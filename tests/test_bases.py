@@ -1,5 +1,6 @@
 """Base detector on synthetic series with known answers."""
 
+import json
 from datetime import date, timedelta
 
 import pytest
@@ -69,18 +70,20 @@ def test_staircase_two_numbered_bases():
     assert [b.number for b in bases] == [1, 2]
     b1, b2 = bases
     assert b1.status == b2.status == "broken_out"
-    assert b1.weeks == 4 and b2.weeks == 6
+    for b in (b1, b2):                              # calendar weeks, rounded down
+        assert b.weeks == (date.fromisoformat(b.end_date) - date.fromisoformat(b.start_date)).days // 7
+    assert b1.weeks < b2.weeks
     assert b1.breakout.volume_ok and "low volume" not in b1.breakout.tags
     assert not b2.breakout.volume_ok and "low volume" in b2.breakout.tags
     assert b1.vol_dryup < 1.0                       # volume faded in the base
-    assert b1.label == "B1 · 4w"
+    assert b1.label == f"B1 · {b1.weeks}w"
 
 
 def test_pivot_is_base_high_and_breakout_closes_above_it():
     candles = staircase()
     b = detect_bases(candles, CFG)[0]
     seg = candles[b.start_index:b.end_index + 1]
-    assert b.pivot == pytest.approx(max(c["high"] for c in seg), abs=0.006)
+    assert b.pivot == pytest.approx(max(c["close"] for c in seg), abs=0.006)   # close basis (default)
     assert b.low == pytest.approx(min(c["low"] for c in seg), abs=0.006)
     assert all(c["close"] <= b.pivot + 0.006 for c in seg)
     assert b.breakout.close > b.pivot and b.breakout.through_pct > 0
@@ -89,7 +92,15 @@ def test_pivot_is_base_high_and_breakout_closes_above_it():
 
 def test_short_pause_is_not_a_base():
     candles = build([("trend", 60, 0.6), ("range", 8, (0.95, 0.99)), ("bo", 1, 1.05), ("trend", 20, 0.1)])
-    assert detect_bases(candles, CFG) == []
+    assert detect_bases(candles, BaseConfig(reset_ma=0, min_base_bars=15)) == []
+    assert len(detect_bases(candles, CFG)) == 1     # default 1-week minimum accepts it
+
+
+def test_high_basis_pivot():
+    candles = staircase()
+    b = detect_bases(candles, BaseConfig(reset_ma=0, pivot_basis="high"))[0]
+    seg = candles[b.start_index:b.end_index + 1]
+    assert b.pivot == pytest.approx(max(c["high"] for c in seg), abs=0.006)
 
 
 def test_deep_decline_is_not_a_base_and_resets_count():
@@ -104,9 +115,10 @@ def test_deep_decline_is_not_a_base_and_resets_count():
 
 
 def test_slow_grind_up_is_not_a_base():
-    # closes never clear the prior bar's wick high, but the pivot keeps creeping up
+    # high basis: closes never clear the prior wick high, but the pivot creeps up -> drift rule
     candles = build([("trend", 60, 0.6), ("trend", 40, 0.20), ("trend", 5, 0.02)])
-    assert detect_bases(candles, CFG) == []
+    assert detect_bases(candles, BaseConfig(reset_ma=0, pivot_basis="high")) == []
+    assert detect_bases(candles, CFG) == []         # close basis: every higher close restarts
 
 
 def test_no_prior_advance_no_base():
@@ -147,3 +159,9 @@ def test_ma_reset_restarts_count():
     cfg = BaseConfig(reset_ma=10, prior_advance_bars=63, min_prior_advance=0.20)
     # base 2 dips below its own 10-SMA, so with a short MA every base restarts at B1
     assert [b.number for b in detect_bases(candles, cfg)] == [1, 1]
+
+
+def test_to_dict_is_plain_json():
+    for b in detect_bases(staircase(), CFG):
+        d = json.loads(json.dumps(b.to_dict()))     # numpy scalars would raise here
+        assert d["label"] == b.label and isinstance(d["breakout"]["volume_ok"], bool)

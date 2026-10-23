@@ -82,11 +82,12 @@ class ServerConfig:
 @dataclass
 class BaseConfig:
     """Base (consolidation box) detection dials. bananapatterns.com publishes no cut-offs; these are ours."""
-    min_base_bars: int = 15                # 3 weeks minimum (site shows 3w bases)
+    pivot_basis: str = "close"             # pivot = highest "close" in the base (matches the site) or "high"
+    min_base_bars: int = 5                 # 1 week; the site draws 1-2 week boxes (VCP screen will ask for more)
     max_base_bars: int = 325               # 65 weeks; longer ranges belong to the multi-year screen (later)
-    max_base_depth: float = 0.40           # (pivot - base low) / pivot; deeper = correction, not a base
-    max_pivot_drift: float = 0.03          # wicks may lift the pivot this far above the base's first high;
-                                           # beyond it the stock is grinding up (a trend, not a base)
+    max_base_depth: float = 0.25           # (pivot - base low) / pivot; site boxes seen were <= ~19% deep
+    max_pivot_drift: float = 0.03          # pivot_basis="high" only: wicks may lift the pivot this far above the
+                                           # base's first high; beyond it the stock is grinding up (a trend)
     prior_advance_bars: int = 63           # look back this far for the advance into the base
     min_prior_advance: float = 0.20        # base high >= 20% above the lowest low of that lookback
     reset_ma: int = 200                    # a close below this SMA restarts the base count at B1 (0 = off)

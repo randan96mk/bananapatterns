@@ -53,7 +53,7 @@ export default function App() {
           </>
         )}
         {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
-        {tab === 'settings' && <SettingsPanel section="ingest" />}
+        {tab === 'settings' && <SettingsPanel />}
         {tab === 'logs' && <LogsPanel />}
       </main>
       <footer className="muted">Personal use only · screen-only mode (no orders) · data © NSE via Zerodha Kite</footer>

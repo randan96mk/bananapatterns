@@ -14,15 +14,36 @@ const HELP = {
   universe_urls: 'Nifty 500 constituents CSV sources, tried in order',
   index_symbols: 'Kite index tradingsymbols to ingest (RS / regime)',
   eod_ready_time: "IST time after which today's daily bar is treated as final",
+  // bases
+  pivot_basis: '"close" = highest close in the base (matches the site) or "high"',
+  min_base_bars: 'Minimum base length in sessions (5 = 1 week)',
+  max_base_bars: 'Maximum base length in sessions (325 = 65 weeks)',
+  max_base_depth: 'Max drop from pivot to base low (0.25 = 25%)',
+  max_pivot_drift: 'pivot_basis=high only: max wick drift above the first high before it counts as a trend',
+  prior_advance_bars: 'Lookback for the advance into the base',
+  min_prior_advance: 'Base high must be this far above the lookback low (0.20 = 20%)',
+  reset_ma: 'Close below this SMA restarts the count at B1 (0 = off)',
+  reset_on_undercut: 'Base low under the previous base low restarts the count (true/false)',
+  vol_baseline: 'Breakout volume rule baseline: "sma50" or "median20"',
+  bo_vol_mult: 'Breakout volume must be >= this x baseline to be volume-confirmed',
+  weak_close_cir: 'Breakout close-in-range below this = weak close',
+  squat_bars: 'Close back under pivot within N sessions after breakout = squat',
+  dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-// Generic editor for a persisted config section. Phase 2 reuses it for the VCP dials.
-export default function SettingsPanel({ section = 'ingest' }) {
+const SECTIONS = ['bases', 'ingest'];
+
+// Generic editor for persisted config sections (bases, ingest; vcp next).
+export default function SettingsPanel() {
+  const [section, setSection] = useState(SECTIONS[0]);
   const [vals, setVals] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState('');
 
-  useEffect(() => { api.getConfig(section).then((v) => { setVals(v); setDraft(v); }).catch((e) => setMsg(e.message)); }, [section]);
+  useEffect(() => {
+    setVals(null); setMsg('');
+    api.getConfig(section).then((v) => { setVals(v); setDraft(v); }).catch((e) => setMsg(e.message));
+  }, [section]);
   if (!vals) return <div className="panel">{msg || 'Loading…'}</div>;
 
   const save = async () => {
@@ -35,7 +56,12 @@ export default function SettingsPanel({ section = 'ingest' }) {
 
   return (
     <div className="panel">
-      <h3>Settings · {section}</h3>
+      <div className="row">
+        <h3>Settings</h3>
+        {SECTIONS.map((x) => (
+          <button key={x} className={`btn ${x === section ? '' : 'ghost'}`} onClick={() => setSection(x)}>{x}</button>))}
+        {section === 'bases' && <span className="muted">Changes apply the next time a chart is opened.</span>}
+      </div>
       <table className="grid small settings">
         <tbody>
           {Object.entries(draft).map(([k, v]) => (
@@ -44,7 +70,7 @@ export default function SettingsPanel({ section = 'ingest' }) {
               <td>{Array.isArray(v)
                 ? <textarea rows={v.length || 1} value={v.join('\n')}
                     onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />
-                : <input value={v} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</td>
+                : <input value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</td>
               <td className="muted">{HELP[k] || ''}</td>
             </tr>
           ))}

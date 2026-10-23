@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
 from backend.database.models import get_candles, get_db, get_logs, get_runs, latest_universe
+from backend.engine.bases import detect_bases
 from backend.ingest import candles as cd
 from backend.ingest import universe as uni
 from backend.kite_api import auth
@@ -196,26 +197,44 @@ def universe_list():
 
 # --- Candles ---
 
+def _resolve_stock(conn, symbol: str) -> tuple[dict, dict]:
+    """(instrument row, universe metadata) for an NSE symbol (BE series -> SYMBOL-BE) or index name."""
+    _, members = latest_universe(conn)
+    meta = next((m for m in members if m["symbol"] == symbol), {})
+    series = (meta.get("series") or "EQ").upper()
+    candidates = [symbol] if series == "EQ" else [f"{symbol}-{series}", symbol]
+    for cand in candidates:
+        row = conn.execute(
+            "SELECT instrument_token, segment FROM instruments WHERE tradingsymbol = ? "
+            "AND segment IN ('NSE', 'INDICES') ORDER BY segment = 'NSE' DESC LIMIT 1", (cand,)
+        ).fetchone()
+        if row:
+            return dict(row), meta
+    raise HTTPException(404, f"Unknown symbol {symbol}")
+
+
 @router.get("/stock/{symbol}/candles")
 def stock_candles(symbol: str, limit: int = Query(750, ge=1, le=5000)):
     with get_db() as conn:
-        _, members = latest_universe(conn)
-        meta = next((m for m in members if m["symbol"] == symbol), {})
-        series = (meta.get("series") or "EQ").upper()
-        candidates = [symbol] if series == "EQ" else [f"{symbol}-{series}", symbol]
-        row = None
-        for cand in candidates:
-            row = conn.execute(
-                "SELECT instrument_token, segment FROM instruments WHERE tradingsymbol = ? "
-                "AND segment IN ('NSE', 'INDICES') ORDER BY segment = 'NSE' DESC LIMIT 1", (cand,)
-            ).fetchone()
-            if row:
-                break
-        if not row:
-            raise HTTPException(404, f"Unknown symbol {symbol}")
+        row, meta = _resolve_stock(conn, symbol)
         candles = get_candles(conn, row["instrument_token"], limit=limit)
     return {"symbol": symbol, "instrument_token": row["instrument_token"], "segment": row["segment"],
-            "company": meta.get("company"), "industry": meta.get("industry"), "candles": candles}
+            "company": meta.get("company"), "industry": meta.get("industry"), "series": meta.get("series"),
+            "candles": candles}
+
+
+@router.get("/stock/{symbol}/bases")
+def stock_bases(symbol: str, since: Optional[str] = None):
+    """Bases over the full stored history (so numbering is right); `since` drops older ones."""
+    with get_db() as conn:
+        row, _ = _resolve_stock(conn, symbol)
+        candles = get_candles(conn, row["instrument_token"])
+    bases = [b.to_dict() for b in detect_bases(candles, S().config.bases)]
+    if since:
+        bases = [b for b in bases if b["end_date"] >= since]
+    latest = bases[-1] if bases else None
+    return {"symbol": symbol, "as_of": candles[-1]["date"] if candles else None, "bases": bases,
+            "latest": latest, "config": asdict(S().config.bases)}
 
 
 # --- Ingest jobs ---

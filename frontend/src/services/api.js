@@ -23,6 +23,8 @@ export const cancelSync = () => req('POST', '/api/ingest/cancel');
 export const ingestStatus = () => req('GET', '/api/ingest/status');
 export const getCandles = (sym, limit = 750) =>
   req('GET', `/api/stock/${encodeURIComponent(sym)}/candles?limit=${limit}`);
+export const getBases = (sym, since) =>
+  req('GET', `/api/stock/${encodeURIComponent(sym)}/bases${since ? `?since=${since}` : ''}`);
 export const getConfig = (section) => req('GET', `/api/config/${section}`);
 export const putConfig = (section, values) => req('PUT', `/api/config/${section}`, values);
 export const getLogs = (level) => req('GET', `/api/logs?limit=200${level ? `&level=${level}` : ''}`);

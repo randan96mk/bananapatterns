@@ -48,3 +48,10 @@ table.grid { width: 100%; border-collapse: collapse; }
 .lvl-ERROR { color: var(--bad); } .lvl-WARNING { color: var(--warn); }
 .settings input { width: 140px; } .settings textarea { width: 420px; font-size: 11px; }
 footer { margin-top: 20px; font-size: 11px; }
+
+.basecard { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+.kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+.kv > div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dotted var(--border); }
+.tag.ok { background: #26a69a22; color: var(--ok); }
+.tag.warnbg { background: #f5a52422; color: var(--warn); }
+@media (max-width: 700px) { .kv { grid-template-columns: 1fr; } }
