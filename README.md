@@ -4,9 +4,10 @@ A personal end-of-day screener for NSE stocks, modelled on the ideas behind
 [bananapatterns.com/screens](https://bananapatterns.com/screens) (especially its
 **VCP — Volatility Contraction Pattern** screen), built on the **Zerodha Kite Connect** API.
 
-> **Status: Phase 1 (Foundation) complete.** You can log in to Kite, load the Nifty 500,
-> backfill ~8 years of adjusted daily candles into SQLite and browse them in the dashboard.
-> The VCP engine (Phase 2) is next. See [Roadmap](#roadmap) and [Development log](#development-log).
+> **Status: Phase 1 (Foundation) complete; Phase 2 in progress.** You can log in to Kite, load the
+> Nifty 500, backfill ~8 years of adjusted daily candles into SQLite and browse them in the dashboard.
+> Phase 2 step 1 is done: **base detection (B1…Bn boxes, pivot, breakout markers and a breakout card)**
+> drawn on every chart. VCP contractions, RS, Trend Template, stages and scoring are next. See [Roadmap](#roadmap) and [Development log](#development-log).
 
 **Personal use only.** Screen-only mode: there is **no order or GTT code** in phases 1–4.
 This is not investment advice; neither this project nor bananapatterns.com is a SEBI-registered
@@ -23,15 +24,16 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 5. [Database schema](#database-schema)
 6. [Kite Connect integration](#kite-connect-integration)
 7. [Data pipeline](#data-pipeline)
-8. [REST API](#rest-api)
-9. [CLI](#cli)
-10. [Configuration](#configuration)
-11. [Frontend](#frontend)
-12. [Testing](#testing)
-13. [Troubleshooting](#troubleshooting)
-14. [Roadmap](#roadmap)
-15. [Decisions log](#decisions-log)
-16. [Development log](#development-log)
+8. [Base detection (engine)](#base-detection-engine)
+9. [REST API](#rest-api)
+10. [CLI](#cli)
+11. [Configuration](#configuration)
+12. [Frontend](#frontend)
+13. [Testing](#testing)
+14. [Troubleshooting](#troubleshooting)
+15. [Roadmap](#roadmap)
+16. [Decisions log](#decisions-log)
+17. [Development log](#development-log)
 
 ---
 
@@ -119,13 +121,17 @@ bananapatterns/
 │  │  └─ candles.py           sync_symbol (backfill/incremental/adjustment refetch), run_sync, JobState
 │  ├─ database/models.py      schema + data-access helpers
 │  ├─ logging_config/logger.py file+console (all) and SQLite (WARNING+) logging
-│  └─ engine/                 (Phase 2) indicators, rs, swings, trend_template, vcp, stages, scoring, diff
+│  └─ engine/
+│     ├─ indicators.py        causal SMA, trailing stats
+│     ├─ bases.py             base (consolidation box) detector + breakout metrics
+│     └─ (next) rs, swings, trend_template, vcp, stages, scoring, diff
 ├─ scripts/sync.py            CLI over the same pipeline code
 ├─ tests/                     offline pytest suite with a fake Kite SDK
 ├─ frontend/
 │  ├─ vite.config.js          :3000, proxies /api → :8000, builds to frontend/build
 │  └─ src/App.jsx, App.css, services/api.js,
-│     components/KiteBar, UniverseTable, StockChart, DataPanel, SettingsPanel, LogsPanel
+│     chart/basesPrimitive.js (canvas plugin drawing base boxes),
+│     components/KiteBar, UniverseTable, StockChart, BaseCard, DataPanel, SettingsPanel, LogsPanel
 ├─ config/                    optional local inputs (fallback Nifty 500 CSV)
 └─ data/  logs/               gitignored: SQLite DB, rotating log file
 ```
@@ -230,6 +236,50 @@ An evening incremental run is about 502 calls ≈ 3 minutes. (Phase 4 can cut th
 
 ---
 
+## Base detection (engine)
+
+`backend/engine/bases.py` finds the **B1…Bn base boxes** drawn on the chart, modelled on the boxes on
+bananapatterns.com's breakout cards. It is a pure function over daily candles: no DB, no Kite.
+
+**Rules** (all of them are dials in **Settings → bases**):
+- A **base** is a run of ≥ `min_base_bars` sessions (default 5 = 1 week) after a closing high, in which
+  **no close goes above the pivot** and the drop from the pivot to the lowest low stays within
+  `max_base_depth` (25%). It must follow an advance: the base high is ≥ `min_prior_advance` (20%) above the
+  lowest low of the previous `prior_advance_bars` (63) sessions. Longer than `max_base_bars` (65 weeks) or
+  deeper than allowed means a restart (deeper also restarts the count).
+- **Pivot = highest close in the base** (`pivot_basis="close"`). Alternative: `"high"`, where wicks may lift
+  the pivot at most `max_pivot_drift` (3%) above the base's first high; past that it is a slow grind up (a trend).
+- **Breakout = the first close above the pivot.** It ends the base and is marked on the chart even on low
+  volume (as the site does). `volume_ok` says whether volume ≥ `bo_vol_mult` (1.5×) × the baseline
+  (`vol_baseline`: `sma50` per your brief, or `median20` as on the site's card). The screen's BREAKOUT stage
+  (next step) requires `volume_ok`.
+- **Numbering** B1, B2, … restarts at B1 after a close below the `reset_ma` (200) SMA, a base low that
+  undercuts the previous base's low (`reset_on_undercut`), or a decline deeper than `max_base_depth`.
+- **Weeks** = calendar days ÷ 7, rounded down (site convention: 24 days → "3w").
+- **Causal:** the forward walk means a base and its breakout depend only on earlier bars, and a test checks that
+  results don't change when later bars are added. The only outcome field is `squat` (closed back below the pivot
+  within `squat_bars` sessions after the breakout). It is `null` ("pending") until those sessions exist.
+
+**Breakout card metrics** (same definitions as the site's card): breakout date, breakout through %
+(close ÷ pivot − 1), breakout volume vs the 50-day average **and** vs the 20-day median, close-in-range
+((close − low) ÷ (high − low), NA when high = low), 1-day gain, breakout-day turnover (₹ cr), base depth,
+and base volume vs the prior pace (mean volume in the base ÷ the `dryup_lookback` sessions before it). A forming base
+shows the pivot, distance under the pivot, length, depth, dry-up and the base low.
+
+**Checked against the site (23 Oct 2026, manual spot-check from screenshots; public daily prices used locally,
+nothing scraped or committed):**
+
+| | bananapatterns.com | this engine |
+|---|---|---|
+| ORIENTHOT latest base | 12w, pivot ₹146.54, BO 16/10/2026, through 3.59%, vol 8.12× (20-d median), CIR 0.82 | **identical** |
+| NRL latest base | 3w, pivot ₹166.26, BO 16/10/2026, through 1.56%, vol 0.44×, CIR NA | **identical** |
+| ORIENTHOT earlier boxes | B2 (Apr), B3 5w (May–Jun), B4 (Jun–Jul) | same boxes, same dates and pivots |
+| Base number | ORIENTHOT **B6**, NRL **B5** | ours B3 and B6: the site's counting origin isn't published; no simple rule reproduced both |
+| "squat" pill | shown (hollow) on both cards, though ORIENTHOT never closed back under its pivot | ours: closed under the pivot within 5 sessions (dial); the site's meaning is unclear |
+
+Two findings from this check changed the defaults: the site's **pivot is the highest close**, not the
+highest high, and its boxes are **tight** (≤ ~20% deep, from 1 week long).
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs
@@ -245,6 +295,7 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/universe/refresh` | download Nifty 500 + Kite instruments; returns mapping summary |
 | GET | `/api/universe` | latest snapshot with per-symbol coverage, last close, change %, last error |
 | GET | `/api/stock/{symbol}/candles?limit=750` | daily candles (stocks or indices, e.g. `NIFTY 500`) |
+| GET | `/api/stock/{symbol}/bases?since=YYYY-MM-DD` | bases over full history (correct numbering), latest base, dials used |
 | POST | `/api/ingest/sync` | `{force_full?, symbols?}`: start background sync (409 if running, 401 if no token) |
 | POST | `/api/ingest/cancel` | stop after the current symbol |
 | GET | `/api/ingest/status` | live job progress + last 10 runs |
@@ -286,6 +337,19 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `include_series` | EQ, BE | constituent series to ingest (REITs = RR excluded) |
 | `index_symbols` | NIFTY 500, NIFTY 50 | indices to ingest |
 
+| `bases.*` | Default | Meaning |
+|---|---|---|
+| `pivot_basis` | close | pivot = highest close (matches site) or highest high |
+| `min_base_bars` / `max_base_bars` | 5 / 325 | base length limits in sessions |
+| `max_base_depth` | 0.25 | max drop from pivot to base low |
+| `max_pivot_drift` | 0.03 | high basis only: wick drift allowed before it counts as a trend |
+| `prior_advance_bars` / `min_prior_advance` | 63 / 0.20 | required advance into the base |
+| `reset_ma` / `reset_on_undercut` | 200 / true | base-count restart rules |
+| `vol_baseline` / `bo_vol_mult` | sma50 / 1.5 | breakout volume rule |
+| `weak_close_cir` | 0.5 | close-in-range below this = weak close |
+| `squat_bars` | 5 | close back under the pivot within N sessions = squat |
+| `dryup_lookback` | 50 | sessions before the base for "volume vs prior pace" |
+
 ---
 
 ## Frontend
@@ -294,18 +358,28 @@ React 19 + Vite + lightweight-charts 5, with a dark theme. Vite replaces create-
 but keeps the same React stack as AlgoTrade-v3. The dev server is on :3000 with `/api` proxied to :8000.
 `npm run build` writes `frontend/build`, which FastAPI serves at :8000.
 
-Tabs: **Universe** (sortable/filterable table + chart with volume and SMA 50/150/200), **Data**
-(refresh, sync, full refetch, progress, errors, run history), **Settings** (generic config editor,
-reused for the VCP dials in Phase 2), **Logs**. The top bar shows Kite status and token expiry, and re-checks every minute.
+Tabs: **Universe** (sortable/filterable table + chart), **Data** (refresh, sync, full refetch, progress,
+errors, run history), **Settings** (config sections `bases` and `ingest`; `vcp` next), **Logs**.
+
+The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay**:
+- base boxes drawn by a canvas plugin (`chart/basesPrimitive.js`, lightweight-charts v5 series primitive):
+  the latest base is green-shaded, earlier ones grey, each labelled "B6 · 12w"
+- a dashed **pivot line** for the latest base ("pivot ₹146.54")
+- **▲ breakout markers**: green when volume-confirmed, amber when below the volume rule
+- a **"bases" checkbox** to hide or show the overlay, and under the chart the **breakout card** ("Broke out of B6" or "Forming B3")
+  with the metrics above and tags (below volume rule, weak close, squat / squat pending). The top bar shows Kite status and token expiry, and re-checks every minute.
 
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest          # 29 tests, offline, ~8 s
+.venv/bin/python -m pytest          # 41 tests, offline, ~10 s
 ```
 
 A `FakeKite` (tests/conftest.py) mimics the SDK, and each test gets its own temporary SQLite DB.
-Coverage includes: throttle spacing, the 06:00 IST rule, date chunking, retry/abort classification,
+Base detector tests (tests/test_bases.py) use synthetic series with known answers: a staircase of two bases,
+too-short pauses, deep declines, no prior advance, a slow grind (high basis), a forming base, squat and pending,
+the MA reset, the high-basis pivot, JSON-serialisable output and **causality** (prefix-stable results).
+Other coverage: throttle spacing, the 06:00 IST rule, date chunking, retry/abort classification,
 universe parsing/fallback/joining, full → incremental → up-to-date sync, split → full refetch, the
 empty-response guard, per-symbol failure recording, auth abort, and the API end to end
 (login callback → universe → background sync → universe/candles endpoints → token expiry while running).
@@ -330,20 +404,24 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 
 Each phase is explained first, built after approval, and shown before the next one starts.
 
-### Phase 2: VCP engine *(next)*
+### Phase 2: VCP engine *(in progress)*
+- ✅ `engine/bases.py` + chart overlay + breakout card (base boxes, pivot, breakout markers): see
+  [Base detection](#base-detection-engine).
 - `engine/indicators.py`: SMA 50/150/200, ATR%, 52-week high/low, volume SMA 50, median turnover.
 - `engine/rs.py`: RS score = 0.4·ROC63 + 0.2·ROC126 + 0.2·ROC189 + 0.2·ROC252, percentile-ranked 1–99
   across the ingested universe (community approximation, not IBD's formula); industry RS from the NSE industry column.
 - `engine/trend_template.py`: the Minervini Trend Template (all conditions as dials; 200-DMA slope lookback 21–63).
 - `engine/swings.py`: **pluggable, causal** swing detection (ZigZag with threshold max(zz_pct, k·ATR%),
   plus fractal pivots), with no look-ahead (a pivot is confirmed only after the reversal).
-- `engine/vcp.py`: base window, 2–N contractions, each ≤ shrink × previous, max depth, final tightness,
+- `engine/vcp.py`: inside each base, 2–N contractions, each ≤ shrink × previous, max depth, final tightness,
   volume dry-up, pivot = high of the last contraction, stop = last contraction low − buffer (capped at 8%).
 - `engine/stages.py`: FORMING / BREAKOUT (close > pivot, previous close ≤ pivot, volume ≥ 1.5× SMA50 volume) / CLIMBING (≤ 5% above pivot).
 - `engine/scoring.py`: weighted sort (RS 30, tightness 20, dry-up 15, pivot proximity 15, 52-week-high proximity 10, industry RS 10).
 - A `vcp` config section with every threshold as a dial. A liquidity gate on median turnover ≥ ₹5 cr
   (Kite has no market cap, so the MVP is turnover-only).
-- Unit tests on synthetic VCP / non-VCP series; visual QA by drawing detected contractions on real charts.
+- Unit tests on synthetic VCP / non-VCP series; visual QA by drawing detected contractions on real charts
+  (toggle inside the base boxes).
+- A `bases` table + universe-wide scan so screens and the what-changed feed can query bases without recomputing.
 
 ### Phase 3: React UI
 Pipeline board (forming → breakout → climbing); stock drawer with annotated chart (contractions, pivot
@@ -386,6 +464,10 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 | 2026-10-23 | Token validity = issued after the last **06:00 IST** (fixes AlgoTrade's calendar-day check) |
 | 2026-10-23 | Corporate actions handled by overlap re-check → full refetch, not a separate CA feed |
 | 2026-10-23 | Ingest series EQ + BE (trade-for-trade equities); exclude REITs (RR) from the stock universe (dial) |
+| 2026-10-23 | Mark every close above the pivot as a breakout (tag weak/low-volume ones); the BREAKOUT stage and the screen keep the ≥ 1.5× volume rule |
+| 2026-10-23 | Phase 2 starts with base detection + chart overlay so later detections can be checked by eye |
+| 2026-10-23 | Pivot = highest **close** in the base and tight boxes (≤ 25%, from 1 week), following the spot-check against the site |
+| 2026-10-23 | Base numbering kept as our own documented rule; the site's numbering origin is unpublished |
 | 2026-10-23 | `main` started with an initial `.gitignore` commit so Phase 1 can be reviewed as a PR into it |
 
 ## Development log
@@ -407,3 +489,20 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
   and rebuilds a `.venv` made with an old Python.
 - 29 offline tests passing. **Not yet run against live Kite**: the first real login and backfill happen on
   Gagan's Mac (see the checklist in the PR).
+
+### 2026-10-23: Phase 2, step 1: base boxes on the chart
+- Gagan shared two breakout cards from the site (ORIENTHOT "B6 · 12w", NRL "B5 · 3w") and asked for the same base
+  boxes. Agreed plan: start Phase 2 with base detection + chart overlay; mark every close above the pivot as a breakout and
+  tag low-volume ones, while the BREAKOUT stage keeps the 1.5× rule.
+- Merged PR #1 into `main` (Phase 1); restarted the branch from `main`, carrying over the `setup.sh` Python-discovery fix.
+- Built `engine/bases.py` (causal forward walk), a `bases` config section, `/api/stock/{symbol}/bases`, a lightweight-charts
+  canvas plugin for the boxes, a pivot price line, breakout markers, the breakout card, and a section switch in Settings.
+- Spot-checked against the site using public daily prices locally (not committed). First run used highest-high pivots
+  and 15-session/40% bases: the breakout dates, the 20-day-median volume ratios (8.12, 0.44) and close-in-range (0.82, NA)
+  matched exactly, but the pivots were higher than the site's. The site's pivots equal the **highest close** in the base,
+  to the paisa. After switching to close basis, calendar weeks and tighter boxes (≤ 25%, ≥ 1 week), every number on both
+  cards matches and the earlier ORIENTHOT boxes line up. Base numbering still differs (site's rule unpublished).
+- Bugs caught: highest-high pivots let a slow grind look like a base (fixed with the drift rule, then close basis); numpy
+  bools broke JSON serialisation of the bases endpoint (fixed + test); config bools parsed "false" as true (fixed + test).
+- 41 offline tests passing.
+
