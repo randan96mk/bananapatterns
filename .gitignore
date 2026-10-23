@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Secrets — never commit
+.env
+
+# Local data, logs and DB (machine-specific, can be rebuilt)
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+
+# IDE (keep tasks.json for one-click launch)
+.vscode/*
+!.vscode/tasks.json
+.idea/
+.DS_Store
