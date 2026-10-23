@@ -60,6 +60,7 @@ class IngestConfig:
     overlap_bars: int = 5                  # incremental refetch overlap to detect re-adjustment
     adjust_tolerance: float = 0.005        # >0.5% close mismatch on overlap => full refetch (split/bonus)
     min_bars_warn: int = 260               # fewer bars => flagged (new listing, IPO-base screen later)
+    eod_ready_time: str = "15:45"          # IST; before this, today's daily bar is partial and is skipped
     universe_urls: list = field(default_factory=lambda: [
         "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
