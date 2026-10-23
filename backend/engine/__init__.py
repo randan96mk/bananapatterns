@@ -1,1 +1,1 @@
-# Phase 2: indicators, rs, swings, trend_template, vcp, stages, scoring, diff
+"""Screening engine (pure functions over daily OHLCV; no DB or Kite access)."""

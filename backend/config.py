@@ -79,14 +79,34 @@ class ServerConfig:
     frontend_port: int = 3000
 
 
+@dataclass
+class BaseConfig:
+    """Base (consolidation box) detection dials. bananapatterns.com publishes no cut-offs; these are ours."""
+    min_base_bars: int = 15                # 3 weeks minimum (site shows 3w bases)
+    max_base_bars: int = 325               # 65 weeks; longer ranges belong to the multi-year screen (later)
+    max_base_depth: float = 0.40           # (pivot - base low) / pivot; deeper = correction, not a base
+    max_pivot_drift: float = 0.03          # wicks may lift the pivot this far above the base's first high;
+                                           # beyond it the stock is grinding up (a trend, not a base)
+    prior_advance_bars: int = 63           # look back this far for the advance into the base
+    min_prior_advance: float = 0.20        # base high >= 20% above the lowest low of that lookback
+    reset_ma: int = 200                    # a close below this SMA restarts the base count at B1 (0 = off)
+    reset_on_undercut: bool = True         # a base low under the previous base low restarts the count
+    vol_baseline: str = "sma50"            # breakout volume vs "sma50" (brief) or "median20" (site's card)
+    bo_vol_mult: float = 1.5               # volume_ok when breakout volume >= mult x baseline
+    weak_close_cir: float = 0.5            # close-in-range below this = weak close
+    squat_bars: int = 5                    # a close back under the pivot within N bars = squat
+    dryup_lookback: int = 50               # bars before the base used for the volume dry-up ratio
+
+
 # Sections persisted to the DB and editable at runtime.
-PERSISTED_SECTIONS = {"ingest": IngestConfig}
+PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig}
 
 
 @dataclass
 class AppConfig:
     kite: KiteConfig = field(default_factory=KiteConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
+    bases: BaseConfig = field(default_factory=BaseConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
@@ -104,13 +124,15 @@ class AppConfig:
         for key, value in values.items():
             current = getattr(sec, key)
             if isinstance(current, bool):
-                value = bool(value)
+                value = value.strip().lower() in ("1", "true", "yes", "on") if isinstance(value, str) else bool(value)
             elif isinstance(current, int):
                 value = int(value)
             elif isinstance(current, float):
                 value = float(value)
             elif isinstance(current, list) and not isinstance(value, list):
                 raise ValueError(f"{name}.{key} must be a list")
+            elif isinstance(current, str):
+                value = str(value)
             setattr(sec, key, value)
         return asdict(sec)
 
