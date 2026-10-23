@@ -314,6 +314,7 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 
 | Symptom | Fix |
 |---|---|
+| `setup.sh`: "Python 3.12+ not found" | macOS's `python3` is 3.9. `brew install python@3.12`, or `BP_PYTHON=/path/to/python3.12 ./setup.sh` |
 | "Kite login required" after a night | Expected: tokens die at 06:00 IST. Log in again. |
 | Run `aborted`: permission denied | Historical data needs the Kite Connect plan on this API key. |
 | AlgoTrade-v3 suddenly logged out | Same Kite app, and only one token is active. Re-login in whichever you are using. |
@@ -401,5 +402,8 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 - Bugs found while testing and fixed: a token-bucket float-drift infinite loop (elapsed·rate landing at
   0.9999999 with a sub-ULP sleep); the run progress counter counting an aborted symbol as done.
 - Visual QA with Playwright against a seeded demo DB (universe table, chart, data tab).
+- First Mac run: `setup.sh` rejected the system Python 3.9 and didn't look in Homebrew paths. It now searches
+  Homebrew (Apple silicon + Intel), pyenv and python.org locations for 3.12–3.14, accepts `BP_PYTHON`,
+  and rebuilds a `.venv` made with an old Python.
 - 29 offline tests passing. **Not yet run against live Kite**: the first real login and backfill happen on
   Gagan's Mac (see the checklist in the PR).
