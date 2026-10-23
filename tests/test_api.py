@@ -24,7 +24,7 @@ def api(fake_kite, make_client, monkeypatch):
     monkeypatch.setattr(main, "KiteClient", lambda kc, ic: client)
     monkeypatch.setattr("backend.ingest.universe.httpx.get", lambda *a, **k: Resp(CSV))
     fake_kite._instruments = INSTRUMENTS
-    for tok in (3329, 408065, 268041):
+    for tok in (3329, 408065, 3, 268041):
         fake_kite.series[tok] = make_series(date(2025, 10, 1), date.today())
     with TestClient(main.app) as tc:
         yield tc, routes
@@ -50,19 +50,21 @@ def test_callback_login_then_full_flow(api):
     assert s["has_token"] and s["token_source"] == "db" and s["user_id"] == "AB1234"
 
     u = tc.post("/api/universe/refresh").json()
-    assert u["matched"] == 2 and u["unmatched"] == ["GONE"]
+    assert u["matched"] == 3 and u["unmatched"] == ["GONE"] and u["excluded"] == ["EMBASSY"]
 
     assert tc.post("/api/ingest/sync", json={}).json()["status"] == "started"
     routes._state.worker.join(timeout=30)
     job = tc.get("/api/ingest/status").json()["job"]
-    assert job["status"] == "ok" and job["done"] == 3
+    assert job["status"] == "ok" and job["done"] == 4
 
     rows = tc.get("/api/universe").json()["rows"]
-    assert {r["symbol"] for r in rows} == {"NIFTY 500", "ABB", "INFY"}
+    assert {r["symbol"] for r in rows} == {"NIFTY 500", "ABB", "INFY", "HFCL"}
+    assert next(r for r in rows if r["symbol"] == "HFCL")["tradingsymbol"] == "HFCL-BE"
     assert all(r["bars"] > 200 for r in rows)
 
     c = tc.get("/api/stock/INFY/candles?limit=50").json()
     assert len(c["candles"]) == 50 and c["industry"] == "Information Technology"
+    assert len(tc.get("/api/stock/HFCL/candles?limit=5").json()["candles"]) == 5
     assert tc.get("/api/stock/NOPE/candles").status_code == 404
 
 

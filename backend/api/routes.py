@@ -184,12 +184,14 @@ def universe_list():
             rows.append({
                 "kind": kind, "symbol": item["symbol"], "instrument_token": tok,
                 "company": item.get("company"), "industry": item.get("industry"), "isin": item.get("isin"),
+                "series": item.get("series"), "tradingsymbol": item.get("tradingsymbol", item["symbol"]),
                 "bars": st.get("bars", 0), "first_date": st.get("first_date"), "last_date": st.get("last_date"),
                 "close": close, "change_pct": round((close / prev - 1) * 100, 2) if close and prev else None,
                 "last_error": st.get("last_error"),
             })
     return {"snapshot_date": resolved["snapshot_date"], "rows": rows,
-            "unmatched": resolved["unmatched"], "missing_indices": resolved["missing_indices"]}
+            "unmatched": resolved["unmatched"], "excluded": resolved["excluded"],
+            "missing_indices": resolved["missing_indices"]}
 
 
 # --- Candles ---
@@ -197,15 +199,21 @@ def universe_list():
 @router.get("/stock/{symbol}/candles")
 def stock_candles(symbol: str, limit: int = Query(750, ge=1, le=5000)):
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT instrument_token, segment FROM instruments WHERE tradingsymbol = ? "
-            "AND segment IN ('NSE', 'INDICES') ORDER BY segment = 'NSE' DESC LIMIT 1", (symbol,)
-        ).fetchone()
+        _, members = latest_universe(conn)
+        meta = next((m for m in members if m["symbol"] == symbol), {})
+        series = (meta.get("series") or "EQ").upper()
+        candidates = [symbol] if series == "EQ" else [f"{symbol}-{series}", symbol]
+        row = None
+        for cand in candidates:
+            row = conn.execute(
+                "SELECT instrument_token, segment FROM instruments WHERE tradingsymbol = ? "
+                "AND segment IN ('NSE', 'INDICES') ORDER BY segment = 'NSE' DESC LIMIT 1", (cand,)
+            ).fetchone()
+            if row:
+                break
         if not row:
             raise HTTPException(404, f"Unknown symbol {symbol}")
         candles = get_candles(conn, row["instrument_token"], limit=limit)
-        _, members = latest_universe(conn)
-    meta = next((m for m in members if m["symbol"] == symbol), {})
     return {"symbol": symbol, "instrument_token": row["instrument_token"], "segment": row["segment"],
             "company": meta.get("company"), "industry": meta.get("industry"), "candles": candles}
 

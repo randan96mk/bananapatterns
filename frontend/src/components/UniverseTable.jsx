@@ -45,6 +45,7 @@ export default function UniverseTable({ data, selected, onSelect }) {
         <span className="muted">snapshot {data.snapshot_date} · {withData}/{rows.length} with data · latest bar {lastDate || '—'}
           {failed > 0 && <span className="warn"> · {failed} with errors</span>}
           {data.unmatched.length > 0 && <span className="warn"> · unmatched: {data.unmatched.join(', ')}</span>}
+          {data.excluded?.length > 0 && <span> · excluded (series): {data.excluded.join(', ')}</span>}
         </span>
       </div>
       <div className="row">
@@ -65,6 +66,7 @@ export default function UniverseTable({ data, selected, onSelect }) {
               <tr key={r.instrument_token} className={r.symbol === selected ? 'sel' : ''}
                   onClick={() => onSelect(r.symbol)} title={r.last_error || ''}>
                 <td><b>{r.symbol}</b>{r.kind === 'index' && <span className="tag">index</span>}
+                  {r.series && r.series !== 'EQ' && <span className="tag" title={`Kite: ${r.tradingsymbol}`}>{r.series}</span>}
                   {r.last_error && <span className="tag bad">err</span>}</td>
                 <td>{r.company}</td><td>{r.industry}</td>
                 <td className="num">{r.close?.toFixed(2)}</td>

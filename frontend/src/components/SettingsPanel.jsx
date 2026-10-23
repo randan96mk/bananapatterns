@@ -10,6 +10,9 @@ const HELP = {
   overlap_bars: 'Bars re-read on incremental sync to detect re-adjusted history',
   adjust_tolerance: 'Close mismatch that triggers a full refetch (0.005 = 0.5%)',
   min_bars_warn: 'Flag symbols with fewer bars (young listings)',
+  include_series: 'Constituent series to ingest (EQ, BE = trade-for-trade; RR = REITs excluded)',
+  universe_urls: 'Nifty 500 constituents CSV sources, tried in order',
+  index_symbols: 'Kite index tradingsymbols to ingest (RS / regime)',
   eod_ready_time: "IST time after which today's daily bar is treated as final",
 };
 

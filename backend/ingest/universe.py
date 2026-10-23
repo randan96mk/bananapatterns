@@ -100,24 +100,40 @@ def refresh_universe(client, cfg: IngestConfig, http_get=None) -> dict:
     summary = {
         "snapshot_date": snapshot_date, "source": source, "members": len(members),
         "matched": len(resolved["stocks"]), "unmatched": resolved["unmatched"],
+        "excluded": resolved["excluded"],
         "indices": {i["symbol"]: i["instrument_token"] for i in resolved["indices"]},
         "missing_indices": resolved["missing_indices"],
     }
-    logger.info("Universe %s: %d members, %d mapped to Kite, %d unmatched %s",
+    logger.info("Universe %s: %d members, %d mapped to Kite, %d unmatched %s, %d excluded by series %s",
                 snapshot_date, len(members), summary["matched"], len(summary["unmatched"]),
-                summary["unmatched"][:10])
+                summary["unmatched"][:10], len(summary["excluded"]), summary["excluded"])
     return summary
+
+
+def _kite_symbol_candidates(member: dict) -> list[str]:
+    """NSE symbol first; non-EQ series are listed on Kite as SYMBOL-SERIES (e.g. HFCL-BE)."""
+    sym, series = member["symbol"], (member.get("series") or "EQ").upper()
+    return [sym] if series == "EQ" else [f"{sym}-{series}", sym]
 
 
 def resolve_universe(cfg: IngestConfig, index_name: str = INDEX_NAME) -> dict:
     """Latest snapshot joined to Kite tokens: {snapshot_date, stocks, indices, unmatched, missing_indices}."""
     with get_db() as conn:
         snapshot_date, members = latest_universe(conn, index_name)
-        stocks, unmatched = [], []
+        stocks, unmatched, excluded = [], [], []
+        series_ok = {s.upper() for s in cfg.include_series}
         for m in members:
-            inst = find_instrument(conn, m["symbol"], "NSE")
+            if (m.get("series") or "EQ").upper() not in series_ok:
+                excluded.append(m["symbol"])
+                continue
+            inst = None
+            for candidate in _kite_symbol_candidates(m):
+                inst = find_instrument(conn, candidate, "NSE")
+                if inst:
+                    break
             if inst:
-                stocks.append({**m, "instrument_token": inst["instrument_token"]})
+                stocks.append({**m, "instrument_token": inst["instrument_token"],
+                               "tradingsymbol": inst["tradingsymbol"]})
             else:
                 unmatched.append(m["symbol"])
         indices, missing = [], []
@@ -128,7 +144,7 @@ def resolve_universe(cfg: IngestConfig, index_name: str = INDEX_NAME) -> dict:
             else:
                 missing.append(sym)
     return {"snapshot_date": snapshot_date, "stocks": stocks, "indices": indices,
-            "unmatched": unmatched, "missing_indices": missing}
+            "unmatched": unmatched, "excluded": excluded, "missing_indices": missing}
 
 
 def universe_ready(cfg: IngestConfig) -> Optional[str]:

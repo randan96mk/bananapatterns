@@ -65,6 +65,9 @@ class IngestConfig:
         "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
     ])
+    # Constituent series to ingest: EQ, plus BE (trade-for-trade equities, listed on Kite as SYMBOL-BE).
+    # REITs (RR) are index members but not equities, so they are excluded; they stay in the snapshot.
+    include_series: list = field(default_factory=lambda: ["EQ", "BE"])
     # Index tradingsymbols on Kite (segment INDICES) used for RS and market regime
     index_symbols: list = field(default_factory=lambda: ["NIFTY 500", "NIFTY 50"])
 

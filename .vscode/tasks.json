@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "BP: Start (dev)", "type": "shell", "command": "./start.sh",
+      "group": { "kind": "build", "isDefault": true }, "presentation": { "panel": "new", "focus": true }, "problemMatcher": [] },
+    { "label": "BP: Start (prod build)", "type": "shell", "command": "./start.sh --prod",
+      "presentation": { "panel": "new" }, "problemMatcher": [] },
+    { "label": "BP: Start backend only", "type": "shell", "command": "./start.sh --backend",
+      "presentation": { "panel": "new" }, "problemMatcher": [] },
+    { "label": "BP: Setup (first time)", "type": "shell", "command": "./setup.sh",
+      "presentation": { "panel": "new" }, "problemMatcher": [] },
+    { "label": "BP: Tests", "type": "shell", "command": ".venv/bin/python -m pytest -q",
+      "group": "test", "presentation": { "panel": "dedicated" }, "problemMatcher": [] },
+    { "label": "BP: Sync status (CLI)", "type": "shell", "command": ".venv/bin/python -m scripts.sync status",
+      "presentation": { "panel": "dedicated" }, "problemMatcher": [] },
+    { "label": "BP: Refresh universe (CLI)", "type": "shell", "command": ".venv/bin/python -m scripts.sync universe",
+      "presentation": { "panel": "dedicated" }, "problemMatcher": [] },
+    { "label": "BP: Sync candles (CLI)", "type": "shell", "command": ".venv/bin/python -m scripts.sync candles",
+      "presentation": { "panel": "dedicated" }, "problemMatcher": [] }
+  ]
+}

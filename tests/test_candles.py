@@ -67,7 +67,7 @@ def _setup_universe(fake_kite, make_client, **kw):
     fake_kite._instruments = INSTRUMENTS
     client = make_client(fake_kite, history_years=1, **kw)
     uni.refresh_universe(client, client.ingest, http_get=lambda u: Resp(CSV))
-    for tok in (3329, 408065, 268041):
+    for tok in (3329, 408065, 3, 268041):
         fake_kite.series[tok] = make_series(date(2025, 10, 1), END)
     return client
 
@@ -83,7 +83,7 @@ def test_run_sync_records_per_symbol_failure_and_continues(fake_kite, make_clien
     fake_kite.historical_data = flaky
     state = cd.JobState()
     snap = cd.run_sync(client, client.ingest, state, now=datetime(2026, 10, 23, 18, 0, tzinfo=IST))
-    assert snap["status"] == "partial" and snap["total"] == 3 and snap["failed"] == 1
+    assert snap["status"] == "partial" and snap["total"] == 4 and snap["failed"] == 1
     assert snap["errors"][0]["symbol"] == "ABB"
     with get_db() as conn:
         assert "invalid instrument" in get_ingest_status(conn, 3329)["last_error"]

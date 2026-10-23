@@ -27,6 +27,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       if (r && r.members !== undefined) {
         setMsg(`Universe ${r.snapshot_date}: ${r.members} members, ${r.matched} mapped to Kite` +
           (r.unmatched.length ? `; unmatched: ${r.unmatched.join(', ')}` : '') +
+          (r.excluded.length ? `; excluded by series: ${r.excluded.join(', ')}` : '') +
           (r.missing_indices.length ? `; missing indices: ${r.missing_indices.join(', ')}` : ''));
         onDataChanged?.();
       } else setMsg('');
