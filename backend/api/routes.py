@@ -465,6 +465,44 @@ def alerts_test():
     return {"status": "sent", "chat_id": n.chat_id}
 
 
+@router.get("/alerts/bot")
+def alerts_bot():
+    """Check the bot token with Telegram (getMe) without sending anything."""
+    from backend.alerts.dispatch import Notifier
+    from backend.alerts.telegram import TelegramError
+    n = Notifier(S().config.alerts)
+    if not n.client.configured:
+        return {"configured": False, "ok": False, "error": "TELEGRAM_BOT_TOKEN is not set in .env"}
+    try:
+        me = n.client.get_me()
+    except TelegramError as exc:
+        return {"configured": True, "ok": False, "error": str(exc)}
+    return {"configured": True, "ok": True, "username": me.get("username"), "name": me.get("first_name"),
+            "chat_id": n.chat_id}
+
+
+class SampleRequest(BaseModel):
+    kind: str = "all"
+
+
+@router.post("/alerts/sample")
+def alerts_sample(req: SampleRequest = SampleRequest()):
+    """Send sample alerts (marked TEST) built from the latest scan; works any day, no Kite needed."""
+    from backend.alerts.dispatch import Notifier
+    from backend.alerts.samples import SAMPLE_KINDS, send_samples
+    if req.kind != "all" and req.kind not in SAMPLE_KINDS:
+        raise HTTPException(422, f"kind must be 'all' or one of {SAMPLE_KINDS}")
+    n = Notifier(S().config.alerts)
+    if not n.client.configured:
+        raise HTTPException(400, "TELEGRAM_BOT_TOKEN is not set in .env (restart the backend after adding it)")
+    if not n.chat_id:
+        raise HTTPException(400, "No chat ID: press Detect chat ID first")
+    tokens = {s["symbol"]: s["instrument_token"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
+    results = send_samples(req.kind, S().config, tokens, n.chat_id, n.client)
+    return {"chat_id": n.chat_id, "results": results, "sent": sum(r["ok"] for r in results),
+            "failed": sum(not r["ok"] for r in results)}
+
+
 @router.get("/alerts/log")
 def alerts_log(limit: int = Query(100, le=500)):
     with get_db() as conn:

@@ -34,6 +34,8 @@ export const getVcp = (sym) => req('GET', `/api/stock/${encodeURIComponent(sym)}
 export const alertsStatus = () => req('GET', '/api/alerts/status');
 export const detectChat = () => req('POST', '/api/alerts/detect-chat');
 export const testAlert = () => req('POST', '/api/alerts/test');
+export const checkBot = () => req('GET', '/api/alerts/bot');
+export const sampleAlert = (kind) => req('POST', '/api/alerts/sample', { kind });
 export const alertsLog = () => req('GET', '/api/alerts/log?limit=100');
 export const getJobs = () => req('GET', '/api/jobs?limit=30');
 export const runJob = (job) => req('POST', `/api/jobs/${job}/run`);

@@ -404,6 +404,12 @@ sequence, tightening, dry-up, U/D ratio and stop.
 2. Add `TELEGRAM_BOT_TOKEN=…` to `.env` and restart (`./start.sh`). The token is never stored in the database or shown in the UI.
 3. Send your bot any message, then **Alerts → Detect chat ID → Send test message**.
 
+**Testing the bot any time:** **Check bot** asks Telegram who the bot is (shows `@your_bot ✓`, or the error, such as
+"Unauthorized" for a wrong token) without sending anything. **Sample alert → Send sample** sends one or all alert types,
+each starting with "🧪 TEST —", built from your latest scan (or a built-in example when there's no data) with chart
+images where the real alert has them. Samples work on weekends and holidays without a Kite login, can be repeated freely,
+never block a real alert, and show in the Sent-alerts log as `test`. A wrong token stops after the first failure.
+
 **Alerts** (each a switch in the **Alerts** tab; sent for the screens chosen there, VCP by default)
 
 | Alert | When | Default |
@@ -468,6 +474,8 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
 | POST | `/api/alerts/detect-chat` | read the bot's recent chats; saves the chat ID when there is exactly one |
 | POST | `/api/alerts/test` | send a test message |
+| GET | `/api/alerts/bot` | check the bot token with Telegram (getMe), no message sent |
+| POST | `/api/alerts/sample` | `{kind: all \| breakout \| near_pivot \| forming \| below_pivot \| played_out \| intraday \| digest \| system}`: send TEST samples |
 | GET | `/api/alerts/log` | sent / failed alerts |
 | GET | `/api/jobs` | automatic job history and schedule |
 | POST | `/api/jobs/{eod,intraday,weekly,reminder}/run` | run a job now (evening job forced even on a non-trading day) |
@@ -596,7 +604,7 @@ The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest          # 80 tests, offline, ~15 s
+.venv/bin/python -m pytest          # 85 tests, offline, ~20 s
 ```
 
 A `FakeKite` (tests/conftest.py) mimics the SDK, and each test gets its own temporary SQLite DB.
@@ -815,4 +823,12 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
   A real Telegram send can't be done from the sandbox: the first live test is Gagan's (Alerts → Send test message).
 - A README update first failed on a mismatched anchor and landed in a follow-up commit.
 - 80 offline tests passing.
+
+### 2026-10-24: Sample alerts and bot check
+- Gagan asked for a button to test the Telegram bot any time. Added **Check bot** (getMe, no message) and
+  **Send sample** (one or all alert types, marked "🧪 TEST", from the latest scan or a built-in example, charts included).
+  Samples skip the send-once rule and are logged as `test`, so they never block real alerts.
+- Checked against the real Telegram API with a fake token: both buttons show "Unauthorized", and a sample run stops
+  after the first failure. The success path is covered by fake-server tests.
+- 85 offline tests passing.
 

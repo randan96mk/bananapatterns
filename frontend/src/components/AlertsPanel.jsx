@@ -13,6 +13,9 @@ const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time'
   ['reminder_time', 'Login reminder (IST)'], ['intraday_start', 'Intraday from'], ['intraday_end', 'Intraday until'],
   ['intraday_interval_min', 'Intraday every (min)'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)']];
 const strip = (h) => h.replace(/<[^>]+>/g, '');
+const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout (chart)'], ['near_pivot', '🎯 Near pivot (chart)'],
+  ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Back below pivot'], ['played_out', '🏁 Played out'],
+  ['intraday', '⚡ Intraday heads-up'], ['digest', '📋 Digest'], ['system', '⚙️ System']];
 
 // Settings + activity for Telegram alerts and the automatic jobs.
 export default function AlertsPanel() {
@@ -21,6 +24,10 @@ export default function AlertsPanel() {
   const [jobs, setJobs] = useState(null);
   const [log, setLog] = useState([]);
   const [msg, setMsg] = useState('');
+  const [bot, setBot] = useState(null);
+  const [sampleKind, setSampleKind] = useState('all');
+  const [sampleRes, setSampleRes] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -39,6 +46,14 @@ export default function AlertsPanel() {
     try { const r = await fn(); setMsg(okText(r)); setTimeout(load, 1500); } catch (e) { setMsg(e.message); }
   };
 
+  const check = async () => { setBot({ checking: true }); try { setBot(await api.checkBot()); } catch (e) { setBot({ ok: false, error: e.message }); } };
+  const sendSample = async () => {
+    setBusy(true); setSampleRes(null);
+    try { setSampleRes(await api.sampleAlert(sampleKind)); setTimeout(load, 500); }
+    catch (e) { setSampleRes({ error: e.message }); }
+    setBusy(false);
+  };
+
   if (!st || !cfg) return <div className="panel">{msg || 'Loading…'}</div>;
   return (
     <>
@@ -54,8 +69,28 @@ export default function AlertsPanel() {
                       : r.hint))}>Detect chat ID</button>
           <button className="btn" disabled={!st.ready} onClick={() => act(api.testAlert, () => 'Test message sent — check Telegram')}>
             Send test message</button>
+          <button className="btn ghost" disabled={!st.bot_configured} onClick={check}>Check bot</button>
+          {bot && (bot.checking ? <span className="muted">checking…</span>
+            : bot.ok ? <span className="up">@{bot.username} ✓ token valid{bot.chat_id ? ` · chat ${bot.chat_id}` : ' · no chat yet'}</span>
+              : <span className="down">✗ {bot.error}</span>)}
           <span className="msg">{msg}</span>
         </div>
+        <div className="row">
+          <b>Sample alert</b>
+          <select value={sampleKind} onChange={(e) => setSampleKind(e.target.value)}>
+            {SAMPLES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          <button className="btn" disabled={!st.bot_configured || !st.chat_id || busy} onClick={sendSample}>
+            {busy ? 'Sending…' : 'Send sample'}</button>
+          <span className="muted small">Marked "🧪 TEST", built from your latest scan (or a built-in example). Works any day, no Kite needed.</span>
+        </div>
+        {sampleRes && (sampleRes.error ? <p className="down">✗ {sampleRes.error}</p> : (
+          <p className="small">{sampleRes.sent} sent{sampleRes.failed ? `, ${sampleRes.failed} failed` : ''} to chat {sampleRes.chat_id}: {' '}
+            {sampleRes.results.map((r) => (
+              <span key={r.kind} className={`tag ${r.ok ? 'ok' : 'warnbg'}`} title={r.error || ''}>
+                {r.ok ? '✓' : '✗'} {r.kind}{r.chart ? ' 🖼' : ''}</span>))}
+            {sampleRes.results.find((r) => r.error) && <span className="down"> {sampleRes.results.find((r) => r.error).error}</span>}
+          </p>))}
         {!st.bot_configured && (
           <ol className="muted small">
             <li>In Telegram, message <b>@BotFather</b> → <code>/newbot</code> → copy the token.</li>
