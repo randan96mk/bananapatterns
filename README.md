@@ -578,9 +578,12 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
   close below the 50-day SMA or 8% under the pivot and stays on the card for 20 sessions.
 - Built `engine/stages.py`, `engine/scan.py`, the `screen` config section, scan tables, screens/changes endpoints,
   scan after sync, at startup and on Rescan, the CLI `scan`, and the Screens home tab.
-- QA on 2 years of public daily prices for the Nifty 500, loaded locally only: a scan of ~500 stocks takes about
-  3 s. The stage lists and feed sentences read correctly; e.g. CYIENT and ANANDRATHI broke out on 23 Oct
-  (18× and 3× volume), AEGISLOG played out by falling 8% under its pivot two sessions after its breakout.
+- QA on 2 years of public daily prices for the Nifty 500, loaded locally only: 497 stocks scanned in 2.5 s
+  (5 forming, 7 fresh + 1 low-volume, 2 climbing, 34 played out, 10 moves as of 23 Oct). The stage lists and feed
+  read correctly. One feed line matches the site's exactly: "PTCIL closed ₹23,455.00, back below the ₹23,830.00
+  pivot it broke out of" (site: "PTC Industries closed ₹23,455, back below the ₹23,830 pivot it broke out of").
+  HFCL's pivot also matches the site's (₹251.47). The site lists HFCL as played out; we don't track that run
+  because its breakout was 0.41× volume (`require_volume`). Setting it to false would follow the site.
 - Bug caught by the screenshot: scan rows were stored without their symbol (empty column, rows not clickable).
   Fixed, with tests.
 - 52 offline tests passing.
