@@ -14,7 +14,7 @@ import os
 from typing import Optional
 
 from backend.alerts import messages as msg
-from backend.alerts.charts import render_chart
+from backend.alerts import charts
 from backend.alerts.telegram import TelegramClient, TelegramError
 from backend.config import AlertsConfig, BaseConfig
 from backend.database.models import get_candles, get_db, now_ist
@@ -68,7 +68,22 @@ class Notifier:
         return self.cfg.system and self.send(key, "system", msg.system_alert(text))
 
 
+_warned_no_charts = False
+
+
+def charts_available() -> bool:
+    """False (with one log warning) when matplotlib is missing: alerts then go out as text."""
+    global _warned_no_charts
+    if not charts.CHARTS_AVAILABLE and not _warned_no_charts:
+        logger.warning("matplotlib not installed: alerts are sent without chart images "
+                       "(run .venv/bin/pip install -r requirements.txt)")
+        _warned_no_charts = True
+    return charts.CHARTS_AVAILABLE
+
+
 def _chart_png(candles: list[dict], p: dict, kind: str, bases_cfg: BaseConfig) -> Optional[bytes]:
+    if not charts_available():
+        return None
     try:
         bases = detect_bases(candles, bases_cfg)
         if not bases:
@@ -83,7 +98,7 @@ def _chart_png(candles: list[dict], p: dict, kind: str, bases_cfg: BaseConfig) -
         sub = " · ".join(x for x in (f"RS {p['rs']}" if p.get("rs") is not None else "",
                                      f"Trend {p.get('tt_passed')}/{p.get('tt_of')}" if p.get("tt_of") else "",
                                      p.get("industry") or "") if x)
-        return render_chart(candles, title, sub, base={"start_date": base.start_date, "end_date": base.end_date,
+        return charts.render_chart(candles, title, sub, base={"start_date": base.start_date, "end_date": base.end_date,
                                                        "pivot": base.pivot, "low": base.low, "label": base.label},
                             stop=v.get("stop"), breakout_date=bo_date, contractions=v.get("contractions"))
     except Exception:

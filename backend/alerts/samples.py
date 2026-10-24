@@ -12,7 +12,7 @@ import uuid
 from typing import Optional
 
 from backend.alerts import messages as msg
-from backend.alerts.dispatch import _chart_png
+from backend.alerts.dispatch import _chart_png, charts_available
 from backend.alerts.telegram import TelegramClient, TelegramError
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, now_ist
@@ -137,7 +137,9 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
     return out
 
 
-def _example_chart(candles: list[dict], kind: str) -> bytes:
+def _example_chart(candles: list[dict], kind: str) -> Optional[bytes]:
+    if not charts_available():
+        return None
     from backend.alerts.charts import render_chart
     base_start = candles[60]["date"]
     end = candles[-2]["date"]

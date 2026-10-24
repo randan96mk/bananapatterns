@@ -634,6 +634,7 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 | Universe refresh fails (NSE 403) | Save the CSV to `config/ind_nifty500list.csv` (see config/README.md). |
 | Symbols listed as *excluded* | Their series isn't in `include_series` (REITs by default). Edit in Settings. |
 | Symbols listed as *unmatched* | Usually a rename or suspension. Check the NSE symbol vs Kite's tradingsymbol. |
+| Backend won't start: `ModuleNotFoundError` (e.g. matplotlib) after `git pull` | A new dependency: `./start.sh` now installs it automatically when `requirements.txt` changes; or run `.venv/bin/pip install -r requirements.txt`. Without matplotlib the app still runs and alerts go out as text. |
 | No Telegram alerts | Alerts tab: token set? chat set? "Ready"? Then Send test message; check the Sent alerts log for errors. |
 | Evening job didn't run | The app must be open and the Mac awake at 18:30 (see "Keeping the Mac ready"); it catches up when opened later that evening. Check Alerts → Automatic jobs. |
 | Port 8000 busy | `start.sh` frees 8000/3000. Otherwise `lsof -ti tcp:8000 \| xargs kill`. |
@@ -831,4 +832,11 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 - Checked against the real Telegram API with a fake token: both buttons show "Unauthorized", and a sample run stops
   after the first failure. The success path is covered by fake-server tests.
 - 85 offline tests passing.
+
+### 2026-10-24: Dependency hardening
+- On the Mac, `git pull` brought in matplotlib (chart images) but it wasn't installed, so the backend failed to import and
+  the dashboard showed proxy errors. Fixes: `start.sh` reinstalls Python / frontend dependencies whenever
+  `requirements.txt` / `package.json` change (checksum stamps inside `.venv/` and `node_modules/`), and matplotlib is
+  optional: without it the app starts, alerts go out as text, and the Alerts tab says how to enable charts.
+- 88 offline tests passing (incl. starting the backend with matplotlib blocked).
 

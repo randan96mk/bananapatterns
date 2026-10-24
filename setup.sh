@@ -33,10 +33,11 @@ fi
 [ -d .venv ] || "$PYTHON" -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q -r requirements.txt
+cksum < requirements.txt > .venv/.requirements.stamp     # start.sh reinstalls when this changes
 echo "Backend dependencies installed"
 
 command -v npm >/dev/null 2>&1 || { echo "Node.js 18+ required (brew install node)"; exit 1; }
-(cd frontend && npm install --no-audit --no-fund)
+(cd frontend && npm install --no-audit --no-fund && cksum < package.json > node_modules/.package.stamp)
 echo "Frontend dependencies installed"
 
 mkdir -p data logs

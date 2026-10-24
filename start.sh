@@ -12,6 +12,21 @@ MODE="${1:-dev}"
 [ -f .env ] || { cp .env.example .env; echo "Created .env — add your Kite credentials"; }
 mkdir -p data logs
 
+# Reinstall dependencies when their manifest changed (e.g. after git pull added one)
+stamp_ok() { [ -f "$2" ] && [ "$(cksum < "$1")" = "$(cat "$2")" ]; }
+if ! stamp_ok requirements.txt .venv/.requirements.stamp; then
+    echo "requirements.txt changed: installing Python dependencies..."
+    .venv/bin/pip install -q -r requirements.txt
+    cksum < requirements.txt > .venv/.requirements.stamp
+fi
+if [ "$MODE" != "--backend" ] && command -v npm >/dev/null 2>&1; then
+    if [ ! -d frontend/node_modules ] || ! stamp_ok frontend/package.json frontend/node_modules/.package.stamp; then
+        echo "frontend/package.json changed: installing frontend dependencies..."
+        (cd frontend && npm install --no-audit --no-fund --silent)
+        cksum < frontend/package.json > frontend/node_modules/.package.stamp
+    fi
+fi
+
 # Free our ports only (not every uvicorn on the machine)
 for port in 8000 3000; do
     pids=$(lsof -ti tcp:$port 2>/dev/null || true)

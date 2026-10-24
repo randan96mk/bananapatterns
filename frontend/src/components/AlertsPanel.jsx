@@ -91,6 +91,9 @@ export default function AlertsPanel() {
                 {r.ok ? '✓' : '✗'} {r.kind}{r.chart ? ' 🖼' : ''}</span>))}
             {sampleRes.results.find((r) => r.error) && <span className="down"> {sampleRes.results.find((r) => r.error).error}</span>}
           </p>))}
+        {st.charts_available === false && (
+          <p className="warn small">Chart images are off: matplotlib isn't installed. Run{' '}
+            <code>.venv/bin/pip install -r requirements.txt</code> and restart; alerts are sent as text meanwhile.</p>)}
         {!st.bot_configured && (
           <ol className="muted small">
             <li>In Telegram, message <b>@BotFather</b> → <code>/newbot</code> → copy the token.</li>
