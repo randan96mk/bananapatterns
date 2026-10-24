@@ -126,6 +126,21 @@ CREATE TABLE IF NOT EXISTS scan_changes (
 );
 CREATE INDEX IF NOT EXISTS idx_changes_asof ON scan_changes(as_of);
 
+-- Per-stock metrics on each as-of date (every scanned stock, not only staged ones).
+CREATE TABLE IF NOT EXISTS stock_metrics (
+    as_of TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    rs INTEGER,
+    rs_score REAL,
+    industry TEXT,
+    industry_rank INTEGER,
+    industry_of INTEGER,
+    tt_passed INTEGER NOT NULL,
+    tt_of INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (as_of, symbol)
+);
+
 CREATE TABLE IF NOT EXISTS scan_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     as_of TEXT NOT NULL,

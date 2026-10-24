@@ -42,7 +42,7 @@ class AppState:
         """Run the stage scan over the resolved universe (serialised)."""
         with self.scan_lock:
             stocks = uni.resolve_universe(self.config.ingest)["stocks"]
-            return run_scan(self.config.bases, self.config.screen, stocks)
+            return run_scan(self.config.bases, self.config.screen, stocks, self.config.trend)
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
