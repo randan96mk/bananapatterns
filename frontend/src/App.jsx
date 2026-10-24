@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import KiteBar from './components/KiteBar';
 import UniverseTable from './components/UniverseTable';
+import ScreensHome from './components/ScreensHome';
 import StockChart from './components/StockChart';
 import DataPanel from './components/DataPanel';
 import SettingsPanel from './components/SettingsPanel';
@@ -8,6 +9,7 @@ import LogsPanel from './components/LogsPanel';
 import * as api from './services/api';
 
 const TABS = [
+  ['screens', 'Screens'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['settings', 'Settings'],
@@ -15,7 +17,7 @@ const TABS = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState('universe');
+  const [tab, setTab] = useState('screens');
   const [kite, setKite] = useState(null);
   const [universe, setUniverse] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -46,6 +48,7 @@ export default function App() {
       {backendErr ? <div className="kitebar warn">Backend unreachable: {backendErr}. Is `python run.py` running?</div>
         : <KiteBar status={kite} onChange={setKite} />}
       <main>
+        {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
         {tab === 'universe' && (
           <>
             {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}
@@ -53,7 +56,7 @@ export default function App() {
           </>
         )}
         {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
-        {tab === 'settings' && <SettingsPanel section="ingest" />}
+        {tab === 'settings' && <SettingsPanel />}
         {tab === 'logs' && <LogsPanel />}
       </main>
       <footer className="muted">Personal use only · screen-only mode (no orders) · data © NSE via Zerodha Kite</footer>

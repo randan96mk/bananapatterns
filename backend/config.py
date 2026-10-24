@@ -79,14 +79,51 @@ class ServerConfig:
     frontend_port: int = 3000
 
 
+@dataclass
+class BaseConfig:
+    """Base (consolidation box) detection dials. bananapatterns.com publishes no cut-offs; these are ours."""
+    pivot_basis: str = "close"             # pivot = highest "close" in the base (matches the site) or "high"
+    min_base_bars: int = 5                 # 1 week; the site draws 1-2 week boxes (VCP screen will ask for more)
+    max_base_bars: int = 325               # 65 weeks; longer ranges belong to the multi-year screen (later)
+    max_base_depth: float = 0.25           # (pivot - base low) / pivot; site boxes seen were <= ~19% deep
+    max_pivot_drift: float = 0.03          # pivot_basis="high" only: wicks may lift the pivot this far above the
+                                           # base's first high; beyond it the stock is grinding up (a trend)
+    prior_advance_bars: int = 63           # look back this far for the advance into the base
+    min_prior_advance: float = 0.20        # base high >= 20% above the lowest low of that lookback
+    reset_ma: int = 200                    # a close below this SMA restarts the base count at B1 (0 = off)
+    reset_on_undercut: bool = True         # a base low under the previous base low restarts the count
+    vol_baseline: str = "sma50"            # breakout volume vs "sma50" (brief) or "median20" (site's card)
+    bo_vol_mult: float = 1.5               # volume_ok when breakout volume >= mult x baseline
+    weak_close_cir: float = 0.5            # close-in-range below this = weak close
+    squat_bars: int = 5                    # a close back under the pivot within N bars = squat
+    dryup_lookback: int = 50               # bars before the base used for the volume dry-up ratio
+
+
+@dataclass
+class ScreenConfig:
+    """Stage-board dials (Forming / Fresh breakouts / Climbing / Played out)."""
+    min_forming_weeks: int = 3             # Forming: active base at least this long
+    max_dist_to_pivot: float = 0.05        # Forming: close within 5% under the pivot
+    fresh_sessions: int = 5                # Fresh: broke out within the last N sessions (incl. today)
+    require_volume: bool = True            # Fresh/Climbing need a volume-confirmed breakout (bases.bo_vol_mult)
+    played_out_ma: int = 50                # run ends on a close below this SMA (0 = off)
+    played_out_drop: float = 0.08          # run ends on a close this far below the pivot
+    played_out_window: int = 20            # Played out: run ended within the last N sessions
+    trend_ma: int = 200                    # all cards: close above this SMA (0 = off)
+    min_turnover_cr: float = 5.0           # all cards: median daily turnover (Rs crore) at least this
+    turnover_window: int = 50              # sessions for the median turnover
+
+
 # Sections persisted to the DB and editable at runtime.
-PERSISTED_SECTIONS = {"ingest": IngestConfig}
+PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig}
 
 
 @dataclass
 class AppConfig:
     kite: KiteConfig = field(default_factory=KiteConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
+    bases: BaseConfig = field(default_factory=BaseConfig)
+    screen: ScreenConfig = field(default_factory=ScreenConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
@@ -104,13 +141,15 @@ class AppConfig:
         for key, value in values.items():
             current = getattr(sec, key)
             if isinstance(current, bool):
-                value = bool(value)
+                value = value.strip().lower() in ("1", "true", "yes", "on") if isinstance(value, str) else bool(value)
             elif isinstance(current, int):
                 value = int(value)
             elif isinstance(current, float):
                 value = float(value)
             elif isinstance(current, list) and not isinstance(value, list):
                 raise ValueError(f"{name}.{key} must be a list")
+            elif isinstance(current, str):
+                value = str(value)
             setattr(sec, key, value)
         return asdict(sec)
 

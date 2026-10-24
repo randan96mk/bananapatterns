@@ -3,7 +3,8 @@
   python -m scripts.sync status              # token + data summary
   python -m scripts.sync token <ACCESS_TOKEN> # store a token obtained elsewhere
   python -m scripts.sync universe            # refresh Nifty 500 list + Kite instruments
-  python -m scripts.sync candles [--full] [SYMBOL ...]   # backfill / incremental sync
+  python -m scripts.sync candles [--full] [SYMBOL ...]   # backfill / incremental sync (then scans)
+  python -m scripts.sync scan                # recompute the stage board from stored candles
 
 Log in first via the dashboard (or http://localhost:8000/api/kite/login-url).
 """
@@ -16,6 +17,7 @@ import time
 from backend.config import AppConfig, load_config
 from backend.database.models import get_db, get_runs, init_db
 from backend.ingest import candles as cd
+from backend.engine.scan import run_scan
 from backend.ingest import universe as uni
 from backend.kite_api import auth
 from backend.kite_api.client import KiteClient
@@ -78,9 +80,19 @@ def cmd_candles(args):
         t.join()
     s = state.snapshot()
     print(f"\n{s['status']}: {s['message']}")
+    if s["status"] in ("ok", "partial"):
+        cmd_scan(None)
     for e in s["errors"]:
         print(f"  {e['symbol']}: {e['error']}")
     sys.exit(0 if s["status"] in ("ok", "partial") else 1)
+
+
+def cmd_scan(_):
+    init_db()
+    config = load_config(AppConfig())
+    out = run_scan(config.bases, config.screen, uni.resolve_universe(config.ingest)["stocks"])
+    print(f"as of {out['as_of']}: {out['scanned']} scanned, {out.get('stale', 0)} stale")
+    print("  " + ", ".join(f"{k} {v}" for k, v in out["counts"].items()) + f"; {out['changes']} changes")
 
 
 def main():
@@ -91,6 +103,7 @@ def main():
     t.add_argument("token")
     t.set_defaults(fn=cmd_token)
     sub.add_parser("universe").set_defaults(fn=cmd_universe)
+    sub.add_parser("scan").set_defaults(fn=cmd_scan)
     c = sub.add_parser("candles")
     c.add_argument("--full", action="store_true", help="refetch full history for every symbol")
     c.add_argument("symbols", nargs="*")

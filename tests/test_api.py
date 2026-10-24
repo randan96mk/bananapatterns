@@ -67,6 +67,21 @@ def test_callback_login_then_full_flow(api):
     assert len(tc.get("/api/stock/HFCL/candles?limit=5").json()["candles"]) == 5
     assert tc.get("/api/stock/NOPE/candles").status_code == 404
 
+    summ = tc.get("/api/screens/bases/summary").json()      # sync finished -> scan ran
+    assert summ["as_of"] == summ["latest_bar"] and summ["stale"] is False
+    assert set(summ["counts"]) >= {"forming", "fresh", "climbing", "played_out"}
+    for stage in ("forming", "fresh", "climbing", "played_out", "fresh_low_volume"):
+        res = tc.get(f"/api/screens/bases/results?stage={stage}")
+        assert res.status_code == 200 and all(r["symbol"] for r in res.json()["rows"])
+    assert tc.get("/api/screens/bases/results?stage=nope").status_code == 422
+    assert tc.get("/api/screens/vcp/summary").status_code == 404
+    assert tc.get("/api/changes").json()["as_of"] == summ["as_of"]
+    assert tc.post("/api/screens/scan").json()["as_of"] == summ["as_of"]
+
+    b = tc.get("/api/stock/INFY/bases").json()
+    assert b["as_of"] and isinstance(b["bases"], list) and b["config"]["min_base_bars"] == 5
+    assert tc.get("/api/stock/NOPE/bases").status_code == 404
+
 
 def test_token_expires_at_six_while_running(api):
     tc, _ = api
@@ -84,3 +99,5 @@ def test_config_roundtrip_and_validation(api):
     assert tc.get("/api/config/ingest").json()["history_years"] == 5
     assert tc.put("/api/config/ingest", json={"nope": 1}).status_code == 422
     assert tc.get("/api/config/vcp").status_code == 404
+    r = tc.put("/api/config/bases", json={"reset_on_undercut": "false", "vol_baseline": "median20"}).json()
+    assert r["reset_on_undercut"] is False and r["vol_baseline"] == "median20"
