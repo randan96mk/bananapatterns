@@ -22,6 +22,9 @@ function sma(candles, n) {
 const MAS = [[50, '#4ea1ff'], [150, '#c58af9'], [200, '#f5a524']];
 
 // Daily candles + volume + SMAs, with base boxes, pivot line and breakout markers.
+const PREVIEW_KINDS = [['auto', 'Auto (current stage)'], ['breakout', 'Breakout'], ['near_pivot', 'Near pivot'],
+  ['forming', 'Forming'], ['below_pivot', 'Below pivot'], ['played_out', 'Played out'], ['climbing', 'Climbing']];
+
 export default function StockChart({ symbol, onClose }) {
   const box = useRef(null);
   const [info, setInfo] = useState(null);
@@ -29,6 +32,7 @@ export default function StockChart({ symbol, onClose }) {
   const [metrics, setMetrics] = useState(null);
   const [showBases, setShowBases] = useState(true);
   const [err, setErr] = useState('');
+  const [preview, setPreview] = useState(null);       // {kind, stamp} while the alert-chart preview is open
 
   useEffect(() => {
     if (!symbol || !box.current) return undefined;
@@ -118,9 +122,22 @@ export default function StockChart({ symbol, onClose }) {
           <span style={{ color: '#26a69a' }}>▲ breakout</span> <span style={{ color: '#f5a524' }}>▲ low-volume breakout</span></span>
         <label className="muted"><input type="checkbox" checked={showBases}
           onChange={(e) => setShowBases(e.target.checked)} /> bases</label>
-        <button className="btn ghost right" onClick={onClose}>Close</button>
+        <button className="btn ghost right" onClick={() => setPreview(preview ? null : { kind: 'auto', stamp: Date.now() })}>
+          {preview ? 'Hide alert chart' : 'Preview alert chart'}</button>
+        <button className="btn ghost" onClick={onClose}>Close</button>
       </div>
       {err && <p className="warn">{err}</p>}
+      {preview && (
+        <div className="alertpreview">
+          <div className="row">
+            <span className="muted small">The image a Telegram alert would carry (screen rules, not advice)</span>
+            <select value={preview.kind} onChange={(e) => setPreview({ kind: e.target.value, stamp: Date.now() })}>
+              {PREVIEW_KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+          </div>
+          <img alt={`${symbol} alert chart`} src={api.alertChartUrl(symbol, preview.kind, preview.stamp)}
+               onError={() => setErr('No alert chart for this stock/kind (no base to annotate, or matplotlib missing)')} />
+        </div>)}
       <div ref={box} className="chart" />
       <TrendPanel m={metrics} />
       <VcpPanel symbol={symbol} />

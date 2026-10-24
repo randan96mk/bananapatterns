@@ -12,7 +12,7 @@ import uuid
 from typing import Optional
 
 from backend.alerts import messages as msg
-from backend.alerts.dispatch import _chart_png, charts_available
+from backend.alerts.dispatch import decision_for
 from backend.alerts.telegram import TelegramClient, TelegramError
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, now_ist
@@ -68,23 +68,26 @@ def _pick(rows: list[dict], stages: tuple, key=None) -> Optional[dict]:
 
 
 def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[tuple[str, str, Optional[bytes]]]:
-    """[(kind, html, png or None)] for one kind or "all"."""
+    """[(kind, html, png or None)] for one kind or "all", with the same decision chart and lines as real alerts."""
     kinds = SAMPLE_KINDS if kind == "all" else [kind]
     as_of, rows = _latest_rows()
     out = []
 
-    def candles_for(p):
+    def candles_for(p, k):
         tok = tokens.get(p["symbol"])
-        if tok is None:
-            return _example_candles()
-        with get_db() as conn:
-            return get_candles(conn, tok) or _example_candles()
+        cs = None
+        if tok is not None:
+            with get_db() as conn:
+                cs = get_candles(conn, tok)
+        if not cs:
+            cs = _example_candles()
+            if k not in ("breakout", "below_pivot", "played_out"):
+                cs = cs[:-1]                                # example forming: before the breakout bar
+        return cs
 
-    def chart(p, k):
-        if not config.alerts.chart_images:
-            return None
-        cs = candles_for(p)
-        return _chart_png(cs, p, k, config.bases) if p["symbol"] != "EXAMPLE" else _example_chart(cs, k)
+    def decision(p, k, live=None):
+        cs = candles_for(p, k)
+        return decision_for(cs, p, k, config.alerts, config.bases, config.vcp, live=live)
 
     for k in kinds:
         if k == "breakout":
@@ -93,29 +96,38 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
             text = (f"{p['symbol']} broke out of {p['base_label']}: closed {msg.rs(p['close'])}, "
                     f"{p.get('gain_from_pivot_pct') or 0:+.1f}% over the {msg.rs(p['pivot'])} pivot on "
                     f"{p.get('volume_ratio') or 0:.1f}x volume.")
-            out.append((k, PREFIX + msg.stage_alert("breakout", p.get("screen", "vcp"), text, p, 0.8), chart(p, k)))
+            png, ctx = decision(p, k)
+            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, 0.8, ctx), png))
         elif k == "near_pivot":
             p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
-            out.append((k, PREFIX + msg.near_pivot_alert(p.get("screen", "vcp"), p), chart(p, k)))
+            png, ctx = decision(p, k)
+            out.append((k, PREFIX + msg.near_pivot_alert(p.get("screen", "vcp"), p, ctx), png))
         elif k == "forming":
             p = _pick(rows, ("forming",), key=lambda r: -(r.get("score") or r.get("rs") or 0)) or EXAMPLE
             text = (f"{p['symbol']} is newly forming {p['base_label']}: {p.get('dist_to_pivot_pct') or 0:.1f}% under "
                     f"the {msg.rs(p['pivot'])} pivot.")
-            out.append((k, PREFIX + msg.stage_alert("forming", p.get("screen", "vcp"), text, p), None))
+            png, ctx = decision(p, k)
+            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png))
         elif k == "below_pivot":
             p = _pick(rows, ("below_pivot", "climbing", "fresh")) or EXAMPLE
             text = f"{p['symbol']} closed {msg.rs(p['close'])}, back below the {msg.rs(p['pivot'])} pivot it broke out of."
-            out.append((k, PREFIX + msg.stage_alert("below_pivot", p.get("screen", "vcp"), text, p), None))
+            png, ctx = decision(p, k)
+            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png))
         elif k == "played_out":
             p = _pick(rows, ("played_out",)) or EXAMPLE
             text = (f"{p['symbol']} played out. Closed {msg.rs(p['close'])}, {p.get('ended_reason') or 'run ended'}, "
                     f"{p.get('gain_from_pivot_pct') or 0:+.1f}% from the {msg.rs(p['pivot'])} pivot "
                     f"(peak {p.get('peak_gain_pct') or 0:+.1f}%).")
-            out.append((k, PREFIX + msg.stage_alert("played_out", p.get("screen", "vcp"), text, p), None))
+            png, ctx = decision(p, k)
+            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png))
         elif k == "intraday":
             p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
+            cs = candles_for(p, k)
             ltp = round(p["pivot"] * 1.006, 2)
-            out.append((k, PREFIX + msg.intraday_alert(p, ltp, 1.1e6, 2.4, 1.0e6), None))
+            prev = cs[-1]["close"]
+            live = {"ltp": ltp, "open": prev, "high": ltp * 1.003, "low": min(prev, ltp) * 0.995, "volume": 1.1e6}
+            png, ctx = decision_for(cs, p, k, config.alerts, config.bases, config.vcp, live=live)
+            out.append((k, PREFIX + msg.intraday_alert(p, ltp, 1.1e6, 2.4, 1.0e6, ctx), png))
         elif k == "digest":
             screen = "vcp" if any(r["screen"] == "vcp" for r in rows) else "bases"
             with get_db() as conn:
@@ -135,17 +147,6 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
         else:
             raise ValueError(f"Unknown sample kind {k!r}; use one of {SAMPLE_KINDS} or 'all'")
     return out
-
-
-def _example_chart(candles: list[dict], kind: str) -> Optional[bytes]:
-    if not charts_available():
-        return None
-    from backend.alerts.charts import render_chart
-    base_start = candles[60]["date"]
-    end = candles[-2]["date"]
-    return render_chart(candles, "EXAMPLE · Example Industries Ltd. — B2 · 7w", "Built-in example (no scan data yet)",
-                        base={"start_date": base_start, "end_date": end, "pivot": 100.0, "low": 89.6, "label": "B2 · 7w"},
-                        stop=96.5, breakout_date=candles[-1]["date"] if kind == "breakout" else None)
 
 
 def send_samples(kind: str, config: AppConfig, tokens: dict[str, int], chat_id: str,

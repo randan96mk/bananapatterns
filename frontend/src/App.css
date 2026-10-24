@@ -100,3 +100,6 @@ footer { margin-top: 20px; font-size: 11px; }
 .grid td.wrap { white-space: normal; }
 .s-waiting, .s-retry { color: var(--warn); } .s-no_session { color: var(--muted); }
 @media (max-width: 900px) { .toggles { grid-template-columns: 1fr; } }
+
+.alertpreview { margin: 8px 0; }
+.alertpreview img { width: 100%; max-width: 1375px; border-radius: 6px; display: block; }

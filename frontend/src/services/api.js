@@ -30,6 +30,8 @@ export const screenSummary = (screen) => req('GET', `/api/screens/${screen}/summ
 export const screenResults = (screen, stage) => req('GET', `/api/screens/${screen}/results?stage=${stage}`);
 export const runScan = () => req('POST', '/api/screens/scan');
 export const getChanges = (screen = 'bases') => req('GET', `/api/changes?screen=${screen}`);
+export const alertChartUrl = (sym, kind = 'auto', stamp = 0) =>
+  `/api/stock/${encodeURIComponent(sym)}/alert-chart.png?kind=${kind}&t=${stamp}`;
 export const getVcp = (sym) => req('GET', `/api/stock/${encodeURIComponent(sym)}/vcp`);
 export const alertsStatus = () => req('GET', '/api/alerts/status');
 export const detectChat = () => req('POST', '/api/alerts/detect-chat');

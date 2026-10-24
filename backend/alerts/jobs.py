@@ -19,7 +19,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Callable, Optional
 
 from backend.alerts import messages as msg
-from backend.alerts.dispatch import Notifier, dispatch_scan
+from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
 from backend.config import IST, AlertsConfig
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
 from backend.ingest import holidays as hol
@@ -182,7 +182,7 @@ class Scheduler:
             return {"status": "no_bar", "as_of": as_of}
 
         sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
-                             st.config.screen.fresh_sessions)
+                             st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
@@ -216,12 +216,21 @@ class Scheduler:
             ltp = q.get("last_price")
             if not ltp or ltp <= p["pivot"]:
                 continue
+            key = f"{today}|intraday|{sym}"
+            if notifier.already_sent(key):
+                continue                                 # skip the chart work for names already alerted today
             vol = q.get("volume") or q.get("volume_traded")
             with get_db() as conn:
-                hist = get_candles(conn, stocks[sym]["instrument_token"], limit=50)
-            avg = sum(c["volume"] for c in hist) / len(hist) if hist else None
+                hist = get_candles(conn, stocks[sym]["instrument_token"])
+            recent = hist[-50:]
+            avg = sum(c["volume"] for c in recent) / len(recent) if recent else None
             pace = volume_pace(vol, avg, now) if vol and avg else None
-            if notifier.send(f"{today}|intraday|{sym}", "intraday", msg.intraday_alert(p, ltp, vol, pace, avg), sym):
+            ohlc = q.get("ohlc") or {}
+            live = {"ltp": ltp, "open": ohlc.get("open") or ltp, "high": max(ohlc.get("high") or ltp, ltp),
+                    "low": min(ohlc.get("low") or ltp, ltp), "volume": vol or 0}
+            png, ctx = decision_for(hist, dict(p, symbol=sym), "intraday", cfg, st.config.bases, st.config.vcp,
+                                    live=live) if hist else (None, None)
+            if notifier.send(key, "intraday", msg.intraday_alert(p, ltp, vol, pace, avg, ctx), sym, png):
                 sent += 1
         return {"status": "ok", "checked": len(keys), "sent": sent}
 

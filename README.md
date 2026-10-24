@@ -131,7 +131,8 @@ bananapatterns/
 │  ├─ logging_config/logger.py file+console (all) and SQLite (WARNING+) logging
 │  ├─ alerts/
 │  │  ├─ telegram.py          Telegram Bot API client (send text/photo, detect chat), 1 msg/s, retries
-│  │  ├─ charts.py            matplotlib PNG for alerts (candles, base box, pivot, stop, pullbacks)
+│  │  ├─ charts.py            optional matplotlib loader + simple chart PNG
+│  │  ├─ decision.py          decision chart: numbered markers + verdict/checklist/levels panel, message lines
 │  │  ├─ messages.py          alert / digest text (HTML, escaped, chunked)
 │  │  ├─ dispatch.py          scan -> alerts, sent once (sent_alerts)
 │  │  └─ jobs.py              scheduler: login reminder, evening job, intraday heads-up, weekly refresh
@@ -425,8 +426,28 @@ never block a real alert, and show in the Sent-alerts log as `test`. A wrong tok
 | ⚠️ Low-volume breakout · ▫️ Left a card | below the volume rule · dropped off a card (noisy) | off |
 
 Every alert is sent **once** (`sent_alerts` key), so rescans and restarts don't repeat it. A failed send is retried on
-the next run. The chart image shows ~6 months of candles, volume, 50/200-day lines, the base box, pivot, stop, the
-VCP pullbacks and the breakout ▲.
+the next run.
+
+**Decision charts** (`backend/alerts/decision.py`). Each stock alert carries an annotated image plus matching text lines,
+so you can decide at a glance:
+
+| Marker | Meaning |
+|---|---|
+| ① pivot line + shaded **buy zone** | the trigger level, and pivot → +`buy_zone_pct` (5%): above it the stock is extended |
+| ② ③ ④ … | the base's pullbacks with depths (they should shrink) |
+| **S** stop line | last pullback low minus a buffer, capped at `vcp.max_stop` under the pivot |
+| volume dry-up band | the base's volume vs the 50-day average |
+| breakout callout | date, % through the pivot, volume ratio |
+| **E** exit day | played-out alerts: the day and the reason the run ended |
+| now / **LIVE** | the latest close, or today's still-forming candle for intraday heads-ups (unconfirmed) |
+
+The right-hand panel shows a **verdict** (e.g. "VCP breakout ✓", "Breakout ✓ · not a VCP", "Failed breakout so far"),
+a ✓/✗ checklist (Trend Template, RS, shrinking pullbacks, dry-up, tightening, breakout volume, close-in-range,
+not extended), the levels, and what to watch. The caption repeats it as `Verdict / Why / Caution / Levels / Watch`
+lines. With `capital` > 0 it also shows a position size: `capital × risk_pct ÷ (entry − stop)` shares. The size is
+off by default. Choose which alert kinds get images in **Alerts → Decision charts**. Without matplotlib the text lines
+still go out. On any stock chart, **Preview alert chart** shows the exact image (auto-picks the kind from the stock's
+current stage, or choose one). These are the screen's rules, not advice.
 
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
@@ -479,6 +500,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/alerts/log` | sent / failed alerts |
 | GET | `/api/jobs` | automatic job history and schedule |
 | POST | `/api/jobs/{eod,intraday,weekly,reminder}/run` | run a job now (evening job forced even on a non-trading day) |
+| GET | `/api/stock/{symbol}/alert-chart.png?kind=auto` | the decision chart an alert would carry (`auto` = from the latest scan stage; or breakout, near_pivot, forming, below_pivot, played_out, climbing) |
 | GET | `/api/stock/{symbol}/vcp` | VCP check of the latest base (breakouts judged on the bar before) |
 | GET | `/api/stock/{symbol}/metrics` | latest RS rating, industry rank, Trend Template checks |
 | GET | `/api/stock/{symbol}/bases?since=YYYY-MM-DD` | bases over full history (correct numbering), latest base, dials used |
@@ -576,7 +598,10 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `breakout`, `below_pivot`, `played_out`, `forming`, `near_pivot`, `digest`, `system`, `intraday` | true | alert types on |
 | `low_volume_breakout`, `left` | false | alert types off |
 | `near_pivot_pct` | 0.03 | near-pivot distance |
-| `chart_images` | true | PNG with breakout / near-pivot alerts |
+| `chart_images` | true | attach decision-chart images |
+| `chart_kinds` | all stock alert kinds | which kinds get an image (breakout, breakout_low_volume, near_pivot, forming, below_pivot, played_out, climbing, intraday) |
+| `buy_zone_pct` | 0.05 | buy zone above the pivot; above it = extended |
+| `capital` / `risk_pct` | 0 / 0.01 | position size on the chart and in the message (0 = off) |
 | `job_enabled` / `job_time` / `reminder_time` | true / 18:30 / 15:30 | evening job and login reminder (IST) |
 | `intraday_start` / `intraday_end` / `intraday_interval_min` | 09:20 / 15:25 / 5 | intraday heads-up window |
 | `universe_refresh_weekday` | 6 (Sunday) | weekly refresh day |
@@ -840,3 +865,14 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
   optional: without it the app starts, alerts go out as text, and the Alerts tab says how to enable charts.
 - 88 offline tests passing (incl. starting the backend with matplotlib blocked).
 
+### 2026-10-24: Decision charts for every alert
+- New `backend/alerts/decision.py`. It computes one decision context per alert from the same engine as the screens:
+  base, VCP metrics, stop, buy zone, checks, verdict, watch lines, and an optional size. It renders an annotated chart
+  with numbered markers and a decision panel. Breakout-family kinds are judged on the broken base at its breakout bar;
+  forming kinds use the open base at the last bar. Callouts are placed so they clear the markers, the legend and the
+  candles.
+- Every stock alert kind now gets the image and `Verdict / Why / Caution / Levels / Watch` lines. Intraday heads-ups
+  draw today's partial candle from the Kite quote (`LIVE`). Samples use the same path.
+- Settings `chart_kinds`, `buy_zone_pct`, `capital`, `risk_pct`. Dashboard **Preview alert chart** button +
+  `/api/stock/{symbol}/alert-chart.png`.
+- 105 offline tests passing.
