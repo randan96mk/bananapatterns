@@ -285,19 +285,11 @@ def universe_list():
 # --- Candles ---
 
 def _resolve_stock(conn, symbol: str) -> tuple[dict, dict]:
-    """(instrument row, universe metadata) for an NSE symbol (BE series -> SYMBOL-BE) or index name."""
-    _, members = latest_universe(conn)
-    meta = next((m for m in members if m["symbol"] == symbol), {})
-    series = (meta.get("series") or "EQ").upper()
-    candidates = [symbol] if series == "EQ" else [f"{symbol}-{series}", symbol]
-    for cand in candidates:
-        row = conn.execute(
-            "SELECT instrument_token, segment FROM instruments WHERE tradingsymbol = ? "
-            "AND segment IN ('NSE', 'INDICES') ORDER BY segment = 'NSE' DESC LIMIT 1", (cand,)
-        ).fetchone()
-        if row:
-            return dict(row), meta
-    raise HTTPException(404, f"Unknown symbol {symbol}")
+    from backend.alerts.preview import resolve_stock
+    try:
+        return resolve_stock(conn, symbol)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
 
 
 @router.get("/stock/{symbol}/candles")
@@ -357,42 +349,20 @@ def stock_bases(symbol: str, since: Optional[str] = None):
             "latest": latest, "config": asdict(S().config.bases)}
 
 
-STAGE_KIND = {"fresh": "breakout", "fresh_low_volume": "breakout_low_volume", "climbing": "climbing",
-              "below_pivot": "below_pivot", "played_out": "played_out", "forming": "forming"}
-ALERT_CHART_KINDS = ("auto", "breakout", "breakout_low_volume", "near_pivot", "forming", "below_pivot",
-                     "played_out", "climbing")
-
-
 @router.get("/stock/{symbol}/alert-chart.png")
 def stock_alert_chart(symbol: str, kind: str = Query("auto")):
     """The annotated decision chart a Telegram alert of `kind` would carry for this stock.
     auto = the kind matching the stock's stage in the latest scan (VCP screen first, then Bases)."""
-    from backend.alerts.dispatch import charts_available, decision_for
-    if kind not in ALERT_CHART_KINDS:
-        raise HTTPException(422, f"kind must be one of {list(ALERT_CHART_KINDS)}")
+    from backend.alerts.dispatch import charts_available
+    from backend.alerts.preview import alert_chart
     if not charts_available():
         raise HTTPException(503, "matplotlib is not installed: run .venv/bin/pip install -r requirements.txt")
-    cfg = S().config
-    with get_db() as conn:
-        row, meta = _resolve_stock(conn, symbol)
-        candles = get_candles(conn, row["instrument_token"])
-        scan = conn.execute("SELECT r.stage, r.payload FROM scan_results r WHERE r.symbol = ? AND r.as_of = "
-                            "(SELECT MAX(as_of) FROM scan_runs) ORDER BY r.screen = 'vcp' DESC LIMIT 1",
-                            (symbol,)).fetchone()
-        m = conn.execute("SELECT rs, tt_passed FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1",
-                         (symbol,)).fetchone()
-    if not candles:
-        raise HTTPException(404, f"No candles stored for {symbol}")
-    p = {"company": meta.get("company"), "industry": meta.get("industry"),
-         "rs": m["rs"] if m else None, "tt_passed": m["tt_passed"] if m else 0}
-    if scan:
-        p.update(json.loads(scan["payload"]))
-    p["symbol"] = symbol
-    if kind == "auto":
-        kind = STAGE_KIND.get(scan["stage"] if scan else "", "forming")
-        if kind == "forming" and (p.get("dist_to_pivot_pct") or 99) <= cfg.alerts.near_pivot_pct * 100:
-            kind = "near_pivot"
-    png, _ = decision_for(candles, p, kind, cfg.alerts, cfg.bases, cfg.vcp, force_image=True)
+    try:
+        png, kind = alert_chart(S().config, symbol, kind)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
     if not png:
         raise HTTPException(404, f"No base to annotate for {symbol}")
     return Response(png, media_type="image/png", headers={"Cache-Control": "no-store", "X-Alert-Kind": kind})
@@ -535,6 +505,27 @@ def market_health(days: int = Query(60, ge=1, le=500)):
         prev = market.before(conn, h["as_of"]) if h else None
         hist = market.history(conn, days)
     return {"health": h, "previous": prev, "history": hist, "config": asdict(S().config.market)}
+
+
+class StopRequest(BaseModel):
+    stop: float
+
+
+@router.get("/positions")
+def positions_list():
+    """Positions the guard follows (synced from Kite holdings after the evening scan, or Run guard now)."""
+    from backend.alerts import guard
+    return {"positions": guard.positions()}
+
+
+@router.put("/positions/{symbol}")
+def positions_set_stop(symbol: str, req: StopRequest):
+    from backend.alerts import guard
+    if req.stop <= 0:
+        raise HTTPException(422, "stop must be positive")
+    if not guard.set_stop(symbol, req.stop):
+        raise HTTPException(404, f"Not following {symbol}")
+    return {"symbol": symbol, "stop": req.stop}
 
 
 @router.get("/plan")
@@ -686,10 +677,11 @@ def jobs_list(limit: int = Query(50, le=500)):
 def jobs_run(job: str):
     sch = S().scheduler
     if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check", "top_setups",
-                                    "morning_plan", "gap_check"):
+                                    "morning_plan", "gap_check", "guard"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
-    forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True)}
+    forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True),
+              "guard": lambda: sch.run_guard()}
     fn = forced.get(job) or (lambda: getattr(sch, f"run_{job}")(now))
 
     def work():

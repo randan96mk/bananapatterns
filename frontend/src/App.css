@@ -151,3 +151,5 @@ footer { margin-top: 20px; font-size: 11px; }
 .planrow { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; text-align: left; background: var(--bg);
   border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); cursor: pointer; font: inherit; }
 .planrow:hover { border-color: #3a4552; }
+.stopinput { width: 7em; }
+.link { cursor: pointer; text-decoration: underline dotted; }

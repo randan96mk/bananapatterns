@@ -312,3 +312,32 @@ def gap_check(results: list[tuple[dict, float, str]]) -> str:
         lines.append(GAP_TEXT[verdict].format(sym=escape(i["symbol"]), rs_open=rs(open_px),
                                               pct=(open_px / i["pivot"] - 1) * 100, stop=rs(i["stop"])))
     return "\n".join(lines)
+
+
+GUARD_TEXT = {
+    "stop": "🛑 <b>{sym}</b> closed {close}, below your stop {stop}. Your rule says exit.",
+    "ma50": "📉 <b>{sym}</b> closed {close}, below its 50-day line ({ma50}). Trend break: consider exiting.",
+    "profit": "💰 <b>{sym}</b> is up {gain:+.1f}% from your {avg}. Profit zone: consider selling part.",
+    "extended": "🎈 <b>{sym}</b> closed {ext:.0f}% above its 50-day line: extended. Consider tightening the stop.",
+    "failed": "⚠️ <b>{sym}</b> is back under the {pivot} pivot within {days} sessions of buying: failed breakout. "
+              "Consider exiting.",
+}
+
+
+def guard_alert(rule: str, pos: dict, ev: dict, cfg) -> str:
+    ext = (ev["close"] / ev["ma50"] - 1) * 100 if ev.get("ma50") else 0
+    return GUARD_TEXT[rule].format(sym=escape(pos["symbol"]), close=rs(ev["close"]), stop=rs(pos["stop"]),
+                                   ma50=rs(ev.get("ma50")), gain=ev["gain_pct"], avg=rs(pos["avg_price"]), ext=ext,
+                                   pivot=rs(pos.get("pivot")), days=ev["days"]) + \
+        f"\n<i>{pos['qty']} sh · {ev['gain_pct']:+.1f}%" + (f" · {ev['r']:+.1f}R" if ev.get("r") is not None else "") + \
+        "</i>"
+
+
+def guard_summary(rows: list, as_of: str) -> str:
+    lines = [f"📒 <b>Your positions</b> (EOD {escape(as_of)})"]
+    for pos, ev in rows:
+        warn = " ⚠️" if any(ev["fire"].values()) else ""
+        lines.append(f"<b>{escape(pos['symbol'])}</b> {pos['qty']} sh · {rs(ev['close'])} · {ev['gain_pct']:+.1f}%"
+                     + (f" · {ev['r']:+.1f}R" if ev.get("r") is not None else "")
+                     + f" · day {ev['days']} · stop {rs(pos['stop'])}{warn}")
+    return "\n".join(lines)

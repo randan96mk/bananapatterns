@@ -547,6 +547,38 @@ last bar is an NR7 (narrowest range of the last 7) or an inside day, on volume �
 
 The Screens home shows the plan; Alerts → Daily plan has the switches and times, plus **Top setups now**.
 
+### Position guard
+
+`backend/alerts/guard.py`. After each evening scan, the app reads your **Kite holdings and today's CNC buys
+(read-only, no order code)**. It follows each one with the setup's pivot and stop (VCP stop, else pivot −8%; or
+average −8% when there's no setup); you can change a stop on the Screens home. Rules:
+
+| Alert | When | Repeats |
+|---|---|---|
+| 🛑 Stop | close below your stop | every day while true |
+| 📉 50-day | close below the 50-day line | once |
+| 💰 Profit zone | +20% from your average (`profit_zone_pct`): consider selling part | once |
+| 🎈 Extended | close 25% above the 50-day line (`extended_pct`): consider tightening | once |
+| ⚠️ Failed | back under the pivot within 3 sessions of buying (`failed_days`) | once |
+
+Plus one evening line per position: price, gain %, R multiple, days held, stop. Sold positions drop off.
+**Run guard now** (Alerts tab) syncs and checks on demand.
+
+### Buttons and bot commands
+
+Stock alerts carry four buttons (`alert_buttons`), answered by the bot poller (`backend/alerts/commands.py`, your
+chat only):
+
+| Button | Effect |
+|---|---|
+| 📌 Watch | always alert on this stock, even as a B setup |
+| 🔕 Mute | no buy-side alerts for `mute_days` (30); sell-side alerts still come |
+| 📈 Chart | sends the decision chart for its current stage |
+| ✅ I bought | the position guard follows it from the last close (stop from the setup); it becomes Kite-backed once your holdings show it |
+
+Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
+`/mute SYM`, `/chart SYM`, `/help`.
+
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
 | Job | When | What |
@@ -593,6 +625,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
+| GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows; change a stop |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
@@ -721,6 +754,8 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
+| `position_guard` / `profit_zone_pct` / `extended_pct` / `failed_days` | true / 20 / 25 / 3 | position guard rules |
+| `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
 | `login_every_day` / `login_check_min` | false / 30 | weekends + holidays too / session check interval |
@@ -1044,3 +1079,16 @@ of receiving it (a small change in that repo).
   pivot), saved per scan in `daily_plan`. Jobs: Top N at 19:00 (after the evening scan), 08:50 morning plan,
   09:10 opening (gap) check. Screens home plan panel, `/api/plan`, Alerts settings.
 - 190 offline tests passing.
+
+### 2026-10-25: Position guard
+- `backend/alerts/guard.py`: read-only Kite holdings + CNC positions, matched to the setup's pivot / stop
+  (`guard_positions`), sell-rule alerts after the evening scan (stop, 50-day, profit zone, extended, failed) and an
+  evening summary with gain % and R. Screens home positions panel with editable stops, `/api/positions`.
+- 195 offline tests passing.
+
+### 2026-10-25: Alert buttons and bot commands
+- Watch / Mute / Chart / I bought buttons under stock alerts (`watchlist`, `muted` tables; watched names always
+  alert, muted names get no buy-side alerts). "I bought" adds a manual guard position that survives holdings syncs.
+- Bot commands `/top`, `/watch`, `/unwatch`, `/mute`, `/chart`. The chart preview moved to `backend/alerts/preview.py`
+  (shared by the dashboard and the bot).
+- 200 offline tests passing.

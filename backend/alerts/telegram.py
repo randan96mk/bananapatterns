@@ -30,6 +30,12 @@ def bot_token() -> str:
     return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 
+def keyboard(buttons: list) -> str:
+    """One row of inline buttons: (label, url) link buttons or (label, None, data) callback buttons."""
+    row = [{"text": b[0], "url": b[1]} if b[1] else {"text": b[0], "callback_data": b[2][:64]} for b in buttons]
+    return json.dumps({"inline_keyboard": [row]})
+
+
 class TelegramClient:
     def __init__(self, token: Optional[str] = None, http: Optional[httpx.Client] = None,
                  sleep: Callable[[float], None] = time.sleep, retries: int = 3):
@@ -77,23 +83,28 @@ class TelegramClient:
     def get_me(self) -> dict:
         return self._call("getMe")
 
-    def send_message(self, chat_id: str, html: str, buttons: Optional[list[tuple[str, str]]] = None) -> dict:
-        """buttons: [(label, https URL)], shown as one row of link buttons under the message."""
+    def send_message(self, chat_id: str, html: str, buttons: Optional[list] = None) -> dict:
+        """buttons: one row under the message; (label, https URL) or (label, None, callback data)."""
         data = {"chat_id": chat_id, "text": html[:MAX_TEXT], "parse_mode": "HTML", "disable_web_page_preview": "true"}
         if buttons:
-            data["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": t, "url": u} for t, u in buttons]]})
+            data["reply_markup"] = keyboard(buttons)
         return self._call("sendMessage", data)
+
+    def answer_callback(self, callback_id: str, text: str = "") -> dict:
+        return self._call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text[:200]})
 
     def get_updates(self, offset: Optional[int] = None, timeout: int = 20) -> list[dict]:
         """New messages to the bot (long poll up to `timeout` s). Pass offset = last update_id + 1."""
-        data = {"timeout": str(timeout), "allowed_updates": '["message"]'}
+        data = {"timeout": str(timeout), "allowed_updates": '["message", "callback_query"]'}
         if offset is not None:
             data["offset"] = str(offset)
         return self._call("getUpdates", data) or []
 
-    def send_photo(self, chat_id: str, png: bytes, caption_html: str) -> dict:
-        return self._call("sendPhoto", {"chat_id": chat_id, "caption": caption_html[:MAX_CAPTION],
-                                        "parse_mode": "HTML"}, files={"photo": ("chart.png", png, "image/png")})
+    def send_photo(self, chat_id: str, png: bytes, caption_html: str, buttons: Optional[list] = None) -> dict:
+        data = {"chat_id": chat_id, "caption": caption_html[:MAX_CAPTION], "parse_mode": "HTML"}
+        if buttons:
+            data["reply_markup"] = keyboard(buttons)
+        return self._call("sendPhoto", data, files={"photo": ("chart.png", png, "image/png")})
 
     def detect_chats(self) -> list[dict]:
         """Chats that have messaged the bot recently (send it any message first)."""

@@ -32,6 +32,8 @@ export const screenSparks = (screen, stage, bars = 120) =>
   req('GET', `/api/screens/${screen}/sparks?stage=${stage}&bars=${bars}`);
 export const marketHealth = () => req('GET', '/api/market/health');
 export const getPlan = () => req('GET', '/api/plan');
+export const getPositions = () => req('GET', '/api/positions');
+export const setStop = (sym, stop) => req('PUT', `/api/positions/${encodeURIComponent(sym)}`, { stop });
 export const runScan = () => req('POST', '/api/screens/scan');
 export const getChanges = (screen = 'bases') => req('GET', `/api/changes?screen=${screen}`);
 export const alertChartUrl = (sym, kind = 'auto', stamp = 0) =>
