@@ -4,6 +4,7 @@ import StockChart from './StockChart';
 import StageList from './StageList';
 import MarketCard from './MarketCard';
 import PlanCard from './PlanCard';
+import PositionsCard from './PositionsCard';
 
 const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
@@ -61,6 +62,7 @@ export default function ScreensHome({ hasData }) {
 
       <MarketCard data={mkt} />
       <PlanCard plan={plan} onSelect={setSelected} />
+      <PositionsCard onSelect={setSelected} />
 
       <div className="panel board">
         {!summary?.as_of ? (

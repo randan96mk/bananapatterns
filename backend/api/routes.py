@@ -537,6 +537,27 @@ def market_health(days: int = Query(60, ge=1, le=500)):
     return {"health": h, "previous": prev, "history": hist, "config": asdict(S().config.market)}
 
 
+class StopRequest(BaseModel):
+    stop: float
+
+
+@router.get("/positions")
+def positions_list():
+    """Positions the guard follows (synced from Kite holdings after the evening scan, or Run guard now)."""
+    from backend.alerts import guard
+    return {"positions": guard.positions()}
+
+
+@router.put("/positions/{symbol}")
+def positions_set_stop(symbol: str, req: StopRequest):
+    from backend.alerts import guard
+    if req.stop <= 0:
+        raise HTTPException(422, "stop must be positive")
+    if not guard.set_stop(symbol, req.stop):
+        raise HTTPException(404, f"Not following {symbol}")
+    return {"symbol": symbol, "stop": req.stop}
+
+
 @router.get("/plan")
 def daily_plan():
     """The newest saved plan (tonight's ranked setups)."""
@@ -686,10 +707,11 @@ def jobs_list(limit: int = Query(50, le=500)):
 def jobs_run(job: str):
     sch = S().scheduler
     if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check", "top_setups",
-                                    "morning_plan", "gap_check"):
+                                    "morning_plan", "gap_check", "guard"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
-    forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True)}
+    forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True),
+              "guard": lambda: sch.run_guard()}
     fn = forced.get(job) or (lambda: getattr(sch, f"run_{job}")(now))
 
     def work():

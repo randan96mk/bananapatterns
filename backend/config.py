@@ -235,6 +235,11 @@ class AlertsConfig:
     gap_check_time: str = "09:10"          # after the 09:00-09:08 pre-open session sets the open
     coiled_volume: float = 0.5             # coiled: last day's volume <= this x 50-day average ...
     coiled_within_pct: float = 3.0         # ... within this % under the pivot, on an NR7 or inside day
+    # Position guard (Kite holdings, read-only): sell-rule alerts after the evening scan
+    position_guard: bool = True
+    profit_zone_pct: float = 20.0          # gain from your average: consider selling part
+    extended_pct: float = 25.0             # close this far above the 50-day line: extended
+    failed_days: int = 3                   # back under the pivot within N sessions of buying: failed breakout
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

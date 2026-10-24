@@ -138,6 +138,14 @@ class KiteClient:
     def instruments(self, exchange: str) -> list[dict]:
         return self._call(self.api_bucket, f"instruments({exchange})", self.kite.instruments, exchange)
 
+    def holdings(self) -> list[dict]:
+        """Delivery holdings (read-only)."""
+        return self._call(self.api_bucket, "holdings", self.kite.holdings)
+
+    def positions(self) -> dict:
+        """Today's net / day positions (read-only)."""
+        return self._call(self.api_bucket, "positions", self.kite.positions)
+
     def quote(self, instruments: list[str]) -> dict:
         """Full quotes for up to 500 'NSE:SYMBOL' keys in one call (last_price, volume, ohlc...)."""
         if not instruments:

@@ -30,6 +30,7 @@ import threading
 from datetime import date, datetime, time, timedelta
 from typing import Callable, Optional
 
+from backend.alerts import guard
 from backend.alerts import intraday as itd
 from backend.alerts import plan as pl
 from backend.alerts import messages as msg
@@ -261,9 +262,27 @@ class Scheduler:
 
         sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
                              st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
+        if st.config.alerts.position_guard:
+            sent["guard"] = self.run_guard(as_of)
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
+
+    def run_guard(self, as_of: Optional[str] = None) -> dict:
+        """Sync your Kite holdings (read-only) and check the sell rules. Never raises."""
+        st = self.state
+        try:
+            if as_of is None:
+                with get_db() as conn:
+                    as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+            changes = guard.sync(guard.kite_holdings(st.client), st.config.vcp)
+            mc, _ = self._market()
+            res = guard.run(as_of, self._tokens(), st.config.alerts, self.notifier(),
+                            lambda h: decorate(h, "guard", None, mc))
+            return dict(res, **changes)
+        except Exception as exc:
+            logger.exception("Position guard failed")
+            return {"error": str(exc)}
 
     def _forming_quotes(self) -> dict:
         """Forming candidates of the alert screens with one Kite quote call: {status, items}.

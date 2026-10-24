@@ -211,6 +211,19 @@ CREATE TABLE IF NOT EXISTS daily_plan (
     payload TEXT NOT NULL
 );
 
+-- Positions the guard follows (from Kite holdings / positions; read-only, never orders).
+CREATE TABLE IF NOT EXISTS guard_positions (
+    symbol TEXT PRIMARY KEY,
+    qty INTEGER NOT NULL,
+    avg_price REAL NOT NULL,
+    first_seen TEXT NOT NULL,
+    pivot REAL,
+    stop REAL NOT NULL,
+    stop_source TEXT NOT NULL,
+    flags TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
