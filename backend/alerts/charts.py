@@ -50,10 +50,9 @@ def render_chart(candles: list[dict], title: str, subtitle: str = "", base: Opti
         if x0 is not None:
             ax.add_patch(Rectangle((x0 - 0.5, base["low"]), x1 - x0 + 1, base["pivot"] - base["low"],
                                    facecolor=UP, alpha=0.10, edgecolor=UP, linestyle=":", linewidth=1))
-            ax.text(x0, base["pivot"], f" {base.get('label', '')}", color=UP, fontsize=8, va="bottom")
+            ax.text(x0, base["low"], f" {base.get('label', '')}", color=UP, fontsize=8, va="top")
         ax.axhline(base["pivot"], color=UP, linestyle="--", linewidth=1)
-        ax.text(len(view) - 1, base["pivot"], f"pivot ₹{base['pivot']:,.2f} ", color=UP, fontsize=8,
-                ha="right", va="bottom")
+        ax.text(0, base["pivot"], f" pivot ₹{base['pivot']:,.2f}", color=UP, fontsize=8, ha="left", va="bottom")
     if stop:
         ax.axhline(stop, color=DOWN, linestyle="--", linewidth=0.9)
         ax.text(0, stop, f" stop ₹{stop:,.2f}", color=DOWN, fontsize=8, ha="left", va="top")
