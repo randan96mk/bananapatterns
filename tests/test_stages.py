@@ -105,4 +105,7 @@ def test_run_scan_stores_results_and_changes():
         stages = dict(conn.execute("SELECT symbol, stage FROM scan_results WHERE as_of = ?", (out["as_of"],)).fetchall())
         changes = [dict(r) for r in conn.execute("SELECT * FROM scan_changes")]
     assert "NONE" not in stages
+    with get_db() as conn:
+        payloads = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM scan_results")]
+    assert {p["symbol"] for p in payloads} == set(stages)          # rows carry their symbol
     assert any(c["symbol"] == "FRESH" and c["kind"] == "breakout" for c in changes)

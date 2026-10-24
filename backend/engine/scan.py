@@ -84,8 +84,8 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
         conn.execute("DELETE FROM scan_changes WHERE as_of = ?", (as_of,))
         conn.executemany(
             "INSERT INTO scan_results (as_of, symbol, stage, payload) VALUES (?, ?, ?, ?)",
-            [(as_of, s["symbol"], r.stage, json.dumps({**r.to_dict(), "company": s.get("company"),
-                                                        "industry": s.get("industry")}))
+            [(as_of, s["symbol"], r.stage, json.dumps({**r.to_dict(), "symbol": s["symbol"],
+                                                        "company": s.get("company"), "industry": s.get("industry")}))
              for s, r in rows if r.stage is not None],
         )
         conn.executemany(

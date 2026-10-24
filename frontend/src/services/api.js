@@ -25,6 +25,10 @@ export const getCandles = (sym, limit = 750) =>
   req('GET', `/api/stock/${encodeURIComponent(sym)}/candles?limit=${limit}`);
 export const getBases = (sym, since) =>
   req('GET', `/api/stock/${encodeURIComponent(sym)}/bases${since ? `?since=${since}` : ''}`);
+export const screenSummary = (screen) => req('GET', `/api/screens/${screen}/summary`);
+export const screenResults = (screen, stage) => req('GET', `/api/screens/${screen}/results?stage=${stage}`);
+export const runScan = () => req('POST', '/api/screens/scan');
+export const getChanges = () => req('GET', '/api/changes');
 export const getConfig = (section) => req('GET', `/api/config/${section}`);
 export const putConfig = (section, values) => req('PUT', `/api/config/${section}`, values);
 export const getLogs = (level) => req('GET', `/api/logs?limit=200${level ? `&level=${level}` : ''}`);

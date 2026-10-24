@@ -71,7 +71,8 @@ def test_callback_login_then_full_flow(api):
     assert summ["as_of"] == summ["latest_bar"] and summ["stale"] is False
     assert set(summ["counts"]) >= {"forming", "fresh", "climbing", "played_out"}
     for stage in ("forming", "fresh", "climbing", "played_out", "fresh_low_volume"):
-        assert tc.get(f"/api/screens/bases/results?stage={stage}").status_code == 200
+        res = tc.get(f"/api/screens/bases/results?stage={stage}")
+        assert res.status_code == 200 and all(r["symbol"] for r in res.json()["rows"])
     assert tc.get("/api/screens/bases/results?stage=nope").status_code == 422
     assert tc.get("/api/screens/vcp/summary").status_code == 404
     assert tc.get("/api/changes").json()["as_of"] == summ["as_of"]

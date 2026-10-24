@@ -28,10 +28,21 @@ const HELP = {
   bo_vol_mult: 'Breakout volume must be >= this x baseline to be volume-confirmed',
   weak_close_cir: 'Breakout close-in-range below this = weak close',
   squat_bars: 'Close back under pivot within N sessions after breakout = squat',
+  // screen (stage board)
+  min_forming_weeks: 'Forming: active base at least this many weeks',
+  max_dist_to_pivot: 'Forming: close within this much under the pivot (0.05 = 5%)',
+  fresh_sessions: 'Fresh breakouts: broke out within the last N sessions',
+  require_volume: 'Fresh/Climbing need a volume-confirmed breakout (true/false)',
+  played_out_ma: 'Run ends on a close below this SMA (0 = off)',
+  played_out_drop: 'Run ends on a close this far below the pivot (0.08 = 8%)',
+  played_out_window: 'Played out: run ended within the last N sessions',
+  trend_ma: 'All cards: close above this SMA (0 = off)',
+  min_turnover_cr: 'All cards: median daily turnover at least this (Rs crore)',
+  turnover_window: 'Sessions for the median turnover',
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['bases', 'ingest'];
+const SECTIONS = ['screen', 'bases', 'ingest'];
 
 // Generic editor for persisted config sections (bases, ingest; vcp next).
 export default function SettingsPanel() {
@@ -60,7 +71,7 @@ export default function SettingsPanel() {
         <h3>Settings</h3>
         {SECTIONS.map((x) => (
           <button key={x} className={`btn ${x === section ? '' : 'ghost'}`} onClick={() => setSection(x)}>{x}</button>))}
-        {section === 'bases' && <span className="muted">Changes apply the next time a chart is opened.</span>}
+        {section !== 'ingest' && <span className="muted">After saving, press Rescan on the Screens tab (charts update when reopened).</span>}
       </div>
       <table className="grid small settings">
         <tbody>
