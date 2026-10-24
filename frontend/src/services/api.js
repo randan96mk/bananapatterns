@@ -29,7 +29,8 @@ export const getBases = (sym, since) =>
 export const screenSummary = (screen) => req('GET', `/api/screens/${screen}/summary`);
 export const screenResults = (screen, stage) => req('GET', `/api/screens/${screen}/results?stage=${stage}`);
 export const runScan = () => req('POST', '/api/screens/scan');
-export const getChanges = () => req('GET', '/api/changes');
+export const getChanges = (screen = 'bases') => req('GET', `/api/changes?screen=${screen}`);
+export const getVcp = (sym) => req('GET', `/api/stock/${encodeURIComponent(sym)}/vcp`);
 export const getConfig = (section) => req('GET', `/api/config/${section}`);
 export const putConfig = (section, values) => req('PUT', `/api/config/${section}`, values);
 export const getLogs = (level) => req('GET', `/api/logs?limit=200${level ? `&level=${level}` : ''}`);

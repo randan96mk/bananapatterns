@@ -6,6 +6,7 @@ import * as api from '../services/api';
 import { BasesPrimitive } from '../chart/basesPrimitive';
 import BaseCard from './BaseCard';
 import TrendPanel from './TrendPanel';
+import VcpPanel from './VcpPanel';
 
 function sma(candles, n) {
   const out = [];
@@ -122,6 +123,7 @@ export default function StockChart({ symbol, onClose }) {
       {err && <p className="warn">{err}</p>}
       <div ref={box} className="chart" />
       <TrendPanel m={metrics} />
+      <VcpPanel symbol={symbol} />
       {bases && <BaseCard latest={bases.latest} baseline={bases.config.vol_baseline} />}
     </div>
   );

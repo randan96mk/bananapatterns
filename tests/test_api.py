@@ -84,6 +84,12 @@ def test_callback_login_then_full_flow(api):
     rows = tc.get("/api/universe").json()["rows"]
     assert all(r["rs"] is not None for r in rows if r["kind"] == "stock")
 
+    v = tc.get("/api/stock/INFY/vcp").json()
+    assert v["vcp"] is None or {"qualifies", "fails", "contractions", "tightening"} <= set(v["vcp"])
+    vs = tc.get("/api/screens/vcp/summary").json()
+    assert vs["as_of"] == summ["as_of"] and set(vs["counts"]) >= {"forming", "fresh", "climbing", "played_out"}
+    assert tc.get("/api/changes?screen=vcp").json()["screen"] == "vcp"
+
     b = tc.get("/api/stock/INFY/bases").json()
     assert b["as_of"] and isinstance(b["bases"], list) and b["config"]["min_base_bars"] == 5
     assert tc.get("/api/stock/NOPE/bases").status_code == 404

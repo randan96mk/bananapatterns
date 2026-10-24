@@ -146,7 +146,7 @@ def evaluate(candles: list[dict], base: Base, rs: Optional[int], trend_passed: i
     if weeks < cfg.min_weeks:
         fails.append(f"base {weeks}w < {cfg.min_weeks}w")
     if base.depth_pct > cfg.max_depth * 100:
-        fails.append(f"base {base.depth_pct:.0f}% deep")
+        fails.append(f"base {base.depth_pct:.1f}% deep")
     if tightening is None or tightening > cfg.max_tightening:
         fails.append("not tightening")
     if dryup is None or dryup > cfg.max_dryup:
@@ -160,7 +160,7 @@ def evaluate(candles: list[dict], base: Base, rs: Optional[int], trend_passed: i
     if len(cons) > cfg.max_contractions:
         fails.append(f"{len(cons)} contractions > {cfg.max_contractions}")
     if depths and depths[-1] > cfg.max_final_contraction * 100:
-        fails.append(f"last pullback {depths[-1]:.0f}% > {cfg.max_final_contraction:.0%}")
+        fails.append(f"last pullback {depths[-1]:.1f}% > {cfg.max_final_contraction * 100:g}%")
     if cfg.require_shrinking and shrinking is not True and len(depths) >= 2:
         fails.append("pullbacks not shrinking")
 

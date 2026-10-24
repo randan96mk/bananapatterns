@@ -7,7 +7,7 @@ const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
 // The stage board: four cards, what-changed feed, and a drill-down list per stage.
 export default function ScreensHome({ hasData }) {
-  const [screen, setScreen] = useState('bases');
+  const [screen, setScreen] = useState('vcp');
   const [summary, setSummary] = useState(null);
   const [feed, setFeed] = useState(null);
   const [stage, setStage] = useState('fresh');
@@ -18,7 +18,7 @@ export default function ScreensHome({ hasData }) {
 
   const load = useCallback(async () => {
     try {
-      const [s, f] = await Promise.all([api.screenSummary(screen), api.getChanges()]);
+      const [s, f] = await Promise.all([api.screenSummary(screen), api.getChanges(screen)]);
       setSummary(s); setFeed(f); setErr('');
     } catch (e) { setErr(e.message); }
   }, [screen]);
@@ -43,9 +43,9 @@ export default function ScreensHome({ hasData }) {
   return (
     <>
       <div className="row toolbar">
-        <select value={screen} onChange={(e) => setScreen(e.target.value)}>
-          <option value="bases">Bases</option>
-          <option value="vcp" disabled>VCP (next step)</option>
+        <select value={screen} onChange={(e) => { setScreen(e.target.value); setSelected(null); }}>
+          <option value="vcp">VCP</option>
+          <option value="bases">Bases (all)</option>
         </select>
         <button className="btn ghost" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : 'Rescan'}</button>
         {summary?.stale && <span className="warn">Board is older than the data (latest bar {fmtDate(summary.latest_bar)}): rescan.</span>}
@@ -59,7 +59,9 @@ export default function ScreensHome({ hasData }) {
         ) : (
           <>
             <h2>{c.fresh || 0} fresh breakout{c.fresh === 1 ? '' : 's'} in the last {n} sessions.</h2>
-            <p className="muted">Every setup this screen finds, at the stage it has reached — tap a stage to see the names.</p>
+            <p className="muted">{screen === 'vcp'
+              ? 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.'
+              : 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
             <div className="boardgrid">
               <div className="cards">
                 {CARDS.map(([id, title, sub]) => (

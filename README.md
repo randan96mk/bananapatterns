@@ -8,7 +8,8 @@ A personal end-of-day screener for NSE stocks, modelled on the ideas behind
 > Nifty 500, backfill ~8 years of adjusted daily candles into SQLite and browse them in the dashboard.
 > Phase 2 so far: **base detection** (B1…Bn boxes, pivot, breakout markers, breakout card on every chart) and
 > the **stage board** home page (Forming / Fresh breakouts / Climbing / Played out + "what changed since last
-> close"), and **RS rating + Trend Template** on every stock. The VCP screen (PR #4) and card view (PR #5) are next. See [Roadmap](#roadmap) and [Development log](#development-log).
+> close"), **RS rating + Trend Template** on every stock, and the **VCP screen** (classic VCP rules, scoring, VCP check on
+> every chart). The card view with mini charts (PR #5) is next. See [Roadmap](#roadmap) and [Development log](#development-log).
 
 **Personal use only.** Screen-only mode: there is **no order or GTT code** in phases 1–4.
 This is not investment advice; neither this project nor bananapatterns.com is a SEBI-registered
@@ -28,15 +29,16 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 8. [Base detection (engine)](#base-detection-engine)
 9. [Stage board (Screens home)](#stage-board-screens-home)
 10. [RS rating and Trend Template](#rs-rating-and-trend-template)
-11. [REST API](#rest-api)
-12. [CLI](#cli)
-13. [Configuration](#configuration)
-14. [Frontend](#frontend)
-15. [Testing](#testing)
-16. [Troubleshooting](#troubleshooting)
-17. [Roadmap](#roadmap)
-18. [Decisions log](#decisions-log)
-19. [Development log](#development-log)
+11. [VCP screen](#vcp-screen)
+12. [REST API](#rest-api)
+13. [CLI](#cli)
+14. [Configuration](#configuration)
+15. [Frontend](#frontend)
+16. [Testing](#testing)
+17. [Troubleshooting](#troubleshooting)
+18. [Roadmap](#roadmap)
+19. [Decisions log](#decisions-log)
+20. [Development log](#development-log)
 
 ---
 
@@ -131,14 +133,15 @@ bananapatterns/
 │     ├─ rs.py                RS score/rating 1-99, industry ranks
 │     ├─ trend_template.py    Minervini Trend Template (8 checks)
 │     ├─ scan.py              universe scan, RS/trend metrics, what-changed feed, stores results
-│     └─ (next) swings, vcp, scoring
+│     ├─ vcp.py               VCP metrics (tightening, dry-up, U/D, ZigZag contractions, stop) + rules
+│     └─ scoring.py           0-100 sort score for the VCP screen
 ├─ scripts/sync.py            CLI over the same pipeline code
 ├─ tests/                     offline pytest suite with a fake Kite SDK
 ├─ frontend/
 │  ├─ vite.config.js          :3000, proxies /api → :8000, builds to frontend/build
 │  └─ src/App.jsx, App.css, services/api.js,
 │     chart/basesPrimitive.js (canvas plugin drawing base boxes),
-│     components/ScreensHome (stage board), StageList, TrendPanel, KiteBar, UniverseTable, StockChart, BaseCard,
+│     components/ScreensHome (stage board), StageList, TrendPanel, VcpPanel, KiteBar, UniverseTable, StockChart, BaseCard,
 │     DataPanel, SettingsPanel, LogsPanel
 ├─ config/                    optional local inputs (fallback Nifty 500 CSV)
 └─ data/  logs/               gitignored: SQLite DB, rotating log file
@@ -182,8 +185,8 @@ SQLite in WAL mode at `data/bananapatterns.db` (override with `BP_DB_PATH`).
 | `universe_snapshots` | **PK (snapshot_date, index_name, symbol)**, company, industry, series, isin. Dated membership history (survivorship-bias protection). |
 | `ingest_status` | Per instrument: first/last date, bars, last full fetch, last incremental, last error |
 | `ingest_runs` | Per sync run: kind, status (`running/ok/partial/failed/aborted`), counts, message |
-| `scan_results` | **PK (as_of, symbol)**, stage, payload JSON (base, pivot, breakout, gains, reasons) |
-| `scan_changes` | per as-of date: symbol, kind (breakout / below_pivot / played_out / forming / left / climbing), sentence |
+| `scan_results` | **PK (as_of, screen, symbol)**, stage, payload JSON (base, pivot, breakout, gains, RS, trend, VCP metrics, score) |
+| `scan_changes` | per as-of date and screen: symbol, kind (breakout / below_pivot / played_out / forming / left / climbing), sentence |
 | `stock_metrics` | **PK (as_of, symbol)**, rs, rs_score, industry, industry rank/of, Trend Template passed/of, payload (all 8 checks) |
 | `scan_runs` | per scan: as_of, ran_at, scanned, stale, counts per stage, dials used |
 | `app_settings` | key/value: `config.<section>` JSON, `kite_access_token`, `kite_token_issued_at` |
@@ -346,6 +349,42 @@ in `stock_metrics`. All dials are in **Settings → trend**.
   industry rank, 52-week distances and the 8-check list.
 - On 23 Oct 2026 (2 years of public prices, local QA) 16 of 497 stocks passed all eight checks.
 
+## VCP screen
+
+The default screen in the **Screens** dropdown (**VCP** / **Bases (all)**): the same four cards and feed, but only for
+bases that pass the VCP rules. Defaults follow the classic Minervini VCP from the project brief, and every rule is a
+dial in **Settings → vcp**.
+
+**Metrics** (`backend/engine/vcp.py`; our own definitions, because the site's formulas are unpublished and ~60 candidates
+failed to reproduce them):
+
+| Metric | Definition |
+|---|---|
+| Pullbacks (contractions) | Inside the base, causal ZigZag swings: a swing is confirmed only after price reverses by max(5%, 2 × ATR%). Each pullback's depth = (swing high − swing low) ÷ swing high. The current, still-open pullback counts once it is that deep. |
+| Tightening (ATR ratio) | ATR over the last 10 sessions ÷ the base's mean true range (< 1 = narrowing) |
+| Volume dry-up | mean volume of the last 10 sessions ÷ mean volume of the 50 sessions before the base |
+| Up/down volume ratio | volume on up days ÷ volume on down days over 50 sessions (shown, not a rule) |
+| Stop | last pullback's low − 1%, never more than 8% under the pivot |
+| Score (0–100) | RS 30, tightening 20, dry-up 15, pivot proximity 15, 52-week-high proximity 10, industry RS 10 (weights are dials, untuned until the backtester) |
+
+**Rules (all must pass):** base ≥ 3 weeks and ≤ 30% deep; 2–6 pullbacks; last pullback ≤ 12% and ≤ 0.8× the largest
+earlier one; tightening ≤ 1.0; dry-up ≤ 0.85; RS ≥ 70; at least 5 of the 8 Trend Template checks. Plus the board's gates
+(above the 200-day, turnover ≥ ₹5 cr).
+
+**Stages on the VCP screen:** Forming = the active base is a VCP and the close is within 25% under the pivot (the
+site's VCP names sit 9–21% under theirs). Fresh / Climbing / Played out = the last breakout came out of a base that was a
+VCP **on the bar before the breakout**, so the judgement is causal. Lists sort by score; the Bases screen tags VCP names.
+The breakout volume rule (≥ 1.5×) is kept; low-volume breakouts stay listed separately.
+
+**Why stricter than the site:** five of the six site VCP names checked aren't classic VCPs. Their latest pullback is the
+deepest (BHAGERIA, SYNCOMF ~20%), or the base has one contraction (TGVSL). With the classic rules, PREMEXPLN (pullbacks
+7.7 → 16 → 14 → 5.7%) passes and the others don't. To approximate the site, relax `min_contractions`,
+`require_shrinking` and `max_final_contraction`. On 23 Oct 2026 (Nifty 500, 2 years of public prices, local QA) the VCP
+screen finds 7 forming (CUB, PAYTM, CRAFTSMAN, STARHEALTH, ATHERENERG, DLF, SOLARINDS), 0 fresh, 0 climbing and 1 played out.
+
+On every chart, **VCP check** shows the verdict, any failed rules ("last pullback 14.0% > 12%"), the pullback
+sequence, tightening, dry-up, U/D ratio and stop.
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs
@@ -361,11 +400,12 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/universe/refresh` | download Nifty 500 + Kite instruments; returns mapping summary |
 | GET | `/api/universe` | latest snapshot with per-symbol coverage, last close, change %, last error |
 | GET | `/api/stock/{symbol}/candles?limit=750` | daily candles (stocks or indices, e.g. `NIFTY 500`) |
-| GET | `/api/screens` | available screens (`bases` now, `vcp` next) |
+| GET | `/api/screens` | available screens (`vcp`, `bases`) |
 | GET | `/api/screens/{screen}/summary` | as-of date, counts per stage, number of changes, stale flag |
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
-| GET | `/api/changes` | what changed since the last close (latest as-of date) |
+| GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
+| GET | `/api/stock/{symbol}/vcp` | VCP check of the latest base (breakouts judged on the bar before) |
 | GET | `/api/stock/{symbol}/metrics` | latest RS rating, industry rank, Trend Template checks |
 | GET | `/api/stock/{symbol}/bases?since=YYYY-MM-DD` | bases over full history (correct numbering), latest base, dials used |
 | POST | `/api/ingest/sync` | `{force_full?, symbols?}`: start background sync (409 if running, 401 if no token) |
@@ -441,6 +481,20 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `min_above_low52` / `max_below_high52` | 0.30 / 0.25 | 52-week low/high checks |
 | `min_rs` | 70 | RS check |
 
+| `vcp.*` | Default | Meaning |
+|---|---|---|
+| `max_depth` / `min_weeks` | 0.30 / 3 | base depth and length |
+| `min_contractions` / `max_contractions` | 2 / 6 | number of pullbacks |
+| `require_shrinking` / `shrink` | true / 0.8 | last pullback ≤ shrink × largest earlier |
+| `max_final_contraction` | 0.12 | last pullback depth |
+| `max_tightening` / `max_dryup` | 1.0 / 0.85 | ATR ratio and volume ratio limits |
+| `min_rs` / `min_trend_checks` | 70 / 5 | strength and trend |
+| `max_dist_to_pivot` | 0.25 | Forming card distance on the VCP screen |
+| `zz_min_pct` / `zz_atr_mult` | 0.05 / 2.0 | swing confirmation threshold |
+| `atr_recent` / `dryup_recent` / `dryup_lookback` / `ud_window` | 10 / 10 / 50 / 50 | metric windows |
+| `stop_buffer` / `max_stop` | 0.01 / 0.08 | stop placement |
+| `score_weights` | 30, 20, 15, 15, 10, 10 | RS, tightening, dry-up, pivot, 52w high, industry RS |
+
 ---
 
 ## Frontend
@@ -450,7 +504,7 @@ but keeps the same React stack as AlgoTrade-v3. The dev server is on :3000 with 
 `npm run build` writes `frontend/build`, which FastAPI serves at :8000.
 
 Tabs: **Screens** (home: stage board, see above), **Universe** (sortable/filterable table + chart), **Data** (refresh, sync, full refetch, progress,
-errors, run history), **Settings** (config sections `screen`, `bases`, `trend` and `ingest`; `vcp` next), **Logs**.
+errors, run history), **Settings** (config sections `vcp`, `screen`, `bases`, `trend` and `ingest`), **Logs**.
 
 The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay**:
 - base boxes drawn by a canvas plugin (`chart/basesPrimitive.js`, lightweight-charts v5 series primitive):
@@ -463,13 +517,15 @@ The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest          # 58 tests, offline, ~10 s
+.venv/bin/python -m pytest          # 65 tests, offline, ~10 s
 ```
 
 A `FakeKite` (tests/conftest.py) mimics the SDK, and each test gets its own temporary SQLite DB.
 Base detector tests (tests/test_bases.py) use synthetic series with known answers: a staircase of two bases,
 too-short pauses, deep declines, no prior advance, a slow grind (high basis), a forming base, squat and pending,
 the MA reset, the high-basis pivot, JSON-serialisable output and **causality** (prefix-stable results).
+VCP tests (tests/test_vcp.py): a textbook 20 → 10 → 5% VCP qualifies, an expanding pattern fails, each rule can fail,
+swings are causal, the VCP classifier judges breakouts on the bar before, scoring order, and the scan-table migration.
 Stage tests (tests/test_stages.py) cover each card's rule, low-volume breakouts, both played-out triggers and the
 window expiring, below-pivot, the climber-forming-next-base precedence, the liquidity/history gates, feed sentences,
 and a scan that stores results and changes. Other coverage: throttle spacing, the 06:00 IST rule, date chunking, retry/abort classification,
@@ -499,8 +555,8 @@ Each phase is explained first, built after approval, and shown before the next o
 
 ### Phase 2: VCP engine *(in progress)*
 - ✅ PR #3: RS rating, industry RS, Trend Template, base dials recalibrated against the site.
-- Next, PR #4: VCP screen (tightening, dry-up, U/D ratio, contractions, quality filter, scoring). Then PR #5:
-  card view with mini charts, a cards/list toggle, and contraction swings on the chart.
+- ✅ PR #4: VCP screen (tightening, dry-up, U/D ratio, contractions, classic VCP rules, scoring, VCP check on charts).
+- Next, PR #5: card view with mini charts, a cards/list toggle, contraction swings drawn on the chart, copy as CSV.
 - ✅ `engine/bases.py` + chart overlay + breakout card (base boxes, pivot, breakout markers): see
   [Base detection](#base-detection-engine).
 - `engine/indicators.py`: SMA 50/150/200, ATR%, 52-week high/low, volume SMA 50, median turnover.
@@ -570,6 +626,9 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 | 2026-10-24 | Remaining Phase 2 split into three PRs: #3 RS + Trend Template, #4 VCP screen, #5 card view |
 | 2026-10-24 | Base dials recalibrated to the site's VCP Forming bases: `max_base_depth` 0.30, `min_prior_advance` 0.10 |
 | 2026-10-24 | The site's Forming isn't "within 5% of pivot" (its names sit 9–21% under); the VCP screen will use a quality filter |
+| 2026-10-24 | VCP screen keeps the ≥ 1.5× breakout-volume rule (Gagan: "as you feel correct"); low-volume breakouts stay listed separately |
+| 2026-10-24 | VCP = classic Minervini rules from the brief (shrinking pullbacks, last ≤ 12%), stricter than the site's list; relaxing dials documented |
+| 2026-10-24 | ZigZag threshold max(5%, 2 × ATR%) and max 6 contractions: median 3 pullbacks per base on the Nifty 500 |
 | 2026-10-23 | `main` started with an initial `.gitignore` commit so Phase 1 can be reviewed as a PR into it |
 
 ## Development log
@@ -641,4 +700,19 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
   as text from Settings are now coerced to numbers.
 - QA on 497 stocks: scan 3.5 s; PNB RS 76 (site 71, different universe); 16 stocks pass all 8 trend checks.
 - 58 offline tests passing.
+
+### 2026-10-24: Phase 2, step 4 (PR #4): VCP screen
+- Volume rule for the VCP screen left to me: kept ≥ 1.5× (brief's definition, risk first), low-volume breakouts listed.
+- Built `engine/vcp.py` (metrics, ZigZag contractions, rules, stop), `engine/scoring.py`, `classify_vcp`, a `vcp` config
+  section, per-screen scan storage (`screen` column; old derived tables dropped and rebuilt), `/api/screens/vcp/*`,
+  `/api/changes?screen=`, `/api/stock/{symbol}/vcp`, the VCP option (default), VCP columns, a VCP tag on Bases lists,
+  and the VCP check panel on charts.
+- Calibration (Nifty 500 + the site's six names, public prices, local only):
+  - With the gates from the plan alone (depth, tightening, dry-up, RS, trend) 66 of ~313 forming bases qualified,
+    far looser than the site (8 of ~5,000). Selectivity has to come from contraction structure.
+  - Five of the site's six names fail classic VCP structure; only PREMEXPLN passes. So VCP = the brief's classic rules.
+  - ZigZag at 3% / 1.5×ATR gave up to 28 "contractions" per base; 5% / 2×ATR gives a median of 3. With max 6 contractions:
+    7–8 VCPs forming on the Nifty 500.
+- Wording fix: failed-rule text shows one decimal ("last pullback 12% > 12%" was 12.x%).
+- 65 offline tests passing.
 

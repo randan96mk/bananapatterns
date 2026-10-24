@@ -252,6 +252,25 @@ def stock_metrics(symbol: str):
             "trend": payload["trend"]}
 
 
+@router.get("/stock/{symbol}/vcp")
+def stock_vcp(symbol: str):
+    """VCP metrics for the stock's latest base (a breakout is judged on the bar before it),
+    using the latest scan's RS and trend count."""
+    from backend.engine.vcp import evaluate
+    with get_db() as conn:
+        row, _ = _resolve_stock(conn, symbol)
+        candles = get_candles(conn, row["instrument_token"])
+        m = conn.execute("SELECT rs, tt_passed FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1",
+                         (symbol,)).fetchone()
+    bases = detect_bases(candles, S().config.bases)
+    if not bases:
+        return {"symbol": symbol, "vcp": None}
+    base = bases[-1]
+    end = len(candles) - 1 if base.status == "forming" else base.end_index
+    v = evaluate(candles, base, m["rs"] if m else None, m["tt_passed"] if m else 0, S().config.vcp, end=end)
+    return {"symbol": symbol, "base_label": base.label, "pivot": base.pivot, "vcp": v.to_dict()}
+
+
 @router.get("/stock/{symbol}/bases")
 def stock_bases(symbol: str, since: Optional[str] = None):
     """Bases over the full stored history (so numbering is right); `since` drops older ones."""

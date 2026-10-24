@@ -88,3 +88,7 @@ footer { margin-top: 20px; font-size: 11px; }
 .checks .pass span:first-child { color: var(--ok); font-weight: 700; }
 .checks .fail span:first-child { color: var(--bad); font-weight: 700; }
 @media (max-width: 700px) { .checks { grid-template-columns: 1fr; } }
+
+.vcppanel { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+.grid td { white-space: nowrap; }
+.grid td:nth-child(2) { white-space: normal; }

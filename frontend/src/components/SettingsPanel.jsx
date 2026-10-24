@@ -48,10 +48,28 @@ const HELP = {
   min_above_low52: 'Close at least this far above the 52-week low (0.30 = 30%)',
   max_below_high52: 'Close within this much of the 52-week high (0.25 = 25%)',
   min_rs: 'Minimum RS rating for the Trend Template',
+  // vcp
+  max_depth: 'VCP: base at most this deep (0.30 = 30%)',
+  min_weeks: 'VCP: base at least this many weeks',
+  min_contractions: 'VCP: at least this many pullbacks in the base',
+  max_contractions: 'VCP: at most this many pullbacks',
+  require_shrinking: 'VCP: last pullback <= shrink x the largest earlier one (true/false)',
+  shrink: 'Shrink factor for the rule above (0.8)',
+  max_final_contraction: 'VCP: last pullback at most this deep (0.12 = 12%)',
+  max_tightening: 'VCP: ATR(recent) / base mean true range at most this',
+  max_dryup: 'VCP: recent volume / volume before the base at most this',
+  min_trend_checks: 'VCP: at least this many of the 8 Trend Template checks',
+  atr_recent: 'Sessions for the recent ATR', dryup_recent: 'Sessions for recent volume',
+  ud_window: 'Sessions for the up/down volume ratio',
+  zz_min_pct: 'ZigZag: minimum reversal to confirm a swing (0.05 = 5%)',
+  zz_atr_mult: 'ZigZag: or this many ATR% if larger',
+  stop_buffer: 'Stop this far under the last pullback low (0.01 = 1%)',
+  max_stop: 'Stop never more than this under the pivot (0.08 = 8%)',
+  score_weights: 'Score weights: RS, tightening, dry-up, pivot proximity, 52w-high proximity, industry RS',
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['screen', 'bases', 'trend', 'ingest'];
+const SECTIONS = ['vcp', 'screen', 'bases', 'trend', 'ingest'];
 
 // Generic editor for persisted config sections (bases, ingest; vcp next).
 export default function SettingsPanel() {
