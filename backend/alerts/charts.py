@@ -1,17 +1,25 @@
 """PNG chart for Telegram alerts: candles, volume, SMA 50/200, base box, pivot, stop, breakout marker.
 
 Rendered headless with matplotlib (Agg). Dark theme to match the dashboard.
+matplotlib is optional: without it CHARTS_AVAILABLE is False and alerts go out as
+text only (install with `.venv/bin/pip install -r requirements.txt`).
 """
 
 import io
 from typing import Optional
 
-import matplotlib
+import numpy as np
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-from matplotlib.patches import Rectangle  # noqa: E402
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+    CHARTS_AVAILABLE = True
+except ImportError:                                    # optional dependency
+    plt = Rectangle = None
+    CHARTS_AVAILABLE = False
 
 from backend.engine.indicators import sma  # noqa: E402
 
@@ -23,6 +31,8 @@ def render_chart(candles: list[dict], title: str, subtitle: str = "", base: Opti
                  stop: Optional[float] = None, breakout_date: Optional[str] = None, bars: int = 130,
                  contractions: Optional[list] = None) -> bytes:
     """base: {start_date, end_date, pivot, low, label}; contractions: [{high_date, high, low_date, low, depth_pct}]."""
+    if not CHARTS_AVAILABLE:
+        raise RuntimeError("matplotlib is not installed: run .venv/bin/pip install -r requirements.txt")
     close_all = np.array([c["close"] for c in candles], dtype=float)
     ma50, ma200 = sma(close_all, 50), sma(close_all, 200)
     view = candles[-bars:]

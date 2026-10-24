@@ -427,7 +427,9 @@ def alerts_status():
     today = datetime.now(IST).date()
     hols = hol.load_holidays()
     upcoming = sorted((d, name) for d, name in hols.items() if d >= today.isoformat())[:3]
+    from backend.alerts.charts import CHARTS_AVAILABLE
     return {"bot_configured": n.client.configured, "chat_id": n.chat_id, "ready": n.ready,
+            "charts_available": CHARTS_AVAILABLE,
             "enabled": S().config.alerts.enabled, "scheduler_running": bool(S().scheduler and S().scheduler._thread),
             "today": today.isoformat(), "trading_day": hol.is_trading_day(today),
             "holiday_today": hols.get(today.isoformat()),
