@@ -6,7 +6,11 @@
             for today yet it retries every 30 min until 22:30, then records "no session".
   intraday  trading days, intraday_start..intraday_end, every intraday_interval_min:
             one Kite quote call for the Forming names; alert once per stock per day when
-            the price trades above the pivot (unconfirmed until the close)
+            the price trades above the pivot (unconfirmed until the close), with a volume
+            verdict; a crossed name falling failed_buffer_pct under the pivot -> failed alert
+  close_check  trading days at close_check_time (15:15): verdict for each name above its
+            pivot (holding / weak / extended) so you can act before 15:30; the 18:30 alerts
+            refer back to it
   weekly    universe_refresh_weekday from 10:00: NSE holiday list + Nifty 500 refresh,
             alert on index additions/removals
   login     each of login_times (06:01, 08:45): if Kite doesn't accept a session, send a
@@ -22,6 +26,7 @@ import threading
 from datetime import date, datetime, time, timedelta
 from typing import Callable, Optional
 
+from backend.alerts import intraday as itd
 from backend.alerts import messages as msg
 from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
 from backend.alerts.login import send_login_link, session_ok
@@ -35,7 +40,8 @@ from backend.logging_config.logger import setup_logger
 logger = setup_logger("jobs")
 
 DONE = ("ok", "partial", "failed", "no_session")      # statuses that end a job for the day
-SESSION_START, SESSION_MINUTES = time(9, 15), 375       # 09:15-15:30
+MARKET_CLOSE = time(15, 30)
+volume_pace = itd.volume_pace                          # re-exported (projection with the NSE volume curve)
 
 
 def hm(s: str) -> time:
@@ -68,6 +74,9 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
     if (trading and cfg.intraday and hm(cfg.intraday_start) <= t <= hm(cfg.intraday_end)
             and (last_intraday is None or now - last_intraday >= timedelta(minutes=cfg.intraday_interval_min))):
         jobs.append("intraday")
+    if (trading and cfg.intraday and cfg.close_check and ready("close_check")
+            and hm(cfg.close_check_time) <= t < MARKET_CLOSE):
+        jobs.append("close_check")
     if now.weekday() == cfg.universe_refresh_weekday and ready("weekly") and t >= time(10, 0):
         jobs.append("weekly")
     if login_slots_due(now, cfg, done_today, login_day):
@@ -79,15 +88,6 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
             and (last_login_check is None or now - last_login_check >= timedelta(minutes=cfg.login_check_min))):
         jobs.append("login_check")
     return jobs
-
-
-def volume_pace(vol_so_far: float, avg_vol: float, now: datetime) -> Optional[float]:
-    """Projected full-day volume as a multiple of the average, from the share of the session elapsed."""
-    start = datetime.combine(now.date(), SESSION_START, now.tzinfo)
-    frac = (now - start).total_seconds() / 60 / SESSION_MINUTES
-    if not avg_vol or frac <= 0.02:
-        return None
-    return vol_so_far / min(frac, 1.0) / avg_vol
 
 
 class Scheduler:
@@ -253,11 +253,12 @@ class Scheduler:
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
 
-    def run_intraday(self, now: datetime) -> dict:
-        self.last_intraday = now
-        st, cfg, today = self.state, self.state.config.alerts, now.date()
+    def _forming_quotes(self) -> dict:
+        """Forming candidates of the alert screens with one Kite quote call: {status, items}.
+        items: [{symbol, p, token, ltp, live, vol}] for names with a price."""
+        st, cfg = self.state, self.state.config.alerts
         if not st.token_valid():
-            return {"status": "no_login"}
+            return {"status": "no_login", "items": []}
         stocks = {s["symbol"]: s for s in uni.resolve_universe(st.config.ingest)["stocks"]}
         with get_db() as conn:
             as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
@@ -269,36 +270,118 @@ class Scheduler:
             if r["symbol"] in stocks and r["symbol"] not in cands:
                 cands[r["symbol"]] = json.loads(r["payload"])
         if not cands:
-            return {"status": "no_candidates"}
+            return {"status": "no_candidates", "items": []}
         keys = {f"NSE:{stocks[s].get('tradingsymbol', s)}": s for s in cands}
         try:
             quotes = st.client.quote(list(keys))
         except Exception as exc:
             logger.warning("Intraday quote failed: %s", exc)
-            return {"status": "quote_failed", "error": str(exc)}
-        notifier, sent = self.notifier(), 0
+            return {"status": "quote_failed", "error": str(exc), "items": []}
+        items = []
         for key, sym in keys.items():
-            q, p = quotes.get(key) or {}, cands[sym]
+            q = quotes.get(key) or {}
             ltp = q.get("last_price")
-            if not ltp or ltp <= p["pivot"]:
+            if not ltp:
                 continue
-            key = f"{today}|intraday|{sym}"
-            if notifier.already_sent(key):
-                continue                                 # skip the chart work for names already alerted today
-            vol = q.get("volume") or q.get("volume_traded")
-            with get_db() as conn:
-                hist = get_candles(conn, stocks[sym]["instrument_token"])
-            recent = hist[-50:]
-            avg = sum(c["volume"] for c in recent) / len(recent) if recent else None
-            pace = volume_pace(vol, avg, now) if vol and avg else None
-            ohlc = q.get("ohlc") or {}
+            ohlc, vol = q.get("ohlc") or {}, q.get("volume") or q.get("volume_traded")
             live = {"ltp": ltp, "open": ohlc.get("open") or ltp, "high": max(ohlc.get("high") or ltp, ltp),
                     "low": min(ohlc.get("low") or ltp, ltp), "volume": vol or 0}
-            png, ctx = decision_for(hist, dict(p, symbol=sym), "intraday", cfg, st.config.bases, st.config.vcp,
-                                    live=live) if hist else (None, None)
-            if notifier.send(key, "intraday", msg.intraday_alert(p, ltp, vol, pace, avg, ctx), sym, png):
+            items.append({"symbol": sym, "p": dict(cands[sym], symbol=sym), "token": stocks[sym]["instrument_token"],
+                          "ltp": ltp, "live": live, "vol": vol})
+        return {"status": "ok", "checked": len(keys), "items": items}
+
+    @staticmethod
+    def _history(token: int) -> tuple[list[dict], Optional[float]]:
+        """(daily candles, 50-day average volume)."""
+        with get_db() as conn:
+            hist = get_candles(conn, token)
+        recent = hist[-50:]
+        return hist, (sum(c["volume"] for c in recent) / len(recent) if recent else None)
+
+    def run_intraday(self, now: datetime) -> dict:
+        """Heads-up when a Forming name trades above its pivot (with a volume verdict), and a
+        failed-breakout alert when a crossed name falls back under it."""
+        self.last_intraday = now
+        st, cfg, today = self.state, self.state.config.alerts, now.date().isoformat()
+        res = self._forming_quotes()
+        if res["status"] != "ok":
+            return {k: v for k, v in res.items() if k != "items"}
+        notifier, sent, failed = self.notifier(), 0, 0
+        with get_db() as conn:
+            day_flags = itd.flags(conn, today)
+        for it in res["items"]:
+            sym, p, ltp = it["symbol"], it["p"], it["ltp"]
+            fl = day_flags.get(sym, set())
+            if ltp > p["pivot"]:
+                with get_db() as conn:
+                    itd.set_flag(conn, today, sym, "crossed", f"{ltp}")
+                key = f"{today}|intraday|{sym}"
+                if notifier.already_sent(key):
+                    continue                             # skip the chart work for names already alerted today
+                hist, avg = self._history(it["token"])
+                pace = volume_pace(it["vol"], avg, now)
+                png, ctx = decision_for(hist, p, "intraday", cfg, st.config.bases, st.config.vcp,
+                                        live=it["live"]) if hist else (None, None)
+                html = msg.intraday_alert(p, ltp, it["vol"], pace, avg, ctx,
+                                          volume=itd.volume_verdict(pace, cfg.intraday_volume_mult),
+                                          zone_top=p["pivot"] * (1 + cfg.buy_zone_pct),
+                                          check_time=cfg.close_check_time if cfg.close_check else "evening")
+                if notifier.send(key, "intraday", html, sym, png):
+                    sent += 1
+            elif "crossed" in fl and ltp < p["pivot"] * (1 - cfg.failed_buffer_pct):
+                with get_db() as conn:
+                    new = itd.set_flag(conn, today, sym, "failed", f"{ltp}")
+                stop = (p.get("vcp") or {}).get("stop")
+                if new and notifier.send(f"{today}|failed|{sym}", "intraday",
+                                         msg.failed_alert(p, ltp, it["live"]["high"], stop), sym):
+                    failed += 1
+        return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed}
+
+    def run_close_check(self, now: datetime) -> dict:
+        """15:15: holding / weak / extended for every Forming name above its pivot. Up to 3 holding names
+        get their own chart; everything else (or everything, when 3 or fewer) is covered too."""
+        st, cfg, today, started = self.state, self.state.config.alerts, now.date(), now_ist()
+        res = self._forming_quotes()
+        if res["status"] == "no_login":
+            self.record("close_check", today, "failed", "Kite login missing at the close check", started)
+            return {"status": "no_login"}
+        if res["status"] == "quote_failed":
+            self.not_before["close_check"] = now + timedelta(minutes=2)     # one quick retry before 15:30
+            return {"status": "quote_failed"}
+        items = []
+        for it in res["items"]:
+            p, ltp, live = it["p"], it["ltp"], it["live"]
+            zone_top = p["pivot"] * (1 + cfg.buy_zone_pct)
+            if ltp <= p["pivot"]:
+                continue
+            hist, avg = self._history(it["token"])
+            pace = volume_pace(it["vol"], avg, now)
+            rng = itd.day_range(ltp, live["low"], live["high"])
+            verdict = itd.close_verdict(ltp, p["pivot"], zone_top, pace, rng, cfg)
+            items.append(dict(it, hist=hist, pace=pace, rng=rng, verdict=verdict, zone_top=zone_top,
+                              pivot=p["pivot"]))
+        order = {"holding": 0, "weak": 1, "extended": 2}
+        items.sort(key=lambda i: (order[i["verdict"]], -(i["pace"] or 0)))
+        with get_db() as conn:
+            for i in items:
+                itd.set_flag(conn, today.isoformat(), i["symbol"], f"close_{i['verdict']}",
+                             f"{i['ltp']}|{i['pace']}|{i['rng']}")
+        notifier, sent = self.notifier(), 0
+        individual = items if len(items) <= 3 else [i for i in items if i["verdict"] == "holding"][:3]
+        for i in individual:
+            live = dict(i["live"], pace=i["pace"], range=i["rng"], verdict=i["verdict"])
+            png, ctx = decision_for(i["hist"], i["p"], "close_check", cfg, st.config.bases, st.config.vcp,
+                                    live=live) if i["hist"] else (None, None)
+            html = msg.close_alert(i["p"], i["verdict"], i["ltp"], i["pace"], i["rng"], i["zone_top"], ctx)
+            if notifier.send(f"{today}|close|{i['symbol']}", "close_check", html, i["symbol"], png):
                 sent += 1
-        return {"status": "ok", "checked": len(keys), "sent": sent}
+        rest = {i["symbol"] for i in individual}
+        if len(items) > len(individual) and notifier.send(f"{today}|close-summary", "close_check",
+                                                          msg.close_summary(items, rest)):
+            sent += 1
+        counts = {v: sum(i["verdict"] == v for i in items) for v in order}
+        self.record("close_check", today, "ok", f"above pivot {len(items)}: {counts}; sent {sent}", started)
+        return {"status": "ok", "above": len(items), "counts": counts, "sent": sent}
 
     def run_weekly(self, now: datetime) -> dict:
         today, started, st = now.date(), now_ist(), self.state

@@ -104,8 +104,8 @@ def test_due_jobs():
 
 
 def test_volume_pace():
-    # half the session gone, already traded 1x the average -> on pace for ~2x
-    assert volume_pace(1000, 1000, ist(2026, 10, 23, 12, 22, 30)) == pytest.approx(2.0, rel=0.01)
+    # by 12:30 a typical NSE day has traded half its volume: 1x the average so far -> on pace for 2x
+    assert volume_pace(1000, 1000, ist(2026, 10, 23, 12, 30)) == pytest.approx(2.0, rel=0.01)
     assert volume_pace(1000, 1000, ist(2026, 10, 23, 9, 16)) is None              # too early to project
 
 

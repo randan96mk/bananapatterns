@@ -6,21 +6,25 @@ const GROUPS = [
     ['forming', '🔵 Newly forming'], ['near_pivot', '🎯 Near pivot'], ['low_volume_breakout', '⚠️ Low-volume breakout'],
     ['left', '▫️ Left a card (noisy)']]],
   ['Delivery', [['enabled', 'Alerts on'], ['digest', '📋 Daily digest'], ['chart_images', '🖼 Chart images'],
-    ['system', '⚙️ System alerts (login, job failures, index changes)'], ['intraday', '⚡ Intraday pivot heads-up'],
+    ['system', '⚙️ System alerts (login, job failures, index changes)'], ['intraday', '⚡ Intraday pivot heads-up + failed breakout'],
+    ['close_check', '🕒 Act-before-close check (15:15)'],
     ['job_enabled', '🕡 Automatic evening job']]],
 ];
 const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time', 'Evening job (IST)'],
   ['reminder_time', 'Login reminder (IST)'], ['intraday_start', 'Intraday from'], ['intraday_end', 'Intraday until'],
-  ['intraday_interval_min', 'Intraday every (min)'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)']];
+  ['intraday_interval_min', 'Intraday every (min)'], ['close_check_time', 'Close check at'],
+  ['intraday_volume_mult', 'Volume needed (× 50-day avg)'], ['failed_buffer_pct', 'Failed below pivot by (0.01 = 1%)'],
+  ['close_min_range', 'Close check: min place in day range (0–1)'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)']];
 const CHART_KINDS = [['breakout', '🚀 Breakout'], ['breakout_low_volume', '⚠️ Low-volume breakout'],
   ['near_pivot', '🎯 Near pivot'], ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Below pivot'],
-  ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday']];
+  ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday + 15:15']];
 const SIZE_FIELDS = [['buy_zone_pct', 'Buy zone above pivot (0.05 = 5%)'],
   ['capital', 'Capital ₹ for position size (0 = off)'], ['risk_pct', 'Risk per trade (0.01 = 1%)']];
 const strip = (h) => h.replace(/<[^>]+>/g, '');
 const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout'], ['near_pivot', '🎯 Near pivot'],
   ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Back below pivot'], ['played_out', '🏁 Played out'],
-  ['intraday', '⚡ Intraday heads-up'], ['digest', '📋 Digest'], ['system', '⚙️ System']];
+  ['intraday', '⚡ Intraday heads-up'], ['failed', '⚠️ Failed breakout'], ['close_check', '🕒 15:15 close check'],
+  ['digest', '📋 Digest'], ['system', '⚙️ System']];
 
 // Settings + activity for Telegram alerts and the automatic jobs.
 export default function AlertsPanel() {
@@ -197,6 +201,7 @@ export default function AlertsPanel() {
         <div className="row"><h3>Automatic jobs</h3>
           <button className="btn" onClick={() => act(() => api.runJob('eod'), () => 'Evening job started (sync → scan → alerts)')}>Run evening job now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('intraday'), () => 'Intraday check started')}>Intraday check now</button>
+          <button className="btn ghost" onClick={() => act(() => api.runJob('close_check'), () => '15:15 close check started')}>Close check now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('weekly'), () => 'Weekly refresh started')}>Weekly refresh now</button>
           <button className="btn ghost" onClick={load}>Refresh</button>
         </div>

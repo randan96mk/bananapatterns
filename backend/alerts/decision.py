@@ -33,7 +33,9 @@ STAGE_TEXT = {"breakout": "FRESH BREAKOUT", "breakout_low_volume": "BREAKOUT ON 
               "below_pivot": "BACK BELOW THE PIVOT", "played_out": "PLAYED OUT", "climbing": "RECLAIMED THE PIVOT",
               "forming": "FORMING — waiting for a close above the pivot",
               "near_pivot": "NEAR THE PIVOT — a close above it is a breakout",
-              "intraday": "INTRADAY — above the pivot, UNCONFIRMED until the close"}
+              "intraday": "INTRADAY — above the pivot, UNCONFIRMED until the close",
+              "close_check": "15:15 CHECK — is the breakout holding into the close?"}
+LIVE_KINDS = {"intraday", "close_check"}
 
 
 def _rs(v):
@@ -46,7 +48,8 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                      ended: Optional[dict] = None, live: Optional[dict] = None) -> Optional[dict]:
     """Everything the decision chart and message need, or None if there is no base.
 
-    live: intraday {ltp, open, high, low, volume} for today's still-forming candle.
+    live: intraday {ltp, open, high, low, volume} for today's still-forming candle; for close_check also
+          {pace, range, verdict} from backend.alerts.intraday.close_verdict.
     ended: played out {date, reason, gain_pct, peak_pct}.
     """
     bases = detect_bases(candles, bases_cfg)
@@ -81,7 +84,12 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
         checks += [(bo.volume_ok, f"Breakout volume {bo.volume_ratio or 0:.1f}× (≥ 1.5)"),
                    (not bo.weak_close, "Closed in upper half" + (f" (range {bo.close_in_range:.2f})"
                                                                 if bo.close_in_range is not None else ""))]
-    if kind in ("breakout", "breakout_low_volume", "climbing", "intraday"):
+    if kind == "close_check" and live:
+        checks += [(live.get("pace") is not None and live["pace"] >= alerts_cfg.intraday_volume_mult,
+                    f"Volume on pace for {live.get('pace') or 0:.1f}× (≥ {alerts_cfg.intraday_volume_mult:g})"),
+                   (live.get("range") is not None and live["range"] >= alerts_cfg.close_min_range,
+                    f"Trading in upper part of today's range ({live.get('range') or 0:.2f})")]
+    if kind in ("breakout", "breakout_low_volume", "climbing") or kind in LIVE_KINDS:
         checks.append((ext <= alerts_cfg.buy_zone_pct * 100, f"Not extended: {ext:+.1f}% vs pivot "
                                                              f"(≤ {alerts_cfg.buy_zone_pct * 100:g}%)"))
 
@@ -108,6 +116,20 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
         verdict, vcolor = "Above the pivot — UNCONFIRMED", ACC
         watch = [f"Needs a CLOSE above {_rs(pivot)} today on ≥ 1.5× volume.",
                  f"Above {_rs(zone_top)} it's extended.", "The evening scan confirms or rejects it."]
+    elif kind == "close_check":
+        state = (live or {}).get("verdict")
+        if state == "holding":
+            verdict, vcolor = "Holding into the close ✓", UP
+            watch = [f"Buy zone {_rs(pivot)} – {_rs(zone_top)}, before 15:30.",
+                     f"Stop {_rs(stop)}: exit on a close below it.", "The 18:30 scan confirms it on the close."]
+        elif state == "extended":
+            verdict, vcolor = "Extended — don't chase ✗", DOWN
+            watch = [f"{ext:+.1f}% above the pivot, beyond the buy zone ({_rs(zone_top)}).",
+                     "Wait for a pullback toward the pivot.", "Buying here widens the stop and the risk."]
+        else:
+            verdict, vcolor = "Above the pivot, but weak ⚠", ACC
+            watch = ["Volume or the close may not confirm the breakout.",
+                     "Wait for the 18:30 confirmation or a better day.", f"Counts only on a close above {_rs(pivot)}."]
     else:                                                         # forming / near_pivot
         verdict = "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)"
         vcolor = UP if v.qualifies else ACC
@@ -118,7 +140,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
 
     size = None
     if alerts_cfg.capital > 0 and alerts_cfg.risk_pct > 0:
-        entry = max(close, pivot) if kind in BREAKOUT_KINDS | {"intraday"} else pivot
+        entry = max(close, pivot) if kind in BREAKOUT_KINDS | LIVE_KINDS else pivot
         per_share = entry - stop
         if per_share > 0:
             qty = floor(alerts_cfg.capital * alerts_cfg.risk_pct / per_share)

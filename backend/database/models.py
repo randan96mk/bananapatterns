@@ -187,6 +187,16 @@ CREATE TABLE IF NOT EXISTS login_links (
     superseded INTEGER NOT NULL DEFAULT 0
 );
 
+-- Intraday events per stock per day: crossed the pivot, failed, 15:15 verdict (close_holding/_weak/_extended).
+CREATE TABLE IF NOT EXISTS intraday_flags (
+    day TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    flag TEXT NOT NULL,
+    at TEXT NOT NULL,
+    detail TEXT,
+    PRIMARY KEY (day, symbol, flag)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

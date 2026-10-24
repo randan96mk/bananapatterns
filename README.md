@@ -135,6 +135,7 @@ bananapatterns/
 │  │  ├─ decision.py          decision chart: numbered markers + verdict/checklist/levels panel, message lines
 │  │  ├─ messages.py          alert / digest text (HTML, escaped, chunked)
 │  │  ├─ dispatch.py          scan -> alerts, sent once (sent_alerts)
+│  │  ├─ intraday.py          NSE volume curve, volume / close verdicts, per-day intraday flags
 │  │  ├─ login.py             Kite login-link alert, session check (profile), login confirmation
 │  │  ├─ commands.py          Telegram /login and /status (long-poll getUpdates, own chat only)
 │  │  └─ jobs.py              scheduler: login reminder, evening job, intraday heads-up, weekly refresh
@@ -429,7 +430,9 @@ never block a real alert, and show in the Sent-alerts log as `test`. A wrong tok
 | 🔵 Newly forming | a base became a VCP Forming setup; includes the pullback sequence and stop | on |
 | 🎯 Near pivot (+ chart image) | Forming and within `near_pivot_pct` (3%) under the pivot, once per base | on |
 | 📋 Daily digest | the four counts + the whole "what changed since last close" list | on |
-| ⚡ Intraday heads-up | during market hours the price trades above a Forming name's pivot; **unconfirmed** until the close, with volume so far and the day's pace | on |
+| ⚡ Intraday heads-up | during market hours the price trades above a Forming name's pivot; **unconfirmed** until the close. Says 🟢 strong / 🟡 average / 🟡 weak volume (day's projected volume vs `intraday_volume_mult`) or ⛔ extended (above the buy zone: don't chase) | on |
+| ⚠️ Failed breakout | a name that crossed its pivot today falls `failed_buffer_pct` (1%) back under it: don't buy / honour the stop | on (with intraday) |
+| 🕒 Act-before-close check | at 15:15, for every Forming name above its pivot: ✅ **holding** (volume on pace ≥ 1.5× and price in the upper half of the day's range), 🟡 weak, or ⛔ extended, with the decision chart and buy zone, so you can act before 15:30. Up to 3 names get their own message; more go in one summary. At 18:30 the breakout alert says "✓ flagged at 15:15", and a 15:15 "holding" name that didn't confirm gets "✗ didn't confirm on the close" | on |
 | ⚙️ System | Kite login missing (15:30), evening job waiting / failed / partial, no bar from Kite, Nifty 500 additions/removals | on |
 | ⚠️ Low-volume breakout · ▫️ Left a card | below the volume rule · dropped off a card (noisy) | off |
 
@@ -494,7 +497,8 @@ confirmation.
 |---|---|---|
 | Login reminder | trading days 15:30 → 18:30 | alerts once if today's Kite token is missing |
 | Evening job | trading days from 18:30 | sync candles → scan → alerts. Without a login it alerts once and retries every 15 min until 23:00; if Kite has no bar for today yet it retries every 30 min until 22:30 ("no session" after). Catches up if the app is opened later that evening. |
-| Intraday heads-up | trading days 09:20–15:25, every 5 min | one Kite quote call for the Forming names (quote API 1 req/s) |
+| Intraday heads-up | trading days 09:20–15:25, every 5 min | one Kite quote call for the Forming names (quote API 1 req/s); heads-up and failed-breakout alerts |
+| Close check | trading days 15:15 | one quote call; holding / weak / extended verdicts (see the alerts table) |
 | Weekly refresh | Sundays from 10:00 | NSE holiday list + Nifty 500 refresh, index-change alert |
 | Kite login links | 06:01 / 08:45, session check every 30 min | see [Kite login link](#kite-login-link) |
 
@@ -648,6 +652,9 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `capital` / `risk_pct` | 0 / 0.01 | position size on the chart and in the message (0 = off) |
 | `job_enabled` / `job_time` / `reminder_time` | true / 18:30 / 15:30 | evening job and login reminder (IST) |
 | `intraday_start` / `intraday_end` / `intraday_interval_min` | 09:20 / 15:25 / 5 | intraday heads-up window |
+| `intraday_volume_mult` | 1.5 | projected day volume (× 50-day average) for "strong" and "holding" |
+| `failed_buffer_pct` | 0.01 | a crossed name this far under the pivot = failed breakout |
+| `close_check` / `close_check_time` / `close_min_range` | true / 15:15 / 0.5 | act-before-close check; price must sit in the upper half of the day's range |
 | `universe_refresh_weekday` | 6 (Sunday) | weekly refresh day |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -940,3 +947,14 @@ of receiving it (a small change in that repo).
 - Bot commands `/login`, `/status`. `PUBLIC_BASE_URL` for phone / cloud use, `BP_DASHBOARD_PASSWORD` (HTTP Basic).
   Alerts → Kite login link panel.
 - 126 offline tests passing.
+
+### 2026-10-24: Catch breakouts the same day (act-before-close)
+- Volume projection now follows a typical NSE intraday volume curve (heavy open and close), so morning
+  projections are no longer inflated (`backend/alerts/intraday.py`).
+- The intraday heads-up says strong / average / weak volume, or extended (don't chase).
+- New failed-breakout alert (crossed, then 1% back under the pivot) and the 15:15 close check (holding / weak /
+  extended, decision chart with the live candle, summary when more than 3 names). Day flags in `intraday_flags`,
+  so restarts don't repeat alerts.
+- 18:30 breakout alerts refer back to the 15:15 verdict; "didn't confirm" when a 15:15 "holding" name fails on
+  the close.
+- 145 offline tests passing.
