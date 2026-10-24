@@ -107,24 +107,26 @@ CREATE TABLE IF NOT EXISTS ingest_status (
 -- Stage of each stock per as-of date (rows only for stocks in some stage).
 CREATE TABLE IF NOT EXISTS scan_results (
     as_of TEXT NOT NULL,
+    screen TEXT NOT NULL,
     symbol TEXT NOT NULL,
     stage TEXT NOT NULL,
     payload TEXT NOT NULL,
-    PRIMARY KEY (as_of, symbol)
+    PRIMARY KEY (as_of, screen, symbol)
 );
-CREATE INDEX IF NOT EXISTS idx_scan_stage ON scan_results(as_of, stage);
+CREATE INDEX IF NOT EXISTS idx_scan_stage ON scan_results(as_of, screen, stage);
 
 -- What changed since the previous close (stage moves), per as-of date.
 CREATE TABLE IF NOT EXISTS scan_changes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     as_of TEXT NOT NULL,
+    screen TEXT NOT NULL,
     symbol TEXT NOT NULL,
     kind TEXT NOT NULL,
     text TEXT NOT NULL,
     change_pct REAL,
     close REAL
 );
-CREATE INDEX IF NOT EXISTS idx_changes_asof ON scan_changes(as_of);
+CREATE INDEX IF NOT EXISTS idx_changes_asof ON scan_changes(as_of, screen);
 
 -- Per-stock metrics on each as-of date (every scanned stock, not only staged ones).
 CREATE TABLE IF NOT EXISTS stock_metrics (
@@ -171,7 +173,17 @@ def init_db(path: Optional[str] = None) -> None:
     p = Path(path or db_path())
     p.parent.mkdir(parents=True, exist_ok=True)
     with get_db(str(p)) as conn:
+        _migrate_scan_tables(conn)
         conn.executescript(SCHEMA)
+
+
+def _migrate_scan_tables(conn) -> None:
+    """Scan tables are derived data: if they predate the `screen` column, drop them so
+    they are recreated and the next scan (startup scan when behind) refills them."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(scan_results)")]
+    if cols and "screen" not in cols:
+        conn.executescript("DROP TABLE IF EXISTS scan_results; DROP TABLE IF EXISTS scan_changes; "
+                           "DROP TABLE IF EXISTS scan_runs;")
 
 
 # --- Settings ---

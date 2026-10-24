@@ -100,12 +100,13 @@ def test_run_scan_stores_results_and_changes():
     syms = [{"symbol": k, "instrument_token": v[0]} for k, v in series.items()]
     out = run_scan(BCFG, SCFG, syms)
     assert out["scanned"] == 3 and out["stale"] == 0
-    assert out["counts"]["fresh"] == 1 and out["counts"]["forming"] == 1
+    assert out["counts"]["bases"]["fresh"] == 1 and out["counts"]["bases"]["forming"] == 1
     with get_db() as conn:
-        stages = dict(conn.execute("SELECT symbol, stage FROM scan_results WHERE as_of = ?", (out["as_of"],)).fetchall())
+        stages = dict(conn.execute("SELECT symbol, stage FROM scan_results WHERE as_of = ? AND screen = 'bases'",
+                                   (out["as_of"],)).fetchall())
         changes = [dict(r) for r in conn.execute("SELECT * FROM scan_changes")]
     assert "NONE" not in stages
     with get_db() as conn:
-        payloads = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM scan_results")]
+        payloads = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM scan_results WHERE screen = 'bases'")]
     assert {p["symbol"] for p in payloads} == set(stages)          # rows carry their symbol
     assert any(c["symbol"] == "FRESH" and c["kind"] == "breakout" for c in changes)

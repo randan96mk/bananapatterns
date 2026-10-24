@@ -90,9 +90,12 @@ def cmd_candles(args):
 def cmd_scan(_):
     init_db()
     config = load_config(AppConfig())
-    out = run_scan(config.bases, config.screen, uni.resolve_universe(config.ingest)["stocks"], config.trend)
+    out = run_scan(config.bases, config.screen, uni.resolve_universe(config.ingest)["stocks"], config.trend,
+                   config.vcp)
     print(f"as of {out['as_of']}: {out['scanned']} scanned, {out.get('stale', 0)} stale")
-    print("  " + ", ".join(f"{k} {v}" for k, v in out["counts"].items()) + f"; {out['changes']} changes")
+    for screen, counts in out["counts"].items():
+        print(f"  {screen}: " + ", ".join(f"{k} {v}" for k, v in counts.items())
+              + f"; {out['changes'].get(screen, 0)} changes")
 
 
 def main():

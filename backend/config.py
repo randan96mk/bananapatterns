@@ -130,8 +130,40 @@ class TrendConfig:
     min_rs: int = 70                       # RS rating at least this
 
 
+@dataclass
+class VcpConfig:
+    """VCP screen dials (classic Minervini VCP; metric definitions in backend/engine/vcp.py).
+
+    The site's own VCP list is looser (e.g. its latest pullback can be the deepest); relax
+    min_contractions / require_shrinking / max_final_contraction to approximate it.
+    """
+    max_depth: float = 0.30                # base depth (pivot -> base low)
+    min_weeks: int = 3                     # base at least this long
+    min_contractions: int = 2              # pullbacks inside the base (brief: 2-4, up to 6)
+    max_contractions: int = 6
+    require_shrinking: bool = True         # last contraction <= shrink x the largest earlier one
+    shrink: float = 0.8
+    max_final_contraction: float = 0.12    # last pullback at most 12% deep
+    max_tightening: float = 1.0            # ATR(recent) / base mean true range
+    max_dryup: float = 0.85                # recent volume / volume before the base
+    min_rs: int = 70
+    min_trend_checks: int = 5              # of the 8 Trend Template checks
+    max_dist_to_pivot: float = 0.25        # Forming card (site's VCP names sit 9-21% under their pivots)
+    atr_recent: int = 10
+    dryup_recent: int = 10
+    dryup_lookback: int = 50
+    ud_window: int = 50
+    zz_min_pct: float = 0.05               # ZigZag reversal threshold floor (median 3 contractions on Nifty 500)
+    zz_atr_mult: float = 2.0               # ... or this many ATR%, whichever is larger
+    stop_buffer: float = 0.01              # stop just under the last contraction low
+    max_stop: float = 0.08                 # never more than 8% under the pivot
+    score_weights: list = field(default_factory=lambda: [30.0, 20.0, 15.0, 15.0, 10.0, 10.0])
+    # weights: RS, tightening, dry-up, proximity to pivot, proximity to 52w high, industry RS (untuned until backtest)
+
+
 # Sections persisted to the DB and editable at runtime.
-PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig}
+PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
+                      "vcp": VcpConfig}
 
 
 @dataclass
@@ -141,6 +173,7 @@ class AppConfig:
     bases: BaseConfig = field(default_factory=BaseConfig)
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     trend: TrendConfig = field(default_factory=TrendConfig)
+    vcp: VcpConfig = field(default_factory=VcpConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

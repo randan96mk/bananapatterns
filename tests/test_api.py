@@ -74,7 +74,7 @@ def test_callback_login_then_full_flow(api):
         res = tc.get(f"/api/screens/bases/results?stage={stage}")
         assert res.status_code == 200 and all(r["symbol"] for r in res.json()["rows"])
     assert tc.get("/api/screens/bases/results?stage=nope").status_code == 422
-    assert tc.get("/api/screens/vcp/summary").status_code == 404
+    assert tc.get("/api/screens/nope/summary").status_code == 404
     assert tc.get("/api/changes").json()["as_of"] == summ["as_of"]
     assert tc.post("/api/screens/scan").json()["as_of"] == summ["as_of"]
 
@@ -104,7 +104,7 @@ def test_config_roundtrip_and_validation(api):
     assert tc.put("/api/config/ingest", json={"history_years": 5}).json()["history_years"] == 5
     assert tc.get("/api/config/ingest").json()["history_years"] == 5
     assert tc.put("/api/config/ingest", json={"nope": 1}).status_code == 422
-    assert tc.get("/api/config/vcp").status_code == 404
+    assert tc.get("/api/config/nope").status_code == 404
     t = tc.put("/api/config/trend", json={"min_rs": "80", "rs_weights": ["0.25", "0.25", "0.25", "0.25"],
                                           "rs_periods": ["63", "126", "189", "252"]}).json()
     assert t["min_rs"] == 80 and t["rs_weights"] == [0.25] * 4 and t["rs_periods"] == [63, 126, 189, 252]

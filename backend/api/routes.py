@@ -42,7 +42,7 @@ class AppState:
         """Run the stage scan over the resolved universe (serialised)."""
         with self.scan_lock:
             stocks = uni.resolve_universe(self.config.ingest)["stocks"]
-            return run_scan(self.config.bases, self.config.screen, stocks, self.config.trend)
+            return run_scan(self.config.bases, self.config.screen, stocks, self.config.trend, self.config.vcp)
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
@@ -311,7 +311,8 @@ def ingest_status():
 
 # --- Screens (stage board) ---
 
-SCREENS = {"bases": "Bases: every base the engine finds (VCP screen comes next)"}
+SCREENS = {"bases": "Bases: every base the engine finds",
+           "vcp": "VCP: bases with shrinking pullbacks, drying volume, RS >= 70 and an uptrend"}
 STAGE_SORT = {
     "forming": lambda p: (p["dist_to_pivot_pct"] or 0),
     "fresh": lambda p: (p["sessions_since_breakout"] or 0, -(p["volume_ratio"] or 0)),   # newest first
@@ -345,12 +346,12 @@ def screens_summary(screen: str):
     with get_db() as conn:
         run = conn.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
         latest_bar = conn.execute("SELECT MAX(last_date) FROM ingest_status").fetchone()[0]
-        n_changes = conn.execute("SELECT COUNT(*) FROM scan_changes WHERE as_of = ?",
-                                 (run["as_of"],)).fetchone()[0] if run else 0
+        n_changes = conn.execute("SELECT COUNT(*) FROM scan_changes WHERE as_of = ? AND screen = ?",
+                                 (run["as_of"], screen)).fetchone()[0] if run else 0
     if not run:
         return {"as_of": None, "counts": {}, "changes": 0, "latest_bar": latest_bar, "stale": bool(latest_bar)}
     return {"as_of": run["as_of"], "ran_at": run["ran_at"], "scanned": run["scanned"],
-            "counts": json.loads(run["counts"]), "changes": n_changes, "latest_bar": latest_bar,
+            "counts": json.loads(run["counts"]).get(screen, {}), "changes": n_changes, "latest_bar": latest_bar,
             "stale": bool(latest_bar and latest_bar > run["as_of"]),
             "fresh_sessions": S().config.screen.fresh_sessions}
 
@@ -362,24 +363,29 @@ def screens_results(screen: str, stage: str = Query(...)):
         raise HTTPException(422, f"stage must be one of {list(STAGE_SORT)}")
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
-        rows = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND stage = ?",
-                            (as_of, stage)).fetchall()
+        rows = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND screen = ? AND stage = ?",
+                            (as_of, screen, stage)).fetchall()
     items = [json.loads(r["payload"]) for r in rows]
-    items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
+    if screen == "vcp":
+        items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
+    else:
+        items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
     return {"as_of": as_of, "stage": stage, "rows": items}
 
 
 @router.get("/changes")
-def changes(limit: int = Query(200, le=1000)):
+def changes(screen: str = "bases", limit: int = Query(200, le=1000)):
+    _check_screen(screen)
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
         prev = conn.execute("SELECT MAX(as_of) FROM scan_runs WHERE as_of < ?", (as_of,)).fetchone()[0] \
             if as_of else None
-        rows = conn.execute("SELECT symbol, kind, text, change_pct, close FROM scan_changes WHERE as_of = ? "
+        rows = conn.execute("SELECT symbol, kind, text, change_pct, close FROM scan_changes "
+                            "WHERE as_of = ? AND screen = ? "
                             "ORDER BY CASE kind WHEN 'breakout' THEN 0 WHEN 'below_pivot' THEN 1 "
                             "WHEN 'played_out' THEN 2 WHEN 'forming' THEN 3 ELSE 4 END, symbol LIMIT ?",
-                            (as_of, limit)).fetchall()
-    return {"as_of": as_of, "previous_scan": prev, "rows": [dict(r) for r in rows]}
+                            (as_of, screen, limit)).fetchall()
+    return {"as_of": as_of, "screen": screen, "previous_scan": prev, "rows": [dict(r) for r in rows]}
 
 
 # --- Logs ---

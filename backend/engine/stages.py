@@ -149,3 +149,30 @@ def classify(candles: list[dict], bases: list[Base], cfg: ScreenConfig) -> Stage
     else:
         res.reason = "no active base"
     return res
+
+
+def classify_vcp(candles: list[dict], bases: list[Base], rs: Optional[int], trend_passed: int,
+                 screen_cfg: ScreenConfig, vcp_cfg) -> tuple[StageResult, Optional[dict]]:
+    """Stage on the VCP screen: the base stage, kept only if the relevant base is a VCP.
+
+    Forming uses the VCP screen's own distance rule (vcp_cfg.max_dist_to_pivot) and
+    minimum length; breakout stages judge the base as it was on the bar before the
+    breakout. Returns (result, vcp dict or None).
+    """
+    from dataclasses import replace
+
+    from backend.engine.vcp import evaluate
+
+    cfg = replace(screen_cfg, max_dist_to_pivot=vcp_cfg.max_dist_to_pivot, min_forming_weeks=vcp_cfg.min_weeks)
+    res = classify(candles, bases, cfg)
+    if res.stage is None:
+        return res, None
+    if res.stage == "forming":
+        base, end = bases[-1], len(candles) - 1
+    else:
+        base = next(b for b in reversed(bases) if b.breakout is not None)
+        end = base.end_index
+    v = evaluate(candles, base, rs, trend_passed, vcp_cfg, end=end)
+    if not v.qualifies:
+        res.stage, res.reason = None, "not a VCP: " + "; ".join(v.fails)
+    return res, v.to_dict()
