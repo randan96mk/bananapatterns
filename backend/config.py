@@ -8,7 +8,7 @@ section here for the screener dials using the same mechanism.
 
 import json
 import os
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -191,6 +191,30 @@ class AlertsConfig:
     job_time: str = "18:30"                # IST, trading days
     reminder_time: str = "15:30"           # IST: remind if today's Kite login is missing
     universe_refresh_weekday: int = 6      # 0=Mon ... 6=Sun; weekly universe + holiday refresh
+    # Kite login links (Telegram button). Tokens die at 06:00 IST, so a login only lasts the day if made after it.
+    login_links: bool = True
+    login_times: list = field(default_factory=lambda: ["06:01", "08:45"])   # IST, each >= 06:00; sent if not logged in
+    login_heads_up: bool = False           # "session ends at 06:00" note while a token is still active
+    login_heads_up_time: str = "05:45"
+    login_every_day: bool = False          # also on weekends / holidays
+    login_check_min: int = 30              # ask Kite every N min whether the session is still accepted
+
+
+TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time")
+
+
+def check_alert_times(sec: "AlertsConfig") -> None:
+    """HH:MM everywhere; login link times must be from 06:00 (an earlier login dies at 06:00)."""
+    def parse(v):
+        h, _, m = str(v).partition(":")
+        if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+            raise ValueError(f"time {v!r} must be HH:MM")
+        return int(h), int(m)
+    for f in TIME_FIELDS:
+        parse(getattr(sec, f))
+    for t in sec.login_times:
+        if parse(t) < (6, 0):
+            raise ValueError(f"login time {t} is before 06:00: a session from then dies at 06:00")
 
 
 # Sections persisted to the DB and editable at runtime.
@@ -217,6 +241,7 @@ class AppConfig:
     def update_section(self, name: str, values: dict) -> dict:
         """Apply known keys with type coercion; unknown keys raise ValueError."""
         sec = self.section(name)
+        before = replace(sec)
         known = {f.name: f for f in fields(sec)}
         unknown = set(values) - set(known)
         if unknown:
@@ -238,6 +263,13 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
+        if name == "alerts":
+            try:
+                check_alert_times(sec)
+            except ValueError:
+                for key in values:                       # roll back this update
+                    setattr(sec, key, getattr(before, key))
+                raise
         return asdict(sec)
 
 

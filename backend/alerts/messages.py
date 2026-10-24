@@ -1,5 +1,6 @@
 """Telegram message text (HTML parse mode). Every value is escaped."""
 
+from datetime import datetime
 from html import escape
 from typing import Optional
 
@@ -105,3 +106,30 @@ def digest(screen: str, as_of: str, counts: dict, moves: list[dict], fresh_sessi
 
 def system_alert(text: str) -> str:
     return f"{ICONS['system']} {escape(text)}"
+
+
+LOGIN_WHY = {
+    "new_day": "New Kite day: yesterday's session ended at 06:00.",
+    "still_needed": "Still not logged in. Intraday alerts start 09:20; the evening scan needs it too.",
+    "evening": "Kite login needed for today's evening scan.",
+    "revoked": "Kite rejected the current session (logged out or revoked).",
+    "requested": "Login link as requested.",
+}
+
+
+def login_link_alert(reason: str, expires: datetime) -> str:
+    return (f"🔑 <b>Kite login needed</b>\n{escape(LOGIN_WHY.get(reason, reason))}\n"
+            f"Tap <b>Log in to Kite</b>: works once, until {expires:%H:%M}. "
+            "Gives a fresh session until 06:00 tomorrow (Banana Patterns + AlgoTrade).")
+
+
+def login_heads_up(first_slot: str) -> str:
+    return f"⏰ <b>Kite session ends at 06:00</b>\nYour login link comes at {escape(first_slot)}."
+
+
+def login_ok_alert(expires: datetime, handover: dict) -> str:
+    lines = [f"✅ <b>Kite connected</b> · valid until {expires:%H:%M %d %b}"]
+    if handover.get("configured"):
+        lines.append("AlgoTrade: ✓ token updated" if handover["ok"]
+                     else f"AlgoTrade: ✗ not updated ({escape(handover['message'])})")
+    return "\n".join(lines)

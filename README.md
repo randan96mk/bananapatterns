@@ -135,6 +135,8 @@ bananapatterns/
 │  │  ├─ decision.py          decision chart: numbered markers + verdict/checklist/levels panel, message lines
 │  │  ├─ messages.py          alert / digest text (HTML, escaped, chunked)
 │  │  ├─ dispatch.py          scan -> alerts, sent once (sent_alerts)
+│  │  ├─ login.py             Kite login-link alert, session check (profile), login confirmation
+│  │  ├─ commands.py          Telegram /login and /status (long-poll getUpdates, own chat only)
 │  │  └─ jobs.py              scheduler: login reminder, evening job, intraday heads-up, weekly refresh
 │  └─ engine/
 │     ├─ indicators.py        causal SMA, trailing stats
@@ -215,6 +217,12 @@ SQLite in WAL mode at `data/bananapatterns.db` (override with `BP_DB_PATH`).
   `generate_session(request_token, api_secret)` → token stored with its issue time → redirect to the dashboard.
   Manual alternative: paste a token in the top bar (`POST /api/kite/token`). TOTP or credential login is
   deliberately **not automated**.
+- **Shared with AlgoTrade-v3:** both use one Kite app, which has one redirect URL and one active token
+  (a new login replaces the previous token). Banana Patterns owns the redirect URL and, after every login,
+  passes the token to AlgoTrade's existing `POST /api/kite/token` (`ALGOTRADE_URL`), so one login a day
+  serves both. Run AlgoTrade on another port (its `backend_port`, e.g. 8001). A login started from
+  AlgoTrade's dashboard also lands here and is handed over.
+- **Login from Telegram:** see [Kite login link](#kite-login-link).
 - **Rate limits:** historical API 3 req/s (shared bucket; capacity 1, so calls are spaced evenly);
   other endpoints are limited to 5 req/s here (Kite allows 10). Kite allows 2,000 days per `day` call.
 - **Static IP** (SEBI retail-algo framework, Apr 2026) applies only to order endpoints, so this
@@ -449,6 +457,37 @@ off by default. Choose which alert kinds get images in **Alerts → Decision cha
 still go out. On any stock chart, **Preview alert chart** shows the exact image (auto-picks the kind from the stock's
 current stage, or choose one). These are the screen's rules, not advice.
 
+### Kite login link
+
+Kite sessions end at **06:00 IST** whatever time you log in, so a session that lasts the day can only
+start after 06:00. The bot sends a **🔑 Log in to Kite** button. Tap it on the Mac or phone, log in on Zerodha's
+page, and the token is saved (and handed to AlgoTrade). You get a "✅ Kite connected" page and a Telegram
+confirmation.
+
+| When (IST, trading days) | Sent if |
+|---|---|
+| 05:45 heads-up "session ends at 06:00" *(off by default)* | a token is active |
+| 06:01 link: "new Kite day" | Kite doesn't accept a session |
+| 08:45 link: "still not logged in" | the 06:01 link wasn't used |
+| 15:30 reminder and the 18:30 evening job | still no login (now with the link) |
+| any time 06:00–23:00 (checked every 30 min) | Kite rejects the held session (logged out / revoked) |
+| `/login` to the bot, or **Send login link now** | on demand (`/status` shows the session) |
+
+- **Checked, not assumed:** before each link the app asks Kite (`profile`) whether the session works. A
+  network error doesn't count as logged out.
+- **Mac asleep:** missed times catch up as **one** link when the app wakes.
+- **Safe links:** each works once, for 15 minutes; a newer link cancels older ones (a stale button shows
+  "link expired"). It's the normal Kite URL plus `redirect_params=n=<one-time code>`, checked on the way back.
+  Only your chat's `/login` is answered.
+- **From a phone:** Kite returns to the redirect URL registered on the Kite developer console, so that
+  address must be reachable from the phone. On the Mac alone it is `http://127.0.0.1:8000/…` (links work on
+  the Mac only). With Tailscale or the cloud deployment, set `PUBLIC_BASE_URL`, then copy the URL shown in
+  **Alerts → Kite login link** into the Kite console. Set `BP_DASHBOARD_PASSWORD` whenever the app is
+  reachable from outside: the dashboard then asks for it, while Telegram links prove themselves with
+  their one-time code.
+- Settings: `login_links`, `login_times`, `login_heads_up`, `login_heads_up_time`, `login_every_day`,
+  `login_check_min`.
+
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
 | Job | When | What |
@@ -457,6 +496,7 @@ current stage, or choose one). These are the screen's rules, not advice.
 | Evening job | trading days from 18:30 | sync candles → scan → alerts. Without a login it alerts once and retries every 15 min until 23:00; if Kite has no bar for today yet it retries every 30 min until 22:30 ("no session" after). Catches up if the app is opened later that evening. |
 | Intraday heads-up | trading days 09:20–15:25, every 5 min | one Kite quote call for the Forming names (quote API 1 req/s) |
 | Weekly refresh | Sundays from 10:00 | NSE holiday list + Nifty 500 refresh, index-change alert |
+| Kite login links | 06:01 / 08:45, session check every 30 min | see [Kite login link](#kite-login-link) |
 
 Trading days = weekdays minus NSE equity holidays (`config/nse_holidays.json`, the official NSE holiday-master list,
 refreshed weekly; special sessions such as Diwali Muhurat are handled by checking that Kite returned a bar).
@@ -480,7 +520,7 @@ Interactive docs: http://localhost:8000/docs
 |---|---|---|
 | GET | `/health` | liveness |
 | GET | `/api/kite/login-url` | Kite login URL (400 if keys missing) |
-| GET | `/api/kite/callback` | OAuth redirect target; stores token, redirects to dashboard |
+| GET | `/api/kite/callback` | OAuth redirect target; stores the token, hands it to AlgoTrade, confirms in Telegram. With `n` (Telegram link) the one-time code must be valid and a phone page is shown; without it, redirects to the dashboard |
 | POST | `/api/kite/token` | `{access_token}`: store a token obtained elsewhere |
 | GET | `/api/kite/status?verify=true` | token state, `expires_at`, `needs_login`; `verify` calls `profile()` |
 | GET/PUT | `/api/config/{section}` | read / update a config section (`ingest` now, `vcp` in Phase 2) |
@@ -497,6 +537,7 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/alerts/test` | send a test message |
 | GET | `/api/alerts/bot` | check the bot token with Telegram (getMe), no message sent |
 | POST | `/api/alerts/sample` | `{kind: all \| breakout \| near_pivot \| forming \| below_pivot \| played_out \| intraday \| digest \| system}`: send TEST samples |
+| POST | `/api/alerts/login-link` | send a one-time Kite login link to Telegram now |
 | GET | `/api/alerts/log` | sent / failed alerts |
 | GET | `/api/jobs` | automatic job history and schedule |
 | POST | `/api/jobs/{eod,intraday,weekly,reminder}/run` | run a job now (evening job forced even on a non-trading day) |
@@ -530,7 +571,10 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 **`.env`** (never committed): `KITE_API_KEY`, `KITE_API_SECRET`, optional `KITE_ACCESS_TOKEN`,
 `TELEGRAM_BOT_TOKEN` (alerts), optional `TELEGRAM_CHAT_ID`, `BP_NO_SCHEDULER=1` (disable automatic jobs),
 `KITE_REDIRECT_URL` (default `http://localhost:8000/api/kite/callback`), optional `BP_DB_PATH`,
-`BP_DEV=1` (reload), `BP_FRONTEND_URL` (post-login redirect target).
+`BP_DEV=1` (reload), `BP_FRONTEND_URL` (post-login redirect target),
+`PUBLIC_BASE_URL` (address Kite redirects to: Tailscale or cloud; default from `KITE_REDIRECT_URL`),
+`ALGOTRADE_URL` (hand each login's token to AlgoTrade-v3, e.g. `http://127.0.0.1:8001`),
+`BP_DASHBOARD_PASSWORD` (password for the dashboard; set it before exposing the app beyond the Mac).
 
 **Runtime dials:** edited in **Settings**, saved in `app_settings`, applied without a restart.
 
@@ -605,6 +649,9 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `job_enabled` / `job_time` / `reminder_time` | true / 18:30 / 15:30 | evening job and login reminder (IST) |
 | `intraday_start` / `intraday_end` / `intraday_interval_min` | 09:20 / 15:25 / 5 | intraday heads-up window |
 | `universe_refresh_weekday` | 6 (Sunday) | weekly refresh day |
+| `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
+| `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
+| `login_every_day` / `login_check_min` | false / 30 | weekends + holidays too / session check interval |
 
 ---
 
@@ -704,6 +751,12 @@ Scheduler (APScheduler in-process, or launchd so it survives restarts) around 18
 days: sync → scan → persist results and diffs. NSE holiday calendar. Alert when the day's Kite login is
 missing. Optional NSE CM-UDiFF bhavcopy cross-check later in the evening (unadjusted, so compare
 only on days without corporate actions). Note: a sleeping Mac will not run jobs (`pmset` wake schedule or keep awake).
+
+### Next: cloud deployment
+Run the app on a small always-on server (e.g. Oracle Cloud Always Free) with HTTPS, so login links work from
+any device and jobs run with the Mac off. `PUBLIC_BASE_URL`, `BP_DASHBOARD_PASSWORD` and the login links are
+ready for it. If AlgoTrade-v3 stays on the Mac, it will need to fetch the token from Banana Patterns instead
+of receiving it (a small change in that repo).
 
 ### Later (only after approval)
 - **Market context:** breadth, sector rotation, industry map, all breakouts today, regime filter
@@ -876,3 +929,14 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 - Settings `chart_kinds`, `buy_zone_pct`, `capital`, `risk_pct`. Dashboard **Preview alert chart** button +
   `/api/stock/{symbol}/alert-chart.png`.
 - 105 offline tests passing.
+
+### 2026-10-24: Kite login link in Telegram
+- One-time login links (`backend/kite_api/login_link.py`, table `login_links`): Kite's `redirect_params`
+  carries a nonce; links work once for 15 minutes and a newer link supersedes older ones.
+- Schedule: 06:01 and 08:45 links when Kite doesn't accept a session (missed slots catch up as one), an optional
+  05:45 heads-up, a session check every 30 min, and links in the 15:30 reminder and the evening job.
+- The token is handed to AlgoTrade-v3 (`ALGOTRADE_URL`, its existing `POST /api/kite/token`), since both share one
+  Kite app. Telegram confirms the login and the handover.
+- Bot commands `/login`, `/status`. `PUBLIC_BASE_URL` for phone / cloud use, `BP_DASHBOARD_PASSWORD` (HTTP Basic).
+  Alerts → Kite login link panel.
+- 126 offline tests passing.

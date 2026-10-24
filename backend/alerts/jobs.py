@@ -9,6 +9,10 @@
             the price trades above the pivot (unconfirmed until the close)
   weekly    universe_refresh_weekday from 10:00: NSE holiday list + Nifty 500 refresh,
             alert on index additions/removals
+  login     each of login_times (06:01, 08:45): if Kite doesn't accept a session, send a
+            one-time login link (missed slots catch up as one link when the app wakes)
+  login_headsup  optional, login_heads_up_time (05:45) while a token is active: "ends at 06:00"
+  login_check    every login_check_min from 06:00 to 23:00: a rejected session -> link at once
 A sleeping Mac or a closed app runs nothing; the eod job catches up when the app is
 opened later the same evening.
 """
@@ -20,10 +24,12 @@ from typing import Callable, Optional
 
 from backend.alerts import messages as msg
 from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
+from backend.alerts.login import send_login_link, session_ok
 from backend.config import IST, AlertsConfig
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
 from backend.ingest import holidays as hol
 from backend.ingest import universe as uni
+from backend.kite_api.auth import EXPIRY_TIME
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("jobs")
@@ -37,11 +43,20 @@ def hm(s: str) -> time:
     return time(int(h), int(m))
 
 
+def login_slots_due(now: datetime, cfg: AlertsConfig, done_today: set, day_ok: bool) -> list[str]:
+    """Login-link times that have passed today and weren't handled yet (earliest first)."""
+    if not (cfg.login_links and day_ok):
+        return []
+    return sorted((s for s in cfg.login_times if hm(s) <= now.time() and f"login@{s}" not in done_today), key=hm)
+
+
 def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
-             last_intraday: Optional[datetime] = None, not_before: Optional[dict] = None) -> list[str]:
+             last_intraday: Optional[datetime] = None, not_before: Optional[dict] = None,
+             last_login_check: Optional[datetime] = None) -> list[str]:
     """Which jobs should run at `now` (pure; used by the loop and the tests)."""
     t, nb = now.time(), not_before or {}
     jobs = []
+    login_day = trading or cfg.login_every_day
 
     def ready(job):
         return job not in done_today and (job not in nb or now >= nb[job])
@@ -55,6 +70,14 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
         jobs.append("intraday")
     if now.weekday() == cfg.universe_refresh_weekday and ready("weekly") and t >= time(10, 0):
         jobs.append("weekly")
+    if login_slots_due(now, cfg, done_today, login_day):
+        jobs.append("login")
+    if (cfg.login_links and cfg.login_heads_up and login_day and ready("login_headsup")
+            and hm(cfg.login_heads_up_time) <= t < EXPIRY_TIME):
+        jobs.append("login_headsup")
+    if (cfg.login_links and login_day and EXPIRY_TIME <= t < time(23, 0) and "login" not in jobs
+            and (last_login_check is None or now - last_login_check >= timedelta(minutes=cfg.login_check_min))):
+        jobs.append("login_check")
     return jobs
 
 
@@ -74,6 +97,7 @@ class Scheduler:
         self.clock = clock
         self.notifier_factory = notifier_factory or Notifier
         self.last_intraday: Optional[datetime] = None
+        self.last_login_check: Optional[datetime] = None
         self.not_before: dict[str, datetime] = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -100,7 +124,7 @@ class Scheduler:
         now = now or self.clock()
         today = now.date()
         jobs = due_jobs(now, self.state.config.alerts, self.done_today(today), hol.is_trading_day(today),
-                        self.last_intraday, self.not_before)
+                        self.last_intraday, self.not_before, self.last_login_check)
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -134,10 +158,51 @@ class Scheduler:
         if self.state.token_valid():
             self.record("reminder", today, "ok", "Kite login present", started)
             return
-        self.notifier().system(f"{today}|login-reminder",
-                               f"Kite login needed for today's {self.state.config.alerts.job_time} evening scan "
-                               "(tokens expire 06:00 IST). Open the dashboard and log in.")
+        self._login_needed(f"{today}|login-reminder", now,
+                           f"Kite login needed for today's {self.state.config.alerts.job_time} evening scan "
+                           "(tokens expire 06:00 IST). Open the dashboard and log in.")
         self.record("reminder", today, "ok", "reminder sent", started)
+
+    def _login_needed(self, key: str, now: datetime, text: str, notifier: Optional[Notifier] = None) -> None:
+        """Evening-scan login nudge: a login link when possible, else the plain system alert."""
+        notifier = notifier or self.notifier()
+        if not (self.state.config.alerts.login_links and send_login_link(self.state, notifier, "evening", key, now)):
+            notifier.system(key, text)
+
+    def run_login(self, now: datetime) -> dict:
+        """Login-link slots: one link for all slots due now, unless Kite accepts the current session."""
+        today, started, cfg = now.date(), now_ist(), self.state.config.alerts
+        slots = login_slots_due(now, cfg, self.done_today(today), True)
+        if not slots:
+            return {"status": "none"}
+        self.last_login_check = now
+        if session_ok(self.state):
+            sent, note = False, "Kite session valid"
+        else:
+            first = min(cfg.login_times, key=hm)
+            sent = send_login_link(self.state, self.notifier(), "new_day" if first in slots else "still_needed",
+                                   f"{today}|login|{slots[-1]}", now)
+            note = "login link sent" if sent else "login needed; link not sent (Telegram or Kite keys not set)"
+        for s in slots:
+            self.record(f"login@{s}", today, "ok", note, started)
+        return {"status": "ok", "slots": slots, "sent": sent}
+
+    def run_login_headsup(self, now: datetime) -> dict:
+        today, started, cfg = now.date(), now_ist(), self.state.config.alerts
+        sent = False
+        if self.state.token_valid() and cfg.login_times:
+            sent = self.notifier().send(f"{today}|login-headsup", "login",
+                                        msg.login_heads_up(min(cfg.login_times, key=hm)))
+        self.record("login_headsup", today, "ok", "heads-up sent" if sent else "no active session", started)
+        return {"status": "ok", "sent": sent}
+
+    def run_login_check(self, now: datetime) -> dict:
+        """A held session that Kite now rejects (logged out / revoked) gets a link straight away."""
+        self.last_login_check = now
+        if not self.state.token_valid() or session_ok(self.state):
+            return {"status": "ok", "sent": False}
+        sent = send_login_link(self.state, self.notifier(), "revoked", f"{now.date()}|login|revoked|{now:%H:%M}", now)
+        return {"status": "revoked", "sent": sent}
 
     def run_eod(self, now: datetime, force: bool = False) -> dict:
         with self.lock:
@@ -149,8 +214,9 @@ class Scheduler:
             datetime.combine(today, time(22, 30), now.tzinfo)
         notifier = self.notifier()
         if not st.token_valid():
-            notifier.system(f"{today}|eod-login", "Evening job waiting: Kite login missing. Log in and it runs "
-                                                  "within 15 minutes (or press Run evening job now).")
+            self._login_needed(f"{today}|eod-login", now, "Evening job waiting: Kite login missing. Log in and it "
+                                                          "runs within 15 minutes (or press Run evening job now).",
+                               notifier)
             if now >= cutoff_login and not force:
                 self.record("eod", today, "failed", "no Kite login by 23:00", started)
             else:
