@@ -5,6 +5,7 @@ limit), retried on 429 (honouring retry_after) and 5xx / network errors.
 The token comes from TELEGRAM_BOT_TOKEN in .env and is never logged.
 """
 
+import json
 import os
 import time
 from typing import Callable, Optional
@@ -76,9 +77,19 @@ class TelegramClient:
     def get_me(self) -> dict:
         return self._call("getMe")
 
-    def send_message(self, chat_id: str, html: str) -> dict:
-        return self._call("sendMessage", {"chat_id": chat_id, "text": html[:MAX_TEXT], "parse_mode": "HTML",
-                                          "disable_web_page_preview": "true"})
+    def send_message(self, chat_id: str, html: str, buttons: Optional[list[tuple[str, str]]] = None) -> dict:
+        """buttons: [(label, https URL)], shown as one row of link buttons under the message."""
+        data = {"chat_id": chat_id, "text": html[:MAX_TEXT], "parse_mode": "HTML", "disable_web_page_preview": "true"}
+        if buttons:
+            data["reply_markup"] = json.dumps({"inline_keyboard": [[{"text": t, "url": u} for t, u in buttons]]})
+        return self._call("sendMessage", data)
+
+    def get_updates(self, offset: Optional[int] = None, timeout: int = 20) -> list[dict]:
+        """New messages to the bot (long poll up to `timeout` s). Pass offset = last update_id + 1."""
+        data = {"timeout": str(timeout), "allowed_updates": '["message"]'}
+        if offset is not None:
+            data["offset"] = str(offset)
+        return self._call("getUpdates", data) or []
 
     def send_photo(self, chat_id: str, png: bytes, caption_html: str) -> dict:
         return self._call("sendPhoto", {"chat_id": chat_id, "caption": caption_html[:MAX_CAPTION],

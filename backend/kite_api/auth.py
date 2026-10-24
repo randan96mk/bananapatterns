@@ -2,7 +2,8 @@
 
 A Kite access token is valid until 06:00 IST the next morning (not midnight),
 and only one token per app is active: logging in here also invalidates the
-token AlgoTrade-v3 holds if both share the API key.
+token AlgoTrade-v3 holds if both share the API key, so a login here is handed
+on to AlgoTrade (see login_link.hand_over).
 """
 
 from datetime import datetime, time, timedelta
@@ -55,3 +56,8 @@ def load_token(conn) -> tuple[Optional[str], Optional[datetime]]:
 def load_fresh_token(conn, now: Optional[datetime] = None) -> Optional[str]:
     token, issued = load_token(conn)
     return token if token and is_fresh(issued, now) else None
+
+
+def clear_token(conn) -> None:
+    """Forget the stored token (Kite rejected it)."""
+    set_setting(conn, KEY_TOKEN, "")

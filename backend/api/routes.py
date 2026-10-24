@@ -3,12 +3,14 @@
 import json
 import os
 import threading
+import uuid
 from dataclasses import asdict
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
@@ -18,7 +20,9 @@ from backend.engine.bases import detect_bases
 from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
 from backend.ingest import universe as uni
+from backend.api import security
 from backend.kite_api import auth
+from backend.kite_api import login_link as ll
 from backend.kite_api.client import KiteAuthError, KiteClient, KiteError
 from backend.logging_config.logger import setup_logger
 
@@ -104,20 +108,62 @@ def kite_login_url():
     return {"url": S().client.login_url()}
 
 
+def _page(title: str, body: str, status: int = 200) -> HTMLResponse:
+    """Small phone-friendly page for the end of a login."""
+    return HTMLResponse(
+        "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{escape(title)}</title><body style='font:17px system-ui;background:#0f1115;color:#e6e6e6;"
+        f"padding:28px;max-width:520px;margin:auto'><h2>{escape(title)}</h2>{body}</body>", status)
+
+
+LINK_REFUSED = {"unknown": "isn't valid", "used": "was already used", "superseded": "was replaced by a newer link",
+                "expired": "has expired (links work for 15 minutes)"}
+
+
 @router.get("/kite/callback")
-def kite_callback(request_token: str = Query(None), status: str = Query(None)):
+def kite_callback(request: Request, request_token: str = Query(None), status: str = Query(None),
+                  n: Optional[str] = Query(None)):
+    """Kite redirects here after login. With `n` (a Telegram link) the one-time nonce must be valid;
+    without it (dashboard / AlgoTrade login) the dashboard password applies when one is set."""
+    if n:
+        with get_db() as conn:
+            refused = ll.check_link(conn, n)
+        if refused:
+            return _page("Login link not usable", f"<p>This link {LINK_REFUSED[refused]}.</p>"
+                         "<p>Use the newest link in Telegram, or send <b>/login</b> to the bot.</p>", 400)
+    elif not security.authorised(request):
+        return security.challenge()
     if status == "failed" or not request_token:
-        return HTMLResponse("<h2>Kite login failed or was cancelled.</h2><a href='/'>Back</a>", 400)
+        return _page("Kite login failed or was cancelled", "<p>Try the link again.</p>", 400)
     try:
         data = S().client.generate_session(request_token)
     except KiteError as exc:
-        return HTMLResponse(f"<h2>Kite authentication failed</h2><p>{exc}</p>"
-                            "<p>Check KITE_API_KEY / KITE_API_SECRET in .env.</p><a href='/'>Back</a>", 400)
+        return _page("Kite authentication failed", f"<p>{escape(str(exc))}</p>"
+                     "<p>Check KITE_API_KEY / KITE_API_SECRET in .env.</p>", 400)
+    token = data["access_token"]
     with get_db() as conn:
-        auth.store_token(conn, data["access_token"])
+        issued = auth.store_token(conn, token)
+        if n:
+            ll.mark_used(conn, n)
+        handover = ll.hand_over(conn, token)
     S().token_source = "db"
-    target = os.getenv("BP_FRONTEND_URL") or ("/" if FRONTEND_BUILD.exists() else "http://localhost:3000/")
-    return RedirectResponse(f"{target}?kite=connected")
+    if handover["configured"] and not handover["ok"]:
+        logger.warning("AlgoTrade token handover failed: %s", handover["message"])
+    from backend.alerts.dispatch import Notifier
+    from backend.alerts.login import confirm_login
+    try:
+        confirm_login(Notifier(S().config.alerts), issued, handover)
+    except Exception:
+        logger.exception("Login confirmation alert failed")
+    if not n:
+        target = os.getenv("BP_FRONTEND_URL") or ("/" if FRONTEND_BUILD.exists() else "http://localhost:3000/")
+        return RedirectResponse(f"{target}?kite=connected")
+    algo = ""
+    if handover["configured"]:
+        algo = ("<p>AlgoTrade: ✓ token updated</p>" if handover["ok"]
+                else f"<p>AlgoTrade: ✗ not updated ({escape(handover['message'])})</p>")
+    return _page("✅ Kite connected", f"<p>Valid until {auth.expiry_for(issued):%H:%M, %d %b} (IST).</p>{algo}"
+                 "<p>You can close this page.</p>")
 
 
 class TokenRequest(BaseModel):
@@ -150,7 +196,12 @@ def kite_status(verify: bool = False):
         "needs_login": not valid,
         "login_url": st.client.login_url() if cfg.is_configured else None,
         "now": datetime.now(IST).isoformat(timespec="seconds"),
+        "redirect_url": ll.redirect_url(),
+        "algotrade_url": ll.algotrade_url() or None,
+        "password_set": bool(security.password()),
     }
+    with get_db() as conn:
+        out["last_handover"] = ll.last_handover(conn)
     if verify and valid:
         try:
             out["user_id"] = st.client.profile().get("user_id")
@@ -546,6 +597,21 @@ def alerts_sample(req: SampleRequest = SampleRequest()):
             "failed": sum(not r["ok"] for r in results)}
 
 
+@router.post("/alerts/login-link")
+def alerts_login_link():
+    """Send a one-time Kite login link to Telegram now."""
+    from backend.alerts.dispatch import Notifier
+    from backend.alerts.login import send_login_link
+    if not S().config.kite.is_configured:
+        raise HTTPException(400, "KITE_API_KEY / KITE_API_SECRET not set in .env")
+    notifier = Notifier(S().config.alerts)
+    if not notifier.ready:
+        raise HTTPException(400, "Telegram not ready: set the bot token and chat ID first")
+    if not send_login_link(S(), notifier, "requested", f"manual-login|{uuid.uuid4().hex}"):
+        raise HTTPException(502, "Telegram send failed: see the Sent-alerts log")
+    return {"status": "sent", "redirect_url": ll.redirect_url()}
+
+
 @router.get("/alerts/log")
 def alerts_log(limit: int = Query(100, le=500)):
     with get_db() as conn:
@@ -560,13 +626,14 @@ def jobs_list(limit: int = Query(50, le=500)):
         rows = [dict(r) for r in conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))]
     return {"runs": rows, "config": {k: getattr(S().config.alerts, k) for k in
                                      ("job_enabled", "job_time", "reminder_time", "intraday", "intraday_start",
-                                      "intraday_end", "intraday_interval_min", "universe_refresh_weekday")}}
+                                      "intraday_end", "intraday_interval_min", "universe_refresh_weekday",
+                                      "login_links", "login_times", "login_heads_up", "login_heads_up_time")}}
 
 
 @router.post("/jobs/{job}/run")
 def jobs_run(job: str):
     sch = S().scheduler
-    if sch is None or job not in ("eod", "intraday", "weekly", "reminder"):
+    if sch is None or job not in ("eod", "intraday", "weekly", "reminder", "login_check"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
     fn = (lambda: sch.run_eod(now, force=True)) if job == "eod" else (lambda: getattr(sch, f"run_{job}")(now))

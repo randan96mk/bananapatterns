@@ -45,13 +45,16 @@ class Notifier:
             row = conn.execute("SELECT ok FROM sent_alerts WHERE key = ?", (key,)).fetchone()
         return bool(row and row["ok"])
 
-    def send(self, key: str, kind: str, html: str, symbol: Optional[str] = None, png: Optional[bytes] = None) -> bool:
+    def send(self, key: str, kind: str, html: str, symbol: Optional[str] = None, png: Optional[bytes] = None,
+             buttons: Optional[list[tuple[str, str]]] = None) -> bool:
         if not self.ready or self.already_sent(key):
             return False
         ok, err = True, None
         try:
             if png:
                 self.client.send_photo(self.chat_id, png, html)
+            elif buttons:
+                self.client.send_message(self.chat_id, html, buttons)
             else:
                 self.client.send_message(self.chat_id, html)
         except TelegramError as exc:

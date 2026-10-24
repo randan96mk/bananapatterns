@@ -33,11 +33,14 @@ export default function AlertsPanel() {
   const [sampleKind, setSampleKind] = useState('all');
   const [sampleRes, setSampleRes] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [kite, setKite] = useState(null);
+  const [timesDraft, setTimesDraft] = useState(null);
 
   const load = useCallback(async () => {
     try {
       const [s, c, j, l] = await Promise.all([api.alertsStatus(), api.getConfig('alerts'), api.getJobs(), api.alertsLog()]);
       setSt(s); setCfg(c); setJobs(j); setLog(l);
+      api.kiteStatus().then(setKite).catch(() => {});
     } catch (e) { setMsg(e.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -116,6 +119,49 @@ export default function AlertsPanel() {
             {st.upcoming_holidays.length > 0 && ` · next holidays ${st.upcoming_holidays.map((h) => `${h.date} ${h.name}`).join(', ')}`}</span>
         </div>
       </div>
+
+      {kite && (
+        <div className="panel">
+          <div className="row"><h3>Kite login link</h3>
+            <button className="btn" disabled={!st.ready || !kite.api_key_configured}
+                    onClick={() => act(api.sendLoginLink, () => 'Login link sent: check Telegram')}>Send login link now</button>
+            <span className={`pill ${kite.has_token ? 'ok' : 'bad'}`}>{kite.has_token
+              ? `Session until ${kite.expires_at ? kite.expires_at.slice(11, 16) + ' ' + kite.expires_at.slice(5, 10) : '06:00'}` : 'No session'}</span>
+          </div>
+          <p className="muted small">Kite sessions end at 06:00 IST. The bot sends a one-time <b>Log in to Kite</b> button
+            (works once, 15 min) at each time below when Kite doesn't accept a session, checks every 30 min for a
+            logged-out session, and answers <code>/login</code> and <code>/status</code>.</p>
+          <div className="toggles">
+            <div>
+              <label className="toggle"><input type="checkbox" checked={cfg.login_links}
+                onChange={(e) => save({ login_links: e.target.checked })} /> 🔑 Login links on</label>
+              <label className="toggle"><input type="checkbox" checked={cfg.login_every_day}
+                onChange={(e) => save({ login_every_day: e.target.checked })} /> Also weekends / holidays</label>
+              <label className="toggle"><input type="checkbox" checked={cfg.login_heads_up}
+                onChange={(e) => save({ login_heads_up: e.target.checked })} /> ⏰ "Ends at 06:00" heads-up</label>
+            </div>
+            <div>
+              <label className="toggle field">Link times (IST, from 06:00)
+                <input style={{ width: '9em' }} value={timesDraft ?? cfg.login_times.join(', ')} onChange={(e) => setTimesDraft(e.target.value)}
+                       onBlur={(e) => { setTimesDraft(null); save({ login_times: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }); }} /></label>
+              <label className="toggle field">Heads-up at
+                <input value={cfg.login_heads_up_time} onChange={(e) => setCfg({ ...cfg, login_heads_up_time: e.target.value })}
+                       onBlur={(e) => save({ login_heads_up_time: e.target.value })} /></label>
+            </div>
+            <div className="small">
+              <div>Kite console redirect URL: <code>{kite.redirect_url}</code></div>
+              <div className="muted">Links open on your phone only if this address is reachable from it
+                (<code>PUBLIC_BASE_URL</code>: Tailscale or cloud).</div>
+              <div>AlgoTrade handover: {kite.algotrade_url
+                ? <>{kite.algotrade_url} {kite.last_handover && (kite.last_handover.ok
+                  ? <span className="up">✓ last {kite.last_handover.at?.slice(5, 16).replace('T', ' ')}</span>
+                  : <span className="down">✗ {kite.last_handover.message}</span>)}</>
+                : <span className="muted">off (set <code>ALGOTRADE_URL</code> in .env)</span>}</div>
+              <div>Dashboard password: {kite.password_set ? 'on' : <span className="muted">off (set{' '}
+                <code>BP_DASHBOARD_PASSWORD</code> before exposing the app)</span>}</div>
+            </div>
+          </div>
+        </div>)}
 
       <div className="panel">
         <h3>What to send</h3>
