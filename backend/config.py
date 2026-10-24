@@ -163,8 +163,12 @@ class AppConfig:
                 value = int(value)
             elif isinstance(current, float):
                 value = float(value)
-            elif isinstance(current, list) and not isinstance(value, list):
-                raise ValueError(f"{name}.{key} must be a list")
+            elif isinstance(current, list):
+                if not isinstance(value, list):
+                    raise ValueError(f"{name}.{key} must be a list")
+                kind = type(current[0]) if current else None
+                if kind in (int, float):                   # UI sends list items as text
+                    value = [kind(float(v)) if kind is int else float(v) for v in value]
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)

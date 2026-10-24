@@ -185,6 +185,9 @@ def universe_list():
     rows = []
     with get_db() as conn:
         status = {r["instrument_token"]: dict(r) for r in conn.execute("SELECT * FROM ingest_status")}
+        metrics = {r["symbol"]: dict(r) for r in conn.execute(
+            "SELECT symbol, rs, tt_passed, tt_of, industry_rank, industry_of FROM stock_metrics "
+            "WHERE as_of = (SELECT MAX(as_of) FROM stock_metrics)")}
         for item, kind in [(i, "index") for i in resolved["indices"]] + [(s, "stock") for s in resolved["stocks"]]:
             tok = item["instrument_token"]
             st = status.get(tok, {})
@@ -198,6 +201,9 @@ def universe_list():
                 "bars": st.get("bars", 0), "first_date": st.get("first_date"), "last_date": st.get("last_date"),
                 "close": close, "change_pct": round((close / prev - 1) * 100, 2) if close and prev else None,
                 "last_error": st.get("last_error"),
+                "rs": metrics.get(item["symbol"], {}).get("rs"),
+                "tt_passed": metrics.get(item["symbol"], {}).get("tt_passed"),
+                "tt_of": metrics.get(item["symbol"], {}).get("tt_of"),
             })
     return {"snapshot_date": resolved["snapshot_date"], "rows": rows,
             "unmatched": resolved["unmatched"], "excluded": resolved["excluded"],
@@ -230,6 +236,20 @@ def stock_candles(symbol: str, limit: int = Query(750, ge=1, le=5000)):
     return {"symbol": symbol, "instrument_token": row["instrument_token"], "segment": row["segment"],
             "company": meta.get("company"), "industry": meta.get("industry"), "series": meta.get("series"),
             "candles": candles}
+
+
+@router.get("/stock/{symbol}/metrics")
+def stock_metrics(symbol: str):
+    """Latest RS rating, industry rank and Trend Template checks (from the last scan)."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1",
+                           (symbol,)).fetchone()
+    if not row:
+        return {"symbol": symbol, "as_of": None}
+    payload = json.loads(row["payload"])
+    return {"symbol": symbol, "as_of": row["as_of"], "rs": row["rs"], "rs_score": row["rs_score"],
+            "industry": row["industry"], "industry_rank": row["industry_rank"], "industry_of": row["industry_of"],
+            "trend": payload["trend"]}
 
 
 @router.get("/stock/{symbol}/bases")

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 
 const COLS = [
   ['symbol', 'Symbol'], ['company', 'Company'], ['industry', 'Industry'], ['close', 'Close'],
-  ['change_pct', 'Chg %'], ['bars', 'Bars'], ['first_date', 'From'], ['last_date', 'To'],
+  ['change_pct', 'Chg %'], ['rs', 'RS'], ['tt_passed', 'Trend'], ['bars', 'Bars'], ['first_date', 'From'], ['last_date', 'To'],
 ];
 
 // Sortable/filterable list of the universe with data coverage per symbol.
@@ -72,6 +72,8 @@ export default function UniverseTable({ data, selected, onSelect }) {
                 <td className="num">{r.close?.toFixed(2)}</td>
                 <td className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>
                   {r.change_pct != null ? r.change_pct.toFixed(2) : ''}</td>
+                <td className="num">{r.rs ?? ''}</td>
+                <td className={`num ${r.tt_passed === r.tt_of && r.tt_of ? 'up' : ''}`}>{r.tt_of ? `${r.tt_passed}/${r.tt_of}` : ''}</td>
                 <td className={`num ${r.bars && r.bars < 260 ? 'warn' : ''}`}>{r.bars}</td>
                 <td>{r.first_date}</td><td>{r.last_date}</td>
               </tr>

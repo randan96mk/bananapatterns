@@ -5,6 +5,7 @@ import {
 import * as api from '../services/api';
 import { BasesPrimitive } from '../chart/basesPrimitive';
 import BaseCard from './BaseCard';
+import TrendPanel from './TrendPanel';
 
 function sma(candles, n) {
   const out = [];
@@ -24,6 +25,7 @@ export default function StockChart({ symbol, onClose }) {
   const box = useRef(null);
   const [info, setInfo] = useState(null);
   const [bases, setBases] = useState(null);
+  const [metrics, setMetrics] = useState(null);
   const [showBases, setShowBases] = useState(true);
   const [err, setErr] = useState('');
 
@@ -54,6 +56,8 @@ export default function StockChart({ symbol, onClose }) {
     let alive = true;
     setErr('');
     setBases(null);
+    setMetrics(null);
+    api.getMetrics(symbol).then((m) => alive && setMetrics(m)).catch(() => {});
     api.getCandles(symbol, 750).then(async (d) => {
       if (!alive) return;
       setInfo(d);
@@ -117,6 +121,7 @@ export default function StockChart({ symbol, onClose }) {
       </div>
       {err && <p className="warn">{err}</p>}
       <div ref={box} className="chart" />
+      <TrendPanel m={metrics} />
       {bases && <BaseCard latest={bases.latest} baseline={bases.config.vol_baseline} />}
     </div>
   );

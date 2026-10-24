@@ -39,10 +39,19 @@ const HELP = {
   trend_ma: 'All cards: close above this SMA (0 = off)',
   min_turnover_cr: 'All cards: median daily turnover at least this (Rs crore)',
   turnover_window: 'Sessions for the median turnover',
+  // trend (RS + Trend Template)
+  rs_weights: 'RS weights for the periods below, one per line (default 0.4, 0.2, 0.2, 0.2)',
+  rs_periods: 'RS periods in sessions, one per line (63, 126, 189, 252 = 3/6/9/12 months)',
+  rs_min_bars: 'Minimum history for an RS rating',
+  ma_fast: 'Fast SMA (50)', ma_mid: 'Mid SMA (150)', ma_slow: 'Slow SMA (200)',
+  slow_rising_bars: 'Slow SMA must be higher than this many sessions ago (21 = ~1 month; 63 is stricter)',
+  min_above_low52: 'Close at least this far above the 52-week low (0.30 = 30%)',
+  max_below_high52: 'Close within this much of the 52-week high (0.25 = 25%)',
+  min_rs: 'Minimum RS rating for the Trend Template',
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['screen', 'bases', 'ingest'];
+const SECTIONS = ['screen', 'bases', 'trend', 'ingest'];
 
 // Generic editor for persisted config sections (bases, ingest; vcp next).
 export default function SettingsPanel() {
