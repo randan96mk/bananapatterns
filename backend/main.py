@@ -1,6 +1,7 @@
 """FastAPI application: lifespan, CORS, routes, optional static frontend."""
 
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,9 +44,24 @@ def build_state() -> AppState:
     return state
 
 
+def _scan_if_behind(state: AppState) -> None:
+    """Refresh the stage board on startup when candles are newer than the last scan."""
+    try:
+        with get_db() as conn:
+            latest_bar = conn.execute("SELECT MAX(last_date) FROM ingest_status").fetchone()[0]
+            last_scan = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        if latest_bar and (last_scan is None or latest_bar > last_scan):
+            logger.info("Stage board behind data (%s < %s): scanning", last_scan, latest_bar)
+            state.scan()
+    except Exception:
+        logger.exception("Startup scan failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    set_state(build_state())
+    state = build_state()
+    set_state(state)
+    threading.Thread(target=_scan_if_behind, args=(state,), name="startup-scan", daemon=True).start()
     logger.info("Banana Patterns backend ready")
     yield
     logger.info("Banana Patterns backend stopped")

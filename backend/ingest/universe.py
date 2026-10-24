@@ -123,7 +123,8 @@ def resolve_universe(cfg: IngestConfig, index_name: str = INDEX_NAME) -> dict:
         stocks, unmatched, excluded = [], [], []
         series_ok = {s.upper() for s in cfg.include_series}
         for m in members:
-            if (m.get("series") or "EQ").upper() not in series_ok:
+            if m["symbol"].upper().startswith("DUMMY") or (m.get("series") or "EQ").upper() not in series_ok:
+                # DUMMY*: NSE placeholder rows in index files, not stocks
                 excluded.append(m["symbol"])
                 continue
             inst = None

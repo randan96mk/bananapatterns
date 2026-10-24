@@ -1,5 +1,6 @@
 """REST API: Kite auth, config, universe, ingest jobs, candles, logs."""
 
+import json
 import os
 import threading
 from dataclasses import asdict
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
 from backend.database.models import get_candles, get_db, get_logs, get_runs, latest_universe
 from backend.engine.bases import detect_bases
+from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
 from backend.ingest import universe as uni
 from backend.kite_api import auth
@@ -34,6 +36,13 @@ class AppState:
         self.worker: Optional[threading.Thread] = None
         # "db" = from browser login / POST token (expiry known), "env" = KITE_ACCESS_TOKEN, None = no token
         self.token_source: Optional[str] = None
+        self.scan_lock = threading.Lock()
+
+    def scan(self) -> dict:
+        """Run the stage scan over the resolved universe (serialised)."""
+        with self.scan_lock:
+            stocks = uni.resolve_universe(self.config.ingest)["stocks"]
+            return run_scan(self.config.bases, self.config.screen, stocks)
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
@@ -256,7 +265,9 @@ def ingest_sync(req: SyncRequest = SyncRequest()):
 
     def work():
         try:
-            cd.run_sync(st.client, st.config.ingest, st.job, force_full=req.force_full, symbols=req.symbols)
+            snap = cd.run_sync(st.client, st.config.ingest, st.job, force_full=req.force_full, symbols=req.symbols)
+            if snap["status"] in ("ok", "partial"):
+                st.scan()                     # refresh the stage board on fresh data
         except Exception:
             logger.exception("Sync worker crashed")
 
@@ -276,6 +287,79 @@ def ingest_status():
     with get_db() as conn:
         runs = get_runs(conn, 10)
     return {"job": S().job.snapshot(), "runs": runs}
+
+
+# --- Screens (stage board) ---
+
+SCREENS = {"bases": "Bases: every base the engine finds (VCP screen comes next)"}
+STAGE_SORT = {
+    "forming": lambda p: (p["dist_to_pivot_pct"] or 0),
+    "fresh": lambda p: (p["sessions_since_breakout"] or 0, -(p["volume_ratio"] or 0)),   # newest first
+    "fresh_low_volume": lambda p: (p["sessions_since_breakout"] or 0, -(p["volume_ratio"] or 0)),
+    "climbing": lambda p: -(p["gain_from_pivot_pct"] or 0),
+    "played_out": lambda p: (p["ended_date"] or ""),
+}
+
+
+def _check_screen(screen: str) -> None:
+    if screen not in SCREENS:
+        raise HTTPException(404, f"Unknown screen; have {list(SCREENS)}")
+
+
+@router.post("/screens/scan")
+def screens_scan():
+    st = S()
+    if st.worker and st.worker.is_alive():
+        raise HTTPException(409, "A candle sync is running; the scan runs automatically when it finishes")
+    return st.scan()
+
+
+@router.get("/screens")
+def screens_list():
+    return [{"id": k, "description": v} for k, v in SCREENS.items()]
+
+
+@router.get("/screens/{screen}/summary")
+def screens_summary(screen: str):
+    _check_screen(screen)
+    with get_db() as conn:
+        run = conn.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
+        latest_bar = conn.execute("SELECT MAX(last_date) FROM ingest_status").fetchone()[0]
+        n_changes = conn.execute("SELECT COUNT(*) FROM scan_changes WHERE as_of = ?",
+                                 (run["as_of"],)).fetchone()[0] if run else 0
+    if not run:
+        return {"as_of": None, "counts": {}, "changes": 0, "latest_bar": latest_bar, "stale": bool(latest_bar)}
+    return {"as_of": run["as_of"], "ran_at": run["ran_at"], "scanned": run["scanned"],
+            "counts": json.loads(run["counts"]), "changes": n_changes, "latest_bar": latest_bar,
+            "stale": bool(latest_bar and latest_bar > run["as_of"]),
+            "fresh_sessions": S().config.screen.fresh_sessions}
+
+
+@router.get("/screens/{screen}/results")
+def screens_results(screen: str, stage: str = Query(...)):
+    _check_screen(screen)
+    if stage not in STAGE_SORT:
+        raise HTTPException(422, f"stage must be one of {list(STAGE_SORT)}")
+    with get_db() as conn:
+        as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        rows = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND stage = ?",
+                            (as_of, stage)).fetchall()
+    items = [json.loads(r["payload"]) for r in rows]
+    items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
+    return {"as_of": as_of, "stage": stage, "rows": items}
+
+
+@router.get("/changes")
+def changes(limit: int = Query(200, le=1000)):
+    with get_db() as conn:
+        as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        prev = conn.execute("SELECT MAX(as_of) FROM scan_runs WHERE as_of < ?", (as_of,)).fetchone()[0] \
+            if as_of else None
+        rows = conn.execute("SELECT symbol, kind, text, change_pct, close FROM scan_changes WHERE as_of = ? "
+                            "ORDER BY CASE kind WHEN 'breakout' THEN 0 WHEN 'below_pivot' THEN 1 "
+                            "WHEN 'played_out' THEN 2 WHEN 'forming' THEN 3 ELSE 4 END, symbol LIMIT ?",
+                            (as_of, limit)).fetchall()
+    return {"as_of": as_of, "previous_scan": prev, "rows": [dict(r) for r in rows]}
 
 
 # --- Logs ---

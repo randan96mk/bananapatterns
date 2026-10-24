@@ -104,6 +104,38 @@ CREATE TABLE IF NOT EXISTS ingest_status (
     updated_at TEXT NOT NULL
 );
 
+-- Stage of each stock per as-of date (rows only for stocks in some stage).
+CREATE TABLE IF NOT EXISTS scan_results (
+    as_of TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY (as_of, symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_stage ON scan_results(as_of, stage);
+
+-- What changed since the previous close (stage moves), per as-of date.
+CREATE TABLE IF NOT EXISTS scan_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL,
+    change_pct REAL,
+    close REAL
+);
+CREATE INDEX IF NOT EXISTS idx_changes_asof ON scan_changes(as_of);
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of TEXT NOT NULL,
+    ran_at TEXT NOT NULL,
+    scanned INTEGER NOT NULL,
+    stale INTEGER NOT NULL,
+    counts TEXT NOT NULL,
+    config TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

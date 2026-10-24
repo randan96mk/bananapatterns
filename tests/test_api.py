@@ -67,6 +67,16 @@ def test_callback_login_then_full_flow(api):
     assert len(tc.get("/api/stock/HFCL/candles?limit=5").json()["candles"]) == 5
     assert tc.get("/api/stock/NOPE/candles").status_code == 404
 
+    summ = tc.get("/api/screens/bases/summary").json()      # sync finished -> scan ran
+    assert summ["as_of"] == summ["latest_bar"] and summ["stale"] is False
+    assert set(summ["counts"]) >= {"forming", "fresh", "climbing", "played_out"}
+    for stage in ("forming", "fresh", "climbing", "played_out", "fresh_low_volume"):
+        assert tc.get(f"/api/screens/bases/results?stage={stage}").status_code == 200
+    assert tc.get("/api/screens/bases/results?stage=nope").status_code == 422
+    assert tc.get("/api/screens/vcp/summary").status_code == 404
+    assert tc.get("/api/changes").json()["as_of"] == summ["as_of"]
+    assert tc.post("/api/screens/scan").json()["as_of"] == summ["as_of"]
+
     b = tc.get("/api/stock/INFY/bases").json()
     assert b["as_of"] and isinstance(b["bases"], list) and b["config"]["min_base_bars"] == 5
     assert tc.get("/api/stock/NOPE/bases").status_code == 404

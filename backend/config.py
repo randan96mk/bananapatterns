@@ -99,8 +99,23 @@ class BaseConfig:
     dryup_lookback: int = 50               # bars before the base used for the volume dry-up ratio
 
 
+@dataclass
+class ScreenConfig:
+    """Stage-board dials (Forming / Fresh breakouts / Climbing / Played out)."""
+    min_forming_weeks: int = 3             # Forming: active base at least this long
+    max_dist_to_pivot: float = 0.05        # Forming: close within 5% under the pivot
+    fresh_sessions: int = 5                # Fresh: broke out within the last N sessions (incl. today)
+    require_volume: bool = True            # Fresh/Climbing need a volume-confirmed breakout (bases.bo_vol_mult)
+    played_out_ma: int = 50                # run ends on a close below this SMA (0 = off)
+    played_out_drop: float = 0.08          # run ends on a close this far below the pivot
+    played_out_window: int = 20            # Played out: run ended within the last N sessions
+    trend_ma: int = 200                    # all cards: close above this SMA (0 = off)
+    min_turnover_cr: float = 5.0           # all cards: median daily turnover (Rs crore) at least this
+    turnover_window: int = 50              # sessions for the median turnover
+
+
 # Sections persisted to the DB and editable at runtime.
-PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig}
+PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig}
 
 
 @dataclass
@@ -108,6 +123,7 @@ class AppConfig:
     kite: KiteConfig = field(default_factory=KiteConfig)
     ingest: IngestConfig = field(default_factory=IngestConfig)
     bases: BaseConfig = field(default_factory=BaseConfig)
+    screen: ScreenConfig = field(default_factory=ScreenConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
