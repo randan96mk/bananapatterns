@@ -8,7 +8,7 @@ A personal end-of-day screener for NSE stocks, modelled on the ideas behind
 > Nifty 500, backfill ~8 years of adjusted daily candles into SQLite and browse them in the dashboard.
 > Phase 2 so far: **base detection** (B1…Bn boxes, pivot, breakout markers, breakout card on every chart) and
 > the **stage board** home page (Forming / Fresh breakouts / Climbing / Played out + "what changed since last
-> close"). VCP contractions, RS rank, Trend Template and scoring are next. See [Roadmap](#roadmap) and [Development log](#development-log).
+> close"), and **RS rating + Trend Template** on every stock. The VCP screen (PR #4) and card view (PR #5) are next. See [Roadmap](#roadmap) and [Development log](#development-log).
 
 **Personal use only.** Screen-only mode: there is **no order or GTT code** in phases 1–4.
 This is not investment advice; neither this project nor bananapatterns.com is a SEBI-registered
@@ -27,15 +27,16 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 7. [Data pipeline](#data-pipeline)
 8. [Base detection (engine)](#base-detection-engine)
 9. [Stage board (Screens home)](#stage-board-screens-home)
-10. [REST API](#rest-api)
-11. [CLI](#cli)
-12. [Configuration](#configuration)
-13. [Frontend](#frontend)
-14. [Testing](#testing)
-15. [Troubleshooting](#troubleshooting)
-16. [Roadmap](#roadmap)
-17. [Decisions log](#decisions-log)
-18. [Development log](#development-log)
+10. [RS rating and Trend Template](#rs-rating-and-trend-template)
+11. [REST API](#rest-api)
+12. [CLI](#cli)
+13. [Configuration](#configuration)
+14. [Frontend](#frontend)
+15. [Testing](#testing)
+16. [Troubleshooting](#troubleshooting)
+17. [Roadmap](#roadmap)
+18. [Decisions log](#decisions-log)
+19. [Development log](#development-log)
 
 ---
 
@@ -127,15 +128,17 @@ bananapatterns/
 │     ├─ indicators.py        causal SMA, trailing stats
 │     ├─ bases.py             base (consolidation box) detector + breakout metrics
 │     ├─ stages.py            stage of a stock: forming / fresh / climbing / played_out
-│     ├─ scan.py              universe scan, what-changed feed, stores results
-│     └─ (next) rs, swings, trend_template, vcp, scoring
+│     ├─ rs.py                RS score/rating 1-99, industry ranks
+│     ├─ trend_template.py    Minervini Trend Template (8 checks)
+│     ├─ scan.py              universe scan, RS/trend metrics, what-changed feed, stores results
+│     └─ (next) swings, vcp, scoring
 ├─ scripts/sync.py            CLI over the same pipeline code
 ├─ tests/                     offline pytest suite with a fake Kite SDK
 ├─ frontend/
 │  ├─ vite.config.js          :3000, proxies /api → :8000, builds to frontend/build
 │  └─ src/App.jsx, App.css, services/api.js,
 │     chart/basesPrimitive.js (canvas plugin drawing base boxes),
-│     components/ScreensHome (stage board), StageList, KiteBar, UniverseTable, StockChart, BaseCard,
+│     components/ScreensHome (stage board), StageList, TrendPanel, KiteBar, UniverseTable, StockChart, BaseCard,
 │     DataPanel, SettingsPanel, LogsPanel
 ├─ config/                    optional local inputs (fallback Nifty 500 CSV)
 └─ data/  logs/               gitignored: SQLite DB, rotating log file
@@ -181,6 +184,7 @@ SQLite in WAL mode at `data/bananapatterns.db` (override with `BP_DB_PATH`).
 | `ingest_runs` | Per sync run: kind, status (`running/ok/partial/failed/aborted`), counts, message |
 | `scan_results` | **PK (as_of, symbol)**, stage, payload JSON (base, pivot, breakout, gains, reasons) |
 | `scan_changes` | per as-of date: symbol, kind (breakout / below_pivot / played_out / forming / left / climbing), sentence |
+| `stock_metrics` | **PK (as_of, symbol)**, rs, rs_score, industry, industry rank/of, Trend Template passed/of, payload (all 8 checks) |
 | `scan_runs` | per scan: as_of, ran_at, scanned, stale, counts per stage, dials used |
 | `app_settings` | key/value: `config.<section>` JSON, `kite_access_token`, `kite_token_issued_at` |
 | `system_logs` | WARNING+ log lines for the Logs tab |
@@ -322,6 +326,26 @@ Results are stored per as-of date (`scan_results`, `scan_changes`, `scan_runs`).
 **When it runs:** automatically after every candle sync, at backend startup when the board is older than the data,
 via **Rescan** (after changing dials), or with `python -m scripts.sync scan`.
 
+## RS rating and Trend Template
+
+Computed for **every** stock on each scan (`backend/engine/rs.py`, `backend/engine/trend_template.py`) and stored
+in `stock_metrics`. All dials are in **Settings → trend**.
+
+- **RS score** = 0.4·ROC(63) + 0.2·ROC(126) + 0.2·ROC(189) + 0.2·ROC(252), i.e. 3/6/9/12-month returns. This is the
+  community approximation of IBD's RS, not IBD's formula. Young listings with ≥ 63 bars use the periods they have,
+  with the weights renormalised.
+- **RS rating** = the score's percentile among all scored stocks that day, 1–99 (ties share a rating).
+  We rank against the Nifty 500, the site against ~5,000 stocks, so values differ (PNB: ours 76, site 71).
+- **Industry RS**: NSE industries (20) ranked by the median RS of their stocks, e.g. "Healthcare: 2nd of 20".
+  The site uses a finer industry map.
+- **Trend Template**: eight checks, each shown with its value: price above the 150- and 200-day; 150-day above 200-day;
+  200-day rising over `slow_rising_bars` (21); 50-day above 150 and 200; price above the 50-day; ≥ 30% above the
+  52-week low; within 25% of the 52-week high; RS ≥ `min_rs` (70). Too little history fails a check rather than
+  passing it.
+- **In the UI:** RS and Trend (x/8) columns in Universe and the stage lists (sortable by RS); the chart shows an RS pill,
+  industry rank, 52-week distances and the 8-check list.
+- On 23 Oct 2026 (2 years of public prices, local QA) 16 of 497 stocks passed all eight checks.
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs
@@ -342,6 +366,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/changes` | what changed since the last close (latest as-of date) |
+| GET | `/api/stock/{symbol}/metrics` | latest RS rating, industry rank, Trend Template checks |
 | GET | `/api/stock/{symbol}/bases?since=YYYY-MM-DD` | bases over full history (correct numbering), latest base, dials used |
 | POST | `/api/ingest/sync` | `{force_full?, symbols?}`: start background sync (409 if running, 401 if no token) |
 | POST | `/api/ingest/cancel` | stop after the current symbol |
@@ -389,9 +414,9 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 |---|---|---|
 | `pivot_basis` | close | pivot = highest close (matches site) or highest high |
 | `min_base_bars` / `max_base_bars` | 5 / 325 | base length limits in sessions |
-| `max_base_depth` | 0.25 | max drop from pivot to base low |
+| `max_base_depth` | 0.30 | max drop from pivot to base low |
 | `max_pivot_drift` | 0.03 | high basis only: wick drift allowed before it counts as a trend |
-| `prior_advance_bars` / `min_prior_advance` | 63 / 0.20 | required advance into the base |
+| `prior_advance_bars` / `min_prior_advance` | 63 / 0.10 | required advance into the base |
 | `reset_ma` / `reset_on_undercut` | 200 / true | base-count restart rules |
 | `vol_baseline` / `bo_vol_mult` | sma50 / 1.5 | breakout volume rule |
 | `weak_close_cir` | 0.5 | close-in-range below this = weak close |
@@ -407,6 +432,15 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `trend_ma` | 200 | all cards: close above this SMA |
 | `min_turnover_cr` / `turnover_window` | 5.0 / 50 | all cards: median turnover floor |
 
+| `trend.*` | Default | Meaning |
+|---|---|---|
+| `rs_weights` / `rs_periods` | 0.4, 0.2, 0.2, 0.2 / 63, 126, 189, 252 | RS score weights and periods (sessions) |
+| `rs_min_bars` | 63 | minimum history for an RS rating |
+| `ma_fast` / `ma_mid` / `ma_slow` | 50 / 150 / 200 | Trend Template SMAs |
+| `slow_rising_bars` | 21 | slow SMA rising over this many sessions (63 is stricter) |
+| `min_above_low52` / `max_below_high52` | 0.30 / 0.25 | 52-week low/high checks |
+| `min_rs` | 70 | RS check |
+
 ---
 
 ## Frontend
@@ -416,7 +450,7 @@ but keeps the same React stack as AlgoTrade-v3. The dev server is on :3000 with 
 `npm run build` writes `frontend/build`, which FastAPI serves at :8000.
 
 Tabs: **Screens** (home: stage board, see above), **Universe** (sortable/filterable table + chart), **Data** (refresh, sync, full refetch, progress,
-errors, run history), **Settings** (config sections `screen`, `bases` and `ingest`; `vcp` next), **Logs**.
+errors, run history), **Settings** (config sections `screen`, `bases`, `trend` and `ingest`; `vcp` next), **Logs**.
 
 The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay**:
 - base boxes drawn by a canvas plugin (`chart/basesPrimitive.js`, lightweight-charts v5 series primitive):
@@ -429,7 +463,7 @@ The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest          # 52 tests, offline, ~10 s
+.venv/bin/python -m pytest          # 58 tests, offline, ~10 s
 ```
 
 A `FakeKite` (tests/conftest.py) mimics the SDK, and each test gets its own temporary SQLite DB.
@@ -464,6 +498,9 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 Each phase is explained first, built after approval, and shown before the next one starts.
 
 ### Phase 2: VCP engine *(in progress)*
+- ✅ PR #3: RS rating, industry RS, Trend Template, base dials recalibrated against the site.
+- Next, PR #4: VCP screen (tightening, dry-up, U/D ratio, contractions, quality filter, scoring). Then PR #5:
+  card view with mini charts, a cards/list toggle, and contraction swings on the chart.
 - ✅ `engine/bases.py` + chart overlay + breakout card (base boxes, pivot, breakout markers): see
   [Base detection](#base-detection-engine).
 - `engine/indicators.py`: SMA 50/150/200, ATR%, 52-week high/low, volume SMA 50, median turnover.
@@ -530,6 +567,9 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 | 2026-10-24 | Home page = stage board (Forming / Fresh / Climbing / Played out + what-changed feed) for the base screen; VCP screen joins the selector next |
 | 2026-10-24 | Played out = close below the 50-day SMA or 8% under the pivot, shown for 20 sessions; low-volume breakouts listed but not counted |
 | 2026-10-24 | NSE `DUMMY*` placeholder rows in the index file are excluded from the universe |
+| 2026-10-24 | Remaining Phase 2 split into three PRs: #3 RS + Trend Template, #4 VCP screen, #5 card view |
+| 2026-10-24 | Base dials recalibrated to the site's VCP Forming bases: `max_base_depth` 0.30, `min_prior_advance` 0.10 |
+| 2026-10-24 | The site's Forming isn't "within 5% of pivot" (its names sit 9–21% under); the VCP screen will use a quality filter |
 | 2026-10-23 | `main` started with an initial `.gitignore` commit so Phase 1 can be reviewed as a PR into it |
 
 ## Development log
@@ -587,3 +627,18 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 - Bug caught by the screenshot: scan rows were stored without their symbol (empty column, rows not clickable).
   Fixed, with tests.
 - 52 offline tests passing.
+
+### 2026-10-24: Phase 2, step 3 (PR #3): RS rating and Trend Template
+- PR #2 merged. Gagan shared the site's VCP screen (Forming list with base depth, tightening, dry-up, now vs pivot,
+  U/D ratio, RS; Fresh list with NRL and ORIENTHOT). Agreed: build the rest of Phase 2 as three separate PRs.
+- Calibration on six of the site's eight VCP Forming names (BHAGERIA, SYNCOMF, BPLPHARMA, PREMEXPLN, TGVSL, PNB;
+  public prices, local only): with `max_base_depth` 0.30 and `min_prior_advance` 0.10 our latest base matches the site's
+  **pivot, base depth and distance under the pivot exactly on all six** (e.g. PNB: ₹132.36 pivot, 25.58%, −9.1%, a 40-week
+  base from 16 Jan). ORIENTHOT and NRL still match too. The site's tightening / dry-up / U-D formulas could not be
+  reproduced from ~60 candidates, so the VCP screen will use our own documented definitions.
+- Built `engine/rs.py`, `engine/trend_template.py`, a `trend` config section, the `stock_metrics` table,
+  `/api/stock/{symbol}/metrics`, RS/Trend columns and RS sort, and the trend panel on the chart. Config list values sent
+  as text from Settings are now coerced to numbers.
+- QA on 497 stocks: scan 3.5 s; PNB RS 76 (site 71, different universe); 16 stocks pass all 8 trend checks.
+- 58 offline tests passing.
+
