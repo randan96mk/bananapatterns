@@ -177,6 +177,16 @@ CREATE TABLE IF NOT EXISTS job_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs ON job_runs(job, run_date);
 
+-- One-time Kite login links (Telegram button / bot /login). A newer link from the same source supersedes older ones.
+CREATE TABLE IF NOT EXISTS login_links (
+    nonce TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    superseded INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

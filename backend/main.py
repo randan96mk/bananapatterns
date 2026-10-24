@@ -13,7 +13,9 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
+from backend.alerts.commands import BotCommands  # noqa: E402
 from backend.alerts.jobs import Scheduler  # noqa: E402
+from backend.api import security  # noqa: E402
 from backend.api.routes import AppState, router, set_state  # noqa: E402
 from backend.config import AppConfig, load_config  # noqa: E402
 from backend.database.models import get_db, init_db  # noqa: E402
@@ -64,15 +66,21 @@ async def lifespan(app: FastAPI):
     set_state(state)
     threading.Thread(target=_scan_if_behind, args=(state,), name="startup-scan", daemon=True).start()
     state.scheduler = Scheduler(state)
+    bot = BotCommands(state)
     if os.getenv("BP_NO_SCHEDULER") != "1":
-        state.scheduler.start()           # evening job, reminders, intraday heads-up, weekly refresh
+        state.scheduler.start()           # evening job, reminders, login links, intraday heads-up, weekly refresh
+        bot.start()                       # Telegram /login and /status
+    if security.password():
+        logger.info("Dashboard password on (BP_DASHBOARD_PASSWORD)")
     logger.info("Banana Patterns backend ready")
     yield
     state.scheduler.stop()
+    bot.stop()
     logger.info("Banana Patterns backend stopped")
 
 
 app = FastAPI(title="Banana Patterns (personal VCP screener)", version="0.1.0", lifespan=lifespan)
+app.middleware("http")(security.require_password)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8000"],

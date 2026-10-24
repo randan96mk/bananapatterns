@@ -35,6 +35,7 @@ export const alertChartUrl = (sym, kind = 'auto', stamp = 0) =>
 export const getVcp = (sym) => req('GET', `/api/stock/${encodeURIComponent(sym)}/vcp`);
 export const alertsStatus = () => req('GET', '/api/alerts/status');
 export const detectChat = () => req('POST', '/api/alerts/detect-chat');
+export const sendLoginLink = () => req('POST', '/api/alerts/login-link');
 export const testAlert = () => req('POST', '/api/alerts/test');
 export const checkBot = () => req('GET', '/api/alerts/bot');
 export const sampleAlert = (kind) => req('POST', '/api/alerts/sample', { kind });
