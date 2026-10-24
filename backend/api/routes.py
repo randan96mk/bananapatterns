@@ -537,6 +537,14 @@ def market_health(days: int = Query(60, ge=1, le=500)):
     return {"health": h, "previous": prev, "history": hist, "config": asdict(S().config.market)}
 
 
+@router.get("/plan")
+def daily_plan():
+    """The newest saved plan (tonight's ranked setups)."""
+    from backend.alerts import plan as pl
+    as_of, items = pl.latest_plan()
+    return {"as_of": as_of, "items": items}
+
+
 @router.get("/changes")
 def changes(screen: str = "bases", limit: int = Query(200, le=1000)):
     _check_screen(screen)
@@ -677,10 +685,12 @@ def jobs_list(limit: int = Query(50, le=500)):
 @router.post("/jobs/{job}/run")
 def jobs_run(job: str):
     sch = S().scheduler
-    if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check"):
+    if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check", "top_setups",
+                                    "morning_plan", "gap_check"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
-    fn = (lambda: sch.run_eod(now, force=True)) if job == "eod" else (lambda: getattr(sch, f"run_{job}")(now))
+    forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True)}
+    fn = forced.get(job) or (lambda: getattr(sch, f"run_{job}")(now))
 
     def work():
         try:

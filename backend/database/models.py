@@ -204,6 +204,13 @@ CREATE TABLE IF NOT EXISTS market_health (
     payload TEXT NOT NULL
 );
 
+-- Tonight's ranked setups for the next session (Top N message, morning plan, gap check).
+CREATE TABLE IF NOT EXISTS daily_plan (
+    as_of TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

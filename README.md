@@ -533,6 +533,20 @@ today's Nifty 500 move, and the digest has a fuller block.
 - Long photo captions are now split at a line break: the rest follows as a message, instead of being cut (which
   could break the HTML).
 
+### Daily plan: Top setups, morning plan, opening check
+
+`backend/alerts/plan.py`. After the evening scan, the Forming setups are ranked:
+rank = VCP score (or 0.6 × RS) − 2 per % under the pivot + 10 for an A setup + 8 when **coiled**. Coiled means the
+last bar is an NR7 (narrowest range of the last 7) or an inside day, on volume ≤ 0.5× average, within 3% of the pivot.
+
+| When (trading days) | Message |
+|---|---|
+| 19:00 (waits for the evening scan) | 🎯 Top 5 for the next session: trigger, buy zone, stop, size, tier, coiled; then a decision chart each. The list is saved (`daily_plan`) |
+| 08:50 | ☀️ Today's plan: market line and the saved triggers |
+| 09:10 | 🔔 Opening check for the plan names: ⛔ gapping above the buy zone (don't chase), 🟢 opening above the pivot, 🔻 below the stop (skip) |
+
+The Screens home shows the plan; Alerts → Daily plan has the switches and times, plus **Top setups now**.
+
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
 | Job | When | What |
@@ -579,6 +593,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
+| GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
 | POST | `/api/alerts/detect-chat` | read the bot's recent chats; saves the chat ID when there is exactly one |
@@ -703,6 +718,9 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `tiering` / `b_alerts` / `correction_mode` | true / digest / caution | A/B priority; B: digest, push or off; correction: caution or mute_buys |
 | `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
 | `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
+| `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
+| `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
+| `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
 | `login_every_day` / `login_check_min` | false / 30 | weekends + holidays too / session check interval |
@@ -1020,3 +1038,9 @@ of receiving it (a small change in that repo).
 - Screens home market card, A/B badges, Alerts → Priority settings, `/api/market/health`.
 - Photo captions over Telegram's limit are split at a line break, not cut.
 - 177 offline tests passing.
+
+### 2026-10-25: Daily plan
+- `backend/alerts/plan.py`: ranking with the A bonus and "coiled" (NR7 / inside day on dried-up volume near the
+  pivot), saved per scan in `daily_plan`. Jobs: Top N at 19:00 (after the evening scan), 08:50 morning plan,
+  09:10 opening (gap) check. Screens home plan panel, `/api/plan`, Alerts settings.
+- 190 offline tests passing.

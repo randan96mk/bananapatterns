@@ -256,3 +256,59 @@ def market_block(h: dict, prev: Optional[dict] = None) -> str:
         lines.append(f"Breakouts working: {bo['working']}/{bo['total']} from the last "
                      f"{h.get('windows', {}).get('breakouts', 20)} sessions")
     return "\n".join(lines)
+
+
+def _coil_text(c: Optional[dict]) -> str:
+    if not c:
+        return ""
+    day = "NR7" if c.get("nr7") else "inside day"
+    return f"🌀 coiled ({day}, volume {c['volume_x']:.2f}×)"
+
+
+def _plan_line(n: int, i: dict) -> str:
+    tag = {"A": "🅰️ ", "B": "🅱️ "}.get(i.get("tier"), "")
+    bits = [f"{n}. {tag}<b>{escape(i['symbol'])}</b> {escape(i.get('base_label') or '')}: close above "
+            f"<b>{rs(i['pivot'])}</b> ({i['dist_to_pivot_pct']:.1f}% away) · buy zone to {rs(i['zone_top'])} · "
+            f"stop {rs(i['stop'])}"]
+    if i.get("size"):
+        bits.append(f" · ~{i['size']['qty']} sh")
+    coil = _coil_text(i.get("coiled"))
+    return "".join(bits) + (f"\n    {coil}" if coil else "")
+
+
+def top_setups(items: list[dict], as_of: str) -> str:
+    lines = [f"🎯 <b>Top {len(items)} setups for the next session</b> (scan {escape(as_of)})"]
+    lines += [_plan_line(n, i) for n, i in enumerate(items, 1)]
+    lines.append("<i>A breakout counts on a close above the pivot on ≥ 1.5× volume. Charts follow.</i>")
+    return "\n".join(lines)
+
+
+def top_setup_caption(n: int, i: dict, ctx: Optional[dict] = None) -> str:
+    lines = [_plan_line(n, i)]
+    if ctx:
+        from backend.alerts.decision import decision_lines
+        lines += [escape(x) for x in decision_lines(ctx)]
+    return "\n".join(lines)
+
+
+def morning_plan(items: list[dict], plan_as_of: str, today: str) -> str:
+    lines = [f"☀️ <b>Today's plan</b> ({escape(today)}, from the {escape(plan_as_of)} scan)"]
+    if not items:
+        lines.append("No setups near a pivot today. Patience is a position.")
+    lines += [_plan_line(n, i) for n, i in enumerate(items, 1)]
+    lines.append("<i>Heads-up alerts from 09:20 when a name trades above its pivot; the 15:15 check says whether "
+                 "it's holding into the close.</i>")
+    return "\n".join(lines)
+
+
+GAP_TEXT = {"chase": "⛔ <b>{sym}</b> opening {rs_open}, {pct:+.1f}% over the pivot: beyond the buy zone. Don't chase.",
+            "above": "🟢 <b>{sym}</b> opening {rs_open}, {pct:+.1f}% over the pivot: watch whether it holds.",
+            "broken": "🔻 <b>{sym}</b> opening {rs_open}, below the stop {stop}: setup broken, skip it."}
+
+
+def gap_check(results: list[tuple[dict, float, str]]) -> str:
+    lines = ["🔔 <b>Opening check</b> (plan names)"]
+    for i, open_px, verdict in results:
+        lines.append(GAP_TEXT[verdict].format(sym=escape(i["symbol"]), rs_open=rs(open_px),
+                                              pct=(open_px / i["pivot"] - 1) * 100, stop=rs(i["stop"])))
+    return "\n".join(lines)
