@@ -74,9 +74,21 @@ def test_callback_login_then_full_flow(api):
         res = tc.get(f"/api/screens/bases/results?stage={stage}")
         assert res.status_code == 200 and all(r["symbol"] for r in res.json()["rows"])
     assert tc.get("/api/screens/bases/results?stage=nope").status_code == 422
-    assert tc.get("/api/screens/vcp/summary").status_code == 404
+    assert tc.get("/api/screens/nope/summary").status_code == 404
     assert tc.get("/api/changes").json()["as_of"] == summ["as_of"]
     assert tc.post("/api/screens/scan").json()["as_of"] == summ["as_of"]
+
+    m = tc.get("/api/stock/INFY/metrics").json()
+    assert m["as_of"] == summ["as_of"] and 1 <= m["rs"] <= 99 and len(m["trend"]["checks"]) == 8
+    assert tc.get("/api/stock/NOPE/metrics").json()["as_of"] is None
+    rows = tc.get("/api/universe").json()["rows"]
+    assert all(r["rs"] is not None for r in rows if r["kind"] == "stock")
+
+    v = tc.get("/api/stock/INFY/vcp").json()
+    assert v["vcp"] is None or {"qualifies", "fails", "contractions", "tightening"} <= set(v["vcp"])
+    vs = tc.get("/api/screens/vcp/summary").json()
+    assert vs["as_of"] == summ["as_of"] and set(vs["counts"]) >= {"forming", "fresh", "climbing", "played_out"}
+    assert tc.get("/api/changes?screen=vcp").json()["screen"] == "vcp"
 
     b = tc.get("/api/stock/INFY/bases").json()
     assert b["as_of"] and isinstance(b["bases"], list) and b["config"]["min_base_bars"] == 5
@@ -98,6 +110,9 @@ def test_config_roundtrip_and_validation(api):
     assert tc.put("/api/config/ingest", json={"history_years": 5}).json()["history_years"] == 5
     assert tc.get("/api/config/ingest").json()["history_years"] == 5
     assert tc.put("/api/config/ingest", json={"nope": 1}).status_code == 422
-    assert tc.get("/api/config/vcp").status_code == 404
+    assert tc.get("/api/config/nope").status_code == 404
+    t = tc.put("/api/config/trend", json={"min_rs": "80", "rs_weights": ["0.25", "0.25", "0.25", "0.25"],
+                                          "rs_periods": ["63", "126", "189", "252"]}).json()
+    assert t["min_rs"] == 80 and t["rs_weights"] == [0.25] * 4 and t["rs_periods"] == [63, 126, 189, 252]
     r = tc.put("/api/config/bases", json={"reset_on_undercut": "false", "vol_baseline": "median20"}).json()
     assert r["reset_on_undercut"] is False and r["vol_baseline"] == "median20"

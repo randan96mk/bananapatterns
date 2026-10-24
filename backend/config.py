@@ -85,11 +85,12 @@ class BaseConfig:
     pivot_basis: str = "close"             # pivot = highest "close" in the base (matches the site) or "high"
     min_base_bars: int = 5                 # 1 week; the site draws 1-2 week boxes (VCP screen will ask for more)
     max_base_bars: int = 325               # 65 weeks; longer ranges belong to the multi-year screen (later)
-    max_base_depth: float = 0.25           # (pivot - base low) / pivot; site boxes seen were <= ~19% deep
+    max_base_depth: float = 0.30           # (pivot - base low) / pivot; 0.30 + min_prior_advance 0.10 reproduce
+                                           # the site's VCP Forming bases (6/6 exact, 23 Oct 2026)
     max_pivot_drift: float = 0.03          # pivot_basis="high" only: wicks may lift the pivot this far above the
                                            # base's first high; beyond it the stock is grinding up (a trend)
     prior_advance_bars: int = 63           # look back this far for the advance into the base
-    min_prior_advance: float = 0.20        # base high >= 20% above the lowest low of that lookback
+    min_prior_advance: float = 0.10        # base high >= 10% above the lowest low of that lookback
     reset_ma: int = 200                    # a close below this SMA restarts the base count at B1 (0 = off)
     reset_on_undercut: bool = True         # a base low under the previous base low restarts the count
     vol_baseline: str = "sma50"            # breakout volume vs "sma50" (brief) or "median20" (site's card)
@@ -114,8 +115,55 @@ class ScreenConfig:
     turnover_window: int = 50              # sessions for the median turnover
 
 
+@dataclass
+class TrendConfig:
+    """RS rating and Minervini Trend Template dials."""
+    rs_weights: list = field(default_factory=lambda: [0.4, 0.2, 0.2, 0.2])   # weights for 3/6/9/12-month returns
+    rs_periods: list = field(default_factory=lambda: [63, 126, 189, 252])     # sessions per period
+    rs_min_bars: int = 63                  # fewer bars => no RS (weights renormalised over available periods)
+    ma_fast: int = 50
+    ma_mid: int = 150
+    ma_slow: int = 200
+    slow_rising_bars: int = 21             # 200-day SMA higher than this many sessions ago (21 ~ 1 month)
+    min_above_low52: float = 0.30          # close >= 30% above the 52-week low
+    max_below_high52: float = 0.25         # close within 25% of the 52-week high
+    min_rs: int = 70                       # RS rating at least this
+
+
+@dataclass
+class VcpConfig:
+    """VCP screen dials (classic Minervini VCP; metric definitions in backend/engine/vcp.py).
+
+    The site's own VCP list is looser (e.g. its latest pullback can be the deepest); relax
+    min_contractions / require_shrinking / max_final_contraction to approximate it.
+    """
+    max_depth: float = 0.30                # base depth (pivot -> base low)
+    min_weeks: int = 3                     # base at least this long
+    min_contractions: int = 2              # pullbacks inside the base (brief: 2-4, up to 6)
+    max_contractions: int = 6
+    require_shrinking: bool = True         # last contraction <= shrink x the largest earlier one
+    shrink: float = 0.8
+    max_final_contraction: float = 0.12    # last pullback at most 12% deep
+    max_tightening: float = 1.0            # ATR(recent) / base mean true range
+    max_dryup: float = 0.85                # recent volume / volume before the base
+    min_rs: int = 70
+    min_trend_checks: int = 5              # of the 8 Trend Template checks
+    max_dist_to_pivot: float = 0.25        # Forming card (site's VCP names sit 9-21% under their pivots)
+    atr_recent: int = 10
+    dryup_recent: int = 10
+    dryup_lookback: int = 50
+    ud_window: int = 50
+    zz_min_pct: float = 0.05               # ZigZag reversal threshold floor (median 3 contractions on Nifty 500)
+    zz_atr_mult: float = 2.0               # ... or this many ATR%, whichever is larger
+    stop_buffer: float = 0.01              # stop just under the last contraction low
+    max_stop: float = 0.08                 # never more than 8% under the pivot
+    score_weights: list = field(default_factory=lambda: [30.0, 20.0, 15.0, 15.0, 10.0, 10.0])
+    # weights: RS, tightening, dry-up, proximity to pivot, proximity to 52w high, industry RS (untuned until backtest)
+
+
 # Sections persisted to the DB and editable at runtime.
-PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig}
+PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
+                      "vcp": VcpConfig}
 
 
 @dataclass
@@ -124,6 +172,8 @@ class AppConfig:
     ingest: IngestConfig = field(default_factory=IngestConfig)
     bases: BaseConfig = field(default_factory=BaseConfig)
     screen: ScreenConfig = field(default_factory=ScreenConfig)
+    trend: TrendConfig = field(default_factory=TrendConfig)
+    vcp: VcpConfig = field(default_factory=VcpConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
@@ -146,8 +196,12 @@ class AppConfig:
                 value = int(value)
             elif isinstance(current, float):
                 value = float(value)
-            elif isinstance(current, list) and not isinstance(value, list):
-                raise ValueError(f"{name}.{key} must be a list")
+            elif isinstance(current, list):
+                if not isinstance(value, list):
+                    raise ValueError(f"{name}.{key} must be a list")
+                kind = type(current[0]) if current else None
+                if kind in (int, float):                   # UI sends list items as text
+                    value = [kind(float(v)) if kind is int else float(v) for v in value]
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)

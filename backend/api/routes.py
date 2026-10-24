@@ -42,7 +42,7 @@ class AppState:
         """Run the stage scan over the resolved universe (serialised)."""
         with self.scan_lock:
             stocks = uni.resolve_universe(self.config.ingest)["stocks"]
-            return run_scan(self.config.bases, self.config.screen, stocks)
+            return run_scan(self.config.bases, self.config.screen, stocks, self.config.trend, self.config.vcp)
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
@@ -185,6 +185,9 @@ def universe_list():
     rows = []
     with get_db() as conn:
         status = {r["instrument_token"]: dict(r) for r in conn.execute("SELECT * FROM ingest_status")}
+        metrics = {r["symbol"]: dict(r) for r in conn.execute(
+            "SELECT symbol, rs, tt_passed, tt_of, industry_rank, industry_of FROM stock_metrics "
+            "WHERE as_of = (SELECT MAX(as_of) FROM stock_metrics)")}
         for item, kind in [(i, "index") for i in resolved["indices"]] + [(s, "stock") for s in resolved["stocks"]]:
             tok = item["instrument_token"]
             st = status.get(tok, {})
@@ -198,6 +201,9 @@ def universe_list():
                 "bars": st.get("bars", 0), "first_date": st.get("first_date"), "last_date": st.get("last_date"),
                 "close": close, "change_pct": round((close / prev - 1) * 100, 2) if close and prev else None,
                 "last_error": st.get("last_error"),
+                "rs": metrics.get(item["symbol"], {}).get("rs"),
+                "tt_passed": metrics.get(item["symbol"], {}).get("tt_passed"),
+                "tt_of": metrics.get(item["symbol"], {}).get("tt_of"),
             })
     return {"snapshot_date": resolved["snapshot_date"], "rows": rows,
             "unmatched": resolved["unmatched"], "excluded": resolved["excluded"],
@@ -230,6 +236,39 @@ def stock_candles(symbol: str, limit: int = Query(750, ge=1, le=5000)):
     return {"symbol": symbol, "instrument_token": row["instrument_token"], "segment": row["segment"],
             "company": meta.get("company"), "industry": meta.get("industry"), "series": meta.get("series"),
             "candles": candles}
+
+
+@router.get("/stock/{symbol}/metrics")
+def stock_metrics(symbol: str):
+    """Latest RS rating, industry rank and Trend Template checks (from the last scan)."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1",
+                           (symbol,)).fetchone()
+    if not row:
+        return {"symbol": symbol, "as_of": None}
+    payload = json.loads(row["payload"])
+    return {"symbol": symbol, "as_of": row["as_of"], "rs": row["rs"], "rs_score": row["rs_score"],
+            "industry": row["industry"], "industry_rank": row["industry_rank"], "industry_of": row["industry_of"],
+            "trend": payload["trend"]}
+
+
+@router.get("/stock/{symbol}/vcp")
+def stock_vcp(symbol: str):
+    """VCP metrics for the stock's latest base (a breakout is judged on the bar before it),
+    using the latest scan's RS and trend count."""
+    from backend.engine.vcp import evaluate
+    with get_db() as conn:
+        row, _ = _resolve_stock(conn, symbol)
+        candles = get_candles(conn, row["instrument_token"])
+        m = conn.execute("SELECT rs, tt_passed FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1",
+                         (symbol,)).fetchone()
+    bases = detect_bases(candles, S().config.bases)
+    if not bases:
+        return {"symbol": symbol, "vcp": None}
+    base = bases[-1]
+    end = len(candles) - 1 if base.status == "forming" else base.end_index
+    v = evaluate(candles, base, m["rs"] if m else None, m["tt_passed"] if m else 0, S().config.vcp, end=end)
+    return {"symbol": symbol, "base_label": base.label, "pivot": base.pivot, "vcp": v.to_dict()}
 
 
 @router.get("/stock/{symbol}/bases")
@@ -291,7 +330,8 @@ def ingest_status():
 
 # --- Screens (stage board) ---
 
-SCREENS = {"bases": "Bases: every base the engine finds (VCP screen comes next)"}
+SCREENS = {"bases": "Bases: every base the engine finds",
+           "vcp": "VCP: bases with shrinking pullbacks, drying volume, RS >= 70 and an uptrend"}
 STAGE_SORT = {
     "forming": lambda p: (p["dist_to_pivot_pct"] or 0),
     "fresh": lambda p: (p["sessions_since_breakout"] or 0, -(p["volume_ratio"] or 0)),   # newest first
@@ -325,12 +365,12 @@ def screens_summary(screen: str):
     with get_db() as conn:
         run = conn.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
         latest_bar = conn.execute("SELECT MAX(last_date) FROM ingest_status").fetchone()[0]
-        n_changes = conn.execute("SELECT COUNT(*) FROM scan_changes WHERE as_of = ?",
-                                 (run["as_of"],)).fetchone()[0] if run else 0
+        n_changes = conn.execute("SELECT COUNT(*) FROM scan_changes WHERE as_of = ? AND screen = ?",
+                                 (run["as_of"], screen)).fetchone()[0] if run else 0
     if not run:
         return {"as_of": None, "counts": {}, "changes": 0, "latest_bar": latest_bar, "stale": bool(latest_bar)}
     return {"as_of": run["as_of"], "ran_at": run["ran_at"], "scanned": run["scanned"],
-            "counts": json.loads(run["counts"]), "changes": n_changes, "latest_bar": latest_bar,
+            "counts": json.loads(run["counts"]).get(screen, {}), "changes": n_changes, "latest_bar": latest_bar,
             "stale": bool(latest_bar and latest_bar > run["as_of"]),
             "fresh_sessions": S().config.screen.fresh_sessions}
 
@@ -342,24 +382,29 @@ def screens_results(screen: str, stage: str = Query(...)):
         raise HTTPException(422, f"stage must be one of {list(STAGE_SORT)}")
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
-        rows = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND stage = ?",
-                            (as_of, stage)).fetchall()
+        rows = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND screen = ? AND stage = ?",
+                            (as_of, screen, stage)).fetchall()
     items = [json.loads(r["payload"]) for r in rows]
-    items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
+    if screen == "vcp":
+        items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
+    else:
+        items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
     return {"as_of": as_of, "stage": stage, "rows": items}
 
 
 @router.get("/changes")
-def changes(limit: int = Query(200, le=1000)):
+def changes(screen: str = "bases", limit: int = Query(200, le=1000)):
+    _check_screen(screen)
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
         prev = conn.execute("SELECT MAX(as_of) FROM scan_runs WHERE as_of < ?", (as_of,)).fetchone()[0] \
             if as_of else None
-        rows = conn.execute("SELECT symbol, kind, text, change_pct, close FROM scan_changes WHERE as_of = ? "
+        rows = conn.execute("SELECT symbol, kind, text, change_pct, close FROM scan_changes "
+                            "WHERE as_of = ? AND screen = ? "
                             "ORDER BY CASE kind WHEN 'breakout' THEN 0 WHEN 'below_pivot' THEN 1 "
                             "WHEN 'played_out' THEN 2 WHEN 'forming' THEN 3 ELSE 4 END, symbol LIMIT ?",
-                            (as_of, limit)).fetchall()
-    return {"as_of": as_of, "previous_scan": prev, "rows": [dict(r) for r in rows]}
+                            (as_of, screen, limit)).fetchall()
+    return {"as_of": as_of, "screen": screen, "previous_scan": prev, "rows": [dict(r) for r in rows]}
 
 
 # --- Logs ---
