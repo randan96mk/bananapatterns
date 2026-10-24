@@ -135,6 +135,7 @@ bananapatterns/
 │  │  ├─ decision.py          decision chart: numbered markers + verdict/checklist/levels panel, message lines
 │  │  ├─ messages.py          alert / digest text (HTML, escaped, chunked)
 │  │  ├─ dispatch.py          scan -> alerts, sent once (sent_alerts)
+│  │  ├─ priority.py          A/B gate, market line + caution on alerts, market-aware size
 │  │  ├─ intraday.py          NSE volume curve, volume / close verdicts, per-day intraday flags
 │  │  ├─ login.py             Kite login-link alert, session check (profile), login confirmation
 │  │  ├─ commands.py          Telegram /login and /status (long-poll getUpdates, own chat only)
@@ -143,6 +144,7 @@ bananapatterns/
 │     ├─ indicators.py        causal SMA, trailing stats
 │     ├─ bases.py             base (consolidation box) detector + breakout metrics
 │     ├─ stages.py            stage of a stock: forming / fresh / climbing / played_out
+│     ├─ market.py            market health signals + status, A/B tier
 │     ├─ rs.py                RS score/rating 1-99, industry ranks
 │     ├─ trend_template.py    Minervini Trend Template (8 checks)
 │     ├─ scan.py              universe scan, RS/trend metrics, what-changed feed, stores results
@@ -500,6 +502,37 @@ confirmation.
 - Settings: `login_links`, `login_times`, `login_heads_up`, `login_heads_up_time`, `login_every_day`,
   `login_check_min`.
 
+### Market health and A/B priority
+
+Each scan computes one **market status** (`backend/engine/market.py`, thresholds in **Settings → market**):
+
+| Signal | Healthy when |
+|---|---|
+| Nifty 500 vs its 50- and 200-day averages, 50-day rising | above both, rising |
+| Breadth: % of the 500 above their own 50-day line | ≥ 50% |
+| Distribution days: index down ≥ 0.2% on higher volume, last 25 sessions (volume = total of the 500 stocks, since Kite index candles have no volume) | ≤ 4 |
+| Breakouts working: of breakouts in the last 20 sessions, the share still above the pivot | ≥ 50% |
+
+- **🟢 Uptrend**: all of the above healthy.
+- **🔴 Correction**: index below its 200-day, or breadth under 35% while the index is below its 50-day (or the
+  index is unknown), or 7+ distribution days.
+- **🟡 Under pressure**: everything in between.
+
+The status shows on the Screens home (market card with each signal and a 60-day strip). Every alert starts with a
+market line, e.g. "Market 🟢 Uptrend · breadth 64% · 3 dist. days · breakouts working 7/10". Intraday alerts add
+today's Nifty 500 move, and the digest has a fuller block.
+
+**A/B priority** (`backend/alerts/priority.py`):
+- A setup: VCP qualifies, RS ≥ 85, Trend Template ≥ 7/8, industry in the top third, market not in correction.
+- A setups alert at once, tagged 🅰️. B setups go to the digest only (or send, tagged 🅱️, or off).
+- Tiered alerts: breakout, near pivot, forming, intraday heads-up, 15:15 check (B names appear in its summary).
+- Sell-side alerts (below pivot, played out, failed breakout, didn't confirm) are always sent.
+- In a correction, buy alerts carry a caution (or are muted with `correction_mode: mute_buys`).
+- With `capital` set, sizes follow the market: ×1 uptrend, ×½ under pressure, ×¼ in correction.
+- A/B badges appear on the stage cards and table rows.
+- Long photo captions are now split at a line break: the rest follows as a message, instead of being cut (which
+  could break the HTML).
+
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
 | Job | When | What |
@@ -545,6 +578,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/screens/{screen}/sparks?stage=&bars=120` | last N candles + 50-day line per stock in a stage (grid view) |
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
+| GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
 | POST | `/api/alerts/detect-chat` | read the bot's recent chats; saves the chat ID when there is exactly one |
@@ -666,6 +700,9 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `failed_buffer_pct` | 0.01 | a crossed name this far under the pivot = failed breakout |
 | `close_check` / `close_check_time` / `close_min_range` | true / 15:15 / 0.5 | act-before-close check; price must sit in the upper half of the day's range |
 | `universe_refresh_weekday` | 6 (Sunday) | weekly refresh day |
+| `tiering` / `b_alerts` / `correction_mode` | true / digest / caution | A/B priority; B: digest, push or off; correction: caution or mute_buys |
+| `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
+| `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
 | `login_every_day` / `login_check_min` | false / 30 | weekends + holidays too / session check interval |
@@ -974,3 +1011,12 @@ of receiving it (a small change in that repo).
   ▲, exit ✕) with the stage's key facts. Table view is still one click away.
 - The scan now saves each base's start, end and low; new `/api/screens/{screen}/sparks` endpoint.
 - 145 offline tests passing.
+
+### 2026-10-25: Market health and A/B priority
+- `backend/engine/market.py`: Nifty 500 trend, breadth, distribution days (total stock volume as the volume),
+  breakout success rate, 52-week highs / lows. One status per scan in `market_health` (new `market` settings section).
+- `backend/alerts/priority.py`: A/B tier, gate (B to the digest, mute in a correction, sell-side always sent),
+  market line on every alert, Nifty 500 move on intraday alerts, market-aware size.
+- Screens home market card, A/B badges, Alerts → Priority settings, `/api/market/health`.
+- Photo captions over Telegram's limit are split at a line break, not cut.
+- 177 offline tests passing.

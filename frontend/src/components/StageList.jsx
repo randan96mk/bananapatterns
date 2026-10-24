@@ -48,7 +48,8 @@ function Table({ screen, stage, selected, onSelect, shown }) {
           {cols.map(([h]) => <th key={h}>{h}</th>)}</tr></thead>
         <tbody>{shown.map((r) => (
           <tr key={r.symbol} className={r.symbol === selected ? 'sel' : ''} onClick={() => onSelect(r.symbol)}>
-            <td><b>{r.symbol}</b>{!isVcp && r.vcp_tag && <span className="tag ok">VCP</span>}
+            <td>{r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>}<b>{r.symbol}</b>
+              {!isVcp && r.vcp_tag && <span className="tag ok">VCP</span>}
               <div className="muted small">{r.company}</div></td><td className="muted">{r.industry}</td>
             <td className="num">{rs(r.close)}</td>
             <td className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>{pct(r.change_pct)}</td>

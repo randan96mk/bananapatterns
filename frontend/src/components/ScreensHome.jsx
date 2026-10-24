@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import * as api from '../services/api';
 import StockChart from './StockChart';
 import StageList from './StageList';
+import MarketCard from './MarketCard';
 
 const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
@@ -15,11 +16,13 @@ export default function ScreensHome({ hasData }) {
   const [fullFeed, setFullFeed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [mkt, setMkt] = useState(null);
 
   const load = useCallback(async () => {
     try {
       const [s, f] = await Promise.all([api.screenSummary(screen), api.getChanges(screen)]);
       setSummary(s); setFeed(f); setErr('');
+      api.marketHealth().then(setMkt).catch(() => setMkt(null));
     } catch (e) { setErr(e.message); }
   }, [screen]);
   useEffect(() => { load(); }, [load]);
@@ -52,6 +55,8 @@ export default function ScreensHome({ hasData }) {
         {err && <span className="warn">{err}</span>}
         <span className="right updated">Updated EOD · {fmtDate(summary?.as_of)}</span>
       </div>
+
+      <MarketCard data={mkt} />
 
       <div className="panel board">
         {!summary?.as_of ? (

@@ -87,6 +87,8 @@ class Quotes:
     def quote(self, keys):
         out = {}
         for k in keys:
+            if k.split(":")[1] not in self.px:
+                continue                                  # like Kite: unknown instruments are left out
             ltp, vol, low, high = self.px[k.split(":")[1]]
             out[k] = {"last_price": ltp, "volume": vol, "ohlc": {"open": low, "high": high, "low": low}}
         return out
@@ -158,11 +160,11 @@ def test_close_check_verdicts_and_charts(monkeypatch):
             "B1": (piv["B1"] * 0.99, 50e6, piv["B1"] * 0.98, piv["B1"])}            # below: ignored
     assert "close_check" in due_jobs(ist(*DAY, 15, 15), sch.state.config.alerts, set(), True)
     sch.run_close_check(ist(*DAY, 15, 15))
-    heads = [h.split("\n")[0] for _, h in fake.sent]
+    heads = [h for _, h in fake.sent]                       # first line may be the market line
     assert any("H1: breakout holding into the close" in h for h in heads)
     assert any("W1: above the pivot, but weak" in h for h in heads)
     assert any("X1: too far above the pivot" in h for h in heads)
-    assert not any("B1" in h for h in heads) and len(fake.sent) == 3              # 3 names: one each
+    assert not any("<b>B1:" in h for h in heads) and len(fake.sent) == 3          # 3 names: one each
     holding = next(h for _, h in fake.sent if "H1: breakout holding" in h)
     assert "act before 15:30" in holding and "Verdict: Holding into the close" in holding
     assert ("photo", holding) in fake.sent
@@ -202,7 +204,7 @@ def test_evening_alerts_refer_to_the_close_check():
     with get_db() as conn:
         itd.set_flag(conn, as_of, "FRESH", "close_holding")
         itd.set_flag(conn, as_of, "NEAR", "close_holding")
-    cfg = AlertsConfig(chat_id="42", screens=["bases"], near_pivot_pct=0.05)
+    cfg = AlertsConfig(chat_id="42", tiering=False, screens=["bases"], near_pivot_pct=0.05)
     fake = FakeTG()
     dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), tokens)
     bo = next(h for _, h in fake.sent if "FRESH" in h and "broke out" in h)

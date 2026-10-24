@@ -158,7 +158,7 @@ def scanned_db():
 
 def test_dispatch_sends_once_and_respects_toggles():
     as_of, tokens = scanned_db()
-    cfg = AlertsConfig(chat_id="42", screens=["bases"], near_pivot_pct=0.05)
+    cfg = AlertsConfig(chat_id="42", tiering=False, screens=["bases"], near_pivot_pct=0.05)
     fake = FakeTG()
     sent = dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), tokens)
     kinds = [k for k, _ in fake.sent]
@@ -168,14 +168,14 @@ def test_dispatch_sends_once_and_respects_toggles():
     dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), tokens)
     assert len(fake.sent) == n                                                     # nothing sent twice
     quiet = FakeTG()
-    off = AlertsConfig(chat_id="42", screens=["bases"], breakout=False, digest=False, near_pivot=False, forming=False)
+    off = AlertsConfig(chat_id="42", tiering=False, screens=["bases"], breakout=False, digest=False, near_pivot=False, forming=False)
     dispatch_scan(as_of, off, BaseConfig(reset_ma=0), Notifier(off, quiet), tokens)
     assert not any("broke out" in h for _, h in quiet.sent)
 
 
 def test_failed_send_is_retried_next_time():
     as_of, tokens = scanned_db()
-    cfg = AlertsConfig(chat_id="42", screens=["bases"], digest=True, near_pivot=False)
+    cfg = AlertsConfig(chat_id="42", tiering=False, screens=["bases"], digest=True, near_pivot=False)
     dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, FakeTG(fail=True)), tokens)
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM sent_alerts WHERE ok = 0").fetchone()[0] >= 1
@@ -193,7 +193,7 @@ def test_not_configured_sends_nothing():
 class FakeState:
     def __init__(self, token=True, snap_status="ok"):
         self.config = AppConfig()
-        self.config.alerts = AlertsConfig(chat_id="42", screens=["bases"])
+        self.config.alerts = AlertsConfig(chat_id="42", tiering=False, screens=["bases"])
         self.config.bases = BaseConfig(reset_ma=0)
         self.config.screen = ScreenConfig(trend_ma=0)
         self._token, self.worker, self.snap_status = token, None, snap_status

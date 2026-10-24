@@ -70,9 +70,15 @@ def _pick(rows: list[dict], stages: tuple, key=None) -> Optional[dict]:
 
 def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[tuple[str, str, Optional[bytes]]]:
     """[(kind, html, png or None)] for one kind or "all", with the same decision chart and lines as real alerts."""
+    from backend.alerts.priority import MarketContext, decorate
+    from backend.engine import market
     kinds = SAMPLE_KINDS if kind == "all" else [kind]
     as_of, rows = _latest_rows()
-    out = []
+    mc = MarketContext.load(config.alerts)
+    raw = []
+
+    def add(k, html, png, p=None):                    # p: the stock, for the A/B tag (None: digest / system)
+        raw.append((k, html, png, p))
 
     def candles_for(p, k):
         tok = tokens.get(p["symbol"])
@@ -98,29 +104,29 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
                     f"{p.get('gain_from_pivot_pct') or 0:+.1f}% over the {msg.rs(p['pivot'])} pivot on "
                     f"{p.get('volume_ratio') or 0:.1f}x volume.")
             png, ctx = decision(p, k)
-            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, 0.8, ctx), png))
+            add(k, msg.stage_alert(k, p.get("screen", "vcp"), text, p, 0.8, ctx), png, p)
         elif k == "near_pivot":
             p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
             png, ctx = decision(p, k)
-            out.append((k, PREFIX + msg.near_pivot_alert(p.get("screen", "vcp"), p, ctx), png))
+            add(k, msg.near_pivot_alert(p.get("screen", "vcp"), p, ctx), png, p)
         elif k == "forming":
             p = _pick(rows, ("forming",), key=lambda r: -(r.get("score") or r.get("rs") or 0)) or EXAMPLE
             text = (f"{p['symbol']} is newly forming {p['base_label']}: {p.get('dist_to_pivot_pct') or 0:.1f}% under "
                     f"the {msg.rs(p['pivot'])} pivot.")
             png, ctx = decision(p, k)
-            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png))
+            add(k, msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png, p)
         elif k == "below_pivot":
             p = _pick(rows, ("below_pivot", "climbing", "fresh")) or EXAMPLE
             text = f"{p['symbol']} closed {msg.rs(p['close'])}, back below the {msg.rs(p['pivot'])} pivot it broke out of."
             png, ctx = decision(p, k)
-            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png))
+            add(k, msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png, p)
         elif k == "played_out":
             p = _pick(rows, ("played_out",)) or EXAMPLE
             text = (f"{p['symbol']} played out. Closed {msg.rs(p['close'])}, {p.get('ended_reason') or 'run ended'}, "
                     f"{p.get('gain_from_pivot_pct') or 0:+.1f}% from the {msg.rs(p['pivot'])} pivot "
                     f"(peak {p.get('peak_gain_pct') or 0:+.1f}%).")
             png, ctx = decision(p, k)
-            out.append((k, PREFIX + msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png))
+            add(k, msg.stage_alert(k, p.get("screen", "vcp"), text, p, ctx=ctx), png, p)
         elif k == "intraday":
             p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
             cs = candles_for(p, k)
@@ -128,12 +134,12 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
             prev = cs[-1]["close"]
             live = {"ltp": ltp, "open": prev, "high": ltp * 1.003, "low": min(prev, ltp) * 0.995, "volume": 1.1e6}
             png, ctx = decision_for(cs, p, k, config.alerts, config.bases, config.vcp, live=live)
-            out.append((k, PREFIX + msg.intraday_alert(p, ltp, 1.1e6, 2.4, 1.0e6, ctx, volume="strong",
-                                                       zone_top=p["pivot"] * (1 + config.alerts.buy_zone_pct)), png))
+            add(k, msg.intraday_alert(p, ltp, 1.1e6, 2.4, 1.0e6, ctx, volume="strong",
+                                      zone_top=p["pivot"] * (1 + config.alerts.buy_zone_pct)), png, p)
         elif k == "failed":
             p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
-            out.append((k, PREFIX + msg.failed_alert(p, round(p["pivot"] * 0.985, 2), round(p["pivot"] * 1.012, 2),
-                                                     (p.get("vcp") or {}).get("stop")), None))
+            add(k, msg.failed_alert(p, round(p["pivot"] * 0.985, 2), round(p["pivot"] * 1.012, 2),
+                                    (p.get("vcp") or {}).get("stop")), None, p)
         elif k == "close_check":
             p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
             cs = candles_for(p, k)
@@ -143,8 +149,8 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
             live = {"ltp": ltp, "open": prev, "high": ltp * 1.004, "low": low, "volume": 1.6e6,
                     "pace": 1.8, "range": (ltp - low) / (ltp * 1.004 - low), "verdict": "holding"}
             png, ctx = decision_for(cs, p, k, config.alerts, config.bases, config.vcp, live=live)
-            out.append((k, PREFIX + msg.close_alert(p, "holding", ltp, 1.8, live["range"],
-                                                    p["pivot"] * (1 + config.alerts.buy_zone_pct), ctx), png))
+            add(k, msg.close_alert(p, "holding", ltp, 1.8, live["range"],
+                                   p["pivot"] * (1 + config.alerts.buy_zone_pct), ctx), png, p)
         elif k == "digest":
             screen = "vcp" if any(r["screen"] == "vcp" for r in rows) else "bases"
             with get_db() as conn:
@@ -157,12 +163,20 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
                 moves = [{"kind": "breakout", "text": "EXAMPLE broke out of B2 · 7w: closed ₹103.00, +3.0% over the "
                           "₹100.00 pivot on 2.6x volume.", "close": 103.0, "change_pct": 3.4}]
             chunk = msg.digest(screen, as_of or "sample", counts, moves)[0]
-            out.append((k, PREFIX + chunk, None))
+            add(k, chunk, None)
         elif k == "system":
-            out.append((k, PREFIX + msg.system_alert("Kite login needed for today's 18:30 evening scan "
-                                                     "(tokens expire 06:00 IST). Open the dashboard and log in."), None))
+            add(k, msg.system_alert("Kite login needed for today's 18:30 evening scan "
+                                    "(tokens expire 06:00 IST). Open the dashboard and log in."), None)
         else:
             raise ValueError(f"Unknown sample kind {k!r}; use one of {SAMPLE_KINDS} or 'all'")
+    out = []
+    for k, html, png, p in raw:                       # same market line and A/B tag as the real alerts
+        if p is not None:
+            t = market.tier(p, mc.status, config.alerts) if config.alerts.tiering else None
+            html = PREFIX + decorate(html, k, t, mc)
+        else:
+            html = PREFIX + html
+        out.append((k, html, png))
     return out
 
 

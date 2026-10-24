@@ -29,7 +29,7 @@ def test_backend_imports_without_matplotlib(tmp_path):
 def test_alerts_fall_back_to_text(monkeypatch):
     monkeypatch.setattr(charts, "CHARTS_AVAILABLE", False)
     as_of, tokens = scanned_db()
-    cfg = AlertsConfig(chat_id="42", screens=["bases"], near_pivot_pct=0.05)
+    cfg = AlertsConfig(chat_id="42", tiering=False, screens=["bases"], near_pivot_pct=0.05)
     fake = FakeTG()
     sent = dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), tokens)
     assert sent["stage"] >= 1 and all(kind == "msg" for kind, _ in fake.sent)        # no photos

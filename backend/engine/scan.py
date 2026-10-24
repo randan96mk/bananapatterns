@@ -8,9 +8,10 @@ as-of date in scan_results / scan_changes (history for Phase 4).
 import json
 from typing import Optional
 
-from backend.config import BaseConfig, ScreenConfig, TrendConfig, VcpConfig
+from backend.config import BaseConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine.bases import detect_bases
+from backend.engine import market
 from backend.engine.rs import industry_ranks, rs_ratings, rs_score
 from backend.engine.scoring import vcp_score
 from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_vcp
@@ -59,7 +60,8 @@ SCREENS = ("bases", "vcp")
 
 
 def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict],
-             trend_cfg: Optional[TrendConfig] = None, vcp_cfg: Optional[VcpConfig] = None) -> dict:
+             trend_cfg: Optional[TrendConfig] = None, vcp_cfg: Optional[VcpConfig] = None,
+             market_cfg: Optional[MarketConfig] = None, index_token: Optional[int] = None) -> dict:
     """symbols: [{symbol, instrument_token, company?, industry?}], e.g. resolve_universe(...)["stocks"].
 
     Produces both screens: "bases" (every base) and "vcp" (bases that pass the VCP rules).
@@ -68,8 +70,10 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
     """
     trend_cfg = trend_cfg or TrendConfig()
     vcp_cfg = vcp_cfg or VcpConfig()
+    market_cfg = market_cfg or MarketConfig()
     with get_db() as conn:
         series = {s["symbol"]: get_candles(conn, s["instrument_token"]) for s in symbols}
+        index = get_candles(conn, index_token) if index_token is not None else []
     as_of = max((c[-1]["date"] for c in series.values() if c), default=None)
     if as_of is None:
         return {"as_of": None, "counts": {}, "changes": {}, "scanned": 0}
@@ -121,7 +125,11 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
         for _, r, _ in rows[k]:
             if r.stage in counts[k]:
                 counts[k][r.stage] += 1
+    index = [c for c in index if c["date"] <= as_of]
+    health = market.compute(index, {s["symbol"]: series[s["symbol"]] for s in current},
+                            [r for _, r, _ in rows["bases"]], as_of, market_cfg)
     with get_db() as conn:
+        market.save(conn, health)
         conn.execute("DELETE FROM scan_results WHERE as_of = ?", (as_of,))
         conn.execute("DELETE FROM scan_changes WHERE as_of = ?", (as_of,))
         for k in SCREENS:
@@ -152,4 +160,5 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
         )
     n_changes = {k: len(v) for k, v in changes.items()}
     logger.info("Scan %s: %d scanned (%d stale), %s, changes %s", as_of, len(current), stale, counts, n_changes)
-    return {"as_of": as_of, "counts": counts, "changes": n_changes, "scanned": len(current), "stale": stale}
+    return {"as_of": as_of, "counts": counts, "changes": n_changes, "scanned": len(current), "stale": stale,
+            "market": health["status"]}

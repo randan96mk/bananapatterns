@@ -95,17 +95,21 @@ def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optio
     return "\n".join(lines)
 
 
-def digest(screen: str, as_of: str, counts: dict, moves: list[dict], fresh_sessions: int = 5) -> list[str]:
-    """Daily digest split into Telegram-sized chunks (< 4,000 chars each)."""
+def digest(screen: str, as_of: str, counts: dict, moves: list[dict], fresh_sessions: int = 5,
+           market: Optional[str] = None) -> list[str]:
+    """Daily digest split into Telegram-sized chunks (< 4,000 chars each). market: market_block() HTML;
+    a move's "tier" (A/B) tags buy-side lines."""
     c = counts or {}
     head = (f"{ICONS['digest']} <b>{SCREEN_NAMES.get(screen, screen)} screen · EOD {as_of}</b>\n"
             f"{c.get('fresh', 0)} fresh breakouts in the last {fresh_sessions} sessions\n"
             f"Forming {c.get('forming', 0)} · Fresh {c.get('fresh', 0)} · Climbing {c.get('climbing', 0)}"
             f" · Played out {c.get('played_out', 0)}"
             + (f" · low-volume breakouts {c['fresh_low_volume']}" if c.get("fresh_low_volume") else "")
+            + (f"\n\n{market}" if market else "")
             + f"\n\n<b>What changed since last close</b> ({len(moves)} moves)")
-    lines = [f"{ICONS.get(m['kind'], '•')} {escape(m['text'])} <i>{rs(m['close'])}{_pct(m.get('change_pct'))}</i>"
-             for m in moves] or ["No stage moves today."]
+    tag = {"A": "🅰️ ", "B": "🅱️ "}
+    lines = [f"{tag.get(m.get('tier'), '')}{ICONS.get(m['kind'], '•')} {escape(m['text'])} "
+             f"<i>{rs(m['close'])}{_pct(m.get('change_pct'))}</i>" for m in moves] or ["No stage moves today."]
     chunks, cur = [], head
     for ln in lines:
         if len(cur) + len(ln) + 2 > 3900:
@@ -193,7 +197,8 @@ def close_summary(items: list[dict], shown: set) -> str:
     groups = {"holding": "✅ Also holding", "weak": "🟡 Above pivot, weak", "extended": "⛔ Extended, don't chase"}
     lines = [f"🕒 <b>15:15 check</b>: {len(items)} names above their pivot"]
     for v, title in groups.items():
-        names = [f"{escape(i['symbol'])} ({(i['ltp'] / i['pivot'] - 1) * 100:+.1f}%, {_pace(i.get('pace'))})"
+        names = [f"{'🅱️ ' if i.get('tier') == 'B' else ''}{escape(i['symbol'])} "
+                 f"({(i['ltp'] / i['pivot'] - 1) * 100:+.1f}%, {_pace(i.get('pace'))})"
                  for i in items if i["verdict"] == v and i["symbol"] not in shown]
         if names:
             lines.append(f"{title}: " + ", ".join(names))
@@ -210,3 +215,44 @@ def confirm_note(flag: Optional[str]) -> Optional[str]:
 def not_confirmed_alert(symbol: str, pivot: float, close: Optional[float]) -> str:
     return (f"✗ <b>{escape(symbol)}</b> didn't confirm on the close: flagged as holding at 15:15, "
             f"but the close {rs(close)} isn't a volume-confirmed breakout over the {rs(pivot)} pivot.")
+
+
+STATUS_TEXT = {"uptrend": "🟢 Uptrend", "pressure": "🟡 Under pressure", "correction": "🔴 Correction"}
+
+
+def market_line(h: dict, index_today: Optional[float] = None) -> str:
+    """One line for the top of an alert."""
+    bits = [f"Market {STATUS_TEXT.get(h['status'], h['status'])}"]
+    br, dd, bo = h["breadth"].get("above_50_pct"), h.get("dist_days"), h["breakouts"]
+    if br is not None:
+        bits.append(f"breadth {br:.0f}%")
+    if dd is not None:
+        bits.append(f"{dd} dist. days")
+    if bo.get("total"):
+        bits.append(f"breakouts working {bo['working']}/{bo['total']}")
+    if index_today is not None:
+        bits.append(f"Nifty 500 {index_today:+.1f}% today")
+    return "<i>" + " · ".join(bits) + "</i>"
+
+
+def market_block(h: dict, prev: Optional[dict] = None) -> str:
+    """Fuller market section for the digest."""
+    ok = lambda v: "✓" if v else ("✗" if v is False else "n/a")  # noqa: E731
+    ix, br, bo = h["index"], h["breadth"], h["breakouts"]
+    head = f"📊 <b>Market {STATUS_TEXT.get(h['status'], h['status'])}</b>"
+    if prev and prev.get("status") != h["status"]:
+        head += f" (was {STATUS_TEXT.get(prev['status'], prev['status'])})"
+    lines = [head,
+             f"Nifty 500: above 50-day {ok(ix.get('above_50'))} · above 200-day {ok(ix.get('above_200'))}"
+             f" · 50-day rising {ok(ix.get('ma50_rising'))}"
+             + (f" · {ix['change_pct']:+.1f}% today" if ix.get("change_pct") is not None else "")]
+    if br.get("above_50_pct") is not None:
+        lines.append(f"Breadth: {br['above_50_pct']:.0f}% above the 50-day"
+                     + (f", {br['above_200_pct']:.0f}% above the 200-day" if br.get("above_200_pct") is not None else "")
+                     + f" · 52-week highs {br['new_highs']} / lows {br['new_lows']}")
+    if h.get("dist_days") is not None:
+        lines.append(f"Distribution days: {h['dist_days']} in the last {h.get('windows', {}).get('dist', 25)} sessions")
+    if bo.get("total"):
+        lines.append(f"Breakouts working: {bo['working']}/{bo['total']} from the last "
+                     f"{h.get('windows', {}).get('breakouts', 20)} sessions")
+    return "\n".join(lines)

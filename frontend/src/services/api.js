@@ -30,6 +30,7 @@ export const screenSummary = (screen) => req('GET', `/api/screens/${screen}/summ
 export const screenResults = (screen, stage) => req('GET', `/api/screens/${screen}/results?stage=${stage}`);
 export const screenSparks = (screen, stage, bars = 120) =>
   req('GET', `/api/screens/${screen}/sparks?stage=${stage}&bars=${bars}`);
+export const marketHealth = () => req('GET', '/api/market/health');
 export const runScan = () => req('POST', '/api/screens/scan');
 export const getChanges = (screen = 'bases') => req('GET', `/api/changes?screen=${screen}`);
 export const alertChartUrl = (sym, kind = 'auto', stamp = 0) =>

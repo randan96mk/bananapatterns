@@ -131,3 +131,17 @@ footer { margin-top: 20px; font-size: 11px; }
 .mc-down line, .mc-down rect { stroke: var(--bad); fill: var(--bad); stroke-width: .8; }
 .mc-bo { fill: var(--ok); } .mc-bo.weak { fill: var(--warn); }
 .mc-ex { stroke: var(--bad); stroke-width: 2; fill: none; }
+
+/* Market health card + A/B tier badges */
+.marketcard { border-left: 3px solid var(--border); padding: 10px 14px; }
+.marketcard.m-uptrend { border-left-color: var(--ok); } .marketcard.m-pressure { border-left-color: var(--warn); }
+.marketcard.m-correction { border-left-color: var(--bad); }
+.mstatus { font-size: 15px; } .mstatus.ok { color: var(--ok); } .mstatus.warnc { color: var(--warn); } .mstatus.bad { color: var(--bad); }
+.msignals { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; }
+.mhist { display: inline-flex; gap: 2px; align-items: center; }
+.mhist i { width: 5px; height: 14px; border-radius: 1px; background: var(--border); display: inline-block; }
+.mhist i.m-uptrend { background: var(--ok); } .mhist i.m-pressure { background: var(--warn); } .mhist i.m-correction { background: var(--bad); }
+.tier { display: inline-block; min-width: 16px; text-align: center; font-size: 11px; font-weight: 700; border-radius: 4px;
+  padding: 0 4px; margin-right: 6px; }
+.tier.t-A { background: var(--ok); color: #052e2b; } .tier.t-B { background: var(--border); color: var(--muted); }
+@media (max-width: 700px) { .mhist { display: none; } }
