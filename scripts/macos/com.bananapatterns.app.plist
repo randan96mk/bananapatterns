@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Optional: start Banana Patterns at login so the scheduled jobs and alerts run.
+     1. Replace /Users/YOU/bananapatterns with your clone path (3 places).
+     2. cp scripts/macos/com.bananapatterns.app.plist ~/Library/LaunchAgents/
+     3. launchctl load ~/Library/LaunchAgents/com.bananapatterns.app.plist
+     Stop: launchctl unload ~/Library/LaunchAgents/com.bananapatterns.app.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.bananapatterns.app</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/YOU/bananapatterns/start.sh</string>
+    <string>--prod</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/YOU/bananapatterns</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>/Users/YOU/bananapatterns/logs/launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/bananapatterns/logs/launchd.log</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+</dict>
+</plist>

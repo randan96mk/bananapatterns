@@ -13,6 +13,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
+from backend.alerts.jobs import Scheduler  # noqa: E402
 from backend.api.routes import AppState, router, set_state  # noqa: E402
 from backend.config import AppConfig, load_config  # noqa: E402
 from backend.database.models import get_db, init_db  # noqa: E402
@@ -62,8 +63,12 @@ async def lifespan(app: FastAPI):
     state = build_state()
     set_state(state)
     threading.Thread(target=_scan_if_behind, args=(state,), name="startup-scan", daemon=True).start()
+    state.scheduler = Scheduler(state)
+    if os.getenv("BP_NO_SCHEDULER") != "1":
+        state.scheduler.start()           # evening job, reminders, intraday heads-up, weekly refresh
     logger.info("Banana Patterns backend ready")
     yield
+    state.scheduler.stop()
     logger.info("Banana Patterns backend stopped")
 
 

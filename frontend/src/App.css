@@ -92,3 +92,11 @@ footer { margin-top: 20px; font-size: 11px; }
 .vcppanel { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
 .grid td { white-space: nowrap; }
 .grid td:nth-child(2) { white-space: normal; }
+
+.toggles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.toggle { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.toggle.field { justify-content: space-between; }
+.toggle.field input { width: 90px; }
+.grid td.wrap { white-space: normal; }
+.s-waiting, .s-retry { color: var(--warn); } .s-no_session { color: var(--muted); }
+@media (max-width: 900px) { .toggles { grid-template-columns: 1fr; } }

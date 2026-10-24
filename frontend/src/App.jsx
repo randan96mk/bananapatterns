@@ -6,12 +6,14 @@ import StockChart from './components/StockChart';
 import DataPanel from './components/DataPanel';
 import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
+import AlertsPanel from './components/AlertsPanel';
 import * as api from './services/api';
 
 const TABS = [
   ['screens', 'Screens'],
   ['universe', 'Universe'],
   ['data', 'Data'],
+  ['alerts', 'Alerts'],
   ['settings', 'Settings'],
   ['logs', 'Logs'],
 ];
@@ -57,6 +59,7 @@ export default function App() {
         )}
         {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
         {tab === 'settings' && <SettingsPanel />}
+        {tab === 'alerts' && <AlertsPanel />}
         {tab === 'logs' && <LogsPanel />}
       </main>
       <footer className="muted">Personal use only · screen-only mode (no orders) · data © NSE via Zerodha Kite</footer>

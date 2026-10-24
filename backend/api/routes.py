@@ -37,6 +37,25 @@ class AppState:
         # "db" = from browser login / POST token (expiry known), "env" = KITE_ACCESS_TOKEN, None = no token
         self.token_source: Optional[str] = None
         self.scan_lock = threading.Lock()
+        self.scheduler = None                 # backend.alerts.jobs.Scheduler, set at startup
+
+    def start_sync(self, force_full: bool = False, symbols: Optional[list[str]] = None) -> threading.Thread:
+        """Background candle sync followed by a scan (the Sync button and the evening job)."""
+        def work():
+            try:
+                snap = cd.run_sync(self.client, self.config.ingest, self.job, force_full=force_full, symbols=symbols)
+                if snap["status"] in ("ok", "partial"):
+                    self.scan()               # refresh the stage board on fresh data
+            except Exception:
+                logger.exception("Sync worker crashed")
+
+        self.worker = threading.Thread(target=work, name="candle-sync", daemon=True)
+        self.worker.start()
+        return self.worker
+
+    def run_sync_blocking(self) -> dict:
+        self.start_sync().join()
+        return self.job.snapshot()
 
     def scan(self) -> dict:
         """Run the stage scan over the resolved universe (serialised)."""
@@ -302,16 +321,7 @@ def ingest_sync(req: SyncRequest = SyncRequest()):
     if reason:
         raise HTTPException(400, reason)
 
-    def work():
-        try:
-            snap = cd.run_sync(st.client, st.config.ingest, st.job, force_full=req.force_full, symbols=req.symbols)
-            if snap["status"] in ("ok", "partial"):
-                st.scan()                     # refresh the stage board on fresh data
-        except Exception:
-            logger.exception("Sync worker crashed")
-
-    st.worker = threading.Thread(target=work, name="candle-sync", daemon=True)
-    st.worker.start()
+    st.start_sync(force_full=req.force_full, symbols=req.symbols)
     return {"status": "started"}
 
 
@@ -405,6 +415,89 @@ def changes(screen: str = "bases", limit: int = Query(200, le=1000)):
                             "WHEN 'played_out' THEN 2 WHEN 'forming' THEN 3 ELSE 4 END, symbol LIMIT ?",
                             (as_of, screen, limit)).fetchall()
     return {"as_of": as_of, "screen": screen, "previous_scan": prev, "rows": [dict(r) for r in rows]}
+
+
+# --- Alerts (Telegram) and automatic jobs ---
+
+@router.get("/alerts/status")
+def alerts_status():
+    from backend.alerts.dispatch import Notifier
+    from backend.ingest import holidays as hol
+    n = Notifier(S().config.alerts)
+    today = datetime.now(IST).date()
+    hols = hol.load_holidays()
+    upcoming = sorted((d, name) for d, name in hols.items() if d >= today.isoformat())[:3]
+    return {"bot_configured": n.client.configured, "chat_id": n.chat_id, "ready": n.ready,
+            "enabled": S().config.alerts.enabled, "scheduler_running": bool(S().scheduler and S().scheduler._thread),
+            "today": today.isoformat(), "trading_day": hol.is_trading_day(today),
+            "holiday_today": hols.get(today.isoformat()),
+            "upcoming_holidays": [{"date": d, "name": nm} for d, nm in upcoming]}
+
+
+@router.post("/alerts/detect-chat")
+def alerts_detect_chat():
+    from backend.alerts.telegram import TelegramClient, TelegramError
+    try:
+        chats = TelegramClient().detect_chats()
+    except TelegramError as exc:
+        raise HTTPException(400, str(exc))
+    if len(chats) == 1:
+        S().config.update_section("alerts", {"chat_id": chats[0]["chat_id"]})
+        save_config(S().config)
+    return {"chats": chats, "saved": chats[0]["chat_id"] if len(chats) == 1 else None,
+            "hint": None if chats else "Send any message to your bot in Telegram, then try again."}
+
+
+@router.post("/alerts/test")
+def alerts_test():
+    from backend.alerts.dispatch import Notifier
+    from backend.alerts.telegram import TelegramError
+    n = Notifier(S().config.alerts)
+    if not n.client.configured:
+        raise HTTPException(400, "TELEGRAM_BOT_TOKEN is not set in .env (restart the backend after adding it)")
+    if not n.chat_id:
+        raise HTTPException(400, "No chat ID: press Detect chat ID first")
+    try:
+        n.client.send_message(n.chat_id, "✅ <b>Banana Patterns</b> alerts are connected.\n"
+                                         "You'll get stage alerts after the evening scan.")
+    except TelegramError as exc:
+        raise HTTPException(502, str(exc))
+    return {"status": "sent", "chat_id": n.chat_id}
+
+
+@router.get("/alerts/log")
+def alerts_log(limit: int = Query(100, le=500)):
+    with get_db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT key, sent_at, kind, symbol, text, ok, error FROM sent_alerts ORDER BY sent_at DESC LIMIT ?",
+            (limit,))]
+
+
+@router.get("/jobs")
+def jobs_list(limit: int = Query(50, le=500)):
+    with get_db() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))]
+    return {"runs": rows, "config": {k: getattr(S().config.alerts, k) for k in
+                                     ("job_enabled", "job_time", "reminder_time", "intraday", "intraday_start",
+                                      "intraday_end", "intraday_interval_min", "universe_refresh_weekday")}}
+
+
+@router.post("/jobs/{job}/run")
+def jobs_run(job: str):
+    sch = S().scheduler
+    if sch is None or job not in ("eod", "intraday", "weekly", "reminder"):
+        raise HTTPException(404, "Unknown job or scheduler not running")
+    now = datetime.now(IST)
+    fn = (lambda: sch.run_eod(now, force=True)) if job == "eod" else (lambda: getattr(sch, f"run_{job}")(now))
+
+    def work():
+        try:
+            fn()
+        except Exception:
+            logger.exception("Manual job %s failed", job)
+
+    threading.Thread(target=work, name=f"job-{job}", daemon=True).start()
+    return {"status": "started", "job": job}
 
 
 # --- Logs ---

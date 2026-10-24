@@ -30,6 +30,16 @@ else
     echo "KITE_API_KEY not set in .env — dashboard works, data sync needs Kite."
 fi
 
+# macOS: keep the Mac from idle-sleeping while the backend runs, so the evening job,
+# reminders and intraday alerts fire. caffeinate -w watches the backend PID and exits
+# with it (closing the lid on battery still sleeps the Mac).
+keep_awake() {
+    if command -v caffeinate >/dev/null 2>&1; then
+        caffeinate -i -w "$1" &
+        echo "Keeping the Mac awake while the backend runs (caffeinate)"
+    fi
+}
+
 cleanup() { [ -n "$BACK" ] && kill "$BACK" 2>/dev/null; [ -n "$FRONT" ] && kill "$FRONT" 2>/dev/null; exit 0; }
 trap cleanup INT TERM
 
@@ -37,11 +47,16 @@ case "$MODE" in
     --prod)
         (cd frontend && npm run build)
         echo "Dashboard: http://localhost:8000"
-        .venv/bin/python run.py ;;
+        .venv/bin/python run.py & BACK=$!
+        keep_awake "$BACK"
+        wait $BACK ;;
     --backend)
-        .venv/bin/python run.py ;;
+        .venv/bin/python run.py & BACK=$!
+        keep_awake "$BACK"
+        wait $BACK ;;
     *)
         BP_DEV=1 .venv/bin/python run.py & BACK=$!
+        keep_awake "$BACK"
         sleep 2
         (cd frontend && npm run dev) & FRONT=$!
         echo "Dashboard (dev): http://localhost:3000   API docs: http://localhost:8000/docs"

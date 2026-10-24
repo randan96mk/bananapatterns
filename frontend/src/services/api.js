@@ -31,6 +31,12 @@ export const screenResults = (screen, stage) => req('GET', `/api/screens/${scree
 export const runScan = () => req('POST', '/api/screens/scan');
 export const getChanges = (screen = 'bases') => req('GET', `/api/changes?screen=${screen}`);
 export const getVcp = (sym) => req('GET', `/api/stock/${encodeURIComponent(sym)}/vcp`);
+export const alertsStatus = () => req('GET', '/api/alerts/status');
+export const detectChat = () => req('POST', '/api/alerts/detect-chat');
+export const testAlert = () => req('POST', '/api/alerts/test');
+export const alertsLog = () => req('GET', '/api/alerts/log?limit=100');
+export const getJobs = () => req('GET', '/api/jobs?limit=30');
+export const runJob = (job) => req('POST', `/api/jobs/${job}/run`);
 export const getConfig = (section) => req('GET', `/api/config/${section}`);
 export const putConfig = (section, values) => req('PUT', `/api/config/${section}`, values);
 export const getLogs = (level) => req('GET', `/api/logs?limit=200${level ? `&level=${level}` : ''}`);

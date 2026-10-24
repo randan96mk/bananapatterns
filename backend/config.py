@@ -161,9 +161,36 @@ class VcpConfig:
     # weights: RS, tightening, dry-up, proximity to pivot, proximity to 52w high, industry RS (untuned until backtest)
 
 
+@dataclass
+class AlertsConfig:
+    """Telegram alerts and the automatic jobs. The bot token lives in .env (TELEGRAM_BOT_TOKEN)."""
+    enabled: bool = True
+    chat_id: str = ""                      # found with "Detect chat ID" (or set TELEGRAM_CHAT_ID in .env)
+    screens: list = field(default_factory=lambda: ["vcp"])
+    breakout: bool = True                  # fresh breakout (volume-confirmed)
+    low_volume_breakout: bool = False
+    below_pivot: bool = True
+    played_out: bool = True
+    forming: bool = True                   # newly forming
+    left: bool = False                     # left a card (noisy)
+    near_pivot: bool = True
+    near_pivot_pct: float = 0.03           # forming and within 3% under the pivot (once per base)
+    digest: bool = True
+    chart_images: bool = True              # PNG with breakout / near-pivot alerts
+    system: bool = True                    # login reminder, job failures, index changes
+    intraday: bool = True                  # heads-up when price crosses a forming VCP's pivot
+    intraday_interval_min: int = 5
+    intraday_start: str = "09:20"
+    intraday_end: str = "15:25"
+    job_enabled: bool = True               # automatic evening sync + scan + alerts
+    job_time: str = "18:30"                # IST, trading days
+    reminder_time: str = "15:30"           # IST: remind if today's Kite login is missing
+    universe_refresh_weekday: int = 6      # 0=Mon ... 6=Sun; weekly universe + holiday refresh
+
+
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
-                      "vcp": VcpConfig}
+                      "vcp": VcpConfig, "alerts": AlertsConfig}
 
 
 @dataclass
@@ -174,6 +201,7 @@ class AppConfig:
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     trend: TrendConfig = field(default_factory=TrendConfig)
     vcp: VcpConfig = field(default_factory=VcpConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

@@ -94,6 +94,7 @@ class KiteClient:
         self._sleep = sleep
         self.hist_bucket = TokenBucket(ingest_config.hist_rate_per_sec, sleep=sleep)
         self.api_bucket = TokenBucket(5.0, sleep=sleep)  # other endpoints allow 10/s
+        self.quote_bucket = TokenBucket(1.0, sleep=sleep)  # quote API: 1 req/s
 
     # --- session ---
 
@@ -136,6 +137,12 @@ class KiteClient:
 
     def instruments(self, exchange: str) -> list[dict]:
         return self._call(self.api_bucket, f"instruments({exchange})", self.kite.instruments, exchange)
+
+    def quote(self, instruments: list[str]) -> dict:
+        """Full quotes for up to 500 'NSE:SYMBOL' keys in one call (last_price, volume, ohlc...)."""
+        if not instruments:
+            return {}
+        return self._call(self.quote_bucket, f"quote({len(instruments)})", self.kite.quote, instruments)
 
     def historical_daily(self, token: int, start: date, end: date, label: str = "") -> list[dict]:
         """Adjusted daily candles for [start, end], chunked to the API's range limit.
