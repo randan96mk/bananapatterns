@@ -28,8 +28,10 @@ def _tail(p: dict) -> str:
     return " · ".join(bits)
 
 
-def stage_alert(kind: str, screen: str, text: str, p: Optional[dict], close_in_range: Optional[float] = None) -> str:
-    """One stage-move alert: the feed sentence plus key numbers."""
+def stage_alert(kind: str, screen: str, text: str, p: Optional[dict], close_in_range: Optional[float] = None,
+                ctx: Optional[dict] = None) -> str:
+    """One stage-move alert: the feed sentence plus key numbers; with a decision context,
+    the Verdict / Why / Caution / Levels / Watch lines that match the chart."""
     head = f"{ICONS.get(kind, '•')} <b>{escape(p.get('symbol') if p else '')}</b> · {SCREEN_NAMES.get(screen, screen)}"
     lines = [head, escape(text)]
     if p:
@@ -49,17 +51,21 @@ def stage_alert(kind: str, screen: str, text: str, p: Optional[dict], close_in_r
         tail = _tail(p)
         if tail:
             lines.append(f"<i>{tail}</i>")
+    if ctx:
+        from backend.alerts.decision import decision_lines
+        lines.append("")
+        lines += [escape(x) for x in decision_lines(ctx)]
     return "\n".join(lines)
 
 
-def near_pivot_alert(screen: str, p: dict) -> str:
+def near_pivot_alert(screen: str, p: dict, ctx: Optional[dict] = None) -> str:
     text = (f"{p['symbol']} is {p['dist_to_pivot_pct']:.1f}% under its {rs(p['pivot'])} pivot "
             f"({p['base_label']}). A close above it is a breakout.")
-    return stage_alert("near_pivot", screen, text, p)
+    return stage_alert("near_pivot", screen, text, p, ctx=ctx)
 
 
 def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optional[float],
-                   avg_vol: Optional[float]) -> str:
+                   avg_vol: Optional[float], ctx: Optional[dict] = None) -> str:
     lines = [f"{ICONS['intraday']} <b>{escape(p['symbol'])}</b> trading {rs(ltp)}, "
              f"{(ltp / p['pivot'] - 1) * 100:+.1f}% above its {rs(p['pivot'])} pivot ({escape(p['base_label'])})",
              "<b>Unconfirmed</b>: a breakout counts only on a close above the pivot."]
@@ -69,6 +75,10 @@ def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optio
     tail = _tail(p)
     if tail:
         lines.append(f"<i>{tail}</i>")
+    if ctx:
+        from backend.alerts.decision import decision_lines
+        lines.append("")
+        lines += [escape(x) for x in decision_lines(ctx)]
     return "\n".join(lines)
 
 

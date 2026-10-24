@@ -237,7 +237,8 @@ def test_intraday_heads_up_once_per_day(monkeypatch):
 
     class Q:
         def quote(self, keys):
-            return {k: {"last_price": 10_000.0, "volume": 5_000_000} for k in keys}   # far above any pivot
+            return {k: {"last_price": 10_000.0, "volume": 5_000_000,                    # far above any pivot
+                        "ohlc": {"open": 9_900.0, "high": 10_050.0, "low": 9_850.0}} for k in keys}
     st = FakeState()
     st.client = Q()
     monkeypatch.setattr("backend.alerts.jobs.uni.resolve_universe",
@@ -246,4 +247,5 @@ def test_intraday_heads_up_once_per_day(monkeypatch):
     now = ist(2026, 10, 26, 11, 0)
     r = sch.run_intraday(now)
     assert r["sent"] >= 1 and any("Unconfirmed" in h for _, h in fake.sent)
+    assert any(k == "photo" and "Verdict:" in h for k, h in fake.sent)                # live decision chart
     assert sch.run_intraday(now + timedelta(minutes=5))["sent"] == 0

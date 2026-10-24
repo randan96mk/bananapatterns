@@ -176,7 +176,12 @@ class AlertsConfig:
     near_pivot: bool = True
     near_pivot_pct: float = 0.03           # forming and within 3% under the pivot (once per base)
     digest: bool = True
-    chart_images: bool = True              # PNG with breakout / near-pivot alerts
+    chart_images: bool = True              # annotated decision chart with the alert types in chart_kinds
+    chart_kinds: list = field(default_factory=lambda: ["breakout", "breakout_low_volume", "near_pivot", "forming",
+                                                       "below_pivot", "played_out", "climbing", "intraday"])
+    buy_zone_pct: float = 0.05             # buy zone = pivot .. +5% (beyond it: extended, don't chase)
+    capital: float = 0.0                   # position size on the chart: 0 = off
+    risk_pct: float = 0.01                 # ... risking this share of capital per trade (0.01 = 1%)
     system: bool = True                    # login reminder, job failures, index changes
     intraday: bool = True                  # heads-up when price crosses a forming VCP's pivot
     intraday_interval_min: int = 5

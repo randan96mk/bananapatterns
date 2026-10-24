@@ -12,8 +12,13 @@ const GROUPS = [
 const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time', 'Evening job (IST)'],
   ['reminder_time', 'Login reminder (IST)'], ['intraday_start', 'Intraday from'], ['intraday_end', 'Intraday until'],
   ['intraday_interval_min', 'Intraday every (min)'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)']];
+const CHART_KINDS = [['breakout', '🚀 Breakout'], ['breakout_low_volume', '⚠️ Low-volume breakout'],
+  ['near_pivot', '🎯 Near pivot'], ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Below pivot'],
+  ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday']];
+const SIZE_FIELDS = [['buy_zone_pct', 'Buy zone above pivot (0.05 = 5%)'],
+  ['capital', 'Capital ₹ for position size (0 = off)'], ['risk_pct', 'Risk per trade (0.01 = 1%)']];
 const strip = (h) => h.replace(/<[^>]+>/g, '');
-const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout (chart)'], ['near_pivot', '🎯 Near pivot (chart)'],
+const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout'], ['near_pivot', '🎯 Near pivot'],
   ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Back below pivot'], ['played_out', '🏁 Played out'],
   ['intraday', '⚡ Intraday heads-up'], ['digest', '📋 Digest'], ['system', '⚙️ System']];
 
@@ -121,6 +126,18 @@ export default function AlertsPanel() {
                 <label key={k} className="toggle"><input type="checkbox" checked={!!cfg[k]}
                   onChange={(e) => save({ [k]: e.target.checked })} /> {label}</label>))}
             </div>))}
+          <div><h4>Decision charts</h4>
+            <p className="muted small">Chart image with numbered markers + verdict panel for:</p>
+            {CHART_KINDS.map(([k, label]) => (
+              <label key={k} className="toggle"><input type="checkbox" checked={cfg.chart_kinds.includes(k)}
+                disabled={!cfg.chart_images}
+                onChange={(e) => save({ chart_kinds: e.target.checked ? [...cfg.chart_kinds, k]
+                  : cfg.chart_kinds.filter((x) => x !== k) })} /> {label}</label>))}
+            {SIZE_FIELDS.map(([k, label]) => (
+              <label key={k} className="toggle field">{label}
+                <input value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
+                       onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
+          </div>
           <div><h4>Timing</h4>
             {FIELDS.map(([k, label]) => (
               <label key={k} className="toggle field">{label}

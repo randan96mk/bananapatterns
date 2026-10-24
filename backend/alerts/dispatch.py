@@ -16,7 +16,7 @@ from typing import Optional
 from backend.alerts import messages as msg
 from backend.alerts import charts
 from backend.alerts.telegram import TelegramClient, TelegramError
-from backend.config import AlertsConfig, BaseConfig
+from backend.config import AlertsConfig, BaseConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine.bases import detect_bases
 from backend.logging_config.logger import setup_logger
@@ -26,7 +26,6 @@ logger = setup_logger("alerts")
 # feed kind -> AlertsConfig toggle ("climbing" in the feed = reclaimed the pivot after falling under it)
 KIND_TOGGLE = {"breakout": "breakout", "breakout_low_volume": "low_volume_breakout", "below_pivot": "below_pivot",
                "played_out": "played_out", "forming": "forming", "left": "left", "climbing": "below_pivot"}
-CHART_KINDS = {"breakout", "breakout_low_volume", "near_pivot"}
 
 
 class Notifier:
@@ -81,34 +80,36 @@ def charts_available() -> bool:
     return charts.CHARTS_AVAILABLE
 
 
-def _chart_png(candles: list[dict], p: dict, kind: str, bases_cfg: BaseConfig) -> Optional[bytes]:
-    if not charts_available():
-        return None
+def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bases_cfg: BaseConfig,
+                 vcp_cfg: VcpConfig, live: Optional[dict] = None,
+                 force_image: bool = False) -> tuple[Optional[bytes], Optional[dict]]:
+    """(annotated PNG or None, decision context or None) for one alert. Never raises.
+    force_image skips the chart_images / chart_kinds settings (dashboard preview)."""
+    from backend.alerts.decision import decision_context, render_decision_chart
     try:
-        bases = detect_bases(candles, bases_cfg)
-        if not bases:
-            return None
-        if kind == "near_pivot":
-            base, bo_date = bases[-1], None
-        else:
-            base = next((b for b in reversed(bases) if b.breakout is not None), bases[-1])
-            bo_date = base.breakout.date if base.breakout else None
-        v = p.get("vcp") or {}
-        title = f"{p['symbol']} · {p.get('company') or ''} — {p.get('base_label') or base.label}"
-        sub = " · ".join(x for x in (f"RS {p['rs']}" if p.get("rs") is not None else "",
-                                     f"Trend {p.get('tt_passed')}/{p.get('tt_of')}" if p.get("tt_of") else "",
-                                     p.get("industry") or "") if x)
-        return charts.render_chart(candles, title, sub, base={"start_date": base.start_date, "end_date": base.end_date,
-                                                       "pivot": base.pivot, "low": base.low, "label": base.label},
-                            stop=v.get("stop"), breakout_date=bo_date, contractions=v.get("contractions"))
+        ended = None
+        if kind == "played_out":
+            ended = {"date": p.get("ended_date"), "reason": p.get("ended_reason") or "",
+                     "gain_pct": p.get("gain_from_pivot_pct") or 0.0, "peak_pct": p.get("peak_gain_pct") or 0.0}
+        ctx = decision_context(candles, kind, symbol=p["symbol"], company=p.get("company") or "",
+                               industry=p.get("industry") or "", rs=p.get("rs"), tt_passed=p.get("tt_passed") or 0,
+                               tt_of=p.get("tt_of") or 8, bases_cfg=bases_cfg, vcp_cfg=vcp_cfg, alerts_cfg=cfg,
+                               ended=ended, live=live)
+        if ctx is None:
+            return None, None
+        png = None
+        if (force_image or (cfg.chart_images and kind in cfg.chart_kinds)) and charts_available():
+            png = render_decision_chart(candles, ctx)
+        return png, ctx
     except Exception:
-        logger.exception("Chart render failed for %s", p.get("symbol"))
-        return None
+        logger.exception("Decision chart failed for %s (%s)", p.get("symbol"), kind)
+        return None, None
 
 
 def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier: Notifier,
-                  tokens: dict[str, int], fresh_sessions: int = 5) -> dict:
+                  tokens: dict[str, int], fresh_sessions: int = 5, vcp_cfg: Optional[VcpConfig] = None) -> dict:
     """Send alerts for one as-of date. tokens: symbol -> instrument_token (for charts)."""
+    vcp_cfg = vcp_cfg or VcpConfig()
     sent = {"stage": 0, "near_pivot": 0, "digest": 0, "skipped_ready": not notifier.ready}
     if not notifier.ready:
         logger.info("Alerts not sent: Telegram not configured or alerts disabled")
@@ -140,16 +141,15 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
             toggle = KIND_TOGGLE.get(kind)
             if not toggle or not getattr(cfg, toggle, False):
                 continue
-            cir, png = None, None
-            if kind in CHART_KINDS and p:
+            cir, png, ctx = None, None, None
+            if p:
                 cs = candles_of(m["symbol"])
                 if cs:
                     last = cs[-1]
                     rng = last["high"] - last["low"]
                     cir = (last["close"] - last["low"]) / rng if rng > 0 else None
-                    if cfg.chart_images:
-                        png = _chart_png(cs, p, kind, bases_cfg)
-            html = msg.stage_alert(kind, screen, m["text"], p or {"symbol": m["symbol"]}, cir)
+                    png, ctx = decision_for(cs, p, kind, cfg, bases_cfg, vcp_cfg)
+            html = msg.stage_alert(kind, screen, m["text"], p or {"symbol": m["symbol"]}, cir, ctx)
             if notifier.send(f"{as_of}|{screen}|{m['symbol']}|{kind}", kind, html, m["symbol"], png):
                 sent["stage"] += 1
 
@@ -159,12 +159,10 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                     continue
                 if p["dist_to_pivot_pct"] > cfg.near_pivot_pct * 100:
                     continue
-                png = None
-                if cfg.chart_images:
-                    cs = candles_of(sym)
-                    png = _chart_png(cs, p, "near_pivot", bases_cfg) if cs else None
-                if notifier.send(f"near|{screen}|{sym}|{p['pivot']}", "near_pivot", msg.near_pivot_alert(screen, p),
-                                 sym, png):
+                cs = candles_of(sym)
+                png, ctx = decision_for(cs, p, "near_pivot", cfg, bases_cfg, vcp_cfg) if cs else (None, None)
+                if notifier.send(f"near|{screen}|{sym}|{p['pivot']}", "near_pivot",
+                                 msg.near_pivot_alert(screen, p, ctx), sym, png):
                     sent["near_pivot"] += 1
 
         if cfg.digest:

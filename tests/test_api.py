@@ -89,6 +89,12 @@ def test_callback_login_then_full_flow(api):
 
     v = tc.get("/api/stock/INFY/vcp").json()
     assert v["vcp"] is None or {"qualifies", "fails", "contractions", "tightening"} <= set(v["vcp"])
+    for sym in ("INFY", "ABB", "HFCL"):
+        img = tc.get(f"/api/stock/{sym}/alert-chart.png")
+        assert img.status_code in (200, 404)
+        if img.status_code == 200:
+            assert img.content[:4] == b"\x89PNG" and img.headers["x-alert-kind"] != "auto"
+    assert tc.get("/api/stock/INFY/alert-chart.png?kind=nope").status_code == 422
     vs = tc.get("/api/screens/vcp/summary").json()
     assert vs["as_of"] == summ["as_of"] and set(vs["counts"]) >= {"forming", "fresh", "climbing", "played_out"}
     assert tc.get("/api/changes?screen=vcp").json()["screen"] == "vcp"
