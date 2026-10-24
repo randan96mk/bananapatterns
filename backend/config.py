@@ -225,9 +225,20 @@ class AlertsConfig:
     b_alerts: str = "digest"               # digest (listed in the digest only) / push (send, tagged B) / off
     correction_mode: str = "caution"       # caution (A alerts still sent, with a warning) / mute_buys
     market_sizing: bool = True             # position size x1 uptrend, x0.5 under pressure, x0.25 correction
+    # Daily plan: tonight's top setups, the morning plan, the pre-open gap check
+    plan_top_n: int = 5
+    top_setups: bool = True
+    top_setups_time: str = "19:00"         # after the evening scan (waits for it, until 23:00)
+    morning_plan: bool = True
+    morning_plan_time: str = "08:50"
+    gap_check: bool = True
+    gap_check_time: str = "09:10"          # after the 09:00-09:08 pre-open session sets the open
+    coiled_volume: float = 0.5             # coiled: last day's volume <= this x 50-day average ...
+    coiled_within_pct: float = 3.0         # ... within this % under the pivot, on an NR7 or inside day
 
 
-TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time")
+TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
+               "top_setups_time", "morning_plan_time", "gap_check_time")
 
 
 CHOICES = {"b_alerts": ("digest", "push", "off"), "correction_mode": ("caution", "mute_buys")}

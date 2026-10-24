@@ -13,6 +13,10 @@
             refer back to it
   weekly    universe_refresh_weekday from 10:00: NSE holiday list + Nifty 500 refresh,
             alert on index additions/removals
+  top_setups  trading days from top_setups_time (19:00), after the evening scan: rank the Forming
+            setups, save the plan, send the Top N with charts
+  morning_plan  trading days morning_plan_time (08:50) until noon: the saved plan's triggers
+  gap_check  trading days gap_check_time (09:10) until 10:00: how the plan names opened
   login     each of login_times (06:01, 08:45): if Kite doesn't accept a session, send a
             one-time login link (missed slots catch up as one link when the app wakes)
   login_headsup  optional, login_heads_up_time (05:45) while a token is active: "ends at 06:00"
@@ -27,6 +31,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Callable, Optional
 
 from backend.alerts import intraday as itd
+from backend.alerts import plan as pl
 from backend.alerts import messages as msg
 from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
 from backend.alerts.login import send_login_link, session_ok
@@ -78,6 +83,12 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
     if (trading and cfg.intraday and cfg.close_check and ready("close_check")
             and hm(cfg.close_check_time) <= t < MARKET_CLOSE):
         jobs.append("close_check")
+    if trading and cfg.top_setups and ready("top_setups") and hm(cfg.top_setups_time) <= t < time(23, 0):
+        jobs.append("top_setups")
+    if trading and cfg.morning_plan and ready("morning_plan") and hm(cfg.morning_plan_time) <= t < time(12, 0):
+        jobs.append("morning_plan")
+    if trading and cfg.gap_check and ready("gap_check") and hm(cfg.gap_check_time) <= t < time(10, 0):
+        jobs.append("gap_check")
     if now.weekday() == cfg.universe_refresh_weekday and ready("weekly") and t >= time(10, 0):
         jobs.append("weekly")
     if login_slots_due(now, cfg, done_today, login_day):
@@ -405,6 +416,81 @@ class Scheduler:
         counts = {v: sum(i["verdict"] == v for i in items) for v in order}
         self.record("close_check", today, "ok", f"above pivot {len(items)}: {counts}; sent {sent}", started)
         return {"status": "ok", "above": len(items), "counts": counts, "sent": sent}
+
+    def run_top_setups(self, now: datetime, force: bool = False) -> dict:
+        """After today's evening scan: rank, save the plan, send the Top N (header + one chart each)."""
+        st, cfg, today, started = self.state, self.state.config.alerts, now.date(), now_ist()
+        with get_db() as conn:
+            as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        if not force and (as_of != today.isoformat() or "eod" not in self.done_today(today)):
+            self.not_before["top_setups"] = now + timedelta(minutes=15)     # wait for the evening scan
+            self.record("top_setups", today, "waiting", f"waiting for today's evening scan (latest {as_of})", started)
+            return {"status": "waiting"}
+        if as_of is None:
+            self.record("top_setups", today, "ok", "no scan yet", started)
+            return {"status": "no_scan"}
+        tokens = self._tokens()
+        items = pl.build_plan(as_of, cfg, st.config.vcp, tokens)
+        mc, sizing = self._market()
+        notifier, sent, charts = self.notifier(), 0, []
+        for n, i in enumerate(items, 1):
+            with get_db() as conn:
+                cs = get_candles(conn, tokens[i["symbol"]]) if i["symbol"] in tokens else []
+            png, ctx = decision_for(cs, i["payload"], "near_pivot", cfg, st.config.bases, st.config.vcp,
+                                    **sizing) if cs else (None, None)
+            if ctx:
+                i["stop"], i["size"] = round(ctx["stop"], 2), ctx["size"]
+            charts.append((n, i, png, ctx))
+        pl.save_plan(as_of, [{k: v for k, v in i.items() if k != "payload"} for i in items])
+        if items and notifier.send(f"{as_of}|top", "plan", decorate(msg.top_setups(items, as_of), "plan", None, mc)):
+            sent += 1
+            for n, i, png, ctx in charts:
+                if png and notifier.send(f"{as_of}|top|{i['symbol']}", "plan", msg.top_setup_caption(n, i, ctx),
+                                         i["symbol"], png):
+                    sent += 1
+        self.record("top_setups", today, "ok", f"{len(items)} setups ranked; sent {sent}", started)
+        return {"status": "ok", "items": len(items), "sent": sent}
+
+    def run_morning_plan(self, now: datetime) -> dict:
+        today, started = now.date(), now_ist()
+        plan_as_of, items = pl.latest_plan(before=today.isoformat())
+        mc, _ = self._market()
+        sent = self.notifier().send(f"{today}|morning", "plan",
+                                    decorate(msg.morning_plan(items, plan_as_of or "no", today.isoformat()), "plan",
+                                             None, mc)) if plan_as_of else False
+        self.record("morning_plan", today, "ok", f"{len(items)} triggers; sent {sent}" if plan_as_of
+                    else "no saved plan yet", started)
+        return {"status": "ok", "items": len(items), "sent": sent}
+
+    def run_gap_check(self, now: datetime) -> dict:
+        """After the pre-open session: how each plan name opened (one Kite quote call)."""
+        st, today, started = self.state, now.date(), now_ist()
+        plan_as_of, items = pl.latest_plan(before=today.isoformat())
+        if not items:
+            self.record("gap_check", today, "ok", "no plan", started)
+            return {"status": "no_plan"}
+        if not st.token_valid():
+            self.record("gap_check", today, "failed", "Kite login missing at the opening check", started)
+            return {"status": "no_login"}
+        stocks = {s["symbol"]: s for s in uni.resolve_universe(st.config.ingest)["stocks"]}
+        keys = {f"NSE:{stocks[i['symbol']].get('tradingsymbol', i['symbol'])}": i for i in items
+                if i["symbol"] in stocks}
+        try:
+            quotes = st.client.quote(list(keys))
+        except Exception as exc:
+            logger.warning("Opening check quote failed: %s", exc)
+            self.not_before["gap_check"] = now + timedelta(minutes=2)
+            return {"status": "quote_failed"}
+        results = []
+        for key, i in keys.items():
+            q = quotes.get(key) or {}
+            open_px = (q.get("ohlc") or {}).get("open") or q.get("last_price")
+            verdict = pl.gap_verdict(open_px, i) if open_px else None
+            if verdict:
+                results.append((i, open_px, verdict))
+        sent = bool(results) and self.notifier().send(f"{today}|gap", "plan", msg.gap_check(results))
+        self.record("gap_check", today, "ok", f"{len(results)} of {len(keys)} worth a note; sent {sent}", started)
+        return {"status": "ok", "notes": len(results), "sent": sent}
 
     def run_weekly(self, now: datetime) -> dict:
         today, started, st = now.date(), now_ist(), self.state

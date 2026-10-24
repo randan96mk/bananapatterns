@@ -145,3 +145,9 @@ footer { margin-top: 20px; font-size: 11px; }
   padding: 0 4px; margin-right: 6px; }
 .tier.t-A { background: var(--ok); color: #052e2b; } .tier.t-B { background: var(--border); color: var(--muted); }
 @media (max-width: 700px) { .mhist { display: none; } }
+
+/* Next session's plan */
+.planrows { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.planrow { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; text-align: left; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; color: var(--text); cursor: pointer; font: inherit; }
+.planrow:hover { border-color: #3a4552; }

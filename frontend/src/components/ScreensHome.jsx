@@ -3,6 +3,7 @@ import * as api from '../services/api';
 import StockChart from './StockChart';
 import StageList from './StageList';
 import MarketCard from './MarketCard';
+import PlanCard from './PlanCard';
 
 const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
@@ -17,12 +18,14 @@ export default function ScreensHome({ hasData }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [mkt, setMkt] = useState(null);
+  const [plan, setPlan] = useState(null);
 
   const load = useCallback(async () => {
     try {
       const [s, f] = await Promise.all([api.screenSummary(screen), api.getChanges(screen)]);
       setSummary(s); setFeed(f); setErr('');
       api.marketHealth().then(setMkt).catch(() => setMkt(null));
+      api.getPlan().then(setPlan).catch(() => setPlan(null));
     } catch (e) { setErr(e.message); }
   }, [screen]);
   useEffect(() => { load(); }, [load]);
@@ -57,6 +60,7 @@ export default function ScreensHome({ hasData }) {
       </div>
 
       <MarketCard data={mkt} />
+      <PlanCard plan={plan} onSelect={setSelected} />
 
       <div className="panel board">
         {!summary?.as_of ? (
