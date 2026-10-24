@@ -197,6 +197,13 @@ CREATE TABLE IF NOT EXISTS intraday_flags (
     PRIMARY KEY (day, symbol, flag)
 );
 
+-- Daily market health (status + signals), written by each scan.
+CREATE TABLE IF NOT EXISTS market_health (
+    as_of TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

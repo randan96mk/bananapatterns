@@ -11,12 +11,14 @@ A failed send is recorded with ok=0 and retried on the next dispatch.
 
 import json
 import os
+import re
+from html import escape, unescape
 from typing import Optional
 
 from backend.alerts import messages as msg
 from backend.alerts import charts
 from backend.alerts import intraday as itd
-from backend.alerts.telegram import TelegramClient, TelegramError
+from backend.alerts.telegram import MAX_CAPTION, TelegramClient, TelegramError
 from backend.config import AlertsConfig, BaseConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine.bases import detect_bases
@@ -27,6 +29,22 @@ logger = setup_logger("alerts")
 # feed kind -> AlertsConfig toggle ("climbing" in the feed = reclaimed the pivot after falling under it)
 KIND_TOGGLE = {"breakout": "breakout", "breakout_low_volume": "low_volume_breakout", "below_pivot": "below_pivot",
                "played_out": "played_out", "forming": "forming", "left": "left", "climbing": "below_pivot"}
+
+
+def strip_tags(html: str) -> str:
+    return unescape(re.sub(r"<[^>]+>", "", html))
+
+
+def split_caption(html: str, limit: int = MAX_CAPTION) -> tuple[str, str]:
+    """Split at a line break so the photo caption fits Telegram's limit; our tags never span lines."""
+    if len(html) <= limit:
+        return html, ""
+    lines, cap = html.split("\n"), []
+    while lines and len("\n".join(cap + [lines[0]])) <= limit:
+        cap.append(lines.pop(0))
+    if not cap:                                            # one huge first line: plain cut, tags stripped
+        return escape(strip_tags(lines[0]))[:limit - 1] + "…", "\n".join(lines[1:])
+    return "\n".join(cap), "\n".join(lines).strip("\n")
 
 
 class Notifier:
@@ -53,7 +71,10 @@ class Notifier:
         ok, err = True, None
         try:
             if png:
-                self.client.send_photo(self.chat_id, png, html)
+                caption, rest = split_caption(html)
+                self.client.send_photo(self.chat_id, png, caption)
+                if rest:
+                    self.client.send_message(self.chat_id, rest)
             elif buttons:
                 self.client.send_message(self.chat_id, html, buttons)
             else:
@@ -85,8 +106,8 @@ def charts_available() -> bool:
 
 
 def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bases_cfg: BaseConfig,
-                 vcp_cfg: VcpConfig, live: Optional[dict] = None,
-                 force_image: bool = False) -> tuple[Optional[bytes], Optional[dict]]:
+                 vcp_cfg: VcpConfig, live: Optional[dict] = None, force_image: bool = False,
+                 size_factor: float = 1.0, size_note: str = "") -> tuple[Optional[bytes], Optional[dict]]:
     """(annotated PNG or None, decision context or None) for one alert. Never raises.
     force_image skips the chart_images / chart_kinds settings (dashboard preview)."""
     from backend.alerts.decision import decision_context, render_decision_chart
@@ -98,7 +119,7 @@ def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bas
         ctx = decision_context(candles, kind, symbol=p["symbol"], company=p.get("company") or "",
                                industry=p.get("industry") or "", rs=p.get("rs"), tt_passed=p.get("tt_passed") or 0,
                                tt_of=p.get("tt_of") or 8, bases_cfg=bases_cfg, vcp_cfg=vcp_cfg, alerts_cfg=cfg,
-                               ended=ended, live=live)
+                               ended=ended, live=live, size_factor=size_factor, size_note=size_note)
         if ctx is None:
             return None, None
         png = None
@@ -115,7 +136,9 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                   tokens: dict[str, int], fresh_sessions: int = 5, vcp_cfg: Optional[VcpConfig] = None) -> dict:
     """Send alerts for one as-of date. tokens: symbol -> instrument_token (for charts)."""
     vcp_cfg = vcp_cfg or VcpConfig()
-    sent = {"stage": 0, "near_pivot": 0, "digest": 0, "skipped_ready": not notifier.ready}
+    from backend.alerts.priority import MarketContext, decorate, gate
+    from backend.engine import market
+    sent = {"stage": 0, "near_pivot": 0, "digest": 0, "held": 0, "skipped_ready": not notifier.ready}
     if not notifier.ready:
         logger.info("Alerts not sent: Telegram not configured or alerts disabled")
         return sent
@@ -123,6 +146,9 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
         run = conn.execute("SELECT counts FROM scan_runs WHERE as_of = ? ORDER BY id DESC LIMIT 1", (as_of,)).fetchone()
         counts_all = json.loads(run["counts"]) if run else {}
         day_flags = itd.flags(conn, as_of)                  # today's 15:15 verdicts, for the cross-reference
+        prev_health = market.before(conn, as_of)
+    mc = MarketContext.load(cfg, as_of)
+    sizing = {"size_factor": mc.size_factor, "size_note": mc.size_note}
     close_flag = {sym: next((f for f in fl if f.startswith("close_")), None) for sym, fl in day_flags.items()}
     confirmed, last_close = set(), {}
     for screen in cfg.screens:
@@ -149,6 +175,10 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
             toggle = KIND_TOGGLE.get(kind)
             if not toggle or not getattr(cfg, toggle, False):
                 continue
+            send_ok, m["tier"] = gate(kind, p or {}, mc, cfg)
+            if not send_ok:
+                sent["held"] += 1                          # B (or muted in a correction): digest only
+                continue
             cir, png, ctx = None, None, None
             if p:
                 cs = candles_of(m["symbol"])
@@ -156,11 +186,12 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                     last = cs[-1]
                     rng = last["high"] - last["low"]
                     cir = (last["close"] - last["low"]) / rng if rng > 0 else None
-                    png, ctx = decision_for(cs, p, kind, cfg, bases_cfg, vcp_cfg)
+                    png, ctx = decision_for(cs, p, kind, cfg, bases_cfg, vcp_cfg, **sizing)
             html = msg.stage_alert(kind, screen, m["text"], p or {"symbol": m["symbol"]}, cir, ctx)
             note = msg.confirm_note(close_flag.get(m["symbol"])) if kind == "breakout" else None
             if note:
                 html += "\n" + note
+            html = decorate(html, kind, m["tier"], mc)
             if notifier.send(f"{as_of}|{screen}|{m['symbol']}|{kind}", kind, html, m["symbol"], png):
                 sent["stage"] += 1
 
@@ -175,14 +206,21 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                     continue
                 if p["dist_to_pivot_pct"] > cfg.near_pivot_pct * 100:
                     continue
+                send_ok, t = gate("near_pivot", p, mc, cfg)
+                key = f"near|{screen}|{sym}|{p['pivot']}"
+                if not send_ok or notifier.already_sent(key):
+                    sent["held"] += not send_ok
+                    continue
                 cs = candles_of(sym)
-                png, ctx = decision_for(cs, p, "near_pivot", cfg, bases_cfg, vcp_cfg) if cs else (None, None)
-                if notifier.send(f"near|{screen}|{sym}|{p['pivot']}", "near_pivot",
-                                 msg.near_pivot_alert(screen, p, ctx), sym, png):
+                png, ctx = decision_for(cs, p, "near_pivot", cfg, bases_cfg, vcp_cfg, **sizing) if cs else (None, None)
+                if notifier.send(key, "near_pivot", decorate(msg.near_pivot_alert(screen, p, ctx), "near_pivot", t, mc),
+                                 sym, png):
                     sent["near_pivot"] += 1
 
         if cfg.digest:
-            for i, chunk in enumerate(msg.digest(screen, as_of, counts_all.get(screen, {}), moves, fresh_sessions)):
+            block = msg.market_block(mc.health, prev_health) if mc.health else None
+            for i, chunk in enumerate(msg.digest(screen, as_of, counts_all.get(screen, {}), moves, fresh_sessions,
+                                                 market=block)):
                 if notifier.send(f"{as_of}|{screen}|digest|{i}", "digest", chunk):
                     sent["digest"] += 1
     if cfg.intraday and cfg.close_check:

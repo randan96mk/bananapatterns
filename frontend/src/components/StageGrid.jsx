@@ -93,6 +93,8 @@ export default function StageGrid({ screen, stage, asOf, rows, selected, onSelec
           <button key={r.symbol} onClick={() => onSelect(r.symbol)}
                   className={`stockcard s-${stage} ${tight ? 'tight' : ''} ${r.symbol === selected ? 'sel' : ''}`}>
             <div className="sc-head">
+              {r.tier && <span className={`tier t-${r.tier}`} title={r.tier === 'A' ? 'A setup: alerts at once'
+                : 'B setup: digest only'}>{r.tier}</span>}
               <b>{r.symbol}</b>{!isVcp && r.vcp_tag && <span className="tag ok">VCP</span>}
               <span className="right muted small">{r.base_label}</span>
             </div>

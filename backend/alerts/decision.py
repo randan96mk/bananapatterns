@@ -45,7 +45,8 @@ def _rs(v):
 def decision_context(candles: list[dict], kind: str, *, symbol: str, company: str = "", industry: str = "",
                      rs: Optional[int] = None, tt_passed: int = 0, tt_of: int = 8,
                      bases_cfg: BaseConfig, vcp_cfg: VcpConfig, alerts_cfg: AlertsConfig,
-                     ended: Optional[dict] = None, live: Optional[dict] = None) -> Optional[dict]:
+                     ended: Optional[dict] = None, live: Optional[dict] = None,
+                     size_factor: float = 1.0, size_note: str = "") -> Optional[dict]:
     """Everything the decision chart and message need, or None if there is no base.
 
     live: intraday {ltp, open, high, low, volume} for today's still-forming candle; for close_check also
@@ -143,8 +144,8 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
         entry = max(close, pivot) if kind in BREAKOUT_KINDS | LIVE_KINDS else pivot
         per_share = entry - stop
         if per_share > 0:
-            qty = floor(alerts_cfg.capital * alerts_cfg.risk_pct / per_share)
-            size = {"qty": qty, "entry": entry, "risk_rs": qty * per_share, "value": qty * entry}
+            qty = floor(alerts_cfg.capital * alerts_cfg.risk_pct * size_factor / per_share)
+            size = {"qty": qty, "entry": entry, "risk_rs": qty * per_share, "value": qty * entry, "note": size_note}
 
     return {"symbol": symbol, "company": company, "industry": industry, "kind": kind, "base": base, "vcp": v,
             "pivot": pivot, "stop": stop, "zone_top": zone_top, "close": close, "ext_pct": ext,
@@ -167,7 +168,8 @@ def decision_lines(ctx: dict) -> list[str]:
     lines.append("Watch: " + " ".join(ctx["watch"][:2]))
     if ctx["size"]:
         s = ctx["size"]
-        lines.append(f"Size: ~{s['qty']} shares at {_rs(s['entry'])} risks {_rs(s['risk_rs'])}")
+        lines.append(f"Size: ~{s['qty']} shares at {_rs(s['entry'])} risks {_rs(s['risk_rs'])}"
+                     + (f" ({s['note']})" if s.get("note") else ""))
     return lines
 
 

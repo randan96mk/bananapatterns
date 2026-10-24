@@ -30,6 +30,7 @@ from backend.alerts import intraday as itd
 from backend.alerts import messages as msg
 from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
 from backend.alerts.login import send_login_link, session_ok
+from backend.alerts.priority import MarketContext, decorate, gate
 from backend.config import IST, AlertsConfig
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
 from backend.ingest import holidays as hol
@@ -272,8 +273,9 @@ class Scheduler:
         if not cands:
             return {"status": "no_candidates", "items": []}
         keys = {f"NSE:{stocks[s].get('tradingsymbol', s)}": s for s in cands}
+        index_key = f"NSE:{uni.INDEX_NAME}"                 # rides in the same quote call
         try:
-            quotes = st.client.quote(list(keys))
+            quotes = st.client.quote(list(keys) + [index_key])
         except Exception as exc:
             logger.warning("Intraday quote failed: %s", exc)
             return {"status": "quote_failed", "error": str(exc), "items": []}
@@ -288,7 +290,14 @@ class Scheduler:
                     "low": min(ohlc.get("low") or ltp, ltp), "volume": vol or 0}
             items.append({"symbol": sym, "p": dict(cands[sym], symbol=sym), "token": stocks[sym]["instrument_token"],
                           "ltp": ltp, "live": live, "vol": vol})
-        return {"status": "ok", "checked": len(keys), "items": items}
+        iq = quotes.get(index_key) or {}
+        prev = (iq.get("ohlc") or {}).get("close")
+        index_today = round((iq["last_price"] / prev - 1) * 100, 2) if iq.get("last_price") and prev else None
+        return {"status": "ok", "checked": len(keys), "items": items, "index_today": index_today}
+
+    def _market(self, index_today: Optional[float] = None) -> tuple[MarketContext, dict]:
+        mc = MarketContext.load(self.state.config.alerts, index_today=index_today)
+        return mc, {"size_factor": mc.size_factor, "size_note": mc.size_note}
 
     @staticmethod
     def _history(token: int) -> tuple[list[dict], Optional[float]]:
@@ -306,7 +315,8 @@ class Scheduler:
         res = self._forming_quotes()
         if res["status"] != "ok":
             return {k: v for k, v in res.items() if k != "items"}
-        notifier, sent, failed = self.notifier(), 0, 0
+        notifier, sent, failed, held = self.notifier(), 0, 0, 0
+        mc, sizing = self._market(res.get("index_today"))
         with get_db() as conn:
             day_flags = itd.flags(conn, today)
         for it in res["items"]:
@@ -318,24 +328,30 @@ class Scheduler:
                 key = f"{today}|intraday|{sym}"
                 if notifier.already_sent(key):
                     continue                             # skip the chart work for names already alerted today
+                send_ok, t = gate("intraday", p, mc, cfg)
+                if not send_ok:
+                    held += 1                            # B setup / muted: no heads-up (and so no failed alert)
+                    continue
                 hist, avg = self._history(it["token"])
                 pace = volume_pace(it["vol"], avg, now)
                 png, ctx = decision_for(hist, p, "intraday", cfg, st.config.bases, st.config.vcp,
-                                        live=it["live"]) if hist else (None, None)
+                                        live=it["live"], **sizing) if hist else (None, None)
                 html = msg.intraday_alert(p, ltp, it["vol"], pace, avg, ctx,
                                           volume=itd.volume_verdict(pace, cfg.intraday_volume_mult),
                                           zone_top=p["pivot"] * (1 + cfg.buy_zone_pct),
                                           check_time=cfg.close_check_time if cfg.close_check else "evening")
-                if notifier.send(key, "intraday", html, sym, png):
+                if notifier.send(key, "intraday", decorate(html, "intraday", t, mc), sym, png):
                     sent += 1
-            elif "crossed" in fl and ltp < p["pivot"] * (1 - cfg.failed_buffer_pct):
+            elif ("crossed" in fl and ltp < p["pivot"] * (1 - cfg.failed_buffer_pct)
+                  and notifier.already_sent(f"{today}|intraday|{sym}")):     # only names you were told about
                 with get_db() as conn:
                     new = itd.set_flag(conn, today, sym, "failed", f"{ltp}")
                 stop = (p.get("vcp") or {}).get("stop")
                 if new and notifier.send(f"{today}|failed|{sym}", "intraday",
-                                         msg.failed_alert(p, ltp, it["live"]["high"], stop), sym):
+                                         decorate(msg.failed_alert(p, ltp, it["live"]["high"], stop), "failed", None,
+                                                  mc), sym):
                     failed += 1
-        return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed}
+        return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed, "held": held}
 
     def run_close_check(self, now: datetime) -> dict:
         """15:15: holding / weak / extended for every Forming name above its pivot. Up to 3 holding names
@@ -360,24 +376,31 @@ class Scheduler:
             verdict = itd.close_verdict(ltp, p["pivot"], zone_top, pace, rng, cfg)
             items.append(dict(it, hist=hist, pace=pace, rng=rng, verdict=verdict, zone_top=zone_top,
                               pivot=p["pivot"]))
+        mc, sizing = self._market(res.get("index_today"))
+        for i in items:
+            i["send_ok"], i["tier"] = gate("close_check", i["p"], mc, cfg)
         order = {"holding": 0, "weak": 1, "extended": 2}
-        items.sort(key=lambda i: (order[i["verdict"]], -(i["pace"] or 0)))
+        items.sort(key=lambda i: (order[i["verdict"]], i["tier"] == "B", -(i["pace"] or 0)))
         with get_db() as conn:
             for i in items:
                 itd.set_flag(conn, today.isoformat(), i["symbol"], f"close_{i['verdict']}",
                              f"{i['ltp']}|{i['pace']}|{i['rng']}")
         notifier, sent = self.notifier(), 0
-        individual = items if len(items) <= 3 else [i for i in items if i["verdict"] == "holding"][:3]
+        eligible = [i for i in items if i["send_ok"]]           # A (or every name when tiering is off / push)
+        muted = mc.status == "correction" and cfg.correction_mode == "mute_buys"
+        listable = [] if muted else (eligible if cfg.b_alerts == "off" else items)   # B names: summary only
+        individual = eligible if len(listable) <= 3 else [i for i in eligible if i["verdict"] == "holding"][:3]
         for i in individual:
             live = dict(i["live"], pace=i["pace"], range=i["rng"], verdict=i["verdict"])
             png, ctx = decision_for(i["hist"], i["p"], "close_check", cfg, st.config.bases, st.config.vcp,
-                                    live=live) if i["hist"] else (None, None)
+                                    live=live, **sizing) if i["hist"] else (None, None)
             html = msg.close_alert(i["p"], i["verdict"], i["ltp"], i["pace"], i["rng"], i["zone_top"], ctx)
-            if notifier.send(f"{today}|close|{i['symbol']}", "close_check", html, i["symbol"], png):
+            if notifier.send(f"{today}|close|{i['symbol']}", "close_check", decorate(html, "close_check", i["tier"], mc),
+                             i["symbol"], png):
                 sent += 1
         rest = {i["symbol"] for i in individual}
-        if len(items) > len(individual) and notifier.send(f"{today}|close-summary", "close_check",
-                                                          msg.close_summary(items, rest)):
+        if len(listable) > len(rest & {i["symbol"] for i in listable}) and notifier.send(
+                f"{today}|close-summary", "close_check", decorate(msg.close_summary(listable, rest), "summary", None, mc)):
             sent += 1
         counts = {v: sum(i["verdict"] == v for i in items) for v in order}
         self.record("close_check", today, "ok", f"above pivot {len(items)}: {counts}; sent {sent}", started)

@@ -64,8 +64,10 @@ class AppState:
     def scan(self) -> dict:
         """Run the stage scan over the resolved universe (serialised)."""
         with self.scan_lock:
-            stocks = uni.resolve_universe(self.config.ingest)["stocks"]
-            return run_scan(self.config.bases, self.config.screen, stocks, self.config.trend, self.config.vcp)
+            u = uni.resolve_universe(self.config.ingest)
+            index = next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None)
+            return run_scan(self.config.bases, self.config.screen, u["stocks"], self.config.trend, self.config.vcp,
+                            self.config.market, index)
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
@@ -487,6 +489,11 @@ def screens_results(screen: str, stage: str = Query(...)):
         rows = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND screen = ? AND stage = ?",
                             (as_of, screen, stage)).fetchall()
     items = [json.loads(r["payload"]) for r in rows]
+    from backend.engine import market
+    with get_db() as conn:
+        h = market.latest(conn, as_of) if as_of else None
+    for p in items:                                   # A/B badge, same rule as the alerts
+        p["tier"] = market.tier(p, h["status"] if h else None, S().config.alerts)
     if screen == "vcp":
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
@@ -517,6 +524,17 @@ def screens_sparks(screen: str, stage: str = Query(...), bars: int = Query(120, 
                         "h": [round(c["high"], 2) for c in cs], "l": [round(c["low"], 2) for c in cs],
                         "c": [round(c["close"], 2) for c in cs], "ma50": ma}
     return {"as_of": as_of, "stage": stage, "bars": bars, "sparks": out}
+
+
+@router.get("/market/health")
+def market_health(days: int = Query(60, ge=1, le=500)):
+    """Latest market status with its signals, and the daily status history."""
+    from backend.engine import market
+    with get_db() as conn:
+        h = market.latest(conn)
+        prev = market.before(conn, h["as_of"]) if h else None
+        hist = market.history(conn, days)
+    return {"health": h, "previous": prev, "history": hist, "config": asdict(S().config.market)}
 
 
 @router.get("/changes")

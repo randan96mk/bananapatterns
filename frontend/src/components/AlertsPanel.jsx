@@ -9,6 +9,8 @@ const GROUPS = [
     ['system', '⚙️ System alerts (login, job failures, index changes)'], ['intraday', '⚡ Intraday pivot heads-up + failed breakout'],
     ['close_check', '🕒 Act-before-close check (15:15)'],
     ['job_enabled', '🕡 Automatic evening job']]],
+  ['Priority', [['tiering', '🅰️ A/B priority (A at once, B per setting)'], ['market_line', '📊 Market line on alerts'],
+    ['market_sizing', '⚖️ Market-aware size (½ under pressure, ¼ in correction)']]],
 ];
 const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time', 'Evening job (IST)'],
   ['reminder_time', 'Login reminder (IST)'], ['intraday_start', 'Intraday from'], ['intraday_end', 'Intraday until'],
@@ -18,6 +20,8 @@ const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time'
 const CHART_KINDS = [['breakout', '🚀 Breakout'], ['breakout_low_volume', '⚠️ Low-volume breakout'],
   ['near_pivot', '🎯 Near pivot'], ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Below pivot'],
   ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday + 15:15']];
+const PRIORITY_FIELDS = [['a_min_rs', 'A needs RS ≥'], ['a_min_trend', 'A needs trend checks ≥ (of 8)'],
+  ['a_top_industry_frac', 'A needs industry in top (0.33 = third)']];
 const SIZE_FIELDS = [['buy_zone_pct', 'Buy zone above pivot (0.05 = 5%)'],
   ['capital', 'Capital ₹ for position size (0 = off)'], ['risk_pct', 'Risk per trade (0.01 = 1%)']];
 const strip = (h) => h.replace(/<[^>]+>/g, '');
@@ -187,6 +191,21 @@ export default function AlertsPanel() {
               <label key={k} className="toggle field">{label}
                 <input value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
                        onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
+          </div>
+          <div><h4>A/B priority</h4>
+            {PRIORITY_FIELDS.map(([k, label]) => (
+              <label key={k} className="toggle field">{label}
+                <input value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
+                       onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
+            <label className="toggle field">B setups
+              <select value={cfg.b_alerts} onChange={(e) => save({ b_alerts: e.target.value })}>
+                <option value="digest">digest only</option><option value="push">send (tagged 🅱️)</option>
+                <option value="off">off</option></select></label>
+            <label className="toggle field">In a correction
+              <select value={cfg.correction_mode} onChange={(e) => save({ correction_mode: e.target.value })}>
+                <option value="caution">send A with a caution</option><option value="mute_buys">mute new-buy alerts</option>
+              </select></label>
+            <p className="muted small">Sell-side alerts (below pivot, played out, failed) are always sent.</p>
           </div>
           <div><h4>Timing</h4>
             {FIELDS.map(([k, label]) => (

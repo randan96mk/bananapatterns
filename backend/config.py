@@ -101,6 +101,19 @@ class BaseConfig:
 
 
 @dataclass
+class MarketConfig:
+    """Market health (computed with each scan from the Nifty 500 and its stocks)."""
+    breadth_up: float = 50.0               # % of stocks above their 50-day line for an uptrend
+    breadth_correction: float = 35.0       # under this (with the index under its 50-day) = correction
+    dist_window: int = 25                  # sessions counted for distribution days
+    dist_drop_pct: float = 0.2             # index down at least this % ...
+    dist_days_max: int = 4                 # ... on higher volume: more than this = no uptrend
+    dist_days_correction: int = 7          # this many or more = correction
+    breakout_window: int = 20              # breakouts in the last N sessions ...
+    breakout_rate_min: float = 0.5         # ... at least this share still above the pivot for an uptrend
+
+
+@dataclass
 class ScreenConfig:
     """Stage-board dials (Forming / Fresh breakouts / Climbing / Played out)."""
     min_forming_weeks: int = 3             # Forming: active base at least this long
@@ -203,13 +216,28 @@ class AlertsConfig:
     login_heads_up_time: str = "05:45"
     login_every_day: bool = False          # also on weekends / holidays
     login_check_min: int = 30              # ask Kite every N min whether the session is still accepted
+    # A/B priority and the market header
+    market_line: bool = True               # market status line on every alert
+    tiering: bool = True                   # A setups alert at once; B setups per b_alerts
+    a_min_rs: int = 85
+    a_min_trend: int = 7                   # Trend Template checks passed (of 8)
+    a_top_industry_frac: float = 0.33      # industry rank within the top third
+    b_alerts: str = "digest"               # digest (listed in the digest only) / push (send, tagged B) / off
+    correction_mode: str = "caution"       # caution (A alerts still sent, with a warning) / mute_buys
+    market_sizing: bool = True             # position size x1 uptrend, x0.5 under pressure, x0.25 correction
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time")
 
 
+CHOICES = {"b_alerts": ("digest", "push", "off"), "correction_mode": ("caution", "mute_buys")}
+
+
 def check_alert_times(sec: "AlertsConfig") -> None:
-    """HH:MM everywhere; login link times must be from 06:00 (an earlier login dies at 06:00)."""
+    """HH:MM everywhere; login link times must be from 06:00 (an earlier login dies at 06:00); choice fields."""
+    for f, allowed in CHOICES.items():
+        if getattr(sec, f) not in allowed:
+            raise ValueError(f"{f} must be one of {list(allowed)}")
     def parse(v):
         h, _, m = str(v).partition(":")
         if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
@@ -224,7 +252,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
-                      "vcp": VcpConfig, "alerts": AlertsConfig}
+                      "vcp": VcpConfig, "alerts": AlertsConfig, "market": MarketConfig}
 
 
 @dataclass
@@ -236,6 +264,7 @@ class AppConfig:
     trend: TrendConfig = field(default_factory=TrendConfig)
     vcp: VcpConfig = field(default_factory=VcpConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    market: MarketConfig = field(default_factory=MarketConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

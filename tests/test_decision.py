@@ -91,7 +91,7 @@ def test_decision_for_never_raises():
 
 def test_dispatch_sends_chart_and_decision_lines():
     as_of, tokens = scanned_db()
-    cfg = AlertsConfig(chat_id="42", screens=["bases"], near_pivot_pct=0.05)
+    cfg = AlertsConfig(chat_id="42", tiering=False, screens=["bases"], near_pivot_pct=0.05)
     fake = FakeTG()
     dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), tokens)
     bo = [(k, h) for k, h in fake.sent if "broke out" in h]
