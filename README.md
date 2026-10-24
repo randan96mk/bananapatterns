@@ -9,7 +9,8 @@ A personal end-of-day screener for NSE stocks, modelled on the ideas behind
 > Phase 2 so far: **base detection** (B1…Bn boxes, pivot, breakout markers, breakout card on every chart) and
 > the **stage board** home page (Forming / Fresh breakouts / Climbing / Played out + "what changed since last
 > close"), **RS rating + Trend Template** on every stock, and the **VCP screen** (classic VCP rules, scoring, VCP check on
-> every chart). The card view with mini charts (PR #5) is next. See [Roadmap](#roadmap) and [Development log](#development-log).
+> every chart), plus **Telegram alerts and the automatic evening job** (Phase 4 core). The card view with mini
+> charts is next. See [Roadmap](#roadmap) and [Development log](#development-log).
 
 **Personal use only.** Screen-only mode: there is **no order or GTT code** in phases 1–4.
 This is not investment advice; neither this project nor bananapatterns.com is a SEBI-registered
@@ -30,15 +31,16 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 9. [Stage board (Screens home)](#stage-board-screens-home)
 10. [RS rating and Trend Template](#rs-rating-and-trend-template)
 11. [VCP screen](#vcp-screen)
-12. [REST API](#rest-api)
-13. [CLI](#cli)
-14. [Configuration](#configuration)
-15. [Frontend](#frontend)
-16. [Testing](#testing)
-17. [Troubleshooting](#troubleshooting)
-18. [Roadmap](#roadmap)
-19. [Decisions log](#decisions-log)
-20. [Development log](#development-log)
+12. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+13. [REST API](#rest-api)
+14. [CLI](#cli)
+15. [Configuration](#configuration)
+16. [Frontend](#frontend)
+17. [Testing](#testing)
+18. [Troubleshooting](#troubleshooting)
+19. [Roadmap](#roadmap)
+20. [Decisions log](#decisions-log)
+21. [Development log](#development-log)
 
 ---
 
@@ -122,10 +124,17 @@ bananapatterns/
 │  │  ├─ throttle.py          thread-safe token bucket
 │  │  └─ auth.py              06:00 IST expiry rule, store/load token
 │  ├─ ingest/
+│  │  ├─ holidays.py          NSE trading calendar (config/nse_holidays.json, weekly refresh from NSE)
 │  │  ├─ universe.py          NSE CSV fetch/parse, Kite instrument filter, symbol→token join, snapshots
 │  │  └─ candles.py           sync_symbol (backfill/incremental/adjustment refetch), run_sync, JobState
 │  ├─ database/models.py      schema + data-access helpers
 │  ├─ logging_config/logger.py file+console (all) and SQLite (WARNING+) logging
+│  ├─ alerts/
+│  │  ├─ telegram.py          Telegram Bot API client (send text/photo, detect chat), 1 msg/s, retries
+│  │  ├─ charts.py            matplotlib PNG for alerts (candles, base box, pivot, stop, pullbacks)
+│  │  ├─ messages.py          alert / digest text (HTML, escaped, chunked)
+│  │  ├─ dispatch.py          scan -> alerts, sent once (sent_alerts)
+│  │  └─ jobs.py              scheduler: login reminder, evening job, intraday heads-up, weekly refresh
 │  └─ engine/
 │     ├─ indicators.py        causal SMA, trailing stats
 │     ├─ bases.py             base (consolidation box) detector + breakout metrics
@@ -141,9 +150,10 @@ bananapatterns/
 │  ├─ vite.config.js          :3000, proxies /api → :8000, builds to frontend/build
 │  └─ src/App.jsx, App.css, services/api.js,
 │     chart/basesPrimitive.js (canvas plugin drawing base boxes),
-│     components/ScreensHome (stage board), StageList, TrendPanel, VcpPanel, KiteBar, UniverseTable, StockChart, BaseCard,
+│     components/AlertsPanel (Telegram + jobs), ScreensHome (stage board), StageList, TrendPanel, VcpPanel, KiteBar, UniverseTable, StockChart, BaseCard,
 │     DataPanel, SettingsPanel, LogsPanel
-├─ config/                    optional local inputs (fallback Nifty 500 CSV)
+├─ config/                    nse_holidays.json (official 2026 list), optional fallback Nifty 500 CSV
+├─ scripts/macos/             optional launchd agent to start the app at login
 └─ data/  logs/               gitignored: SQLite DB, rotating log file
 ```
 
@@ -189,6 +199,8 @@ SQLite in WAL mode at `data/bananapatterns.db` (override with `BP_DB_PATH`).
 | `scan_changes` | per as-of date and screen: symbol, kind (breakout / below_pivot / played_out / forming / left / climbing), sentence |
 | `stock_metrics` | **PK (as_of, symbol)**, rs, rs_score, industry, industry rank/of, Trend Template passed/of, payload (all 8 checks) |
 | `scan_runs` | per scan: as_of, ran_at, scanned, stale, counts per stage, dials used |
+| `sent_alerts` | **PK key** (dedup), sent_at, kind, symbol, text, ok, error: every alert sent or attempted |
+| `job_runs` | per automatic job run: job, run_date, started/finished, status (`ok/partial/failed/no_session/waiting/retry`), message |
 | `app_settings` | key/value: `config.<section>` JSON, `kite_access_token`, `kite_token_issued_at` |
 | `system_logs` | WARNING+ log lines for the Logs tab |
 
@@ -385,6 +397,54 @@ screen finds 7 forming (CUB, PAYTM, CRAFTSMAN, STARHEALTH, ATHERENERG, DLF, SOLA
 On every chart, **VCP check** shows the verdict, any failed rules ("last pullback 14.0% > 12%"), the pullback
 sequence, tightening, dry-up, U/D ratio and stop.
 
+## Telegram alerts and automatic jobs
+
+**Setup (once)**
+1. In Telegram, message **@BotFather** → `/newbot` → copy the bot token.
+2. Add `TELEGRAM_BOT_TOKEN=…` to `.env` and restart (`./start.sh`). The token is never stored in the database or shown in the UI.
+3. Send your bot any message, then **Alerts → Detect chat ID → Send test message**.
+
+**Alerts** (each a switch in the **Alerts** tab; sent for the screens chosen there, VCP by default)
+
+| Alert | When | Default |
+|---|---|---|
+| 🚀 Fresh breakout (+ chart image) | a VCP base closed above its pivot on ≥ 1.5× volume; includes close-in-range, stop and risk % from the close | on |
+| 🔻 Back below pivot | a breakout closed back under its pivot (and "reclaimed the pivot" when it recovers) | on |
+| 🏁 Played out | the run ended: close below the 50-day line or 8% under the pivot | on |
+| 🔵 Newly forming | a base became a VCP Forming setup; includes the pullback sequence and stop | on |
+| 🎯 Near pivot (+ chart image) | Forming and within `near_pivot_pct` (3%) under the pivot, once per base | on |
+| 📋 Daily digest | the four counts + the whole "what changed since last close" list | on |
+| ⚡ Intraday heads-up | during market hours the price trades above a Forming name's pivot; **unconfirmed** until the close, with volume so far and the day's pace | on |
+| ⚙️ System | Kite login missing (15:30), evening job waiting / failed / partial, no bar from Kite, Nifty 500 additions/removals | on |
+| ⚠️ Low-volume breakout · ▫️ Left a card | below the volume rule · dropped off a card (noisy) | off |
+
+Every alert is sent **once** (`sent_alerts` key), so rescans and restarts don't repeat it. A failed send is retried on
+the next run. The chart image shows ~6 months of candles, volume, 50/200-day lines, the base box, pivot, stop, the
+VCP pullbacks and the breakout ▲.
+
+**Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
+
+| Job | When | What |
+|---|---|---|
+| Login reminder | trading days 15:30 → 18:30 | alerts once if today's Kite token is missing |
+| Evening job | trading days from 18:30 | sync candles → scan → alerts. Without a login it alerts once and retries every 15 min until 23:00; if Kite has no bar for today yet it retries every 30 min until 22:30 ("no session" after). Catches up if the app is opened later that evening. |
+| Intraday heads-up | trading days 09:20–15:25, every 5 min | one Kite quote call for the Forming names (quote API 1 req/s) |
+| Weekly refresh | Sundays from 10:00 | NSE holiday list + Nifty 500 refresh, index-change alert |
+
+Trading days = weekdays minus NSE equity holidays (`config/nse_holidays.json`, the official NSE holiday-master list,
+refreshed weekly; special sessions such as Diwali Muhurat are handled by checking that Kite returned a bar).
+**Run evening job now / Intraday check now / Weekly refresh now** buttons and the job history are in the Alerts tab.
+
+**Keeping the Mac ready** (jobs run only while the app is open and the Mac is awake)
+- `./start.sh` keeps the Mac from idle-sleeping while the backend runs (`caffeinate -i -w <pid>`, macOS only).
+  Closing the lid on battery still sleeps it.
+- Start the app at login: `scripts/macos/com.bananapatterns.app.plist` (edit the path, copy to
+  `~/Library/LaunchAgents/`, `launchctl load …`; instructions inside the file).
+- Wake the Mac before market open on weekdays: `sudo pmset repeat wakeorpoweron MTWRF 09:10:00`
+  (check with `pmset -g sched`, remove with `sudo pmset repeat cancel`).
+
+Personal use only: send alerts to your own chat. Broadcasting signals to others may count as investment advice (SEBI).
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs
@@ -405,6 +465,12 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
+| GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
+| POST | `/api/alerts/detect-chat` | read the bot's recent chats; saves the chat ID when there is exactly one |
+| POST | `/api/alerts/test` | send a test message |
+| GET | `/api/alerts/log` | sent / failed alerts |
+| GET | `/api/jobs` | automatic job history and schedule |
+| POST | `/api/jobs/{eod,intraday,weekly,reminder}/run` | run a job now (evening job forced even on a non-trading day) |
 | GET | `/api/stock/{symbol}/vcp` | VCP check of the latest base (breakouts judged on the bar before) |
 | GET | `/api/stock/{symbol}/metrics` | latest RS rating, industry rank, Trend Template checks |
 | GET | `/api/stock/{symbol}/bases?since=YYYY-MM-DD` | bases over full history (correct numbering), latest base, dials used |
@@ -432,6 +498,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 ## Configuration
 
 **`.env`** (never committed): `KITE_API_KEY`, `KITE_API_SECRET`, optional `KITE_ACCESS_TOKEN`,
+`TELEGRAM_BOT_TOKEN` (alerts), optional `TELEGRAM_CHAT_ID`, `BP_NO_SCHEDULER=1` (disable automatic jobs),
 `KITE_REDIRECT_URL` (default `http://localhost:8000/api/kite/callback`), optional `BP_DB_PATH`,
 `BP_DEV=1` (reload), `BP_FRONTEND_URL` (post-login redirect target).
 
@@ -495,6 +562,17 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `stop_buffer` / `max_stop` | 0.01 / 0.08 | stop placement |
 | `score_weights` | 30, 20, 15, 15, 10, 10 | RS, tightening, dry-up, pivot, 52w high, industry RS |
 
+| `alerts.*` | Default | Meaning |
+|---|---|---|
+| `enabled` / `chat_id` / `screens` | true / "" / vcp | master switch, Telegram chat, screens to alert on |
+| `breakout`, `below_pivot`, `played_out`, `forming`, `near_pivot`, `digest`, `system`, `intraday` | true | alert types on |
+| `low_volume_breakout`, `left` | false | alert types off |
+| `near_pivot_pct` | 0.03 | near-pivot distance |
+| `chart_images` | true | PNG with breakout / near-pivot alerts |
+| `job_enabled` / `job_time` / `reminder_time` | true / 18:30 / 15:30 | evening job and login reminder (IST) |
+| `intraday_start` / `intraday_end` / `intraday_interval_min` | 09:20 / 15:25 / 5 | intraday heads-up window |
+| `universe_refresh_weekday` | 6 (Sunday) | weekly refresh day |
+
 ---
 
 ## Frontend
@@ -503,7 +581,8 @@ React 19 + Vite + lightweight-charts 5, with a dark theme. Vite replaces create-
 but keeps the same React stack as AlgoTrade-v3. The dev server is on :3000 with `/api` proxied to :8000.
 `npm run build` writes `frontend/build`, which FastAPI serves at :8000.
 
-Tabs: **Screens** (home: stage board, see above), **Universe** (sortable/filterable table + chart), **Data** (refresh, sync, full refetch, progress,
+Tabs: **Screens** (home: stage board, see above), **Alerts** (Telegram setup, switches, timing, job buttons and
+history, sent-alerts log), **Universe** (sortable/filterable table + chart), **Data** (refresh, sync, full refetch, progress,
 errors, run history), **Settings** (config sections `vcp`, `screen`, `bases`, `trend` and `ingest`), **Logs**.
 
 The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay**:
@@ -517,14 +596,17 @@ The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest          # 65 tests, offline, ~10 s
+.venv/bin/python -m pytest          # 80 tests, offline, ~15 s
 ```
 
 A `FakeKite` (tests/conftest.py) mimics the SDK, and each test gets its own temporary SQLite DB.
 Base detector tests (tests/test_bases.py) use synthetic series with known answers: a staircase of two bases,
 too-short pauses, deep declines, no prior advance, a slow grind (high basis), a forming base, squat and pending,
 the MA reset, the high-basis pivot, JSON-serialisable output and **causality** (prefix-stable results).
-VCP tests (tests/test_vcp.py): a textbook 20 → 10 → 5% VCP qualifies, an expanding pattern fails, each rule can fail,
+Alert tests (tests/test_alerts.py): Telegram client against a fake server (429 retry, 401 not retried, chat detection),
+HTML escaping and digest splitting, chart PNG, the schedule (fake clock), volume pace, holiday refresh merge, dispatch
+(sent once, toggles, failed send retried), the evening job (waits for login, retries without today's bar) and the intraday
+heads-up (once per day). VCP tests (tests/test_vcp.py): a textbook 20 → 10 → 5% VCP qualifies, an expanding pattern fails, each rule can fail,
 swings are causal, the VCP classifier judges breakouts on the bar before, scoring order, and the scan-table migration.
 Stage tests (tests/test_stages.py) cover each card's rule, low-volume breakouts, both played-out triggers and the
 window expiring, below-pivot, the climber-forming-next-base precedence, the liquidity/history gates, feed sentences,
@@ -544,6 +626,8 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 | Universe refresh fails (NSE 403) | Save the CSV to `config/ind_nifty500list.csv` (see config/README.md). |
 | Symbols listed as *excluded* | Their series isn't in `include_series` (REITs by default). Edit in Settings. |
 | Symbols listed as *unmatched* | Usually a rename or suspension. Check the NSE symbol vs Kite's tradingsymbol. |
+| No Telegram alerts | Alerts tab: token set? chat set? "Ready"? Then Send test message; check the Sent alerts log for errors. |
+| Evening job didn't run | The app must be open and the Mac awake at 18:30 (see "Keeping the Mac ready"); it catches up when opened later that evening. Check Alerts → Automatic jobs. |
 | Port 8000 busy | `start.sh` frees 8000/3000. Otherwise `lsof -ti tcp:8000 \| xargs kill`. |
 | Details of a failure | Logs tab (WARNING+), full log in `logs/bananapatterns.log` |
 
@@ -581,7 +665,7 @@ line, breakout marker, stop) and a plain-English summary (base length, depth, di
 contraction ratio, volume vs prior pace); dial sliders with named presets; what-changed-since-yesterday
 feed; watchlist ("waiting well").
 
-### Phase 4: daily EOD job and alerts
+### Phase 4: daily EOD job and alerts *(core done: Telegram alerts, evening job, reminders, intraday heads-up, holiday calendar)*
 Scheduler (APScheduler in-process, or launchd so it survives restarts) around 18:00–19:00 IST on trading
 days: sync → scan → persist results and diffs. NSE holiday calendar. Alert when the day's Kite login is
 missing. Optional NSE CM-UDiFF bhavcopy cross-check later in the evening (unadjusted, so compare
@@ -629,6 +713,9 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 | 2026-10-24 | VCP screen keeps the ≥ 1.5× breakout-volume rule (Gagan: "as you feel correct"); low-volume breakouts stay listed separately |
 | 2026-10-24 | VCP = classic Minervini rules from the brief (shrinking pullbacks, last ≤ 12%), stricter than the site's list; relaxing dials documented |
 | 2026-10-24 | ZigZag threshold max(5%, 2 × ATR%) and max 6 contractions: median 3 pullbacks per base on the Nifty 500 |
+| 2026-10-24 | Telegram alerts + automatic evening job before the card view; individual alerts **and** a digest; chart images and an intraday heads-up included |
+| 2026-10-24 | Bot token only in `.env`; alerts to Gagan's own chat (personal use) |
+| 2026-10-24 | Intraday heads-up via the Kite quote API every 5 min (one call for all Forming names), clearly "unconfirmed" since breakouts are closing-basis |
 | 2026-10-23 | `main` started with an initial `.gitignore` commit so Phase 1 can be reviewed as a PR into it |
 
 ## Development log
@@ -715,4 +802,17 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
     7–8 VCPs forming on the Nifty 500.
 - Wording fix: failed-rule text shows one decimal ("last pullback 12% > 12%" was 12.x%).
 - 65 offline tests passing.
+
+### 2026-10-24: Phase 4 core (PR #4): Telegram alerts and automatic jobs
+- PR #3 (RS + Trend Template + VCP screen) merged. Gagan asked for Telegram alerts like the "what changed" feed.
+  Choices: smart defaults, individual alerts **and** a digest, chart images and an intraday heads-up, alerts with the
+  evening job before the card view.
+- Built `backend/alerts/` (Telegram client, chart PNG, messages, dispatch with dedup, scheduler), the NSE holiday
+  calendar (official 2026 equity list fetched from NSE's holiday-master API), the Kite quote call, the `alerts`
+  config section, alerts/jobs endpoints, the Alerts tab, `caffeinate` in `start.sh`, and a launchd template.
+- QA: the dispatcher ran on 497 stocks of real data against a fake Telegram server: 12 stage alerts, 3 near-pivot,
+  2 digests; breakout alerts carry charts. Chart labels were moved so the pivot/stop text never covers the latest candles.
+  A real Telegram send can't be done from the sandbox: the first live test is Gagan's (Alerts → Send test message).
+- A README update first failed on a mismatched anchor and landed in a follow-up commit.
+- 80 offline tests passing.
 
