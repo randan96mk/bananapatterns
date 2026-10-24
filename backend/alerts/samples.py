@@ -8,6 +8,7 @@ rule and use their own log keys (kind "test"), so they never block a real alert.
 
 import json
 import math
+import uuid
 from typing import Optional
 
 from backend.alerts import messages as msg
@@ -150,7 +151,7 @@ def send_samples(kind: str, config: AppConfig, tokens: dict[str, int], chat_id: 
     """Send the samples and log each one (kind 'test'). Returns [{kind, ok, error}]."""
     client = client or TelegramClient()
     results = []
-    for i, (k, html, png) in enumerate(build_samples(kind, config, tokens)):
+    for k, html, png in build_samples(kind, config, tokens):
         ok, err = True, None
         try:
             if png:
@@ -162,7 +163,7 @@ def send_samples(kind: str, config: AppConfig, tokens: dict[str, int], chat_id: 
         stamp = now_ist()
         with get_db() as conn:
             conn.execute("INSERT OR REPLACE INTO sent_alerts (key, sent_at, kind, symbol, text, ok, error) "
-                         "VALUES (?,?,?,?,?,?,?)", (f"test|{stamp}|{k}|{i}", stamp, "test", k, html, int(ok), err))
+                         "VALUES (?,?,?,?,?,?,?)", (f"test|{uuid.uuid4().hex}", stamp, "test", k, html, int(ok), err))
         results.append({"kind": k, "ok": ok, "error": err, "chart": png is not None})
         if not ok and "Unauthorized" in (err or ""):
             break                                        # a bad token fails every message: stop early
