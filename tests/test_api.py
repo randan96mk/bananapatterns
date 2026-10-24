@@ -13,6 +13,9 @@ from tests.test_universe import CSV, INSTRUMENTS, Resp
 @pytest.fixture
 def api(fake_kite, make_client, monkeypatch):
     monkeypatch.setenv("BP_NO_STATIC", "1")
+    monkeypatch.setenv("BP_NO_SCHEDULER", "1")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.delenv("KITE_ACCESS_TOKEN", raising=False)
     monkeypatch.setenv("KITE_API_KEY", "key123")
     monkeypatch.setenv("KITE_API_SECRET", "sec")

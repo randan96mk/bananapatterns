@@ -153,6 +153,30 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     config TEXT NOT NULL
 );
 
+-- Telegram alerts already sent (dedup key) and what was sent.
+CREATE TABLE IF NOT EXISTS sent_alerts (
+    key TEXT PRIMARY KEY,
+    sent_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    symbol TEXT,
+    text TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 1,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_sent_at ON sent_alerts(sent_at);
+
+-- Automatic jobs (evening job, reminders, intraday checks, weekly refresh).
+CREATE TABLE IF NOT EXISTS job_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job TEXT NOT NULL,
+    run_date TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jobs ON job_runs(job, run_date);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
