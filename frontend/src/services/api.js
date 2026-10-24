@@ -28,6 +28,8 @@ export const getBases = (sym, since) =>
   req('GET', `/api/stock/${encodeURIComponent(sym)}/bases${since ? `?since=${since}` : ''}`);
 export const screenSummary = (screen) => req('GET', `/api/screens/${screen}/summary`);
 export const screenResults = (screen, stage) => req('GET', `/api/screens/${screen}/results?stage=${stage}`);
+export const screenSparks = (screen, stage, bars = 120) =>
+  req('GET', `/api/screens/${screen}/sparks?stage=${stage}&bars=${bars}`);
 export const runScan = () => req('POST', '/api/screens/scan');
 export const getChanges = (screen = 'bases') => req('GET', `/api/changes?screen=${screen}`);
 export const alertChartUrl = (sym, kind = 'auto', stamp = 0) =>

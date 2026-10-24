@@ -103,3 +103,31 @@ footer { margin-top: 20px; font-size: 11px; }
 
 .alertpreview { margin: 8px 0; }
 .alertpreview img { width: 100%; max-width: 1375px; border-radius: 6px; display: block; }
+
+/* Grid view: stock cards with mini charts */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-left: 8px; }
+.seg button { background: none; border: none; color: var(--muted); padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+.seg button.active { background: var(--border); color: var(--text); }
+.stockgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.stockcard { text-align: left; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--border);
+  border-radius: 10px; padding: 12px; color: var(--text); cursor: pointer; font: inherit; display: flex; flex-direction: column;
+  gap: 4px; min-width: 0; content-visibility: auto; contain-intrinsic-size: 260px 300px; }
+.stockcard:hover { border-color: #3a4552; }
+.stockcard.s-forming, .stockcard.s-fresh, .stockcard.s-climbing { border-left-color: var(--ok); }
+.stockcard.s-fresh_low_volume { border-left-color: var(--warn); }
+.stockcard.s-played_out { border-left-color: var(--bad); }
+.stockcard.tight { box-shadow: 0 0 0 1px var(--accent) inset; }
+.stockcard.sel { border-color: var(--accent); }
+.sc-head { display: flex; align-items: center; gap: 6px; }
+.sc-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-price { display: flex; gap: 8px; align-items: baseline; }
+.facts > div { line-height: 1.45; }
+.minichart { width: 100%; height: 120px; display: block; background: var(--panel); border-radius: 6px; }
+.minichart.empty { display: flex; align-items: center; justify-content: center; }
+.mc-box { fill: #26a69a1f; stroke: #26a69a66; stroke-dasharray: 3 2; stroke-width: 1; }
+.mc-pivot { stroke: var(--ok); stroke-dasharray: 4 3; stroke-width: 1; }
+.mc-ma { fill: none; stroke: #4ea1ff; stroke-width: 1; opacity: .8; }
+.mc-up line, .mc-up rect { stroke: var(--ok); fill: var(--ok); stroke-width: .8; }
+.mc-down line, .mc-down rect { stroke: var(--bad); fill: var(--bad); stroke-width: .8; }
+.mc-bo { fill: var(--ok); } .mc-bo.weak { fill: var(--warn); }
+.mc-ex { stroke: var(--bad); stroke-width: 2; fill: none; }

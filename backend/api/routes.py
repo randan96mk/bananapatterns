@@ -494,6 +494,31 @@ def screens_results(screen: str, stage: str = Query(...)):
     return {"as_of": as_of, "stage": stage, "rows": items}
 
 
+@router.get("/screens/{screen}/sparks")
+def screens_sparks(screen: str, stage: str = Query(...), bars: int = Query(120, ge=20, le=400)):
+    """Last `bars` daily candles (+ 50-day line) for every stock in a stage, for the grid view's mini charts."""
+    _check_screen(screen)
+    if stage not in STAGE_SORT:
+        raise HTTPException(422, f"stage must be one of {list(STAGE_SORT)}")
+    tokens = {s["symbol"]: s["instrument_token"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
+    out = {}
+    with get_db() as conn:
+        as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        syms = [r["symbol"] for r in conn.execute(
+            "SELECT symbol FROM scan_results WHERE as_of = ? AND screen = ? AND stage = ?", (as_of, screen, stage))]
+        for sym in syms:
+            if sym not in tokens:
+                continue
+            cs = get_candles(conn, tokens[sym], limit=bars + 49)
+            closes = [c["close"] for c in cs]
+            ma = [round(sum(closes[i - 49:i + 1]) / 50, 2) if i >= 49 else None for i in range(len(cs))]
+            cs, ma = cs[-bars:], ma[-bars:]
+            out[sym] = {"d": [c["date"] for c in cs], "o": [round(c["open"], 2) for c in cs],
+                        "h": [round(c["high"], 2) for c in cs], "l": [round(c["low"], 2) for c in cs],
+                        "c": [round(c["close"], 2) for c in cs], "ma50": ma}
+    return {"as_of": as_of, "stage": stage, "bars": bars, "sparks": out}
+
+
 @router.get("/changes")
 def changes(screen: str = "bases", limit: int = Query(200, le=1000)):
     _check_screen(screen)

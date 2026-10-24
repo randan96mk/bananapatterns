@@ -52,6 +52,9 @@ class StageResult:
     ended_date: Optional[str] = None
     ended_reason: Optional[str] = None
     peak_gain_pct: Optional[float] = None         # best close since breakout vs pivot
+    base_start: Optional[str] = None              # base box, for the grid view's mini chart
+    base_end: Optional[str] = None
+    base_low: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -100,6 +103,7 @@ def classify(candles: list[dict], bases: list[Base], cfg: ScreenConfig) -> Stage
                 break
         res.base_label, res.base_number, res.base_weeks = last_bo.label, last_bo.number, last_bo.weeks
         res.pivot, res.depth_pct = last_bo.pivot, last_bo.depth_pct
+        res.base_start, res.base_end, res.base_low = last_bo.start_date, last_bo.end_date, _r(last_bo.low)
         res.breakout_date, res.sessions_since_breakout = bo.date, i - bo.index
         res.volume_ratio, res.volume_ok = bo.volume_ratio, bo.volume_ok
         res.gain_from_pivot_pct = _r((close[i] / pivot - 1) * 100)
@@ -114,6 +118,7 @@ def classify(candles: list[dict], bases: list[Base], cfg: ScreenConfig) -> Stage
         res.stage, res.reason = "forming", "pausing under its lid"
         res.base_label, res.base_number, res.base_weeks = latest.label, latest.number, latest.weeks
         res.pivot, res.depth_pct = latest.pivot, latest.depth_pct
+        res.base_start, res.base_end, res.base_low = latest.start_date, latest.end_date, _r(latest.low)
         res.dist_to_pivot_pct = latest.dist_to_pivot_pct
         res.breakout_date = res.sessions_since_breakout = res.volume_ratio = res.volume_ok = None
         res.gain_from_pivot_pct = res.ended_date = res.ended_reason = res.peak_gain_pct = None
