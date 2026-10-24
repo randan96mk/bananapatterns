@@ -24,6 +24,8 @@ class MarketContext:
     line: Optional[str]                 # HTML line for the top of alerts (None when off / no data)
     size_factor: float
     size_note: str
+    watched: frozenset = frozenset()    # bot 📌 Watch: always alert
+    muted: frozenset = frozenset()      # bot 🔕 Mute: no buy-side alerts
 
     @classmethod
     def load(cls, cfg: AlertsConfig, on_or_before: Optional[str] = None,
@@ -31,18 +33,26 @@ class MarketContext:
         from backend.alerts import messages as msg
         with get_db() as conn:
             h = market.latest(conn, on_or_before)
+            watched = frozenset(r[0] for r in conn.execute("SELECT symbol FROM watchlist"))
+            muted = frozenset(r[0] for r in conn.execute("SELECT symbol FROM muted WHERE until >= date('now')"))
         status = h["status"] if h else None
         sizing = cfg.market_sizing and status is not None
         return cls(h, status, msg.market_line(h, index_today) if (h and cfg.market_line) else None,
-                   market.SIZE_FACTOR[status] if sizing else 1.0, market.SIZE_NOTE[status] if sizing else "")
+                   market.SIZE_FACTOR[status] if sizing else 1.0, market.SIZE_NOTE[status] if sizing else "",
+                   watched, muted)
 
 
 def gate(kind: str, p: dict, mc: MarketContext, cfg: AlertsConfig) -> tuple[bool, Optional[str]]:
     """(send individually?, tier A/B or None when not tiered)."""
     if kind not in BUY_KINDS:
         return True, None
+    sym = p.get("symbol")
+    if sym in mc.muted:
+        return False, None
     if mc.status == market.CORRECTION and cfg.correction_mode == "mute_buys":
         return False, None
+    if sym in mc.watched:
+        return True, (market.tier(p, mc.status, cfg) if cfg.tiering else None)
     if not cfg.tiering:
         return True, None
     t = market.tier(p, mc.status, cfg)

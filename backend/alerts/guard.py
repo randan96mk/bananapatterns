@@ -40,33 +40,51 @@ def _setup(conn, symbol: str, as_of: Optional[str]) -> Optional[dict]:
     return json.loads(row["payload"]) if row else None
 
 
+def _initial_stop(conn, symbol: str, avg: float, as_of: Optional[str], vcp_cfg: VcpConfig) -> tuple:
+    """(pivot, stop, where the stop came from): VCP stop, else pivot - max_stop, else average - max_stop."""
+    p = _setup(conn, symbol, as_of)
+    pivot = p.get("pivot") if p else None
+    if p and (p.get("vcp") or {}).get("stop"):
+        return pivot, p["vcp"]["stop"], "setup (VCP stop)"
+    if pivot:
+        return pivot, round(pivot * (1 - vcp_cfg.max_stop), 2), f"pivot −{vcp_cfg.max_stop * 100:g}%"
+    return None, round(avg * (1 - vcp_cfg.max_stop), 2), f"average −{vcp_cfg.max_stop * 100:g}%"
+
+
 def sync(held: dict[str, dict], vcp_cfg: VcpConfig) -> dict:
     """Update the followed positions from Kite. Returns {added: [...], closed: [...]}"""
     added, closed, now = [], [], now_ist()
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
-        known = {r["symbol"] for r in conn.execute("SELECT symbol FROM guard_positions")}
+        rows = conn.execute("SELECT symbol, source FROM guard_positions").fetchall()
+        known = {r["symbol"] for r in rows}
+        from_kite = {r["symbol"] for r in rows if r["source"] == "kite"}
         for sym, h in held.items():
-            if sym in known:
-                conn.execute("UPDATE guard_positions SET qty = ?, avg_price = ?, updated_at = ? WHERE symbol = ?",
-                             (h["qty"], h["avg"], now, sym))
+            if sym in known:                               # a manual ("I bought") entry becomes Kite-backed
+                conn.execute("UPDATE guard_positions SET qty = ?, avg_price = ?, source = 'kite', updated_at = ? "
+                             "WHERE symbol = ?", (h["qty"], h["avg"], now, sym))
                 continue
-            p = _setup(conn, sym, as_of)
-            pivot = p.get("pivot") if p else None
-            if p and (p.get("vcp") or {}).get("stop"):
-                stop, src = p["vcp"]["stop"], "setup (VCP stop)"
-            elif pivot:
-                stop, src = round(pivot * (1 - vcp_cfg.max_stop), 2), f"pivot −{vcp_cfg.max_stop * 100:g}%"
-            else:
-                stop, src = round(h["avg"] * (1 - vcp_cfg.max_stop), 2), f"average −{vcp_cfg.max_stop * 100:g}%"
+            pivot, stop, src = _initial_stop(conn, sym, h["avg"], as_of, vcp_cfg)
             conn.execute("INSERT INTO guard_positions (symbol, qty, avg_price, first_seen, pivot, stop, stop_source, "
                          "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                          (sym, h["qty"], h["avg"], as_of or now[:10], pivot, stop, src, now))
             added.append(sym)
-        for sym in known - set(held):
+        for sym in from_kite - set(held):                  # sold; manual entries stay until removed
             conn.execute("DELETE FROM guard_positions WHERE symbol = ?", (sym,))
             closed.append(sym)
     return {"added": added, "closed": closed}
+
+
+def add_manual(symbol: str, price: float, vcp_cfg: VcpConfig) -> dict:
+    """Follow a position from the bot's "I bought" button (qty 0 until Kite holdings show it)."""
+    with get_db() as conn:
+        if not conn.execute("SELECT 1 FROM guard_positions WHERE symbol = ?", (symbol,)).fetchone():
+            as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+            pivot, stop, src = _initial_stop(conn, symbol, price, as_of, vcp_cfg)
+            conn.execute("INSERT INTO guard_positions (symbol, qty, avg_price, first_seen, pivot, stop, stop_source, "
+                         "updated_at, source) VALUES (?, 0, ?, ?, ?, ?, ?, ?, 'manual')",
+                         (symbol, price, as_of or now_ist()[:10], pivot, stop, src, now_ist()))
+    return next(p for p in positions() if p["symbol"] == symbol)
 
 
 def positions() -> list[dict]:

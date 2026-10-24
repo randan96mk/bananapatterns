@@ -12,7 +12,8 @@ const GROUPS = [
   ['Priority', [['tiering', '🅰️ A/B priority (A at once, B per setting)'], ['market_line', '📊 Market line on alerts'],
     ['market_sizing', '⚖️ Market-aware size (½ under pressure, ¼ in correction)']]],
   ['Daily plan', [['top_setups', '🎯 Top setups after the evening scan'], ['morning_plan', '☀️ Morning plan'],
-    ['gap_check', '🔔 Opening (gap) check'], ['position_guard', '📒 Position guard (Kite holdings, read-only)']]],
+    ['gap_check', '🔔 Opening (gap) check'], ['position_guard', '📒 Position guard (Kite holdings, read-only)'],
+    ['alert_buttons', '🔘 Buttons under alerts (Watch · Mute · Chart · I bought)']]],
 ];
 const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time', 'Evening job (IST)'],
   ['reminder_time', 'Login reminder (IST)'], ['intraday_start', 'Intraday from'], ['intraday_end', 'Intraday until'],

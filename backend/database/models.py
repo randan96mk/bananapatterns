@@ -224,6 +224,16 @@ CREATE TABLE IF NOT EXISTS guard_positions (
     updated_at TEXT NOT NULL
 );
 
+-- Bot buttons: watched names always alert; muted names get no buy-side alerts until `until`.
+CREATE TABLE IF NOT EXISTS watchlist (
+    symbol TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS muted (
+    symbol TEXT PRIMARY KEY,
+    until TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -246,6 +256,12 @@ def init_db(path: Optional[str] = None) -> None:
     with get_db(str(p)) as conn:
         _migrate_scan_tables(conn)
         conn.executescript(SCHEMA)
+        _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'kite'")   # kite / manual
+
+
+def _add_column(conn, table: str, column: str, decl: str) -> None:
+    if column not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def _migrate_scan_tables(conn) -> None:

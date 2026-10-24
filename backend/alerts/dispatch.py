@@ -31,6 +31,16 @@ KIND_TOGGLE = {"breakout": "breakout", "breakout_low_volume": "low_volume_breako
                "played_out": "played_out", "forming": "forming", "left": "left", "climbing": "below_pivot"}
 
 
+ACTION_KINDS = {"breakout", "breakout_low_volume", "forming", "near_pivot", "intraday", "close_check", "plan",
+                "climbing"}
+
+
+def action_buttons(symbol: str) -> list:
+    """Watch / Mute / Chart / I bought, answered by backend.alerts.commands."""
+    return [("📌 Watch", None, f"w:{symbol}"), ("🔕 Mute", None, f"m:{symbol}"), ("📈 Chart", None, f"c:{symbol}"),
+            ("✅ I bought", None, f"b:{symbol}")]
+
+
 def strip_tags(html: str) -> str:
     return unescape(re.sub(r"<[^>]+>", "", html))
 
@@ -70,9 +80,14 @@ class Notifier:
             return False
         ok, err = True, None
         try:
+            if buttons is None and symbol and kind in ACTION_KINDS and self.cfg.alert_buttons:
+                buttons = action_buttons(symbol)
             if png:
                 caption, rest = split_caption(html)
-                self.client.send_photo(self.chat_id, png, caption)
+                if buttons:
+                    self.client.send_photo(self.chat_id, png, caption, buttons)
+                else:
+                    self.client.send_photo(self.chat_id, png, caption)
                 if rest:
                     self.client.send_message(self.chat_id, rest)
             elif buttons:

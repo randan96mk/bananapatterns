@@ -135,8 +135,9 @@ class FakeTG:
         self.sent.append(("msg", html))
         self.buttons = buttons
 
-    def send_photo(self, chat, png, html):
+    def send_photo(self, chat, png, html, buttons=None):
         self.sent.append(("photo", html))
+        self.buttons = buttons
 
 
 UP = ("trend", 60, 0.60)
