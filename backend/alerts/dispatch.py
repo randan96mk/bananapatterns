@@ -15,6 +15,7 @@ from typing import Optional
 
 from backend.alerts import messages as msg
 from backend.alerts import charts
+from backend.alerts import intraday as itd
 from backend.alerts.telegram import TelegramClient, TelegramError
 from backend.config import AlertsConfig, BaseConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
@@ -101,7 +102,8 @@ def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bas
         if ctx is None:
             return None, None
         png = None
-        if (force_image or (cfg.chart_images and kind in cfg.chart_kinds)) and charts_available():
+        chart_kind = "intraday" if kind == "close_check" else kind      # one toggle covers both live charts
+        if (force_image or (cfg.chart_images and chart_kind in cfg.chart_kinds)) and charts_available():
             png = render_decision_chart(candles, ctx)
         return png, ctx
     except Exception:
@@ -120,6 +122,9 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
     with get_db() as conn:
         run = conn.execute("SELECT counts FROM scan_runs WHERE as_of = ? ORDER BY id DESC LIMIT 1", (as_of,)).fetchone()
         counts_all = json.loads(run["counts"]) if run else {}
+        day_flags = itd.flags(conn, as_of)                  # today's 15:15 verdicts, for the cross-reference
+    close_flag = {sym: next((f for f in fl if f.startswith("close_")), None) for sym, fl in day_flags.items()}
+    confirmed, last_close = set(), {}
     for screen in cfg.screens:
         with get_db() as conn:
             payloads = {r["symbol"]: dict(json.loads(r["payload"]), stage=r["stage"]) for r in conn.execute(
@@ -153,8 +158,16 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                     cir = (last["close"] - last["low"]) / rng if rng > 0 else None
                     png, ctx = decision_for(cs, p, kind, cfg, bases_cfg, vcp_cfg)
             html = msg.stage_alert(kind, screen, m["text"], p or {"symbol": m["symbol"]}, cir, ctx)
+            note = msg.confirm_note(close_flag.get(m["symbol"])) if kind == "breakout" else None
+            if note:
+                html += "\n" + note
             if notifier.send(f"{as_of}|{screen}|{m['symbol']}|{kind}", kind, html, m["symbol"], png):
                 sent["stage"] += 1
+
+        for sym, p in payloads.items():
+            if p.get("stage") == "fresh":
+                confirmed.add(sym)
+            last_close.setdefault(sym, (p.get("pivot"), p.get("close")))
 
         if cfg.near_pivot:
             for sym, p in payloads.items():
@@ -172,5 +185,11 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
             for i, chunk in enumerate(msg.digest(screen, as_of, counts_all.get(screen, {}), moves, fresh_sessions)):
                 if notifier.send(f"{as_of}|{screen}|digest|{i}", "digest", chunk):
                     sent["digest"] += 1
+    if cfg.intraday and cfg.close_check:
+        for sym, flag in close_flag.items():
+            if flag == "close_holding" and sym not in confirmed and sym in last_close:
+                pivot, close = last_close[sym]
+                if notifier.send(f"{as_of}|noconfirm|{sym}", "intraday", msg.not_confirmed_alert(sym, pivot, close), sym):
+                    sent["stage"] += 1
     logger.info("Alerts for %s: %s", as_of, sent)
     return sent

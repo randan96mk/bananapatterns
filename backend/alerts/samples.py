@@ -17,7 +17,8 @@ from backend.alerts.telegram import TelegramClient, TelegramError
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, now_ist
 
-SAMPLE_KINDS = ["breakout", "near_pivot", "forming", "below_pivot", "played_out", "intraday", "digest", "system"]
+SAMPLE_KINDS = ["breakout", "near_pivot", "forming", "below_pivot", "played_out", "intraday", "failed",
+                "close_check", "digest", "system"]
 PREFIX = "🧪 <b>TEST</b> — "
 
 
@@ -81,7 +82,7 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
                 cs = get_candles(conn, tok)
         if not cs:
             cs = _example_candles()
-            if k not in ("breakout", "below_pivot", "played_out"):
+            if k not in ("breakout", "below_pivot", "played_out"):  # intraday kinds: the bars before today
                 cs = cs[:-1]                                # example forming: before the breakout bar
         return cs
 
@@ -127,7 +128,23 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
             prev = cs[-1]["close"]
             live = {"ltp": ltp, "open": prev, "high": ltp * 1.003, "low": min(prev, ltp) * 0.995, "volume": 1.1e6}
             png, ctx = decision_for(cs, p, k, config.alerts, config.bases, config.vcp, live=live)
-            out.append((k, PREFIX + msg.intraday_alert(p, ltp, 1.1e6, 2.4, 1.0e6, ctx), png))
+            out.append((k, PREFIX + msg.intraday_alert(p, ltp, 1.1e6, 2.4, 1.0e6, ctx, volume="strong",
+                                                       zone_top=p["pivot"] * (1 + config.alerts.buy_zone_pct)), png))
+        elif k == "failed":
+            p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
+            out.append((k, PREFIX + msg.failed_alert(p, round(p["pivot"] * 0.985, 2), round(p["pivot"] * 1.012, 2),
+                                                     (p.get("vcp") or {}).get("stop")), None))
+        elif k == "close_check":
+            p = _pick(rows, ("forming",), key=lambda r: r.get("dist_to_pivot_pct") or 99) or EXAMPLE
+            cs = candles_for(p, k)
+            ltp = round(p["pivot"] * 1.018, 2)
+            prev = cs[-1]["close"]
+            low = min(prev, p["pivot"]) * 0.995
+            live = {"ltp": ltp, "open": prev, "high": ltp * 1.004, "low": low, "volume": 1.6e6,
+                    "pace": 1.8, "range": (ltp - low) / (ltp * 1.004 - low), "verdict": "holding"}
+            png, ctx = decision_for(cs, p, k, config.alerts, config.bases, config.vcp, live=live)
+            out.append((k, PREFIX + msg.close_alert(p, "holding", ltp, 1.8, live["range"],
+                                                    p["pivot"] * (1 + config.alerts.buy_zone_pct), ctx), png))
         elif k == "digest":
             screen = "vcp" if any(r["screen"] == "vcp" for r in rows) else "bases"
             with get_db() as conn:

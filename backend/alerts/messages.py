@@ -65,11 +65,23 @@ def near_pivot_alert(screen: str, p: dict, ctx: Optional[dict] = None) -> str:
     return stage_alert("near_pivot", screen, text, p, ctx=ctx)
 
 
+VOLUME_LINE = {"strong": "🟢 <b>Strong volume</b>: on pace for {pace}. A real breakout candidate.",
+               "average": "🟡 <b>Average volume</b> ({pace}): wait for the {check} check.",
+               "weak": "🟡 <b>Weak volume</b> ({pace}): wait for the {check} check.",
+               "unknown": "Volume too early to judge: wait for the {check} check."}
+
+
 def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optional[float],
-                   avg_vol: Optional[float], ctx: Optional[dict] = None) -> str:
+                   avg_vol: Optional[float], ctx: Optional[dict] = None, volume: Optional[str] = None,
+                   zone_top: Optional[float] = None, check_time: str = "15:15") -> str:
     lines = [f"{ICONS['intraday']} <b>{escape(p['symbol'])}</b> trading {rs(ltp)}, "
              f"{(ltp / p['pivot'] - 1) * 100:+.1f}% above its {rs(p['pivot'])} pivot ({escape(p['base_label'])})",
              "<b>Unconfirmed</b>: a breakout counts only on a close above the pivot."]
+    if zone_top and ltp > zone_top:
+        lines.append(f"⛔ <b>Extended</b>: beyond the buy zone ({rs(zone_top)}). Don't chase.")
+    elif volume:
+        lines.append(VOLUME_LINE[volume].format(pace=f"{pace:.1f}× average" if pace else "n/a",
+                                                check=escape(check_time)))
     if vol_so_far is not None and avg_vol:
         lines.append(f"Volume so far {vol_so_far / avg_vol:.1f}× the 50-day average"
                      + (f", on pace for {pace:.1f}×" if pace else ""))
@@ -133,3 +145,68 @@ def login_ok_alert(expires: datetime, handover: dict) -> str:
         lines.append("AlgoTrade: ✓ token updated" if handover["ok"]
                      else f"AlgoTrade: ✗ not updated ({escape(handover['message'])})")
     return "\n".join(lines)
+
+
+def failed_alert(p: dict, ltp: float, day_high: Optional[float], stop: Optional[float]) -> str:
+    lines = [f"⚠️ <b>{escape(p['symbol'])}: breakout failing.</b> Back at {rs(ltp)}, below the {rs(p['pivot'])} pivot"
+             + (f" (today's high {rs(day_high)})." if day_high else "."),
+             "Don't buy." + (f" If you bought, honour the stop {rs(stop)}." if stop else "")]
+    tail = _tail(p)
+    if tail:
+        lines.append(f"<i>{tail}</i>")
+    return "\n".join(lines)
+
+
+CLOSE_HEAD = {"holding": "✅ <b>{sym}: breakout holding into the close</b>",
+              "weak": "🟡 <b>{sym}: above the pivot, but weak</b>",
+              "extended": "⛔ <b>{sym}: too far above the pivot</b>"}
+
+
+def close_alert(p: dict, verdict: str, ltp: float, pace: Optional[float], rng: Optional[float],
+                zone_top: float, ctx: Optional[dict] = None) -> str:
+    lines = [CLOSE_HEAD[verdict].format(sym=escape(p["symbol"])),
+             f"{rs(ltp)}, {(ltp / p['pivot'] - 1) * 100:+.1f}% over the {rs(p['pivot'])} pivot "
+             f"({escape(p['base_label'])}) · volume on pace {_pace(pace)} · "
+             f"range {f'{rng:.2f}' if rng is not None else 'n/a'}"]
+    if verdict == "holding":
+        lines.append(f"Buy zone {rs(p['pivot'])} – {rs(zone_top)} · act before 15:30. The 18:30 scan confirms it.")
+    elif verdict == "weak":
+        lines.append("Volume or the close may not confirm: wait for the 18:30 scan.")
+    else:
+        lines.append("Don't chase: wait for a pullback toward the pivot.")
+    tail = _tail(p)
+    if tail:
+        lines.append(f"<i>{tail}</i>")
+    if ctx:
+        from backend.alerts.decision import decision_lines
+        lines.append("")
+        lines += [escape(x) for x in decision_lines(ctx)]
+    return "\n".join(lines)
+
+
+def _pace(pace: Optional[float]) -> str:
+    return f"{pace:.1f}×" if pace else "n/a"
+
+
+def close_summary(items: list[dict], shown: set) -> str:
+    """One message for the 15:15 names not sent individually. items: {symbol, verdict, ltp, pivot, pace}."""
+    groups = {"holding": "✅ Also holding", "weak": "🟡 Above pivot, weak", "extended": "⛔ Extended, don't chase"}
+    lines = [f"🕒 <b>15:15 check</b>: {len(items)} names above their pivot"]
+    for v, title in groups.items():
+        names = [f"{escape(i['symbol'])} ({(i['ltp'] / i['pivot'] - 1) * 100:+.1f}%, {_pace(i.get('pace'))})"
+                 for i in items if i["verdict"] == v and i["symbol"] not in shown]
+        if names:
+            lines.append(f"{title}: " + ", ".join(names))
+    return "\n".join(lines)
+
+
+def confirm_note(flag: Optional[str]) -> Optional[str]:
+    """18:30 cross-reference to the 15:15 check."""
+    return {"close_holding": "✓ Flagged at 15:15 (holding into the close)",
+            "close_weak": "✓ Confirmed, though it looked weak at 15:15",
+            "close_extended": "✓ Confirmed; it was extended at 15:15"}.get(flag)
+
+
+def not_confirmed_alert(symbol: str, pivot: float, close: Optional[float]) -> str:
+    return (f"✗ <b>{escape(symbol)}</b> didn't confirm on the close: flagged as holding at 15:15, "
+            f"but the close {rs(close)} isn't a volume-confirmed breakout over the {rs(pivot)} pivot.")

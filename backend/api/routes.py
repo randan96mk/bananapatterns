@@ -626,14 +626,15 @@ def jobs_list(limit: int = Query(50, le=500)):
         rows = [dict(r) for r in conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,))]
     return {"runs": rows, "config": {k: getattr(S().config.alerts, k) for k in
                                      ("job_enabled", "job_time", "reminder_time", "intraday", "intraday_start",
-                                      "intraday_end", "intraday_interval_min", "universe_refresh_weekday",
+                                      "intraday_end", "intraday_interval_min", "close_check", "close_check_time",
+                                      "universe_refresh_weekday",
                                       "login_links", "login_times", "login_heads_up", "login_heads_up_time")}}
 
 
 @router.post("/jobs/{job}/run")
 def jobs_run(job: str):
     sch = S().scheduler
-    if sch is None or job not in ("eod", "intraday", "weekly", "reminder", "login_check"):
+    if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
     fn = (lambda: sch.run_eod(now, force=True)) if job == "eod" else (lambda: getattr(sch, f"run_{job}")(now))

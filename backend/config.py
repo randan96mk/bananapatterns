@@ -187,6 +187,11 @@ class AlertsConfig:
     intraday_interval_min: int = 5
     intraday_start: str = "09:20"
     intraday_end: str = "15:25"
+    intraday_volume_mult: float = 1.5      # projected day volume needed for "strong" / "holding" (x 50-day avg)
+    failed_buffer_pct: float = 0.01        # after crossing, falling this far under the pivot = failed breakout
+    close_check: bool = True               # act-before-close check
+    close_check_time: str = "15:15"
+    close_min_range: float = 0.5           # (price - day low) / day range needed at the close check
     job_enabled: bool = True               # automatic evening sync + scan + alerts
     job_time: str = "18:30"                # IST, trading days
     reminder_time: str = "15:30"           # IST: remind if today's Kite login is missing
@@ -200,7 +205,7 @@ class AlertsConfig:
     login_check_min: int = 30              # ask Kite every N min whether the session is still accepted
 
 
-TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time")
+TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time")
 
 
 def check_alert_times(sec: "AlertsConfig") -> None:

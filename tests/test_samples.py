@@ -23,7 +23,8 @@ def test_every_kind_builds_with_empty_db():
     assert [k for k, _, _ in samples] == SAMPLE_KINDS
     assert all(html.startswith("🧪 <b>TEST</b> — ") for _, html, _ in samples)
     charts = {k for k, _, png in samples if png}
-    assert charts == {"breakout", "near_pivot", "forming", "below_pivot", "played_out", "intraday"}   # decision charts
+    assert charts == {"breakout", "near_pivot", "forming", "below_pivot", "played_out", "intraday",
+                      "close_check"}                                                 # decision charts
     assert all(png[:4] == b"\x89PNG" for _, _, png in samples if png)
 
 
