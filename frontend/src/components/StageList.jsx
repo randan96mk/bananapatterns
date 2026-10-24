@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
+import StageGrid from './StageGrid';
 
 const pct = (v) => (v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
 const rs = (v) => (v == null ? '' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
@@ -24,15 +25,21 @@ const VCP_COLS = [['Score', (r) => r.score?.toFixed(0)], ['Pullbacks %', pullbac
 const TITLES = { forming: 'Forming', fresh: 'Fresh breakouts', climbing: 'Climbing', played_out: 'Played out',
   fresh_low_volume: 'Low-volume breakouts (below the volume rule; not counted)' };
 
-function Table({ screen, stage, asOf, selected, onSelect, sort }) {
-  const isVcp = screen === 'vcp';
+// Fetch + sort once; show as a table or as a grid of mini-chart cards.
+function Results({ view, ...props }) {
+  const { screen, stage, asOf, sort } = props;
   const [rows, setRows] = useState(null);
   useEffect(() => { setRows(null); api.screenResults(screen, stage).then((d) => setRows(d.rows)).catch(() => setRows([])); },
     [screen, stage, asOf]);
-  const cols = isVcp ? [...COLS[stage], ...VCP_COLS] : COLS[stage];
   if (!rows) return <p className="muted">Loading…</p>;
-  const shown = sort === 'rs' ? [...rows].sort((a, b) => (b.rs ?? -1) - (a.rs ?? -1)) : rows;
   if (!rows.length) return <p className="muted">None as of {asOf}.</p>;
+  const shown = sort === 'rs' ? [...rows].sort((a, b) => (b.rs ?? -1) - (a.rs ?? -1)) : rows;
+  return view === 'grid' ? <StageGrid {...props} rows={shown} /> : <Table {...props} shown={shown} />;
+}
+
+function Table({ screen, stage, selected, onSelect, shown }) {
+  const isVcp = screen === 'vcp';
+  const cols = isVcp ? [...COLS[stage], ...VCP_COLS] : COLS[stage];
   return (
     <div className="tablewrap">
       <table className="grid">
@@ -55,23 +62,32 @@ function Table({ screen, stage, asOf, selected, onSelect, sort }) {
   );
 }
 
+const VIEW_KEY = 'bp.stageView';
+const loadView = () => { try { return localStorage.getItem(VIEW_KEY) || 'grid'; } catch { return 'grid'; } };
+
 export default function StageList(props) {
   const [sort, setSort] = useState('default');
+  const [view, setView] = useState(loadView);
+  const pick = (v) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ } };
   return (
     <div className="panel">
       <div className="row">
         <h3>{TITLES[props.stage]}</h3>
+        <span className="seg">
+          <button className={view === 'grid' ? 'active' : ''} onClick={() => pick('grid')}>▦ Grid</button>
+          <button className={view === 'table' ? 'active' : ''} onClick={() => pick('table')}>☰ Table</button>
+        </span>
         <span className="right muted">Sort</span>
         <select value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="default">{props.screen === 'vcp' ? 'Score' : 'Stage order'}</option>
           <option value="rs">RS rating</option>
         </select>
       </div>
-      <Table {...props} sort={sort} />
+      <Results {...props} sort={sort} view={view} />
       {props.stage === 'fresh' && (
         <>
           <h4>{TITLES.fresh_low_volume}</h4>
-          <Table {...props} sort={sort} stage="fresh_low_volume" />
+          <Results {...props} sort={sort} view={view} stage="fresh_low_volume" />
         </>
       )}
     </div>

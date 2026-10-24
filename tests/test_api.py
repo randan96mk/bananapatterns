@@ -77,6 +77,15 @@ def test_callback_login_then_full_flow(api):
         res = tc.get(f"/api/screens/bases/results?stage={stage}")
         assert res.status_code == 200 and all(r["symbol"] for r in res.json()["rows"])
     assert tc.get("/api/screens/bases/results?stage=nope").status_code == 422
+    for stage in ("forming", "fresh", "climbing", "played_out"):
+        rows = tc.get(f"/api/screens/bases/results?stage={stage}").json()["rows"]
+        sp = tc.get(f"/api/screens/bases/sparks?stage={stage}&bars=60").json()["sparks"]
+        assert set(sp) == {r["symbol"] for r in rows}
+        for r in rows:
+            assert r["base_start"] <= r["base_end"] and r["base_low"] <= r["pivot"]
+            s = sp[r["symbol"]]
+            assert len(s["d"]) == len(s["c"]) == len(s["ma50"]) <= 60 and s["ma50"][-1] is not None
+    assert tc.get("/api/screens/bases/sparks?stage=nope").status_code == 422
     assert tc.get("/api/screens/nope/summary").status_code == 404
     assert tc.get("/api/changes").json()["as_of"] == summ["as_of"]
     assert tc.post("/api/screens/scan").json()["as_of"] == summ["as_of"]

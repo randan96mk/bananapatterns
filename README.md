@@ -323,6 +323,15 @@ The **Screens** tab is the home page, modelled on the site's VCP screen header. 
 the last 5 sessions") sits above four **stage cards** with counts. Tap a card to list its stocks, and tap a stock
 to open its chart with the base boxes. The **What changed since last close** feed sits on the right.
 
+**Grid view** (default; **▦ Grid / ☰ Table** toggle, remembered per browser): each stock is a card with a
+~6-month mini chart: candles, the base box (shaded), pivot line, 50-day line, ▲ breakout (amber when below the
+volume rule), ✕ the day a run ended. Under the chart: price and change, then stage facts (forming: distance under
+the pivot and depth; fresh: breakout date, % over the pivot, volume; climbing: sessions, gain, peak; played out: end
+date, reason, result), RS, trend and, on the VCP screen, score, pullbacks, dry-up and stop. Forming names within 3%
+of the pivot get a highlighted border. Click a card for the full chart. Mini charts are SVG
+(`components/StageGrid.jsx`) fed by `GET /api/screens/{screen}/sparks?stage=…&bars=120`. The base box needs the
+`base_start` / `base_end` / `base_low` fields saved by the scan: press **Rescan** once after updating.
+
 **Stages** (`backend/engine/stages.py`, every threshold in **Settings → screen**). Each stock is classified on its
 last bar using only past bars:
 
@@ -533,6 +542,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/stock/{symbol}/candles?limit=750` | daily candles (stocks or indices, e.g. `NIFTY 500`) |
 | GET | `/api/screens` | available screens (`vcp`, `bases`) |
 | GET | `/api/screens/{screen}/summary` | as-of date, counts per stage, number of changes, stale flag |
+| GET | `/api/screens/{screen}/sparks?stage=&bars=120` | last N candles + 50-day line per stock in a stage (grid view) |
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
@@ -957,4 +967,10 @@ of receiving it (a small change in that repo).
   so restarts don't repeat alerts.
 - 18:30 breakout alerts refer back to the 15:15 verdict; "didn't confirm" when a 15:15 "holding" name fails on
   the close.
+- 145 offline tests passing.
+
+### 2026-10-25: Grid view with mini charts
+- Stage lists can be shown as a grid of cards, like the site: SVG mini chart (base box, pivot, 50-day line, breakout
+  ▲, exit ✕) with the stage's key facts. Table view is still one click away.
+- The scan now saves each base's start, end and low; new `/api/screens/{screen}/sparks` endpoint.
 - 145 offline tests passing.
