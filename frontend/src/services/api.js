@@ -57,3 +57,6 @@ export const refreshEvents = () => req('POST', '/api/events/refresh');
 export const filingsStatus = () => req('GET', '/api/filings');
 export const stockFilings = (symbol) => req('GET', `/api/filings?symbol=${encodeURIComponent(symbol)}`);
 export const refreshFilings = () => req('POST', '/api/filings/refresh');
+export const dealsStatus = () => req('GET', '/api/deals');
+export const stockDeals = (symbol) => req('GET', `/api/deals?symbol=${encodeURIComponent(symbol)}`);
+export const refreshDeals = () => req('POST', '/api/deals/refresh');

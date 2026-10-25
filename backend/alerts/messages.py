@@ -292,6 +292,11 @@ def _plan_line(n: int, i: dict) -> str:
         bits.append(f" · ~{i['size']['qty']} sh")
     if i.get("results"):
         bits.append(f"\n    ⚠️ {escape(results_short(i['results']))}: a results gap can jump the stop")
+    fl = i.get("flags") or {}
+    if fl.get("red"):
+        bits.append(f"\n    🚩 {escape(fl['red'][0]['label'])}")
+    if fl.get("buy"):
+        bits.append(f"\n    🏦 {escape(fl['buy'][0]['label'])}")
     coil = _coil_text(i.get("coiled"))
     return "".join(bits) + (f"\n    {coil}" if coil else "")
 
@@ -367,6 +372,12 @@ def filing_alert(f: dict, why: str) -> str:
     if f.get("url", "").startswith("https://"):
         lines[-1] += f' · <a href="{escape(f["url"], quote=True)}">filing</a>'
     return "\n".join(lines)
+
+
+def deal_alert(symbol: str, icon: str, item: dict, why: str) -> str:
+    tail = " Holds it at tier B: no A alerts until it clears." if icon == "🚩" else ""
+    return (f"{icon} <b>{escape(symbol)}</b> · {escape(item['label'])} <i>({escape(why)})</i>\n"
+            f"{escape(item['text'])}.{tail}")
 
 
 def guard_results(pos: dict, ev: dict, label: str) -> str:

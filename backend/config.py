@@ -279,6 +279,13 @@ class AlertsConfig:
     filings_interval_min: int = 15         # fetched every N minutes, 07:00-23:00, every day
     filings_alerts: bool = True            # push important filings on stocks you watch, hold or have in the plan
     news_days: int = 3                     # "recent" for alert news lines and card chips (calendar days)
+    # Red flags and fund buying (filings + bulk / block deals + SAST holder disclosures)
+    red_flags: bool = True                 # 🚩 promoter selling, legal action, auditor exit, downgrade: tier B
+    red_flag_days: int = 30
+    stake_change_min_pct: float = 1.0      # SAST: a promoter sale / fund stake change (% of the company) that counts
+    deals: bool = True                     # 🏦 funds buying / selling in bulk / block deals or raising stakes
+    deal_days: int = 10
+    deal_min_cr: float = 5.0               # net bulk / block value (₹ crore) a fund must trade to count
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

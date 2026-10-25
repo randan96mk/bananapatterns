@@ -259,6 +259,24 @@ CREATE TABLE IF NOT EXISTS filings (
 );
 CREATE INDEX IF NOT EXISTS idx_filings_symbol_dt ON filings (symbol, dt);
 
+-- Bulk / block deals and SAST Reg 29 holder disclosures (backend/ingest/holders.py), kept KEEP_DAYS.
+CREATE TABLE IF NOT EXISTS deals (
+    date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    client TEXT NOT NULL,
+    side TEXT NOT NULL,
+    qty REAL NOT NULL,
+    price REAL NOT NULL,
+    source TEXT NOT NULL,
+    pct REAL,
+    after_pct REAL,
+    promoter INTEGER NOT NULL DEFAULT 0,
+    url TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (date, symbol, client, side, qty, price, source)
+);
+CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

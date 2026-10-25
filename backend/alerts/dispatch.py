@@ -80,7 +80,7 @@ class Notifier:
         if not self.ready or self.already_sent(key):
             return False
         if symbol and kind in RESULTS_NOTE_KINDS:
-            html += results_note(symbol, self.cfg) + news_note(symbol, kind, self.cfg)
+            html += results_note(symbol, self.cfg) + news_note(symbol, kind, self.cfg) + flags_note(symbol, self.cfg)
         ok, err = True, None
         try:
             if buttons is None and symbol and kind in ACTION_KINDS and self.cfg.alert_buttons:
@@ -154,6 +154,26 @@ def news_note(symbol: str, kind: str, cfg: AlertsConfig, today: Optional[str] = 
     top = rows[0]
     if top["kind"] in fl.IMPORTANT and top["text"]:
         out += f"\n<i>{escape(top['text'][:160] + ('…' if len(top['text']) > 160 else ''))}</i>"
+    return out
+
+
+def flags_note(symbol: str, cfg: AlertsConfig) -> str:
+    """'🚩 Promoter sold 2.1% (23 Oct) …' / '🏦 Fund bought ₹45 Cr (23 Oct)' lines for a stock alert."""
+    from backend.ingest import holders
+    try:
+        s = holders.signals([symbol], cfg).get(symbol)
+    except Exception:
+        logger.exception("Signals lookup failed for %s", symbol)
+        return ""
+    if not s:
+        return ""
+    out = ""
+    for i in s["red"][:2]:
+        out += f"\n🚩 <b>{escape(i['label'])}</b>: {escape(i['text'][:160])}"
+    if s["red"]:
+        out += " <i>Held at tier B.</i>"
+    for i in (s["buy"] + s["sell"])[:2]:
+        out += f"\n🏦 {escape(i['text'][:160])}"
     return out
 
 

@@ -21,6 +21,7 @@ from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
 from backend.ingest import events as ev
 from backend.ingest import filings as fl
+from backend.ingest import holders as hd
 from backend.ingest import universe as uni
 from backend.api import security
 from backend.kite_api import auth
@@ -499,6 +500,27 @@ def filings_refresh():
     return {"new": len(new), "last_fetch": fl.last_fetch()}
 
 
+@router.get("/deals")
+def deals_list(symbol: Optional[str] = None, days: int = Query(30, ge=1, le=120)):
+    """One stock's bulk / block deals and holder disclosures with its signals, or the fetch status."""
+    if symbol:
+        sym = symbol.upper()
+        since = (datetime.now(IST).date() - timedelta(days=days)).isoformat()
+        return {"symbol": sym, "deals": hd.for_symbol(sym, since),
+                "signals": hd.signals([sym], S().config.alerts).get(sym)}
+    return {"last_fetch": hd.last_fetch()}
+
+
+@router.post("/deals/refresh")
+def deals_refresh():
+    """Fetch the latest bulk / block deals and SAST disclosures now (alerts come from the scheduler)."""
+    try:
+        new = hd.refresh_from_nse()
+    except Exception as exc:
+        raise HTTPException(502, f"NSE deals fetch failed: {exc}")
+    return {"new": len(new), "last_fetch": hd.last_fetch()}
+
+
 @router.get("/events")
 def events_list(symbol: Optional[str] = None):
     """The NSE event calendar: one stock's events (from 30 days ago), or the fetch status."""
@@ -536,10 +558,12 @@ def screens_results(screen: str, stage: str = Query(...)):
         h = market.latest(conn, as_of) if as_of else None
     results = _results_for([p["symbol"] for p in items])
     news = _news_for([p["symbol"] for p in items])
+    flags = hd.signals([p["symbol"] for p in items], S().config.alerts)
     for p in items:                                   # A/B badge, same rule as the alerts
         p["tier"] = market.tier(p, h["status"] if h else None, S().config.alerts)
         p["results"] = results.get(p["symbol"])
         p["news"] = news.get(p["symbol"])
+        p["flags"] = flags.get(p["symbol"])
     if screen in ("vcp", "cup"):
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
@@ -599,8 +623,9 @@ def positions_list():
     from backend.alerts import guard
     pos = guard.positions()
     syms = [p["symbol"] for p in pos]
-    results, news = _results_for(syms), _news_for(syms)
-    return {"positions": [dict(p, results=results.get(p["symbol"]), news=news.get(p["symbol"])) for p in pos]}
+    results, news, flags = _results_for(syms), _news_for(syms), hd.signals(syms, S().config.alerts)
+    return {"positions": [dict(p, results=results.get(p["symbol"]), news=news.get(p["symbol"]),
+                               flags=flags.get(p["symbol"])) for p in pos]}
 
 
 @router.put("/positions/{symbol}")

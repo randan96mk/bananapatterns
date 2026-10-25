@@ -41,6 +41,7 @@ from backend.config import IST, AlertsConfig
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
 from backend.ingest import events
 from backend.ingest import filings
+from backend.ingest import holders
 from backend.ingest import holidays as hol
 from backend.ingest import universe as uni
 from backend.kite_api.auth import EXPIRY_TIME
@@ -283,22 +284,55 @@ class Scheduler:
         """Fetch new NSE filings; push the important ones on stocks you watch, hold or have in the plan."""
         self.last_filings = now
         cfg = self.state.config.alerts
+        deals = []
+        if cfg.red_flags or cfg.deals:
+            try:
+                deals = holders.refresh_from_nse()
+            except Exception as exc:
+                logger.warning("Deals fetch failed (%s); keeping the stored ones", exc)
         try:
             new = filings.refresh_from_nse()
         except Exception as exc:
             logger.warning("Filings fetch failed (%s); keeping the stored ones", exc)
-            return {"status": "failed", "error": str(exc)}
-        sent = self.alert_filings(new, now) if cfg.filings_alerts else 0
-        return {"status": "ok", "new": len(new), "sent": sent}
+            new = None
+        sent = 0
+        if cfg.filings_alerts:
+            sent = self.alert_filings(new or [], now) + self.alert_deals(deals)
+        if new is None:
+            return {"status": "failed", "deals": len(deals), "sent": sent}
+        return {"status": "ok", "new": len(new), "deals": len(deals), "sent": sent}
 
-    def alert_filings(self, new: list[dict], now: datetime) -> int:
-        """One message per important filing (from the last 24 h) on a stock you hold, watch or have in the plan."""
+    @staticmethod
+    def _scope() -> dict[str, str]:
+        """Stocks you hold, watch or have in the plan: {symbol: why}."""
         scope = {p["symbol"]: "you hold it" for p in guard.positions()}
         with get_db() as conn:
             for r in conn.execute("SELECT symbol FROM watchlist"):
                 scope.setdefault(r["symbol"], "on your watchlist")
         for i in pl.latest_plan()[1]:
             scope.setdefault(i["symbol"], "in the plan")
+        return scope
+
+    def alert_deals(self, new: list[dict]) -> int:
+        """Red flags and fund moves from newly fetched deals / disclosures, on stocks in scope; once each."""
+        scope = self._scope()
+        syms = sorted({d["symbol"] for d in new} & set(scope))
+        if not syms:
+            return 0
+        cfg, notifier, sent = self.state.config.alerts, self.notifier(), 0
+        dates = {(d["symbol"], d["date"]) for d in new}
+        for sym, s in holders.signals(syms, cfg).items():
+            for key, icon in (("red", "🚩"), ("buy", "🏦"), ("sell", "🏦")):
+                for i in s[key]:
+                    if (sym, i["date"]) in dates and notifier.send(
+                            f"deal|{sym}|{i['label']}|{i['date']}", "filing", msg.deal_alert(sym, icon, i, scope[sym]),
+                            sym):
+                        sent += 1
+        return sent
+
+    def alert_filings(self, new: list[dict], now: datetime) -> int:
+        """One message per important filing (from the last 24 h) on a stock you hold, watch or have in the plan."""
+        scope = self._scope()
         since = (now - timedelta(hours=24)).replace(tzinfo=None).isoformat()
         notifier, sent = self.notifier(), 0
         for f in sorted(new, key=lambda f: f["dt"]):

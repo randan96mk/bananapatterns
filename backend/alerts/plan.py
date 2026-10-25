@@ -1,7 +1,7 @@
 """Daily plan: rank tonight's Forming setups for the next session, keep the list, and judge the open.
 
 Rank = VCP score (or 0.6 x RS when a name has no VCP score) - 2 per % under the pivot
-       + 10 for an A setup + 8 when coiled.
+       + 10 for an A setup + 8 when coiled + 4 when funds are buying (bulk / block deals, stake raises).
 Coiled = the last bar is an NR7 (narrowest range of the last 7) or an inside day, on volume
          <= coiled_volume x the 50-day average, within coiled_within_pct under the pivot:
          the calm that often comes right before a breakout.
@@ -14,9 +14,9 @@ from backend.alerts.messages import SCREEN_PREF, setup_stop
 from backend.config import AlertsConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine import market
-from backend.ingest import events
+from backend.ingest import events, holders
 
-TOP_BONUS, COILED_BONUS, DIST_WEIGHT = 10.0, 8.0, 2.0
+TOP_BONUS, COILED_BONUS, DIST_WEIGHT, FUND_BONUS = 10.0, 8.0, 2.0, 4.0
 
 
 def coiled(candles: list[dict], dist_pct: Optional[float], cfg: AlertsConfig) -> Optional[dict]:
@@ -66,6 +66,7 @@ def build_plan(as_of: str, cfg: AlertsConfig, vcp_cfg: VcpConfig, tokens: dict[s
     items = []
     cands = candidates(as_of, cfg.screens)
     upcoming = events.upcoming_results(as_of, [p["symbol"] for p in cands]) if cfg.results_calendar else {}
+    flags = holders.signals([p["symbol"] for p in cands], cfg, as_of)
     for p in cands:
         tok = tokens.get(p["symbol"])
         with get_db() as conn:
@@ -77,8 +78,10 @@ def build_plan(as_of: str, cfg: AlertsConfig, vcp_cfg: VcpConfig, tokens: dict[s
         items.append({"symbol": p["symbol"], "screen": p["screen"], "base_label": p.get("base_label"), "pivot": pivot,
                       "zone_top": round(pivot * (1 + cfg.buy_zone_pct), 2), "stop": stop, "close": p.get("close"),
                       "dist_to_pivot_pct": p.get("dist_to_pivot_pct"), "rs": p.get("rs"), "score": p.get("score"),
-                      "tier": t, "coiled": coil, "rank": rank_score(p, t, coil), "payload": p,
-                      "results": soon(upcoming.get(p["symbol"]), cfg)})
+                      "tier": t, "coiled": coil, "payload": p, "results": soon(upcoming.get(p["symbol"]), cfg),
+                      "flags": flags.get(p["symbol"]),
+                      "rank": rank_score(p, t, coil) + (FUND_BONUS if (flags.get(p["symbol"]) or {}).get("buy")
+                                                        else 0)})
     items.sort(key=lambda i: -i["rank"])
     return items[:cfg.plan_top_n]
 
