@@ -8,13 +8,14 @@ as-of date in scan_results / scan_changes (history for Phase 4).
 import json
 from typing import Optional
 
-from backend.config import BaseConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
+from backend.config import BaseConfig, CupConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine.bases import detect_bases
 from backend.engine import market
+from backend.engine.cups import cup_score, detect_cups
 from backend.engine.rs import industry_ranks, rs_ratings, rs_score
 from backend.engine.scoring import vcp_score
-from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_vcp
+from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_cup, classify_vcp
 from backend.engine.trend_template import trend_template
 from backend.logging_config.logger import setup_logger
 
@@ -56,12 +57,13 @@ def change_line(symbol: str, y: Optional[StageResult], t: StageResult) -> Option
     return None
 
 
-SCREENS = ("bases", "vcp")
+SCREENS = ("bases", "vcp", "cup")
 
 
 def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict],
              trend_cfg: Optional[TrendConfig] = None, vcp_cfg: Optional[VcpConfig] = None,
-             market_cfg: Optional[MarketConfig] = None, index_token: Optional[int] = None) -> dict:
+             market_cfg: Optional[MarketConfig] = None, index_token: Optional[int] = None,
+             cup_cfg: Optional[CupConfig] = None) -> dict:
     """symbols: [{symbol, instrument_token, company?, industry?}], e.g. resolve_universe(...)["stocks"].
 
     Produces both screens: "bases" (every base) and "vcp" (bases that pass the VCP rules).
@@ -71,6 +73,7 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
     trend_cfg = trend_cfg or TrendConfig()
     vcp_cfg = vcp_cfg or VcpConfig()
     market_cfg = market_cfg or MarketConfig()
+    cup_cfg = cup_cfg or CupConfig()
     with get_db() as conn:
         series = {s["symbol"]: get_candles(conn, s["instrument_token"]) for s in symbols}
         index = get_candles(conn, index_token) if index_token is not None else []
@@ -119,6 +122,20 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
         line = change_line(sym, vy, vt)
         if line:
             changes["vcp"].append((s, line[0], line[1], vt))
+
+        cups_today = detect_cups(candles, cup_cfg, bases_cfg, vcp_cfg.max_stop)
+        cups_yday = detect_cups(prev, cup_cfg, bases_cfg, vcp_cfg.max_stop)
+        ct, shape = classify_cup(candles, cups_today, ratings[sym], tt["passed"], screen_cfg, cup_cfg)
+        cy, _ = classify_cup(prev, cups_yday, ratings[sym], tt["passed"], screen_cfg, cup_cfg)
+        cextra = {k: v for k, v in extra.items() if k not in ("vcp_tag", "cup_tag")}
+        if shape is not None:
+            cextra["cup"] = shape
+            cextra["score"] = cup_score(shape, ratings[sym], cup_cfg)
+            extra["cup_tag"] = ct.stage is not None   # shown as a "C&H" tag on the Bases screen
+        rows["cup"].append((s, ct, cextra))
+        line = change_line(sym, cy, ct)
+        if line:
+            changes["cup"].append((s, line[0], line[1], ct))
 
     counts = {k: {st: 0 for st in (*CARD_STAGES, "fresh_low_volume")} for k in SCREENS}
     for k in SCREENS:

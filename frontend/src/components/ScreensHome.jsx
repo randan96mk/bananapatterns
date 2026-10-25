@@ -54,6 +54,7 @@ export default function ScreensHome({ hasData }) {
       <div className="row toolbar">
         <select value={screen} onChange={(e) => { setScreen(e.target.value); setSelected(null); }}>
           <option value="vcp">VCP</option>
+          <option value="cup">Cup &amp; handle</option>
           <option value="bases">Bases (all)</option>
         </select>
         <button className="btn ghost" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : 'Rescan'}</button>
@@ -72,9 +73,11 @@ export default function ScreensHome({ hasData }) {
         ) : (
           <>
             <h2>{c.fresh || 0} fresh breakout{c.fresh === 1 ? '' : 's'} in the last {n} sessions.</h2>
-            <p className="muted">{screen === 'vcp'
-              ? 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.'
-              : 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
+            <p className="muted">{{
+              vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.',
+              cup: 'Cups with a handle: U-shaped 12–33% cups of 7–65 weeks after a 30%+ rise, with a tight, quiet handle in '
+                + 'the upper half — tap a stage to see the names.',
+            }[screen] || 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
             <div className="boardgrid">
               <div className="cards">
                 {CARDS.map(([id, title, sub]) => (

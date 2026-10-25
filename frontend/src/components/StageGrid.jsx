@@ -24,7 +24,17 @@ function MiniChart({ s, r }) {
   return (
     <svg className="minichart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
          aria-label={`${r.symbol} last ${n} sessions`}>
-      {b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (
+      {r.cup && (() => {                                     // cup: L - U - R outline and the handle
+        const pts = [[r.cup.left_lip.date, r.cup.left_lip.high], [r.cup.bottom.date, r.cup.bottom.low],
+          [r.cup.right_lip.date, r.cup.right_lip.high]].map(([d, v]) => [idx(d), v]).filter(([i]) => i >= 0);
+        const hs = idx(r.cup.handle.start), he = idx(r.cup.handle.end);
+        return (<>
+          {pts.length >= 2 && <polyline className="mc-cup" points={pts.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')} />}
+          {hs >= 0 && he >= hs && <rect className="mc-handle" x={hs * step} y={y(r.pivot)} width={(he - hs + 1) * step}
+                                        height={Math.max(1, y(r.cup.handle.low) - y(r.pivot))} />}
+        </>);
+      })()}
+      {!r.cup && b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (
         <rect x={b0 * step} y={y(r.pivot)} width={(b1 - b0 + 1) * step} height={y(r.base_low) - y(r.pivot)}
               className="mc-box" />)}
       {r.pivot != null && <line x1={b0 >= 0 ? b0 * step : 0} x2={W} y1={y(r.pivot)} y2={y(r.pivot)} className="mc-pivot" />}
@@ -53,6 +63,7 @@ function MiniChart({ s, r }) {
 
 // The stage-specific lines under the chart.
 function Facts({ r, stage, isVcp }) {
+  const cup = r.cup;
   const pulls = (r.vcp?.contractions || []).map((c) => Math.round(c.depth_pct)).join('→');
   const lines = {
     forming: [`${r.dist_to_pivot_pct?.toFixed(1)}% under ${rs(r.pivot)}`, `Depth ${r.depth_pct?.toFixed(1)}%`],
@@ -69,11 +80,14 @@ function Facts({ r, stage, isVcp }) {
       {(lines[st] || []).map((l) => <div key={l}>{l}</div>)}
       <div className="muted">
         {[r.rs != null && `RS ${r.rs}`, r.tt_of && `Trend ${r.tt_passed}/${r.tt_of}`,
-          isVcp && r.score != null && `Score ${r.score.toFixed(0)}`].filter(Boolean).join(' · ')}
+          (isVcp || cup) && r.score != null && `Score ${r.score.toFixed(0)}`].filter(Boolean).join(' · ')}
       </div>
       {isVcp && (pulls || r.vcp?.dryup != null) && (
         <div className="muted">{[pulls && `Pullbacks ${pulls}`, r.vcp?.dryup != null && `Dry-up ${x2(r.vcp.dryup)}`,
           r.vcp?.stop && `Stop ${rs(r.vcp.stop)}`].filter(Boolean).join(' · ')}</div>)}
+      {cup && (
+        <div className="muted">{`Cup ${cup.cup.depth_pct.toFixed(0)}% · ${cup.cup.weeks}w · handle ${cup.handle.depth_pct.toFixed(1)}%`
+          + `${cup.handle.volume_x != null ? ` · vol ${x2(cup.handle.volume_x)}` : ''} · stop ${rs(cup.stop)}`}</div>)}
     </div>
   );
 }
@@ -95,7 +109,8 @@ export default function StageGrid({ screen, stage, asOf, rows, selected, onSelec
             <div className="sc-head">
               {r.tier && <span className={`tier t-${r.tier}`} title={r.tier === 'A' ? 'A setup: alerts at once'
                 : 'B setup: digest only'}>{r.tier}</span>}
-              <b>{r.symbol}</b>{!isVcp && r.vcp_tag && <span className="tag ok">VCP</span>}
+              <b>{r.symbol}</b>{screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
+              {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
               <span className="right muted small">{r.base_label}</span>
             </div>
             <div className="muted small sc-sub">{r.company}{r.industry ? ` · ${r.industry}` : ''}</div>

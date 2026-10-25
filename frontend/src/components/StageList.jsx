@@ -22,6 +22,12 @@ const x2 = (v) => (v == null ? '' : `${v.toFixed(2)}x`);
 const VCP_COLS = [['Score', (r) => r.score?.toFixed(0)], ['Pullbacks %', pullbacks], ['Tightening', (r) => x2(r.vcp?.tightening)],
   ['Dry-up', (r) => x2(r.vcp?.dryup)], ['U/D', (r) => x2(r.vcp?.ud_ratio)], ['Stop', (r) => rs(r.vcp?.stop)]];
 
+const pctv = (v) => (v == null ? '' : `${v.toFixed(1)}%`);
+const CUP_COLS = [['Score', (r) => r.score?.toFixed(0)], ['Cup', (r) => r.cup && `${pctv(r.cup.cup.depth_pct)} · ${r.cup.cup.weeks}w`],
+  ['Handle', (r) => r.cup && `${pctv(r.cup.handle.depth_pct)} · ${r.cup.handle.bars}d`],
+  ['Handle vol', (r) => x2(r.cup?.handle.volume_x)], ['Prior rise', (r) => r.cup && pctv(r.cup.prior_advance_pct)],
+  ['Stop', (r) => rs(r.cup?.stop)]];
+
 const TITLES = { forming: 'Forming', fresh: 'Fresh breakouts', climbing: 'Climbing', played_out: 'Played out',
   fresh_low_volume: 'Low-volume breakouts (below the volume rule; not counted)' };
 
@@ -39,7 +45,8 @@ function Results({ view, ...props }) {
 
 function Table({ screen, stage, selected, onSelect, shown }) {
   const isVcp = screen === 'vcp';
-  const cols = isVcp ? [...COLS[stage], ...VCP_COLS] : COLS[stage];
+  const extra = { vcp: VCP_COLS, cup: CUP_COLS }[screen] || [];
+  const cols = [...COLS[stage], ...extra];
   return (
     <div className="tablewrap">
       <table className="grid">
@@ -49,7 +56,8 @@ function Table({ screen, stage, selected, onSelect, shown }) {
         <tbody>{shown.map((r) => (
           <tr key={r.symbol} className={r.symbol === selected ? 'sel' : ''} onClick={() => onSelect(r.symbol)}>
             <td>{r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>}<b>{r.symbol}</b>
-              {!isVcp && r.vcp_tag && <span className="tag ok">VCP</span>}
+              {screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
+              {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
               <div className="muted small">{r.company}</div></td><td className="muted">{r.industry}</td>
             <td className="num">{rs(r.close)}</td>
             <td className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>{pct(r.change_pct)}</td>

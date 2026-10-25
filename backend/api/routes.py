@@ -67,7 +67,7 @@ class AppState:
             u = uni.resolve_universe(self.config.ingest)
             index = next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None)
             return run_scan(self.config.bases, self.config.screen, u["stocks"], self.config.trend, self.config.vcp,
-                            self.config.market, index)
+                            self.config.market, index, self.config.cup)
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
@@ -405,7 +405,8 @@ def ingest_status():
 # --- Screens (stage board) ---
 
 SCREENS = {"bases": "Bases: every base the engine finds",
-           "vcp": "VCP: bases with shrinking pullbacks, drying volume, RS >= 70 and an uptrend"}
+           "vcp": "VCP: bases with shrinking pullbacks, drying volume, RS >= 70 and an uptrend",
+           "cup": "Cup & handle: U-shaped 12-33% cups of 7-65 weeks with a tight, quiet handle in the upper half"}
 STAGE_SORT = {
     "forming": lambda p: (p["dist_to_pivot_pct"] or 0),
     "fresh": lambda p: (p["sessions_since_breakout"] or 0, -(p["volume_ratio"] or 0)),   # newest first
@@ -464,7 +465,7 @@ def screens_results(screen: str, stage: str = Query(...)):
         h = market.latest(conn, as_of) if as_of else None
     for p in items:                                   # A/B badge, same rule as the alerts
         p["tier"] = market.tier(p, h["status"] if h else None, S().config.alerts)
-    if screen == "vcp":
+    if screen in ("vcp", "cup"):
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
         items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))

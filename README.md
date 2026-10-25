@@ -418,6 +418,26 @@ screen finds 7 forming (CUB, PAYTM, CRAFTSMAN, STARHEALTH, ATHERENERG, DLF, SOLA
 On every chart, **VCP check** shows the verdict, any failed rules ("last pullback 14.0% > 12%"), the pullback
 sequence, tightening, dry-up, U/D ratio and stop.
 
+## Cup & handle screen
+
+`backend/engine/cups.py` finds William O'Neil's cup with handle, looking only at past bars. Pick **Cup & handle** in
+the screen dropdown; it uses the same stage cards, feed, grid, alerts, decision charts, A/B tiers, daily plan and
+position guard as VCP. Every rule is in **Settings → cup**:
+
+| Part | Default rule |
+|---|---|
+| Prior uptrend | ≥ 30% rise into the left lip (from the low of the 130 sessions before it) |
+| Cup | 7–65 weeks lip to lip, 12–33% deep, nothing above the rim, right lip within −10% / +5% of the left |
+| U-shape | ≥ 5 sessions within 5% of the bottom **and** ≥ 25% of closes in the cup's bottom third (rejects spike / V bottoms) |
+| Handle | 1–5 weeks, 2–12% deep, low in the cup's upper half, volume ≤ 1.0× the 50-day average |
+| Pivot / stop | pivot = the handle's intraday high; stop = handle low − 1%, never more than 8% under the pivot |
+| Screen | Forming = in the handle within 5% of the pivot; RS ≥ 70 and Trend Template ≥ 5/8, as for VCP |
+
+Score (0–100): handle tightness 30, handle volume dry-up 20, U-shape 15, cup depth 15, RS 20. The decision chart marks
+**L** / **U** / **R** and the handle box; the checklist shows cup depth and length, the U-shape, the handle and its
+volume. Cups appear on the Bases screen with a **C&H** tag. Only cups *with* a handle count (no cup-without-handle).
+Choose which screens send alerts in **Alerts → screens** (VCP, Cup & handle, Bases).
+
 ## Telegram alerts and automatic jobs
 
 **Setup (once)**
@@ -619,7 +639,7 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/universe/refresh` | download Nifty 500 + Kite instruments; returns mapping summary |
 | GET | `/api/universe` | latest snapshot with per-symbol coverage, last close, change %, last error |
 | GET | `/api/stock/{symbol}/candles?limit=750` | daily candles (stocks or indices, e.g. `NIFTY 500`) |
-| GET | `/api/screens` | available screens (`vcp`, `bases`) |
+| GET | `/api/screens` | available screens (`vcp`, `cup`, `bases`) |
 | GET | `/api/screens/{screen}/summary` | as-of date, counts per stage, number of changes, stale flag |
 | GET | `/api/screens/{screen}/sparks?stage=&bars=120` | last N candles + 50-day line per stock in a stage (grid view) |
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
@@ -1118,3 +1138,12 @@ of receiving it (a small change in that repo).
 - Bottom tab bar + More sheet, compact Kite bar and market card, full-screen chart with folded panels, position
   cards, pinned first column in tables, touch-size controls, phone keyboards for times and numbers, safe areas.
 - Fixed tables without a scroll container that made the whole page scroll sideways on phones.
+
+### 2026-10-25: Cup & handle screen
+- `backend/engine/cups.py`: causal cup-with-handle detector returning bases (kind "cup") with the lips, bottom, handle
+  and stop; `classify_cup` stages; a third scan screen `cup`; `cup` settings section. Breakout maths shared with box
+  bases (`breakout_metrics`).
+- Decision charts mark L / U / R and the handle; A/B tiers and the daily plan treat a cup like a VCP; grid cards draw
+  the cup outline; Alerts → screens is now three checkboxes.
+- Calibrated on the demo history: a "time in the bottom third" rule was added after spike bottoms showed up.
+- 217 offline tests passing.

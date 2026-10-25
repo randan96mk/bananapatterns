@@ -144,6 +144,34 @@ class TrendConfig:
 
 
 @dataclass
+class CupConfig:
+    """Cup with handle (O'Neil). Bars are trading sessions; depths are fractions."""
+    min_prior_advance: float = 0.30        # rise into the left lip ...
+    prior_lookback_bars: int = 130         # ... from the lowest low of this many bars before it
+    min_cup_bars: int = 35                 # 7 weeks, left lip to right lip
+    max_cup_bars: int = 325                # 65 weeks
+    min_depth: float = 0.12                # left lip to cup bottom
+    max_depth: float = 0.33
+    right_lip_within: float = 0.10         # right lip at least (1 - this) x the left lip ...
+    right_lip_above: float = 0.05          # ... and at most (1 + this) x it
+    u_low_band: float = 0.05               # U-shape: sessions with a low within this of the cup low ...
+    u_min_bars: int = 5                    # ... at least this many (a V bottom has one or two)
+    u_bottom_frac: float = 0.25            # ... and at least this share of closes in the cup's bottom third
+                                           #     (a straight-line V has ~0.33, a spike bottom ~0.1, a round U 0.4+)
+    handle_min_bars: int = 5               # 1 week
+    handle_max_bars: int = 25              # ~5 weeks
+    handle_min_depth: float = 0.02
+    handle_max_depth: float = 0.12
+    handle_upper_half: bool = True         # handle low above the cup's midpoint
+    handle_max_volume: float = 1.0         # handle volume / 50-day average before it (dry-up)
+    max_dist_to_pivot: float = 0.05        # Forming: close within this under the handle high
+    stop_buffer: float = 0.01              # stop = handle low - 1%, never more than vcp.max_stop under the pivot
+    min_rs: int = 70
+    min_trend_checks: int = 5
+    history_bars: int = 400                # how far back breakouts are looked for (stages need ~6 months)
+
+
+@dataclass
 class VcpConfig:
     """VCP screen dials (classic Minervini VCP; metric definitions in backend/engine/vcp.py).
 
@@ -270,7 +298,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
-                      "vcp": VcpConfig, "alerts": AlertsConfig, "market": MarketConfig}
+                      "vcp": VcpConfig, "cup": CupConfig, "alerts": AlertsConfig, "market": MarketConfig}
 
 
 @dataclass
@@ -281,6 +309,7 @@ class AppConfig:
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     trend: TrendConfig = field(default_factory=TrendConfig)
     vcp: VcpConfig = field(default_factory=VcpConfig)
+    cup: CupConfig = field(default_factory=CupConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
