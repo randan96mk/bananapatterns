@@ -207,7 +207,7 @@ class AlertsConfig:
     """Telegram alerts and the automatic jobs. The bot token lives in .env (TELEGRAM_BOT_TOKEN)."""
     enabled: bool = True
     chat_id: str = ""                      # found with "Detect chat ID" (or set TELEGRAM_CHAT_ID in .env)
-    screens: list = field(default_factory=lambda: ["vcp"])
+    screens: list = field(default_factory=lambda: ["vcp", "cup"])
     breakout: bool = True                  # fresh breakout (volume-confirmed)
     low_volume_breakout: bool = False
     below_pivot: bool = True
@@ -363,7 +363,7 @@ def save_config(config: AppConfig) -> None:
 
 def load_config(config: AppConfig | None = None) -> AppConfig:
     """Overlay persisted sections onto defaults; stale keys are ignored."""
-    from backend.database.models import get_db, get_setting
+    from backend.database.models import get_db, get_setting, set_setting
     config = config or AppConfig()
     with get_db() as conn:
         for name in PERSISTED_SECTIONS:
@@ -375,4 +375,11 @@ def load_config(config: AppConfig | None = None) -> AppConfig:
             for key, value in json.loads(raw).items():
                 if key in known:
                     setattr(sec, key, value)
+        # once: alert screens saved before the cup screen existed get it next to VCP
+        if not get_setting(conn, "migrated.alerts_cup"):
+            screens = config.alerts.screens
+            if "vcp" in screens and "cup" not in screens:
+                screens.insert(screens.index("vcp") + 1, "cup")
+                set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
+            set_setting(conn, "migrated.alerts_cup", "1")
     return config

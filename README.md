@@ -433,10 +433,18 @@ position guard as VCP. Every rule is in **Settings → cup**:
 | Pivot / stop | pivot = the handle's intraday high; stop = handle low − 1%, never more than 8% under the pivot |
 | Screen | Forming = in the handle within 5% of the pivot; RS ≥ 70 and Trend Template ≥ 5/8, as for VCP |
 
-Score (0–100): handle tightness 30, handle volume dry-up 20, U-shape 15, cup depth 15, RS 20. The decision chart marks
-**L** / **U** / **R** and the handle box; the checklist shows cup depth and length, the U-shape, the handle and its
-volume. Cups appear on the Bases screen with a **C&H** tag. Only cups *with* a handle count (no cup-without-handle).
-Choose which screens send alerts in **Alerts → screens** (VCP, Cup & handle, Bases).
+Score (0–100): handle tightness 30, handle volume dry-up 20, U-shape 15, cup depth 15, RS 20. The decision chart and
+the grid cards draw the cup as a smooth green **U** from lip to lip (each side's roundness fitted to the stock's lows,
+so a fast drop and a long flat bottom draw a wide, flat U) and the handle as a yellow curve back up to the pivot, with
+**L** / **U** / **R** marks. On the cup screen a grid card reaches back to just before the left lip. The checklist
+shows cup depth and length, the U-shape, the handle and its volume. Cups appear on the Bases screen with a **C&H**
+tag. Only cups *with* a handle count (no cup-without-handle).
+
+**Alerts.** Cup & handle is on in **Alerts → screens** by default next to VCP (an existing saved setting gets it added
+once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, near-pivot, intraday heads-up, the 15:15
+close check, the daily plan and the position guard, with the cup's own stop (handle low − 1%) and a
+"Cup · handle · vol · stop" line. A name on several screens alerts once per kind, from the most specific screen
+(VCP, then Cup & handle, then Bases).
 
 ## Telegram alerts and automatic jobs
 
@@ -1147,3 +1155,12 @@ of receiving it (a small change in that repo).
   the cup outline; Alerts → screens is now three checkboxes.
 - Calibrated on the demo history: a "time in the bottom third" rule was added after spike bottoms showed up.
 - 217 offline tests passing.
+
+### 2026-10-25: Curved cup line and cup alerts
+- Decision charts and grid cards draw the cup as a smooth U (`_cup_curve`, each side `bottom + depth·u^p` with p in
+  1.7–4 fitted to the lows) and the handle as a curve (`_handle_curve`), replacing the dotted L-U-R line and handle
+  box. Cup grid cards fetch enough history to show the left lip.
+- Alerts: Cup & handle is an alert screen by default (one-time migration of saved settings); cup stop used in breakout
+  lines, intraday "failed" alerts, the plan and the position guard; a "Cup … handle … stop" line on forming /
+  near-pivot alerts; one alert per name and kind across screens (VCP > Cup > Bases).
+- 222 offline tests passing.

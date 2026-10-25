@@ -35,17 +35,20 @@ def kite_holdings(client) -> dict[str, dict]:
 
 
 def _setup(conn, symbol: str, as_of: Optional[str]) -> Optional[dict]:
-    row = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND symbol = ? ORDER BY screen = 'vcp' DESC "
-                       "LIMIT 1", (as_of, symbol)).fetchone() if as_of else None
+    row = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND symbol = ? ORDER BY CASE screen "
+                       "WHEN 'vcp' THEN 0 WHEN 'cup' THEN 1 ELSE 2 END LIMIT 1", (as_of, symbol)).fetchone() if as_of else None
     return json.loads(row["payload"]) if row else None
 
 
 def _initial_stop(conn, symbol: str, avg: float, as_of: Optional[str], vcp_cfg: VcpConfig) -> tuple:
-    """(pivot, stop, where the stop came from): VCP stop, else pivot - max_stop, else average - max_stop."""
+    """(pivot, stop, where the stop came from): VCP stop, else cup stop (handle low), else pivot - max_stop,
+    else average - max_stop."""
     p = _setup(conn, symbol, as_of)
     pivot = p.get("pivot") if p else None
     if p and (p.get("vcp") or {}).get("stop"):
         return pivot, p["vcp"]["stop"], "setup (VCP stop)"
+    if p and (p.get("cup") or {}).get("stop"):
+        return pivot, p["cup"]["stop"], "setup (cup handle low)"
     if pivot:
         return pivot, round(pivot * (1 - vcp_cfg.max_stop), 2), f"pivot −{vcp_cfg.max_stop * 100:g}%"
     return None, round(avg * (1 - vcp_cfg.max_stop), 2), f"average −{vcp_cfg.max_stop * 100:g}%"

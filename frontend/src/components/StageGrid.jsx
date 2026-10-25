@@ -24,14 +24,38 @@ function MiniChart({ s, r }) {
   return (
     <svg className="minichart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
          aria-label={`${r.symbol} last ${n} sessions`}>
-      {r.cup && (() => {                                     // cup: L - U - R outline and the handle
-        const pts = [[r.cup.left_lip.date, r.cup.left_lip.high], [r.cup.bottom.date, r.cup.bottom.low],
-          [r.cup.right_lip.date, r.cup.right_lip.high]].map(([d, v]) => [idx(d), v]).filter(([i]) => i >= 0);
-        const hs = idx(r.cup.handle.start), he = idx(r.cup.handle.end);
+      {r.cup && (() => {                                     // cup: a smooth U from lip to lip, then the handle
+        const L = idx(r.cup.left_lip.date), B = idx(r.cup.bottom.date), R = idx(r.cup.right_lip.date);
+        const he = idx(r.cup.handle.end);
+        const bot = r.cup.bottom.low, pt = (i, v) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+        const fit = (a, lip) => {                          // the roundness (1.7..4) that best follows the lows
+          let best = 2, err = Infinity;
+          for (let q = 1.7; q <= 4; q += 0.1) {
+            let e = 0;
+            for (let i = Math.min(a, B); i <= Math.max(a, B); i++) e += (bot + (lip - bot) * (Math.abs(i - B) / Math.abs(a - B)) ** q - s.l[i]) ** 2;
+            if (e < err) { err = e; best = q; }
+          }
+          return best;
+        };
+        const side = (a, lip, from) => {                   // from: the lip end (true) or the bottom end
+          const q = Math.abs(a - B) < 3 ? 2 : fit(a, lip), out = [];
+          for (let k = 0; k <= 40; k++) { const u = from ? 1 - k / 40 : k / 40; out.push(pt(B + (a - B) * u, bot + (lip - bot) * u ** q)); }
+          return out;
+        };
+        let handle = null;
+        if (R >= 0 && he > R) {
+          let m = R + 1;
+          for (let i = R + 1; i <= he; i++) if (s.l[i] < s.l[m]) m = i;
+          const hl = r.cup.handle.low, lip = r.cup.right_lip.high, out = [];
+          for (let k = 0; k <= 20; k++) { const a = k / 20; out.push(pt(R + (m - R) * a, lip - (lip - hl) * Math.sin(a * Math.PI / 2))); }
+          for (let k = 1; k <= 20; k++) { const a = k / 20; out.push(pt(m + (he - m) * a, hl + (r.pivot - hl) * (1 - Math.cos(a * Math.PI / 2)))); }
+          handle = out.join(' ');
+        }
+        if (B < 0 || R < 0) return null;
+        const cup = [...(L >= 0 ? side(L, r.cup.left_lip.high, true) : []), ...side(R, r.cup.right_lip.high, false)].join(' ');
         return (<>
-          {pts.length >= 2 && <polyline className="mc-cup" points={pts.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')} />}
-          {hs >= 0 && he >= hs && <rect className="mc-handle" x={hs * step} y={y(r.pivot)} width={(he - hs + 1) * step}
-                                        height={Math.max(1, y(r.cup.handle.low) - y(r.pivot))} />}
+          <polyline className="mc-cup-glow" points={cup} /><polyline className="mc-cup" points={cup} />
+          {handle && <><polyline className="mc-handle-glow" points={handle} /><polyline className="mc-handle" points={handle} /></>}
         </>);
       })()}
       {!r.cup && b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (

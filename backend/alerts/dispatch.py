@@ -167,7 +167,8 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
     sizing = {"size_factor": mc.size_factor, "size_note": mc.size_note}
     close_flag = {sym: next((f for f in fl if f.startswith("close_")), None) for sym, fl in day_flags.items()}
     confirmed, last_close = set(), {}
-    for screen in cfg.screens:
+    done = set()                                           # (symbol, kind): a name on several screens alerts once
+    for screen in sorted(cfg.screens, key=lambda s: msg.SCREEN_PREF.get(s, 3)):
         with get_db() as conn:
             payloads = {r["symbol"]: dict(json.loads(r["payload"]), stage=r["stage"]) for r in conn.execute(
                 "SELECT symbol, stage, payload FROM scan_results WHERE as_of = ? AND screen = ?", (as_of, screen))}
@@ -189,8 +190,9 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
             if kind == "breakout" and p and p.get("stage") == "fresh_low_volume":
                 kind = "breakout_low_volume"
             toggle = KIND_TOGGLE.get(kind)
-            if not toggle or not getattr(cfg, toggle, False):
+            if not toggle or not getattr(cfg, toggle, False) or (m["symbol"], kind) in done:
                 continue
+            done.add((m["symbol"], kind))
             send_ok, m["tier"] = gate(kind, p or {}, mc, cfg)
             if not send_ok:
                 sent["held"] += 1                          # B (or muted in a correction): digest only
@@ -220,8 +222,9 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
             for sym, p in payloads.items():
                 if p.get("stage") != "forming" or p.get("dist_to_pivot_pct") is None:
                     continue
-                if p["dist_to_pivot_pct"] > cfg.near_pivot_pct * 100:
+                if p["dist_to_pivot_pct"] > cfg.near_pivot_pct * 100 or (sym, "near_pivot") in done:
                     continue
+                done.add((sym, "near_pivot"))
                 send_ok, t = gate("near_pivot", p, mc, cfg)
                 key = f"near|{screen}|{sym}|{p['pivot']}"
                 if not send_ok or notifier.already_sent(key):
