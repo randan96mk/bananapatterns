@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import ResultsTag from './ResultsTag';
 import StageGrid from './StageGrid';
+import NewsTag from './NewsTag';
 
 const pct = (v) => (v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
 const rs = (v) => (v == null ? '' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
@@ -60,6 +61,7 @@ function Table({ screen, stage, selected, onSelect, shown }) {
               {screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
               {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
               <ResultsTag r={r.results} />
+              <NewsTag n={r.news} />
               <div className="muted small">{r.company}</div></td><td className="muted">{r.industry}</td>
             <td className="num">{rs(r.close)}</td>
             <td className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>{pct(r.change_pct)}</td>

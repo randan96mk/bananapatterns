@@ -33,16 +33,17 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 11. [VCP screen](#vcp-screen)
 12. [Cup & handle screen](#cup--handle-screen)
 13. [Results calendar](#results-calendar)
-14. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
-15. [REST API](#rest-api)
-16. [CLI](#cli)
-17. [Configuration](#configuration)
-18. [Frontend](#frontend)
-19. [Testing](#testing)
-20. [Troubleshooting](#troubleshooting)
-21. [Roadmap](#roadmap)
-22. [Decisions log](#decisions-log)
-23. [Development log](#development-log)
+14. [Exchange filings (news)](#exchange-filings-news)
+15. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+16. [REST API](#rest-api)
+17. [CLI](#cli)
+18. [Configuration](#configuration)
+19. [Frontend](#frontend)
+20. [Testing](#testing)
+21. [Troubleshooting](#troubleshooting)
+22. [Roadmap](#roadmap)
+23. [Decisions log](#decisions-log)
+24. [Development log](#development-log)
 ---
 
 ## Quick start (Mac)
@@ -466,6 +467,37 @@ way, so the next results date shows up where you decide:
 Sessions count NSE trading days (Friday → Monday is the next session). Settings → alerts: `results_calendar`,
 `results_warn_sessions`, `results_guard_sessions`. API: `GET /api/events` (status), `GET /api/events?symbol=X`,
 `POST /api/events/refresh`.
+
+## Exchange filings (news)
+
+`backend/ingest/filings.py` keeps NSE's corporate announcements (`/api/corporate-announcements`: what each company
+has told the exchange) in the `filings` table for 120 days. The `filings` job fetches new ones every
+`filings_interval_min` (15) from 07:00 to 23:00 on every day (results often come out in the evening or on a
+Saturday); **Data → Refresh filings** does it by hand. A failed fetch keeps what is stored. Each filing gets a kind
+from NSE's category and text:
+
+| Kind | From | Pushed? |
+|---|---|---|
+| 📊 Results | board-meeting outcome / press release with the financial results | yes |
+| 📦 Order win | orders / contracts received | yes |
+| 🤝 Deal | acquisition, merger, agreement, buyback, fund raising, capacity / production start | yes |
+| ⚖️ Regulatory / legal | actions or orders passed, insolvency, litigation, default, penalty | yes |
+| 🏷️ Credit rating | new / revised rating | yes |
+| ❓ Exchange query | NSE asked about a news item, a volume spurt or a price move | yes |
+| 👔 Management change | management, director / KMP or auditor change or resignation | yes |
+| Update | press release, investor presentation, other updates | shown only |
+| (noise) | newspaper copies, analyst-meet schedules, trading window, ESOPs, certificates | hidden |
+
+What you get:
+- **News line on stock alerts** (breakout, near-pivot, forming, intraday, 15:15 check): "📰 Results 24 Oct · Order win
+  22 Oct" from the last `news_days` (3), with the most telling filing's text. A breakout with none says
+  "📰 No exchange filings in 3 days: a move on no news."
+- **Filing alerts** (`filings_alerts`): every important filing (last 24 h) on a stock you **hold** (position guard),
+  **watch** (📌 button / `/watch`) or have in tonight's **plan**, once per filing, with a link to the filing PDF.
+- **📰 chips** on grid cards, stage tables and positions (newest important filing in `news_days`; red for legal), and
+  an **Exchange filings (30 days)** list in the stock chart window.
+
+API: `GET /api/filings` (status), `GET /api/filings?symbol=X&days=30`, `POST /api/filings/refresh`.
 
 ## Telegram alerts and automatic jobs
 
@@ -1192,3 +1224,10 @@ of receiving it (a small change in that repo).
 - Results warnings on stock alerts (added in `Notifier.send`), the decision chart panel, the plan lines, the guard
   (one alert per results date, plus the summary) and as 📅 chips on cards, tables, positions and the plan card.
 - Tests never touch the network (conftest blocks the fetch). 232 offline tests passing.
+
+### 2026-10-25: Exchange filings
+- `backend/ingest/filings.py` + `filings` table: NSE corporate announcements sorted into kinds; a 15-minute `filings`
+  job (07:00-23:00, every day).
+- News lines on stock alerts (`news_note` in `Notifier.send`), filing alerts for held / watched / plan stocks
+  (`Scheduler.alert_filings`), 📰 chips and a filings list in the chart window.
+- 253 offline tests passing.

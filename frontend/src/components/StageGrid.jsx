@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import ResultsTag from './ResultsTag';
+import NewsTag from './NewsTag';
 
 const pct = (v) => (v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
 const rs = (v) => (v == null ? '' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
@@ -145,6 +146,7 @@ export default function StageGrid({ screen, stage, asOf, rows, selected, onSelec
               <span className={r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}>{pct(r.change_pct)}</span>
               {tight && <span className="tag warnbg">near pivot</span>}
               <ResultsTag r={r.results} />
+              <NewsTag n={r.news} />
             </div>
             <Facts r={r} stage={stage} isVcp={isVcp} />
           </button>);

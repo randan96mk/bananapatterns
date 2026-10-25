@@ -80,7 +80,7 @@ class Notifier:
         if not self.ready or self.already_sent(key):
             return False
         if symbol and kind in RESULTS_NOTE_KINDS:
-            html += results_note(symbol, self.cfg)
+            html += results_note(symbol, self.cfg) + news_note(symbol, kind, self.cfg)
         ok, err = True, None
         try:
             if buttons is None and symbol and kind in ACTION_KINDS and self.cfg.alert_buttons:
@@ -123,6 +123,38 @@ def results_note(symbol: str, cfg: AlertsConfig, as_of: Optional[str] = None) ->
     if not r or r["sessions"] > cfg.results_warn_sessions:
         return ""
     return f"\n⚠️ <b>{events.results_label(r)}</b>: a results gap can jump past the stop either way."
+
+
+def news_note(symbol: str, kind: str, cfg: AlertsConfig, today: Optional[str] = None) -> str:
+    """'📰 Order win 24 Oct · Results 23 Oct' from the stock's NSE filings in the last news_days; on a breakout
+    with none, says so (a move on no news). Nothing when filings were never fetched."""
+    if not cfg.filings:
+        return ""
+    from datetime import date, timedelta
+    from backend.ingest import filings as fl
+    try:
+        if not fl.last_fetch():
+            return ""
+        since = (date.fromisoformat(today or now_ist()[:10]) - timedelta(days=cfg.news_days)).isoformat()
+        rows = fl.recent(symbol, since, limit=20)
+    except Exception:
+        logger.exception("Filings lookup failed for %s", symbol)
+        return ""
+    if not rows:
+        return (f"\n📰 No exchange filings in {cfg.news_days} days: a move on no news."
+                if kind in ("breakout", "breakout_low_volume") else "")
+    rank = {k: i for i, k in enumerate(fl.IMPORTANT)}
+    rows.sort(key=lambda r: rank.get(r["kind"], len(rank)))             # most telling kind first, newest within
+    bits, seen = [], set()
+    for r in rows:
+        if r["label"] not in seen:
+            seen.add(r["label"])
+            bits.append(f"{r['label']} {fl.short_date(r['dt'])}")
+    out = "\n📰 " + escape(" · ".join(bits[:3]))
+    top = rows[0]
+    if top["kind"] in fl.IMPORTANT and top["text"]:
+        out += f"\n<i>{escape(top['text'][:160] + ('…' if len(top['text']) > 160 else ''))}</i>"
+    return out
 
 
 _warned_no_charts = False

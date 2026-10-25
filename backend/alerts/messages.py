@@ -353,6 +353,22 @@ def guard_alert(rule: str, pos: dict, ev: dict, cfg) -> str:
         "</i>"
 
 
+FILING_ICONS = {"results": "📊", "order": "📦", "deal": "🤝", "rating": "🏷️", "management": "👔", "legal": "⚖️",
+                "exchange": "❓"}
+
+
+def filing_alert(f: dict, why: str) -> str:
+    from backend.ingest.filings import LABELS
+    d = datetime.fromisoformat(f["dt"])
+    text = f["text"] if len(f["text"]) <= 400 else f["text"][:397] + "…"
+    lines = [f"{FILING_ICONS.get(f['kind'], '📰')} <b>{escape(f['symbol'])}</b> · {LABELS[f['kind']]} "
+             f"<i>({escape(why)})</i>", escape(text),
+             f"<i>{escape(f['category'])} · {d.day} {d.strftime('%b %H:%M')}</i>"]
+    if f.get("url", "").startswith("https://"):
+        lines[-1] += f' · <a href="{escape(f["url"], quote=True)}">filing</a>'
+    return "\n".join(lines)
+
+
 def guard_results(pos: dict, ev: dict, label: str) -> str:
     return (f"📅 <b>{escape(pos['symbol'])}</b>: {escape(label)}. A results gap can jump past your stop "
             f"{rs(pos['stop'])}: decide before the close whether to hold, trim or sell."

@@ -9,6 +9,7 @@ import TrendPanel from './TrendPanel';
 import VcpPanel from './VcpPanel';
 import { cssVar, useTheme } from '../theme';
 import { useIsPhone } from '../useMedia';
+import FilingsList from './FilingsList';
 
 function sma(candles, n) {
   const out = [];
@@ -161,6 +162,8 @@ export default function StockChart({ symbol, onClose }) {
                onError={() => setErr('No alert chart for this stock/kind (no base to annotate, or matplotlib missing)')} />
         </div>)}
       <div ref={box} className="chart" />
+      <details className="fold" open={!phone}><summary>Exchange filings (30 days)</summary>
+        <FilingsList symbol={symbol} /></details>
       <details className="fold" open={!phone}><summary>Trend Template &amp; RS</summary><TrendPanel m={metrics} /></details>
       <details className="fold" open={!phone}><summary>VCP check</summary><VcpPanel symbol={symbol} /></details>
       {bases && <details className="fold" open={!phone}><summary>Base</summary>
