@@ -7,6 +7,7 @@ import { BasesPrimitive } from '../chart/basesPrimitive';
 import BaseCard from './BaseCard';
 import TrendPanel from './TrendPanel';
 import VcpPanel from './VcpPanel';
+import { cssVar, useTheme } from '../theme';
 
 function sma(candles, n) {
   const out = [];
@@ -19,7 +20,19 @@ function sma(candles, n) {
   return out;
 }
 
-const MAS = [[50, '#4ea1ff'], [150, '#c58af9'], [200, '#f5a524']];
+const MAS = [[50, '--blue'], [150, '--purple'], [200, '--warn']];       // period, theme colour
+
+// Chart colours from the page theme (lightweight-charts needs real colours, not CSS variables).
+function palette() {
+  const v = cssVar;
+  const up = v('--ok'), muted = v('--muted');
+  return {
+    bg: v('--panel'), text: v('--text'), grid: v('--grid'), border: v('--border'), up, down: v('--bad'), warn: v('--warn'),
+    mas: MAS.map(([, name]) => v(name)),
+    bases: { active: { fill: `${up}1a`, stroke: `${up}e6`, text: up },
+      past: { fill: `${muted}14`, stroke: `${muted}cc`, text: muted } },
+  };
+}
 
 // Daily candles + volume + SMAs, with base boxes, pivot line and breakout markers.
 const PREVIEW_KINDS = [['auto', 'Auto (current stage)'], ['breakout', 'Breakout'], ['near_pivot', 'Near pivot'],
@@ -27,6 +40,7 @@ const PREVIEW_KINDS = [['auto', 'Auto (current stage)'], ['breakout', 'Breakout'
 
 export default function StockChart({ symbol, onClose }) {
   const box = useRef(null);
+  const theme = useTheme();              // the chart is rebuilt in the new colours when it changes
   const [info, setInfo] = useState(null);
   const [bases, setBases] = useState(null);
   const [metrics, setMetrics] = useState(null);
@@ -36,24 +50,25 @@ export default function StockChart({ symbol, onClose }) {
 
   useEffect(() => {
     if (!symbol || !box.current) return undefined;
+    const pal = palette();
     const chart = createChart(box.current, {
       autoSize: true,
-      layout: { background: { color: '#12161c' }, textColor: '#c9d1d9' },
-      grid: { vertLines: { color: '#1e242c' }, horzLines: { color: '#1e242c' } },
-      timeScale: { borderColor: '#2a313b' },
-      rightPriceScale: { borderColor: '#2a313b' },
+      layout: { background: { color: pal.bg }, textColor: pal.text },
+      grid: { vertLines: { color: pal.grid }, horzLines: { color: pal.grid } },
+      timeScale: { borderColor: pal.border },
+      rightPriceScale: { borderColor: pal.border },
     });
     const candles = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-      wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+      upColor: pal.up, downColor: pal.down, borderVisible: false,
+      wickUpColor: pal.up, wickDownColor: pal.down,
     });
     candles.priceScale().applyOptions({ scaleMargins: { top: 0.08, bottom: 0.25 } });
     const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-    const lines = MAS.map(([, color]) => chart.addSeries(LineSeries, {
-      color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+    const lines = MAS.map((_, i) => chart.addSeries(LineSeries, {
+      color: pal.mas[i], lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
     }));
-    const boxes = new BasesPrimitive();
+    const boxes = new BasesPrimitive(pal.bases);
     candles.attachPrimitive(boxes);
     const markers = createSeriesMarkers(candles, []);
     let pivotLine = null;
@@ -69,7 +84,7 @@ export default function StockChart({ symbol, onClose }) {
       const cs = d.candles;
       candles.setData(cs.map((c) => ({ time: c.date, open: c.open, high: c.high, low: c.low, close: c.close })));
       vol.setData(cs.map((c) => ({
-        time: c.date, value: c.volume, color: c.close >= c.open ? '#26a69a55' : '#ef535055',
+        time: c.date, value: c.volume, color: c.close >= c.open ? `${pal.up}55` : `${pal.down}55`,
       })));
       MAS.forEach(([n], i) => lines[i].setData(sma(cs, n)));
       chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, cs.length - 260), to: cs.length + 5 });
@@ -81,16 +96,16 @@ export default function StockChart({ symbol, onClose }) {
       const latest = b.latest;
       if (latest) {
         pivotLine = candles.createPriceLine({
-          price: latest.pivot, color: '#26a69a', lineWidth: 1, lineStyle: LineStyle.Dashed,
+          price: latest.pivot, color: pal.up, lineWidth: 1, lineStyle: LineStyle.Dashed,
           axisLabelVisible: true, title: `pivot ₹${latest.pivot.toFixed(2)}`,
         });
       }
     }).catch((e) => alive && setErr(e.message));
 
     // handles for the overlay effect below
-    box.current.__bp = { boxes, markers, candles, get pivotLine() { return pivotLine; } };
+    box.current.__bp = { boxes, markers, candles, pal, get pivotLine() { return pivotLine; } };
     return () => { alive = false; chart.remove(); };
-  }, [symbol]);
+  }, [symbol, theme]);
 
   // draw (or hide) boxes, breakout markers and the pivot line; no refetch on toggle
   useEffect(() => {
@@ -104,7 +119,7 @@ export default function StockChart({ symbol, onClose }) {
     })) : []);
     h.markers.setMarkers(showBases ? list.filter((x) => x.breakout && x.breakout.date >= first).map((x) => ({
       time: x.breakout.date, position: 'aboveBar', shape: 'arrowUp',
-      color: x.breakout.volume_ok ? '#26a69a' : '#f5a524',
+      color: x.breakout.volume_ok ? h.pal.up : h.pal.warn,
     })) : []);
     if (h.pivotLine) h.pivotLine.applyOptions({ lineVisible: showBases, axisLabelVisible: showBases, title: showBases ? `pivot ₹${bases.latest.pivot.toFixed(2)}` : '' });
   }, [showBases, bases, info]);
@@ -118,8 +133,8 @@ export default function StockChart({ symbol, onClose }) {
         <span className="muted">{info?.company} {info?.industry && `· ${info.industry}`}
           {info?.series && info.series !== 'EQ' && ` · ${info.series === 'BE' ? 'trade-for-trade' : info.series}`}
           {last && ` · ${last.date} close ${last.close.toFixed(2)}`}</span>
-        <span className="legend">{MAS.map(([n, c]) => <span key={n} style={{ color: c }}>SMA{n} </span>)}
-          <span style={{ color: '#26a69a' }}>▲ breakout</span> <span style={{ color: '#f5a524' }}>▲ low-volume breakout</span></span>
+        <span className="legend">{MAS.map(([n, c]) => <span key={n} style={{ color: `var(${c})` }}>SMA{n} </span>)}
+          <span className="up">▲ breakout</span> <span className="warn">▲ low-volume breakout</span></span>
         <label className="muted"><input type="checkbox" checked={showBases}
           onChange={(e) => setShowBases(e.target.checked)} /> bases</label>
         <button className="btn ghost right" onClick={() => setPreview(preview ? null : { kind: 'auto', stamp: Date.now() })}>

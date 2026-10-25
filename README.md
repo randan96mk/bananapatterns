@@ -772,6 +772,12 @@ Tabs: **Screens** (home: stage board, see above), **Alerts** (Telegram setup, sw
 history, sent-alerts log), **Universe** (sortable/filterable table + chart), **Data** (refresh, sync, full refetch, progress,
 errors, run history), **Settings** (config sections `vcp`, `screen`, `bases`, `trend` and `ingest`), **Logs**.
 
+**Light / dark mode**: the header switch ◐ Auto / ☀ Light / ☾ Dark (remembered per browser; Auto follows the
+system setting). Colours are CSS variables in `App.css` (`:root` dark, `:root[data-theme="light"]` light, tints via
+`color-mix`), all text colours pass WCAG AA contrast in both. `src/theme.js` applies the mode; `index.html` sets it
+before the first paint (no flash). The candle chart reads the theme colours and is rebuilt when you switch. Telegram
+chart images stay dark.
+
 The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay**:
 - base boxes drawn by a canvas plugin (`chart/basesPrimitive.js`, lightweight-charts v5 series primitive):
   the latest base is green-shaded, earlier ones grey, each labelled "B6 · 12w"
@@ -1092,3 +1098,7 @@ of receiving it (a small change in that repo).
 - Bot commands `/top`, `/watch`, `/unwatch`, `/mute`, `/chart`. The chart preview moved to `backend/alerts/preview.py`
   (shared by the dashboard and the bot).
 - 200 offline tests passing.
+
+### 2026-10-25: Light and dark mode
+- Header theme switch (Auto / Light / Dark); light palette, remaining hard-coded colours moved to CSS variables;
+  the candle chart and base boxes follow the theme. WCAG AA contrast checked for every text colour.

@@ -2,13 +2,15 @@
 // Each box spans start..end date horizontally and low..pivot vertically. The active (latest)
 // base is green-shaded; earlier bases are grey. Dates outside the loaded data are clamped by the caller.
 
-const STYLE = {
+// Colours come from the page theme (see makeStyle in StockChart): {active, past} x {fill, stroke, text}.
+const DEFAULT_STYLE = {
   active: { fill: 'rgba(38,166,154,0.10)', stroke: 'rgba(38,166,154,0.9)', text: '#26a69a' },
   past: { fill: 'rgba(201,209,217,0.05)', stroke: 'rgba(125,133,144,0.8)', text: '#9aa4af' },
 };
 
 export class BasesPrimitive {
-  constructor() {
+  constructor(style = DEFAULT_STYLE) {
+    this._style = style;
     this._boxes = [];
     this._chart = null;
     this._series = null;
@@ -54,7 +56,7 @@ export class BasesPrimitive {
         const yTop = this._series.priceToCoordinate(b.top);
         const yBot = this._series.priceToCoordinate(b.bottom);
         if (x1 === null || x2 === null || yTop === null || yBot === null) continue;
-        const st = b.active ? STYLE.active : STYLE.past;
+        const st = b.active ? this._style.active : this._style.past;
         const left = x1 - half;
         const width = x2 - x1 + 2 * half;
         ctx.fillStyle = st.fill;
