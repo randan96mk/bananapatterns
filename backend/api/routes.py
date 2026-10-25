@@ -129,7 +129,7 @@ LINK_REFUSED = {"unknown": "isn't valid", "used": "was already used", "supersede
 def kite_callback(request: Request, request_token: str = Query(None), status: str = Query(None),
                   n: Optional[str] = Query(None)):
     """Kite redirects here after login. With `n` (a Telegram link) the one-time nonce must be valid;
-    without it (dashboard / AlgoTrade login) the dashboard password applies when one is set."""
+    without it (dashboard login) the dashboard password applies when one is set."""
     if n:
         with get_db() as conn:
             refused = ll.check_link(conn, n)
@@ -150,24 +150,17 @@ def kite_callback(request: Request, request_token: str = Query(None), status: st
         issued = auth.store_token(conn, token)
         if n:
             ll.mark_used(conn, n)
-        handover = ll.hand_over(conn, token)
     S().token_source = "db"
-    if handover["configured"] and not handover["ok"]:
-        logger.warning("AlgoTrade token handover failed: %s", handover["message"])
     from backend.alerts.dispatch import Notifier
     from backend.alerts.login import confirm_login
     try:
-        confirm_login(Notifier(S().config.alerts), issued, handover)
+        confirm_login(Notifier(S().config.alerts), issued)
     except Exception:
         logger.exception("Login confirmation alert failed")
     if not n:
         target = os.getenv("BP_FRONTEND_URL") or ("/" if FRONTEND_BUILD.exists() else "http://localhost:3000/")
         return RedirectResponse(f"{target}?kite=connected")
-    algo = ""
-    if handover["configured"]:
-        algo = ("<p>AlgoTrade: ✓ token updated</p>" if handover["ok"]
-                else f"<p>AlgoTrade: ✗ not updated ({escape(handover['message'])})</p>")
-    return _page("✅ Kite connected", f"<p>Valid until {auth.expiry_for(issued):%H:%M, %d %b} (IST).</p>{algo}"
+    return _page("✅ Kite connected", f"<p>Valid until {auth.expiry_for(issued):%H:%M, %d %b} (IST).</p>"
                  "<p>You can close this page.</p>")
 
 
@@ -202,11 +195,8 @@ def kite_status(verify: bool = False):
         "login_url": st.client.login_url() if cfg.is_configured else None,
         "now": datetime.now(IST).isoformat(timespec="seconds"),
         "redirect_url": ll.redirect_url(),
-        "algotrade_url": ll.algotrade_url() or None,
         "password_set": bool(security.password()),
     }
-    with get_db() as conn:
-        out["last_handover"] = ll.last_handover(conn)
     if verify and valid:
         try:
             out["user_id"] = st.client.profile().get("user_id")

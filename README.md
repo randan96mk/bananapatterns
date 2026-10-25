@@ -50,7 +50,7 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 
 ## Quick start (Mac)
 
-Requirements: Python 3.12+, Node.js 18+, a Kite Connect app (the **same app as AlgoTrade-v3**).
+Requirements: Python 3.12+, Node.js 18+, a Kite Connect app with historical data.
 
 ```bash
 git clone https://github.com/randan96mk/bananapatterns.git && cd bananapatterns
@@ -67,9 +67,8 @@ Then in the dashboard (http://localhost:3000):
 3. **Data → 2. Sync candles**. The first run is a full backfill of ~1,000 calls at 3/s, roughly 6–7 minutes.
 4. **Universe** tab: about 498 stocks (REITs excluded) plus the NIFTY 500 / NIFTY 50 indices. Click a row to open its chart.
 
-> ⚠️ AlgoTrade-v3 shares the Kite app and port 8000. Only one token per app is active,
-> so logging in here logs AlgoTrade out (and the other way round). Run one at a time.
-> The Kite developer console redirect URL stays `http://localhost:8000/api/kite/callback`.
+> The Kite developer console redirect URL is `http://localhost:8000/api/kite/callback`. Only one token per Kite
+> app is active: if another program uses the same API key, a login in either one logs the other out.
 
 ## Daily workflow
 
@@ -102,13 +101,8 @@ Phase 4 automates the evening sync and alerts you if the day's login is missing.
 **Stack:** Python 3.12+, FastAPI, SQLite (WAL), pandas/numpy (Phase 2), `kiteconnect` 5.2.2,
 httpx, pytest; React 19, Vite 6, lightweight-charts 5.
 
-**Shape borrowed from AlgoTrade-v3** (copied as patterns, nothing imported): Kite login and
-callback routes, the dataclass config persisted to SQLite, the WAL DB helpers, logger,
-FastAPI lifespan + CORS shell, `run.py`/`start.sh`/`setup.sh`/`.vscode/tasks.json`, the dark React shell.
-
-**Deliberately not carried over:** the trendline strategy, order executor, intraday scheduler,
-NFO-only instruments loader, and the old `historical_data` wrapper (it swallowed errors).
-Also fixed: AlgoTrade treated a token as valid for the whole calendar day. Kite tokens die at 06:00 IST.
+Banana Patterns is standalone: it reads market data only and places no orders. Kite tokens die at 06:00 IST,
+whenever they were issued.
 
 ---
 
@@ -224,11 +218,8 @@ SQLite in WAL mode at `data/bananapatterns.db` (override with `BP_DB_PATH`).
   `generate_session(request_token, api_secret)` → token stored with its issue time → redirect to the dashboard.
   Manual alternative: paste a token in the top bar (`POST /api/kite/token`). TOTP or credential login is
   deliberately **not automated**.
-- **Shared with AlgoTrade-v3:** both use one Kite app, which has one redirect URL and one active token
-  (a new login replaces the previous token). Banana Patterns owns the redirect URL and, after every login,
-  passes the token to AlgoTrade's existing `POST /api/kite/token` (`ALGOTRADE_URL`), so one login a day
-  serves both. Run AlgoTrade on another port (its `backend_port`, e.g. 8001). A login started from
-  AlgoTrade's dashboard also lands here and is handed over.
+- **One token per Kite app:** a new login replaces the previous token, so don't run another program on the
+  same API key at the same time.
 - **Login from Telegram:** see [Kite login link](#kite-login-link).
 - **Rate limits:** historical API 3 req/s (shared bucket; capacity 1, so calls are spaced evenly);
   other endpoints are limited to 5 req/s here (Kite allows 10). Kite allows 2,000 days per `day` call.
@@ -613,7 +604,7 @@ current stage, or choose one). These are the screen's rules, not advice.
 
 Kite sessions end at **06:00 IST** whatever time you log in, so a session that lasts the day can only
 start after 06:00. The bot sends a **🔑 Log in to Kite** button. Tap it on the Mac or phone, log in on Zerodha's
-page, and the token is saved (and handed to AlgoTrade). You get a "✅ Kite connected" page and a Telegram
+page, and the token is saved. You get a "✅ Kite connected" page and a Telegram
 confirmation.
 
 | When (IST, trading days) | Sent if |
@@ -750,7 +741,7 @@ Interactive docs: http://localhost:8000/docs
 |---|---|---|
 | GET | `/health` | liveness |
 | GET | `/api/kite/login-url` | Kite login URL (400 if keys missing) |
-| GET | `/api/kite/callback` | OAuth redirect target; stores the token, hands it to AlgoTrade, confirms in Telegram. With `n` (Telegram link) the one-time code must be valid and a phone page is shown; without it, redirects to the dashboard |
+| GET | `/api/kite/callback` | OAuth redirect target; stores the token, confirms in Telegram. With `n` (Telegram link) the one-time code must be valid and a phone page is shown; without it, redirects to the dashboard |
 | POST | `/api/kite/token` | `{access_token}`: store a token obtained elsewhere |
 | GET | `/api/kite/status?verify=true` | token state, `expires_at`, `needs_login`; `verify` calls `profile()` |
 | GET/PUT | `/api/config/{section}` | read / update a config section (`ingest` now, `vcp` in Phase 2) |
@@ -807,7 +798,6 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 `KITE_REDIRECT_URL` (default `http://localhost:8000/api/kite/callback`), optional `BP_DB_PATH`,
 `BP_DEV=1` (reload), `BP_FRONTEND_URL` (post-login redirect target),
 `PUBLIC_BASE_URL` (address Kite redirects to: Tailscale or cloud; default from `KITE_REDIRECT_URL`),
-`ALGOTRADE_URL` (hand each login's token to AlgoTrade-v3, e.g. `http://127.0.0.1:8001`),
 `BP_DASHBOARD_PASSWORD` (password for the dashboard; set it before exposing the app beyond the Mac).
 
 **Runtime dials:** edited in **Settings**, saved in `app_settings`, applied without a restart.
@@ -903,7 +893,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 ## Frontend
 
 React 19 + Vite + lightweight-charts 5, with a dark theme. Vite replaces create-react-app (deprecated)
-but keeps the same React stack as AlgoTrade-v3. The dev server is on :3000 with `/api` proxied to :8000.
+The dev server is on :3000 with `/api` proxied to :8000.
 `npm run build` writes `frontend/build`, which FastAPI serves at :8000.
 
 Tabs: **Screens** (home: stage board, see above), **Alerts** (Telegram setup, switches, timing, job buttons and
@@ -964,7 +954,7 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 | `setup.sh`: "Python 3.12+ not found" | macOS's `python3` is 3.9. `brew install python@3.12`, or `BP_PYTHON=/path/to/python3.12 ./setup.sh` |
 | "Kite login required" after a night | Expected: tokens die at 06:00 IST. Log in again. |
 | Run `aborted`: permission denied | Historical data needs the Kite Connect plan on this API key. |
-| AlgoTrade-v3 suddenly logged out | Same Kite app, and only one token is active. Re-login in whichever you are using. |
+| Kite logged out during the day | Another program logged in with the same API key (one token per app). Log in again. |
 | Universe refresh fails (NSE 403) | Save the CSV to `config/ind_nifty500list.csv` (see config/README.md). |
 | Symbols listed as *excluded* | Their series isn't in `include_series` (REITs by default). Edit in Settings. |
 | Symbols listed as *unmatched* | Usually a rename or suspension. Check the NSE symbol vs Kite's tradingsymbol. |
@@ -1017,8 +1007,7 @@ only on days without corporate actions). Note: a sleeping Mac will not run jobs 
 ### Next: cloud deployment
 Run the app on a small always-on server (e.g. Oracle Cloud Always Free) with HTTPS, so login links work from
 any device and jobs run with the Mac off. `PUBLIC_BASE_URL`, `BP_DASHBOARD_PASSWORD` and the login links are
-ready for it. If AlgoTrade-v3 stays on the Mac, it will need to fetch the token from Banana Patterns instead
-of receiving it (a small change in that repo).
+ready for it.
 
 ### Later (only after approval)
 - **Market context:** breadth, sector rotation, industry map, all breakouts today, regime filter
@@ -1307,3 +1296,8 @@ of receiving it (a small change in that repo).
 - Decision chart (pole arrow, channel, volume shading, collision-free labels), grid cards, table columns, alerts
   (flag stop and line, "Bull flag" header), tiers, plan, guard (flag low), News scope, one SQL screen order
   (`SCREEN_ORDER_SQL`). 287 offline tests passing.
+
+### 2026-10-25: Standalone (AlgoTrade link removed)
+- Banana Patterns no longer hands Kite tokens to AlgoTrade-v3: `ALGOTRADE_URL`, `login_link.hand_over` and the
+  handover status / Telegram line are gone. It keeps its own Kite login, Telegram login links and the paste-token
+  box; the same API key can be used as long as no other program logs in with it at the same time.

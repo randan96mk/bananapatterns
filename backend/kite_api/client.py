@@ -1,6 +1,6 @@
 """Kite Connect wrapper for market data.
 
-Unlike AlgoTrade-v3's client, nothing here swallows errors:
+Nothing here swallows errors:
   - TokenException      -> KiteAuthError (fatal: log in again; never retried)
   - PermissionException -> KitePermissionError (fatal: e.g. no historical-data plan)
   - network / 429 / 5xx -> retried with exponential backoff + jitter, then KiteRequestError

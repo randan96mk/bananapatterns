@@ -15,7 +15,7 @@ def test_boundary_before_and_after_six():
 
 
 def test_token_issued_after_midnight_dies_at_six():
-    issued = ist(2026, 10, 23, 1, 0)  # AlgoTrade-v3 would call this valid all day
+    issued = ist(2026, 10, 23, 1, 0)  # issued after midnight: still dies at 06:00 that morning
     assert auth.is_fresh(issued, ist(2026, 10, 23, 5, 30))
     assert not auth.is_fresh(issued, ist(2026, 10, 23, 6, 1))
     assert auth.expiry_for(issued) == ist(2026, 10, 23, 6, 0)

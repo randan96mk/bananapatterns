@@ -1,9 +1,8 @@
-"""Kite login links: one-time links, callback, AlgoTrade handover, schedule, bot commands, dashboard password."""
+"""Kite login links: one-time links, callback, schedule, bot commands, dashboard password."""
 
 import base64
 from datetime import datetime, timedelta
 
-import httpx
 import pytest
 
 from backend.alerts.commands import BotCommands
@@ -60,49 +59,20 @@ def test_public_base_url(monkeypatch):
     assert ll.redirect_url() == "https://bp.example.com/api/kite/callback"
 
 
-# --- AlgoTrade handover --------------------------------------------------------
-
-def mock_http(handler):
-    return httpx.Client(transport=httpx.MockTransport(handler))
-
-
-def test_handover(monkeypatch):
-    monkeypatch.delenv("ALGOTRADE_URL", raising=False)
-    with get_db() as conn:
-        assert ll.hand_over(conn, "t")["configured"] is False
-        monkeypatch.setenv("ALGOTRADE_URL", "http://127.0.0.1:8001/")
-        seen = []
-
-        def ok(req):
-            seen.append((str(req.url), req.content))
-            return httpx.Response(200, json={"status": "token_set"})
-        out = ll.hand_over(conn, "tok", mock_http(ok))
-        assert out["ok"] and seen == [("http://127.0.0.1:8001/api/kite/token", b'{"access_token":"tok"}')]
-        assert ll.last_handover(conn)["ok"] is True
-        assert not ll.hand_over(conn, "t", mock_http(lambda r: httpx.Response(500, text="boom")))["ok"]
-
-        def down(req):
-            raise httpx.ConnectError("refused")
-        bad = ll.hand_over(conn, "t", mock_http(down))
-        assert bad["ok"] is False and "ConnectError" in bad["message"]
-
-
 # --- callback ------------------------------------------------------------------
 
-def test_callback_with_telegram_link(api, monkeypatch):  # noqa: F811
+def test_callback_with_telegram_link(api):  # noqa: F811
     tc, _ = api
-    monkeypatch.setenv("ALGOTRADE_URL", "http://algo")
-    monkeypatch.setattr(ll.httpx, "post", lambda url, json, timeout: httpx.Response(200, json={}))
     with get_db() as conn:
         n = nonce_of(ll.create_link(conn, LOGIN)[0])
     r = tc.get(f"/api/kite/callback?request_token=abc&status=success&n={n}")
-    assert r.status_code == 200 and "Kite connected" in r.text and "AlgoTrade: ✓" in r.text
+    assert r.status_code == 200 and "Kite connected" in r.text and "AlgoTrade" not in r.text
     with get_db() as conn:
         assert auth.load_fresh_token(conn) == "tok-abc"
     again = tc.get(f"/api/kite/callback?request_token=abc&status=success&n={n}")
     assert again.status_code == 400 and "already used" in again.text
     s = tc.get("/api/kite/status").json()
-    assert s["has_token"] and s["last_handover"]["ok"] and s["redirect_url"].endswith("/api/kite/callback")
+    assert s["has_token"] and s["redirect_url"].endswith("/api/kite/callback") and "algotrade_url" not in s
 
 
 def test_callback_stale_link_and_cancelled_login(api):  # noqa: F811
@@ -126,7 +96,7 @@ def test_dashboard_password(api, monkeypatch):  # noqa: F811
     assert r.status_code == 401 and "Basic" in r.headers["www-authenticate"]
     assert tc.get("/api/kite/status", headers=bad).status_code == 401
     assert tc.get("/api/kite/status", headers=good).json()["password_set"] is True
-    # dashboard / AlgoTrade login (no nonce) needs the password; a Telegram link carries its own proof
+    # dashboard login (no nonce) needs the password; a Telegram link carries its own proof
     assert tc.get("/api/kite/callback?request_token=abc&status=success", follow_redirects=False).status_code == 401
     with get_db() as conn:
         n = nonce_of(ll.create_link(conn, LOGIN)[0])

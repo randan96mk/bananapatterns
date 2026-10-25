@@ -171,11 +171,6 @@ export default function AlertsPanel() {
               <div>Kite console redirect URL: <code>{kite.redirect_url}</code></div>
               <div className="muted">Links open on your phone only if this address is reachable from it
                 (<code>PUBLIC_BASE_URL</code>: Tailscale or cloud).</div>
-              <div>AlgoTrade handover: {kite.algotrade_url
-                ? <>{kite.algotrade_url} {kite.last_handover && (kite.last_handover.ok
-                  ? <span className="up">✓ last {kite.last_handover.at?.slice(5, 16).replace('T', ' ')}</span>
-                  : <span className="down">✗ {kite.last_handover.message}</span>)}</>
-                : <span className="muted">off (set <code>ALGOTRADE_URL</code> in .env)</span>}</div>
               <div>Dashboard password: {kite.password_set ? 'on' : <span className="muted">off (set{' '}
                 <code>BP_DASHBOARD_PASSWORD</code> before exposing the app)</span>}</div>
             </div>

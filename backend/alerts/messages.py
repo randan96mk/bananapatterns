@@ -156,19 +156,15 @@ LOGIN_WHY = {
 def login_link_alert(reason: str, expires: datetime) -> str:
     return (f"🔑 <b>Kite login needed</b>\n{escape(LOGIN_WHY.get(reason, reason))}\n"
             f"Tap <b>Log in to Kite</b>: works once, until {expires:%H:%M}. "
-            "Gives a fresh session until 06:00 tomorrow (Banana Patterns + AlgoTrade).")
+            "Gives a fresh session until 06:00 tomorrow.")
 
 
 def login_heads_up(first_slot: str) -> str:
     return f"⏰ <b>Kite session ends at 06:00</b>\nYour login link comes at {escape(first_slot)}."
 
 
-def login_ok_alert(expires: datetime, handover: dict) -> str:
-    lines = [f"✅ <b>Kite connected</b> · valid until {expires:%H:%M %d %b}"]
-    if handover.get("configured"):
-        lines.append("AlgoTrade: ✓ token updated" if handover["ok"]
-                     else f"AlgoTrade: ✗ not updated ({escape(handover['message'])})")
-    return "\n".join(lines)
+def login_ok_alert(expires: datetime) -> str:
+    return f"✅ <b>Kite connected</b> · valid until {expires:%H:%M %d %b}"
 
 
 def failed_alert(p: dict, ltp: float, day_high: Optional[float], stop: Optional[float]) -> str:
