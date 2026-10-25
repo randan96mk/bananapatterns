@@ -7,7 +7,13 @@ from typing import Optional
 ICONS = {"breakout": "🚀", "breakout_low_volume": "⚠️", "below_pivot": "🔻", "played_out": "🏁",
          "forming": "🔵", "left": "▫️", "climbing": "📈", "near_pivot": "🎯", "intraday": "⚡",
          "system": "⚙️", "digest": "📋"}
-SCREEN_NAMES = {"vcp": "VCP", "bases": "Bases"}
+SCREEN_NAMES = {"vcp": "VCP", "cup": "Cup &amp; handle", "bases": "Bases"}
+SCREEN_PREF = {"vcp": 0, "cup": 1, "bases": 2}           # a name on several screens: the most specific one
+
+
+def setup_stop(p: dict) -> Optional[float]:
+    """The setup's own stop: the VCP stop, else the cup's (handle low - buffer), else None."""
+    return (p.get("vcp") or {}).get("stop") or (p.get("cup") or {}).get("stop")
 
 
 def rs(v: Optional[float]) -> str:
@@ -36,19 +42,24 @@ def stage_alert(kind: str, screen: str, text: str, p: Optional[dict], close_in_r
     head = f"{ICONS.get(kind, '•')} <b>{escape(p.get('symbol') if p else '')}</b> · {SCREEN_NAMES.get(screen, screen)}"
     lines = [head, escape(text)]
     if p:
-        v = p.get("vcp") or {}
+        v, cup, stop = p.get("vcp") or {}, p.get("cup"), setup_stop(p)
         if kind in ("breakout", "breakout_low_volume"):
             extra = []
             if close_in_range is not None:
                 extra.append(f"close-in-range {close_in_range:.2f}")
-            if v.get("stop"):
-                risk = (p["close"] - v["stop"]) / p["close"] * 100
-                extra.append(f"stop {rs(v['stop'])} ({risk:.1f}% risk from close)")
+            if stop:
+                risk = (p["close"] - stop) / p["close"] * 100
+                extra.append(f"stop {rs(stop)} ({risk:.1f}% risk from close)")
             if extra:
                 lines.append(" · ".join(extra))
         if kind in ("forming", "near_pivot") and v.get("contractions"):
             lines.append("Pullbacks " + " → ".join(f"{c['depth_pct']:.0f}%" for c in v["contractions"])
                          + (f" · stop {rs(v['stop'])}" if v.get("stop") else ""))
+        if kind in ("forming", "near_pivot") and cup:
+            h, c = cup["handle"], cup["cup"]
+            lines.append(f"Cup {c['depth_pct']:.0f}% · {c['weeks']}w · handle {h['depth_pct']:.1f}%"
+                         + (f" · vol {h['volume_x']:.2f}×" if h.get("volume_x") is not None else "")
+                         + f" · stop {rs(cup['stop'])}")
         tail = _tail(p)
         if tail:
             lines.append(f"<i>{tail}</i>")

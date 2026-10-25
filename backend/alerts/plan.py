@@ -10,6 +10,7 @@ Coiled = the last bar is an NR7 (narrowest range of the last 7) or an inside day
 import json
 from typing import Optional
 
+from backend.alerts.messages import SCREEN_PREF, setup_stop
 from backend.config import AlertsConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine import market
@@ -40,8 +41,7 @@ def rank_score(p: dict, tier: Optional[str], coil: Optional[dict]) -> float:
 
 def candidates(as_of: str, screens: list[str]) -> list[dict]:
     """Forming names on the alert screens (VCP payload preferred when a name is on both)."""
-    pref = {"vcp": 0, "cup": 1, "bases": 2}                 # a name on several screens: the most specific payload
-    order = {s: pref.get(s, 3) for s in screens}
+    order = {s: SCREEN_PREF.get(s, 3) for s in screens}
     out = {}
     with get_db() as conn:
         rows = conn.execute(
@@ -65,7 +65,7 @@ def build_plan(as_of: str, cfg: AlertsConfig, vcp_cfg: VcpConfig, tokens: dict[s
         coil = coiled(cs, p.get("dist_to_pivot_pct"), cfg)
         t = market.tier(p, status, cfg) if cfg.tiering else None
         pivot = p["pivot"]
-        stop = (p.get("vcp") or {}).get("stop") or round(pivot * (1 - vcp_cfg.max_stop), 2)
+        stop = setup_stop(p) or round(pivot * (1 - vcp_cfg.max_stop), 2)
         items.append({"symbol": p["symbol"], "screen": p["screen"], "base_label": p.get("base_label"), "pivot": pivot,
                       "zone_top": round(pivot * (1 + cfg.buy_zone_pct), 2), "stop": stop, "close": p.get("close"),
                       "dist_to_pivot_pct": p.get("dist_to_pivot_pct"), "rs": p.get("rs"), "score": p.get("score"),

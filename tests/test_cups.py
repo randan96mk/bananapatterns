@@ -160,3 +160,66 @@ def test_api_lists_the_cup_screen(monkeypatch):
         assert rows[0]["symbol"] == "CUPX" and rows[0]["tier"] in ("A", "B")
         assert tc.get("/api/config/cup").json()["min_depth"] == 0.12
         assert tc.put("/api/config/cup", json={"max_depth": 0.4}).json()["max_depth"] == 0.4
+
+
+def test_cup_curve_runs_lip_to_bottom_to_lip():
+    from backend.alerts.decision import _cup_curve, _handle_curve
+    import numpy as np
+    lows = np.array([110 - 10 * (1 - abs(i - 20) / 20) ** 0.3 for i in range(41)])    # fast drop, flat bottom
+    xs, ys = _cup_curve(0, 20, 40, 110, 100, 109, lows)
+    assert (xs[0], ys[0]) == (0, 110) and min(ys) == 100 and (xs[-1], ys[-1]) == (40, 109)
+    assert np.all(np.diff(xs) >= 0)
+    hx, hy = _handle_curve(40, 45, 50, 109, 104, 109)
+    assert hy[0] == 109 and min(hy) == pytest.approx(104) and hy[-1] == pytest.approx(109) and hx[-1] == 50
+
+
+def test_cup_alerts_once_with_the_cup_stop():
+    from backend.alerts.dispatch import Notifier, dispatch_scan
+    from tests.test_alerts import FakeTG
+    out = scan_with({"CUPX": cup_series(), "NEARC": cup_series(breakout=False, handle_depth=0.03, prior=91)})   # same last date
+    shape = {}
+    with get_db() as conn:
+        for r in conn.execute("SELECT symbol, payload FROM scan_results WHERE screen = 'cup'"):
+            shape[r["symbol"]] = json.loads(r["payload"])["cup"]
+    cfg = AlertsConfig(chat_id="42", tiering=False, screens=["bases", "cup"], digest=False, near_pivot_pct=0.05)
+    fake = FakeTG()
+    dispatch_scan(out["as_of"], cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), {"CUPX": 1, "NEARC": 2})
+    bo = [h for _, h in fake.sent if "CUPX" in h and "broke out" in h]
+    assert len(bo) == 1 and "Cup &amp; handle" in bo[0] and f"stop ₹{shape['CUPX']['stop']:,.2f}" in bo[0]
+    near = [h for _, h in fake.sent if "NEARC" in h and "under its" in h]
+    h = shape["NEARC"]["handle"]
+    assert len(near) == 1 and "Cup &amp; handle" in near[0] and f"handle {h['depth_pct']:.1f}%" in near[0]
+
+
+def test_alert_screens_default_and_migration():
+    from backend.config import AppConfig, load_config, save_config
+    from backend.database.models import set_setting
+    assert AlertsConfig().screens == ["vcp", "cup"]
+    with get_db() as conn:
+        set_setting(conn, "config.alerts", json.dumps({"screens": ["vcp", "bases"]}))      # saved before cups
+    assert load_config().alerts.screens == ["vcp", "cup", "bases"]
+    cfg = load_config()
+    cfg.alerts.screens = ["vcp"]                                                         # you untick it later
+    save_config(cfg)
+    assert load_config(AppConfig()).alerts.screens == ["vcp"]
+
+
+def test_guard_takes_the_cup_stop():
+    from backend.alerts import guard
+    scan_with({"CUPX": cup_series(breakout=False, handle_depth=0.04)})
+    p = guard.add_manual("CUPX", 140.0, VcpConfig())
+    assert p["stop_source"] == "setup (cup handle low)" and p["stop"] > 0
+
+
+def test_cup_grid_card_reaches_back_to_the_left_lip(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("BP_NO_STATIC", "1")
+    monkeypatch.setenv("BP_NO_SCHEDULER", "1")
+    scan_with({"CUPX": cup_series(breakout=False, handle_depth=0.04, prior=200, advance=0.8)})
+    monkeypatch.setattr("backend.ingest.universe.resolve_universe",
+                        lambda cfg: {"stocks": [{"symbol": "CUPX", "instrument_token": 1}]})
+    from backend import main
+    with TestClient(main.app) as tc:
+        s = tc.get("/api/screens/cup/sparks?stage=forming&bars=60").json()["sparks"]["CUPX"]
+        lip = tc.get("/api/screens/cup/results?stage=forming").json()["rows"][0]["cup"]["left_lip"]["date"]
+    assert s["d"][0] < lip and len(s["d"]) > 60

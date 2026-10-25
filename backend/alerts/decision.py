@@ -87,8 +87,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
     if cup:
         h, cp = cup["handle"], cup["cup"]
         checks += [(True, f"Cup {cp['depth_pct']:.0f}% deep, {cp['weeks']}w, after a {cup['prior_advance_pct']:.0f}% rise"),
-                   (cp["u_bars"] >= 5, f"U-shaped bottom ({(cp.get('u_frac') or 0) * 100:.0f}% of the time in the "
-                                       f"bottom third)"),
+                   (cp["u_bars"] >= 5, f"U-shaped bottom · {(cp.get('u_frac') or 0) * 100:.0f}% of time near low"),
                    (True, f"Handle {h['depth_pct']:.1f}% deep, {h['bars']} sessions, upper half"),
                    ((h["volume_x"] if h["volume_x"] is not None else 9) <= 1.0,
                     f"Handle volume dried up {h['volume_x'] or 0:.2f}×")]
@@ -241,6 +240,35 @@ def _place(ax, taken: list, text: str, xy: tuple, offsets: list, **kw):
     return ann
 
 
+def _cup_curve(L, B, R, lip_l, bottom, lip_r, lows=None, k=60):
+    """A smooth U from the left lip down to the bottom and up to the right lip (L may be off-chart: None).
+    Each side is bottom + (lip - bottom) * u^p, with p (1.7..4, so always round) fitted to that side's lows so
+    the curve hugs the price: a fast drop then a long flat bottom gives a high p, a steady slide a low one."""
+    def fit(a, b, lip):
+        if lows is None or abs(b - a) < 3:
+            return 2.0
+        i = np.arange(min(a, b), max(a, b) + 1)
+        u = np.abs(i - B) / abs(b - a)
+        ps = np.linspace(1.7, 4, 24)
+        err = [np.mean((bottom + (lip - bottom) * u ** q - lows[i]) ** 2) for q in ps]
+        return float(ps[int(np.argmin(err))])
+    xs, ys = [], []
+    if L is not None and B > L:
+        u = np.linspace(1, 0, k)
+        xs += list(B - (B - L) * u); ys += list(bottom + (lip_l - bottom) * u ** fit(L, B, lip_l))
+    u = np.linspace(0, 1, k)
+    xs += list(B + (R - B) * u); ys += list(bottom + (lip_r - bottom) * u ** fit(R, B, lip_r))
+    return np.array(xs), np.array(ys)
+
+
+def _handle_curve(R, M, E, lip, low, pivot, k=30):
+    """The handle: a gentle drift from the right lip down to its low, then back up to the pivot."""
+    a = np.linspace(0, 1, k)
+    xs = list(R + (M - R) * a) + list(M + (E - M) * a)
+    ys = list(lip - (lip - low) * np.sin(a * np.pi / 2)) + list(low + (pivot - low) * (1 - np.cos(a * np.pi / 2)))
+    return np.array(xs), np.array(ys)
+
+
 def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> bytes:
     if not charts.CHARTS_AVAILABLE:
         raise RuntimeError("matplotlib is not installed: run .venv/bin/pip install -r requirements.txt")
@@ -309,21 +337,29 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
                                  va="top", fontweight="bold"))
             marks.append(_badge(ax, b_, k["low"], mark, ACC, dy=-26))
             mark += 1
-    if cup:                                                         # L / U / R and the handle box
+    if cup:                                                         # L / U / R, the cup curve and the handle
         pts = [(cup["left_lip"]["date"], cup["left_lip"]["high"], "L", UP, 16),
                (cup["bottom"]["date"], cup["bottom"]["low"], "U", BLUE, -18),
                (cup["right_lip"]["date"], cup["right_lip"]["high"], "R", UP, 16)]
-        seen = [(idx[d], y) for d, y, *_ in pts if d in idx]
-        if len(seen) >= 2:
-            ax.plot([p[0] for p in seen], [p[1] for p in seen], ls=":", color=UP, lw=1.4)
+        L_, B_, R_ = (idx.get(cup[k]["date"]) for k in ("left_lip", "bottom", "right_lip"))
+        he = idx.get(cup["handle"]["end"])
+        if B_ is not None and R_ is not None:
+            cx, cy = _cup_curve(L_, B_, R_, cup["left_lip"]["high"], cup["bottom"]["low"], cup["right_lip"]["high"], lo)
+            ax.plot(cx, cy, color=UP, lw=7, alpha=.16, solid_capstyle="round", zorder=4)
+            ax.plot(cx, cy, color=UP, lw=2.2, alpha=.95, solid_capstyle="round", zorder=5)
+            marks.append(ax.text(((L_ if L_ is not None else 0) + R_) / 2,
+                                 cup["bottom"]["low"] + (cup["right_lip"]["high"] - cup["bottom"]["low"]) * .45,
+                                 f"cup −{cup['cup']['depth_pct']:.0f}% · {cup['cup']['weeks']}w", color=UP, fontsize=9,
+                                 ha="center", va="center", fontweight="bold"))
         for d, y, lab, col, dy in pts:
             if d in idx:
                 marks.append(_badge(ax, idx[d], y, lab, col, dy=dy))
-        hs, he = idx.get(cup["handle"]["start"]), idx.get(cup["handle"]["end"])
-        if hs is not None and he is not None:
-            ax.add_patch(Rectangle((hs - .5, cup["handle"]["low"]), he - hs + 1, pivot - cup["handle"]["low"], fc=ACC,
-                                   alpha=.12, ec=ACC, ls=":", lw=1))
-            marks.append(ax.text((hs + he) / 2, cup["handle"]["low"], f"handle −{cup['handle']['depth_pct']:.0f}%",
+        if R_ is not None and he is not None and he > R_:
+            m_ = R_ + 1 + int(np.argmin(lo[R_ + 1:he + 1]))
+            hx, hy = _handle_curve(R_, m_, he, cup["right_lip"]["high"], cup["handle"]["low"], pivot)
+            ax.plot(hx, hy, color=ACC, lw=6, alpha=.18, solid_capstyle="round", zorder=4)
+            ax.plot(hx, hy, color=ACC, lw=2.2, solid_capstyle="round", zorder=5)
+            marks.append(ax.text(m_, cup["handle"]["low"], f"handle −{cup['handle']['depth_pct']:.0f}%",
                                  color=ACC, fontsize=9, ha="center", va="top", fontweight="bold"))
     ax.set_xlim(-1.5, n + 0.5)
     ax.set_ylim(*ax.get_ylim())                                     # freeze limits so boxes can be measured
