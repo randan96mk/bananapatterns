@@ -181,3 +181,25 @@ def classify_vcp(candles: list[dict], bases: list[Base], rs: Optional[int], tren
     if not v.qualifies:
         res.stage, res.reason = None, "not a VCP: " + "; ".join(v.fails)
     return res, v.to_dict()
+
+
+def classify_cup(candles: list[dict], cups: list[Base], rs: Optional[int], trend_passed: int,
+                 screen_cfg: ScreenConfig, cup_cfg) -> tuple[StageResult, Optional[dict]]:
+    """Stage on the Cup & handle screen (cups from engine/cups.py). Forming = in the handle within
+    cup_cfg.max_dist_to_pivot of the handle high; RS and Trend Template minimums as for VCP.
+    Returns (result, cup shape dict or None)."""
+    from dataclasses import replace
+
+    cfg = replace(screen_cfg, max_dist_to_pivot=cup_cfg.max_dist_to_pivot, min_forming_weeks=0)
+    res = classify(candles, cups, cfg)
+    if res.stage is None:
+        return res, None
+    cup = cups[-1] if res.stage == "forming" else next(b for b in reversed(cups) if b.breakout is not None)
+    fails = []
+    if rs is None or rs < cup_cfg.min_rs:
+        fails.append(f"RS {rs} < {cup_cfg.min_rs}")
+    if trend_passed < cup_cfg.min_trend_checks:
+        fails.append(f"trend {trend_passed} < {cup_cfg.min_trend_checks}")
+    if fails:
+        res.stage, res.reason = None, "cup with handle, but " + "; ".join(fails)
+    return res, cup.shape

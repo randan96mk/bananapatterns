@@ -69,10 +69,12 @@ class Base:
     vol_dryup: Optional[float]       # mean volume in base / mean volume of dryup_lookback bars before it
     dist_to_pivot_pct: Optional[float] = None   # forming only: (pivot - last close) / pivot, in %
     breakout: Optional[Breakout] = None
+    kind: str = "base"                          # "base" (box) | "cup" (cup with handle, engine/cups.py)
+    shape: Optional[dict] = None                # cup geometry: lips, bottom, handle (cups only)
 
     @property
     def label(self) -> str:
-        return f"B{self.number} · {self.weeks}w"
+        return f"C&H · {self.weeks}w" if self.kind == "cup" else f"B{self.number} · {self.weeks}w"
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -82,6 +84,33 @@ class Base:
 
 def _r(x, nd=2):
     return None if x is None or (isinstance(x, float) and np.isnan(x)) else round(float(x), nd)
+
+
+def breakout_metrics(t: int, pivot: float, dates: list, high, low, close, vol, cfg: BaseConfig) -> Breakout:
+    """The Breakout record for a close above `pivot` at bar t (shared by box bases and cups)."""
+    sma50 = trailing_stat(vol, t, 50, np.mean)
+    med20 = trailing_stat(vol, t, 20, np.median)
+    r50 = vol[t] / sma50 if sma50 and not np.isnan(sma50) else None
+    r20 = vol[t] / med20 if med20 and not np.isnan(med20) else None
+    ratio = r20 if cfg.vol_baseline == "median20" else r50
+    rng = high[t] - low[t]
+    cir = (close[t] - low[t]) / rng if rng > 0 else None
+    after = close[t + 1:t + 1 + cfg.squat_bars]
+    if bool((after < pivot).any()):
+        squat = True
+    elif len(after) >= cfg.squat_bars:
+        squat = False
+    else:
+        squat = None
+    vol_ok = bool(ratio is not None and ratio >= cfg.bo_vol_mult)   # plain bools: JSON-serialisable
+    weak = bool(cir is not None and cir < cfg.weak_close_cir)
+    tags = [t_ for t_, on in (("low volume", not vol_ok), ("weak close", weak), ("squat", squat)) if on]
+    return Breakout(date=dates[t], index=t, close=_r(close[t]),
+                    through_pct=_r((close[t] / pivot - 1) * 100),
+                    volume=int(vol[t]), volume_ratio=_r(ratio), volume_ratio_sma50=_r(r50),
+                    volume_ratio_median20=_r(r20), volume_ok=vol_ok, close_in_range=_r(cir),
+                    weak_close=weak, gain_1d_pct=_r((close[t] / close[t - 1] - 1) * 100),
+                    turnover_cr=_r(close[t] * vol[t] / 1e7), squat=squat, tags=tags)
 
 
 def detect_bases(candles: list[dict], cfg: BaseConfig) -> list[Base]:
@@ -128,30 +157,7 @@ def detect_bases(candles: list[dict], cfg: BaseConfig) -> list[Base]:
                     depth_pct=_r((H - L) / H * 100), vol_dryup=_r(dry))
 
     def breakout_at(t: int, base: Base) -> Breakout:
-        pivot = H
-        sma50 = trailing_stat(vol, t, 50, np.mean)
-        med20 = trailing_stat(vol, t, 20, np.median)
-        r50 = vol[t] / sma50 if sma50 and not np.isnan(sma50) else None
-        r20 = vol[t] / med20 if med20 and not np.isnan(med20) else None
-        ratio = r20 if cfg.vol_baseline == "median20" else r50
-        rng = high[t] - low[t]
-        cir = (close[t] - low[t]) / rng if rng > 0 else None
-        after = close[t + 1:t + 1 + cfg.squat_bars]
-        if bool((after < pivot).any()):
-            squat = True
-        elif len(after) >= cfg.squat_bars:
-            squat = False
-        else:
-            squat = None
-        vol_ok = bool(ratio is not None and ratio >= cfg.bo_vol_mult)   # plain bools: JSON-serialisable
-        weak = bool(cir is not None and cir < cfg.weak_close_cir)
-        tags = [t_ for t_, on in (("low volume", not vol_ok), ("weak close", weak), ("squat", squat)) if on]
-        return Breakout(date=dates[t], index=t, close=_r(close[t]),
-                        through_pct=_r((close[t] / pivot - 1) * 100),
-                        volume=int(vol[t]), volume_ratio=_r(ratio), volume_ratio_sma50=_r(r50),
-                        volume_ratio_median20=_r(r20), volume_ok=vol_ok, close_in_range=_r(cir),
-                        weak_close=weak, gain_1d_pct=_r((close[t] / close[t - 1] - 1) * 100),
-                        turnover_cr=_r(close[t] * vol[t] / 1e7), squat=squat, tags=tags)
+        return breakout_metrics(t, H, dates, high, low, close, vol, cfg)
 
     for t in range(1, n):
         if not np.isnan(ma[t]) and close[t] < ma[t]:

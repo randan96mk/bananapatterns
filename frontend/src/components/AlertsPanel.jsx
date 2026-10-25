@@ -126,10 +126,13 @@ export default function AlertsPanel() {
           </ol>)}
         <div className="row">
           <label className="muted">chat_id <input value={cfg.chat_id} onChange={(e) => setCfg({ ...cfg, chat_id: e.target.value })} /></label>
-          <label className="muted">screens <select value={cfg.screens.join(',')}
-            onChange={(e) => save({ screens: e.target.value.split(',') })}>
-            <option value="vcp">VCP</option><option value="bases">Bases</option><option value="vcp,bases">VCP + Bases</option>
-          </select></label>
+          <span className="muted">screens</span>
+          {[['vcp', 'VCP'], ['cup', 'Cup & handle'], ['bases', 'Bases']].map(([k, label]) => (
+            <label key={k} className="muted"><input type="checkbox" checked={cfg.screens.includes(k)}
+              onChange={(e) => {
+                const next = e.target.checked ? [...cfg.screens, k] : cfg.screens.filter((x) => x !== k);
+                if (next.length) save({ screens: next });
+              }} /> {label}</label>))}
           <button className="btn ghost" onClick={() => save({ chat_id: cfg.chat_id })}>Save chat</button>
           <span className="muted">Today {st.today}: {st.trading_day ? 'trading day' : `no trading (${st.holiday_today || 'weekend'})`}
             {st.upcoming_holidays.length > 0 && ` · next holidays ${st.upcoming_holidays.map((h) => `${h.date} ${h.name}`).join(', ')}`}</span>

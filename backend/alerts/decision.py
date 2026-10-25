@@ -15,13 +15,14 @@ The levels and checks are the screen's rules, not recommendations (personal use)
 
 import io
 from math import floor
+from types import SimpleNamespace
 from typing import Optional
 
 import numpy as np
 
 from backend.alerts import charts
 from backend.config import AlertsConfig, BaseConfig, VcpConfig
-from backend.engine.bases import detect_bases
+from backend.engine.bases import Base, breakout_metrics, detect_bases
 from backend.engine.indicators import sma
 from backend.engine.vcp import evaluate
 
@@ -46,24 +47,32 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                      rs: Optional[int] = None, tt_passed: int = 0, tt_of: int = 8,
                      bases_cfg: BaseConfig, vcp_cfg: VcpConfig, alerts_cfg: AlertsConfig,
                      ended: Optional[dict] = None, live: Optional[dict] = None,
-                     size_factor: float = 1.0, size_note: str = "") -> Optional[dict]:
+                     size_factor: float = 1.0, size_note: str = "", cup: Optional[dict] = None) -> Optional[dict]:
     """Everything the decision chart and message need, or None if there is no base.
 
     live: intraday {ltp, open, high, low, volume} for today's still-forming candle; for close_check also
           {pace, range, verdict} from backend.alerts.intraday.close_verdict.
     ended: played out {date, reason, gain_pct, peak_pct}.
+    cup: the Cup & handle screen's shape (engine/cups.py); the chart then shows that cup, not a box base.
     """
-    bases = detect_bases(candles, bases_cfg)
-    if not bases:
-        return None
-    if kind in BREAKOUT_KINDS:
-        base = next((b for b in reversed(bases) if b.breakout is not None), None)
+    if cup:
+        base = _cup_base(candles, cup, kind, bases_cfg)
         if base is None:
             return None
-        end = base.end_index
+        v = SimpleNamespace(stop=cup["stop"], contractions=[], qualifies=True, shrinking=None, dryup=None,
+                            tightening=None)
     else:
-        base, end = bases[-1], len(candles) - 1
-    v = evaluate(candles, base, rs, tt_passed, vcp_cfg, end=end)
+        bases = detect_bases(candles, bases_cfg)
+        if not bases:
+            return None
+        if kind in BREAKOUT_KINDS:
+            base = next((b for b in reversed(bases) if b.breakout is not None), None)
+            if base is None:
+                return None
+            end = base.end_index
+        else:
+            base, end = bases[-1], len(candles) - 1
+        v = evaluate(candles, base, rs, tt_passed, vcp_cfg, end=end)
     close = live["ltp"] if live else candles[-1]["close"]
     pivot = base.pivot
     stop = v.stop if v.stop else pivot * (1 - vcp_cfg.max_stop)
@@ -74,12 +83,22 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
     depths = [k["depth_pct"] for k in v.contractions]
 
     checks = [(tt_passed >= vcp_cfg.min_trend_checks, f"Trend template {tt_passed}/{tt_of}"),
-              (rs is not None and rs >= vcp_cfg.min_rs, f"RS rating {rs if rs is not None else 'n/a'}"),
-              (bool(v.shrinking), "Pullbacks shrinking " + (" → ".join(f"{d:.0f}%" for d in depths) or "(none)")),
+              (rs is not None and rs >= vcp_cfg.min_rs, f"RS rating {rs if rs is not None else 'n/a'}")]
+    if cup:
+        h, cp = cup["handle"], cup["cup"]
+        checks += [(True, f"Cup {cp['depth_pct']:.0f}% deep, {cp['weeks']}w, after a {cup['prior_advance_pct']:.0f}% rise"),
+                   (cp["u_bars"] >= 5, f"U-shaped bottom ({(cp.get('u_frac') or 0) * 100:.0f}% of the time in the "
+                                       f"bottom third)"),
+                   (True, f"Handle {h['depth_pct']:.1f}% deep, {h['bars']} sessions, upper half"),
+                   ((h["volume_x"] if h["volume_x"] is not None else 9) <= 1.0,
+                    f"Handle volume dried up {h['volume_x'] or 0:.2f}×")]
+    else:
+        checks += [(bool(v.shrinking), "Pullbacks shrinking " + (" → ".join(f"{d:.0f}%" for d in depths) or "(none)")),
               ((v.dryup or 9) <= vcp_cfg.max_dryup, f"Volume dried up {v.dryup if v.dryup is not None else 0:.2f}× "
                                                     f"(≤ {vcp_cfg.max_dryup:g})"),
               ((v.tightening or 9) <= vcp_cfg.max_tightening,
                f"Range tightening {v.tightening if v.tightening is not None else 0:.2f}× (≤ {vcp_cfg.max_tightening:g})")]
+    pattern = "cup & handle" if cup else ("VCP ✓" if v.qualifies else "not a VCP")
     bo = base.breakout
     if bo is not None and kind in BREAKOUT_KINDS:
         checks += [(bo.volume_ok, f"Breakout volume {bo.volume_ratio or 0:.1f}× (≥ 1.5)"),
@@ -95,7 +114,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                                                              f"(≤ {alerts_cfg.buy_zone_pct * 100:g}%)"))
 
     if kind in ("breakout", "climbing"):
-        verdict, vcolor = ("Breakout ✓" + (" · VCP ✓" if v.qualifies else " · not a VCP")), (UP if v.qualifies else ACC)
+        verdict, vcolor = f"Breakout ✓ · {pattern}", (UP if v.qualifies else ACC)
         watch = [f"Valid while it closes above {_rs(pivot)}.",
                  f"Exit on a close below {_rs(stop)} or the 50-day line.",
                  f"Above {_rs(zone_top)} it's extended: don't chase."]
@@ -132,11 +151,11 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
             watch = ["Volume or the close may not confirm the breakout.",
                      "Wait for the 18:30 confirmation or a better day.", f"Counts only on a close above {_rs(pivot)}."]
     else:                                                         # forming / near_pivot
-        verdict = "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)"
+        verdict = ("Cup & handle forming ✓" if cup else "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)")
         vcolor = UP if v.qualifies else ACC
-        fail_at = v.contractions[-1]["low"] if v.contractions else stop
+        fail_at = cup["handle"]["low"] if cup else (v.contractions[-1]["low"] if v.contractions else stop)
         watch = [f"Trigger: a CLOSE above {_rs(pivot)} on ≥ 1.5× volume.",
-                 f"Setup fails on a close below {_rs(fail_at)} (last pullback low).",
+                 f"Setup fails on a close below {_rs(fail_at)} ({'handle low' if cup else 'last pullback low'}).",
                  f"Now {abs(ext):.1f}% under the pivot."]
 
     size = None
@@ -147,11 +166,37 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
             qty = floor(alerts_cfg.capital * alerts_cfg.risk_pct * size_factor / per_share)
             size = {"qty": qty, "entry": entry, "risk_rs": qty * per_share, "value": qty * entry, "note": size_note}
 
-    return {"symbol": symbol, "company": company, "industry": industry, "kind": kind, "base": base, "vcp": v,
+    return {"symbol": symbol, "company": company, "industry": industry, "kind": kind, "base": base, "vcp": v, "cup": cup,
             "pivot": pivot, "stop": stop, "zone_top": zone_top, "close": close, "ext_pct": ext,
             "risk_pct": (close - stop) / close * 100, "ma50": ma50, "checks": checks, "verdict": verdict,
             "verdict_color": vcolor, "watch": watch, "size": size, "ended": ended, "live": live,
             "date": candles[-1]["date"]}
+
+
+def _cup_base(candles: list[dict], cup: dict, kind: str, bases_cfg: BaseConfig) -> Optional[Base]:
+    """Rebuild the scan's cup as a Base on these candles (plus its breakout for breakout kinds)."""
+    idx = {c["date"]: i for i, c in enumerate(candles)}
+    L, t = idx.get(cup["left_lip"]["date"]), idx.get(cup["handle"]["end"])
+    if L is None or t is None:
+        return None
+    pivot, low = cup["right_lip"]["high"], cup["bottom"]["low"]
+    base = Base(number=1, status="forming", start_date=candles[L]["date"], end_date=candles[t]["date"],
+                start_index=L, end_index=t, bars=t - L + 1, weeks=cup["cup"]["weeks"], pivot=pivot,
+                pivot_date=cup["right_lip"]["date"], low=low, low_date=cup["bottom"]["date"],
+                depth_pct=cup["cup"]["depth_pct"], vol_dryup=cup["handle"]["volume_x"], kind="cup", shape=cup)
+    if kind in BREAKOUT_KINDS:
+        close = np.array([c["close"] for c in candles], dtype=float)
+        after = np.nonzero(close[t + 1:] > pivot)[0]
+        if not len(after):
+            return None
+        j = t + 1 + int(after[0])
+        arr = lambda k: np.array([c[k] for c in candles], dtype=float)  # noqa: E731
+        base.status = "broken_out"
+        base.breakout = breakout_metrics(j, pivot, [c["date"] for c in candles], arr("high"), arr("low"), close,
+                                         arr("volume"), bases_cfg)
+    else:
+        base.dist_to_pivot_pct = (pivot - candles[-1]["close"]) / pivot * 100
+    return base
 
 
 def decision_lines(ctx: dict) -> list[str]:
@@ -201,6 +246,8 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
         raise RuntimeError("matplotlib is not installed: run .venv/bin/pip install -r requirements.txt")
     plt, Rectangle = charts.plt, charts.Rectangle
     live = ctx.get("live")
+    if ctx.get("cup"):                                            # show the whole cup, left lip included
+        bars = min(330, max(bars, len(candles) - ctx["base"].start_index + 15))
     data = list(candles)
     if live:                                                      # today's still-forming candle
         data.append({"date": "LIVE", "open": live["open"], "high": live["high"], "low": live["low"],
@@ -234,9 +281,10 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     axp.set_facecolor(BG)
     axp.axis("off")
 
+    cup = ctx.get("cup")
     x0 = idx.get(base.start_date, 0 if base.start_date < view[0]["date"] else None)
     x1 = idx.get(base.end_date)
-    if x0 is not None and x1 is not None:
+    if x0 is not None and x1 is not None and not cup:
         ax.add_patch(Rectangle((x0 - .5, base.low), x1 - x0 + 1, pivot - base.low, fc=UP, alpha=.08, ec=UP, ls=":", lw=1))
     ax.axhspan(pivot, ctx["zone_top"], color=UP, alpha=.13, lw=0)
     ax.text(n * 0.62, ctx["zone_top"], "buy zone", color=UP, fontsize=9, ha="center", va="bottom")
@@ -251,7 +299,7 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     ax.vlines(x, lo, h, color=np.where(up, UP, DOWN), lw=.9)
     ax.bar(x, np.abs(cl - o) + 1e-9, bottom=np.minimum(o, cl), color=np.where(up, UP, DOWN), width=.68)
 
-    ax.legend(loc="upper left", fontsize=9, facecolor=PANEL, edgecolor=GRID, labelcolor=TEXT)
+    ax.legend(loc="lower left" if cup else "upper left", fontsize=9, facecolor=PANEL, edgecolor=GRID, labelcolor=TEXT)
     marks, mark = [], 2
     for k in v.contractions:
         if k["high_date"] in idx and k["low_date"] in idx:
@@ -261,6 +309,22 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
                                  va="top", fontweight="bold"))
             marks.append(_badge(ax, b_, k["low"], mark, ACC, dy=-26))
             mark += 1
+    if cup:                                                         # L / U / R and the handle box
+        pts = [(cup["left_lip"]["date"], cup["left_lip"]["high"], "L", UP, 16),
+               (cup["bottom"]["date"], cup["bottom"]["low"], "U", BLUE, -18),
+               (cup["right_lip"]["date"], cup["right_lip"]["high"], "R", UP, 16)]
+        seen = [(idx[d], y) for d, y, *_ in pts if d in idx]
+        if len(seen) >= 2:
+            ax.plot([p[0] for p in seen], [p[1] for p in seen], ls=":", color=UP, lw=1.4)
+        for d, y, lab, col, dy in pts:
+            if d in idx:
+                marks.append(_badge(ax, idx[d], y, lab, col, dy=dy))
+        hs, he = idx.get(cup["handle"]["start"]), idx.get(cup["handle"]["end"])
+        if hs is not None and he is not None:
+            ax.add_patch(Rectangle((hs - .5, cup["handle"]["low"]), he - hs + 1, pivot - cup["handle"]["low"], fc=ACC,
+                                   alpha=.12, ec=ACC, ls=":", lw=1))
+            marks.append(ax.text((hs + he) / 2, cup["handle"]["low"], f"handle −{cup['handle']['depth_pct']:.0f}%",
+                                 color=ACC, fontsize=9, ha="center", va="top", fontweight="bold"))
     ax.set_xlim(-1.5, n + 0.5)
     ax.set_ylim(*ax.get_ylim())                                     # freeze limits so boxes can be measured
     renderer = fig.canvas.get_renderer()
