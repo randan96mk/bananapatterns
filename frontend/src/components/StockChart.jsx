@@ -8,6 +8,7 @@ import BaseCard from './BaseCard';
 import TrendPanel from './TrendPanel';
 import VcpPanel from './VcpPanel';
 import { cssVar, useTheme } from '../theme';
+import { useIsPhone } from '../useMedia';
 
 function sma(candles, n) {
   const out = [];
@@ -41,6 +42,12 @@ const PREVIEW_KINDS = [['auto', 'Auto (current stage)'], ['breakout', 'Breakout'
 export default function StockChart({ symbol, onClose }) {
   const box = useRef(null);
   const theme = useTheme();              // the chart is rebuilt in the new colours when it changes
+  const phone = useIsPhone();            // phone: full-screen sheet, panels folded
+  useEffect(() => {
+    if (!phone || !symbol) return undefined;
+    document.body.classList.add('modal-open');            // no page scroll behind the sheet
+    return () => document.body.classList.remove('modal-open');
+  }, [phone, symbol]);
   const [info, setInfo] = useState(null);
   const [bases, setBases] = useState(null);
   const [metrics, setMetrics] = useState(null);
@@ -154,9 +161,10 @@ export default function StockChart({ symbol, onClose }) {
                onError={() => setErr('No alert chart for this stock/kind (no base to annotate, or matplotlib missing)')} />
         </div>)}
       <div ref={box} className="chart" />
-      <TrendPanel m={metrics} />
-      <VcpPanel symbol={symbol} />
-      {bases && <BaseCard latest={bases.latest} baseline={bases.config.vol_baseline} />}
+      <details className="fold" open={!phone}><summary>Trend Template &amp; RS</summary><TrendPanel m={metrics} /></details>
+      <details className="fold" open={!phone}><summary>VCP check</summary><VcpPanel symbol={symbol} /></details>
+      {bases && <details className="fold" open={!phone}><summary>Base</summary>
+        <BaseCard latest={bases.latest} baseline={bases.config.vol_baseline} /></details>}
     </div>
   );
 }

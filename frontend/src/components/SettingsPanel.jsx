@@ -100,7 +100,7 @@ export default function SettingsPanel() {
           <button key={x} className={`btn ${x === section ? '' : 'ghost'}`} onClick={() => setSection(x)}>{x}</button>))}
         {section !== 'ingest' && <span className="muted">After saving, press Rescan on the Screens tab (charts update when reopened).</span>}
       </div>
-      <table className="grid small settings">
+      <div className="hscroll"><table className="grid small settings">
         <tbody>
           {Object.entries(draft).map(([k, v]) => (
             <tr key={k}>
@@ -113,7 +113,7 @@ export default function SettingsPanel() {
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
       <div className="row"><button className="btn" onClick={save}>Save</button><span className="msg">{msg}</span></div>
     </div>
   );

@@ -778,6 +778,17 @@ system setting). Colours are CSS variables in `App.css` (`:root` dark, `:root[da
 before the first paint (no flash). The candle chart reads the theme colours and is rebuilt when you switch. Telegram
 chart images stay dark.
 
+**On a phone** (under 600 px wide) the app switches to a mobile layout:
+- A bottom tab bar (Screens · Alerts · Data · More). More opens a sheet with Universe, Settings, Logs and the theme.
+- The Kite bar shrinks to a status pill and Login, with the rest behind "⋯".
+- The market card shrinks to one line; tap it for the signals.
+- The feed shows 3 items, the grid one card per row, and positions show as cards.
+- Tables keep the symbol column pinned while the rest scrolls sideways.
+- The stock chart opens full-screen, with the Trend / VCP / Base panels folded.
+- Touch targets are at least 44 px, inputs use 16 px text (no iOS zoom), time fields use the phone's time picker and
+  number fields its keypad, and the layout leaves room for the notch and home bar.
+- Checked at 390 px: no page scrolls sideways.
+
 The **chart** shows daily candles, volume, SMA 50/150/200 and the **base overlay**:
 - base boxes drawn by a canvas plugin (`chart/basesPrimitive.js`, lightweight-charts v5 series primitive):
   the latest base is green-shaded, earlier ones grey, each labelled "B6 · 12w"
@@ -1102,3 +1113,8 @@ of receiving it (a small change in that repo).
 ### 2026-10-25: Light and dark mode
 - Header theme switch (Auto / Light / Dark); light palette, remaining hard-coded colours moved to CSS variables;
   the candle chart and base boxes follow the theme. WCAG AA contrast checked for every text colour.
+
+### 2026-10-25: Mobile layout
+- Bottom tab bar + More sheet, compact Kite bar and market card, full-screen chart with folded panels, position
+  cards, pinned first column in tables, touch-size controls, phone keyboards for times and numbers, safe areas.
+- Fixed tables without a scroll container that made the whole page scroll sideways on phones.

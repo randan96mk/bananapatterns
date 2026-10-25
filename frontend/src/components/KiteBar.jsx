@@ -8,6 +8,7 @@ export default function KiteBar({ status, onChange }) {
   const [paste, setPaste] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [open, setOpen] = useState(false);                // phone: details folded away
 
   if (!status) return <div className="kitebar">Connecting to backend…</div>;
 
@@ -22,21 +23,25 @@ export default function KiteBar({ status, onChange }) {
   };
 
   return (
-    <div className="kitebar">
+    <div className={`kitebar ${open ? 'open' : ''}`}>
       <span className={`pill ${status.has_token ? 'ok' : 'bad'}`}>
         Kite: {status.has_token ? 'connected' : 'login needed'}
       </span>
-      {status.user_id && <span className="muted">user {status.user_id}</span>}
-      {status.expires_at && <span className="muted">expires {fmt(status.expires_at)} IST</span>}
-      {status.token_source === 'env' && <span className="muted">token from .env (expiry unknown)</span>}
-      {!status.api_key_configured && <span className="warn">Set KITE_API_KEY / KITE_API_SECRET in .env</span>}
       {status.login_url && (
         <a className="btn" href={status.login_url}>{status.has_token ? 'Re-login' : 'Login with Kite'}</a>
       )}
-      {status.has_token && <button className="btn ghost" disabled={busy} onClick={verify}>Verify</button>}
-      <input className="token" placeholder="or paste access token" value={paste}
-             onChange={(e) => setPaste(e.target.value)} />
-      {paste && <button className="btn ghost" onClick={saveToken}>Save</button>}
+      <button className="btn ghost kb-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Less' : '⋯'}</button>
+      <span className="kb-extra">
+        {status.user_id && <span className="muted">user {status.user_id}</span>}
+        {status.expires_at && <span className="muted">expires {fmt(status.expires_at)} IST</span>}
+        {status.token_source === 'env' && <span className="muted">token from .env (expiry unknown)</span>}
+        {!status.api_key_configured && <span className="warn">Set KITE_API_KEY / KITE_API_SECRET in .env</span>}
+        {status.has_token && <button className="btn ghost" disabled={busy} onClick={verify}>Verify</button>}
+        <input className="token" placeholder="or paste access token" value={paste}
+               onChange={(e) => setPaste(e.target.value)} />
+        {paste && <button className="btn ghost" onClick={saveToken}>Save</button>}
+      </span>
       {err && <span className="warn">{err}</span>}
     </div>
   );
