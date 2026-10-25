@@ -6,6 +6,7 @@ import MarketCard from './MarketCard';
 import PlanCard from './PlanCard';
 import PositionsCard from './PositionsCard';
 import { useIsPhone } from '../useMedia';
+import { NewsList, ResultsList } from './NewsFeed';
 
 const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
@@ -22,6 +23,8 @@ export default function ScreensHome({ hasData }) {
   const [mkt, setMkt] = useState(null);
   const phone = useIsPhone();
   const [plan, setPlan] = useState(null);
+  const [news, setNews] = useState(null);
+  const [tab, setTab] = useState('moves');
 
   const load = useCallback(async () => {
     try {
@@ -29,6 +32,7 @@ export default function ScreensHome({ hasData }) {
       setSummary(s); setFeed(f); setErr('');
       api.marketHealth().then(setMkt).catch(() => setMkt(null));
       api.getPlan().then(setPlan).catch(() => setPlan(null));
+      api.getNews().then(setNews).catch(() => setNews({ items: [], results: [], counts: {}, scope: 0, days: 3 }));
     } catch (e) { setErr(e.message); }
   }, [screen]);
   useEffect(() => { load(); }, [load]);
@@ -90,6 +94,26 @@ export default function ScreensHome({ hasData }) {
                 ))}
               </div>
               <div className="feed">
+                <div className="tabs" role="tablist">
+                  {[['moves', 'Moves', rows.length], ['news', 'News', news?.items.length],
+                    ['results', 'Results', news?.results.length]].map(([id, label, n]) => (
+                    <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`}
+                            onClick={() => { setTab(id); setFullFeed(false); }}>
+                      {label}{n != null && <span className="count">{n}</span>}</button>))}
+                </div>
+                {tab === 'news' && <>
+                  <div className="muted small">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board
+                    stocks (VCP, Cup &amp; handle, Bases) + held / watched</div>
+                  <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : (phone ? 4 : 8)} />
+                  {(news?.items.length || 0) > (phone ? 4 : 8) && <button className="linkbtn"
+                    onClick={() => setFullFeed(!fullFeed)}>
+                    {fullFeed ? 'Show less' : `Show the full feed (${news.items.length}) ›`}</button>}
+                </>}
+                {tab === 'results' && <>
+                  <div className="muted small">Board stocks reporting results soon: a results gap can jump the stop</div>
+                  <ResultsList data={news} onSelect={setSelected} />
+                </>}
+                {tab === 'moves' && <>
                 <div className="row"><b>What changed since last close</b>
                   <span className="muted">({fmtDate(feed?.as_of)}) · end of day · {rows.length} moves</span></div>
                 {rows.length === 0 && <p className="muted">No stage moves today.</p>}
@@ -102,6 +126,7 @@ export default function ScreensHome({ hasData }) {
                 ))}
                 {rows.length > (phone ? 3 : 6) && <button className="linkbtn" onClick={() => setFullFeed(!fullFeed)}>
                   {fullFeed ? 'Show less' : `Show the full feed (${rows.length}) ›`}</button>}
+                </>}
               </div>
             </div>
           </>

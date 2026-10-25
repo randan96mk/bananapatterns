@@ -520,7 +520,16 @@ Funds are told apart from prop traders by name (mutual fund, insurance, pension,
 and sells the same stock on the same day nets out. A red flag keeps a stock at **tier B** (so it only appears in the
 digest unless watched) until it ages out. Stock alerts carry the 🚩 / 🏦 lines; held, watched and plan stocks get a
 message for each new one ("🚩 DDD · Promoter sold 2.4% (you hold it)"); chips show on cards, tables, positions and
-the plan card; the stock window's **Filings & deals** list shows every deal and disclosure. `red_flags` and `deals`
+the plan card; the stock window's **Filings & deals** list shows every deal and disclosure.
+
+**News tab.** The "What changed" box on the Screens page has three tabs: **Moves** (today's stage moves), **News** and
+**Results**. News lists the last `news_days` (3) of exchange news on the *board stocks*: every stock in the latest
+scan on any screen (VCP, Cup & handle, Bases) at any stage, plus held and watched stocks. 📊 results, 📦 orders /
+🤝 deals, 🚩 red flags, 🏦 fund moves and other filings (ratings, management, exchange queries), newest first, with
+filter chips; a results filing and its press release show once; a red-flag filing shows once, as 🚩. Each line says
+why the stock is in scope ("VCP forming", "held" …) and links to the filing; clicking it opens the chart. Results lists
+board stocks reporting within `results_warn_sessions`, nearest first (held, watched and live setups ahead of the rest).
+Built from stored data (`backend/ingest/news.py`, `GET /api/news`), no extra NSE calls. `red_flags` and `deals`
 switch them off. API: `GET /api/deals` (status), `GET /api/deals?symbol=X`, `POST /api/deals/refresh`.
 
 ## Telegram alerts and automatic jobs
@@ -1262,3 +1271,7 @@ of receiving it (a small change in that repo).
 - A red flag holds a stock at tier B (`market.tier`); alert lines (`flags_note`), held / watched / plan messages
   (`Scheduler.alert_deals`), plan rank +4 for fund buying, chips and a deals list in the stock window.
 - 268 offline tests passing.
+
+### 2026-10-25: News tab
+- Moves / News / Results tabs in the What-changed box; `backend/ingest/news.py` + `GET /api/news` (board scope: all
+  screens and stages + held / watched). 271 offline tests passing.
