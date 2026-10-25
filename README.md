@@ -82,7 +82,7 @@ folders are mounted in, so it uses the **same database, settings and Kite login*
 Keep your `.env` as it is: it is read at start-up and never copied into the image.
 
 ```bash
-./docker.sh up        # first time builds the image (~3-5 min), then starts it in the background
+./docker.sh up        # start in the background (the first time it builds the image, ~3-5 min)
 ./docker.sh logs      # follow what it is doing (Ctrl+C stops following, not the app)
 ./docker.sh status    # running / healthy?
 ./docker.sh update    # after a PR is merged: git pull + rebuild + restart (~1 min)
@@ -101,7 +101,9 @@ Keep your `.env` as it is: it is read at start-up and never copied into the imag
 - Files: `Dockerfile` (Node stage builds the dashboard, Python 3.12 slim runs the app as a non-root user,
   IST time zone, `/health` check), `docker-compose.yml` (restart policy, `.env`, the three folders, log
   rotation), `.dockerignore` (keeps `.env`, `data/`, `logs/`, `node_modules`, `.venv` out of the image),
-  `docker.sh`. `BP_HOST=0.0.0.0` inside the container; `./start.sh` keeps `127.0.0.1`.
+  `docker.sh`. `BP_HOST=0.0.0.0` inside the container; `./start.sh` keeps `127.0.0.1`. The container runs as
+  your user (`docker.sh` passes `BP_UID` / `BP_GID`), so it can always write `data/` and `logs/`; only
+  `update` rebuilds, so a plain `up` needs no internet.
 
 ## Daily workflow
 

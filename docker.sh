@@ -1,6 +1,6 @@
 #!/bin/bash
 # Banana Patterns with Docker.
-#   ./docker.sh up        build if needed and start in the background (restarts on its own)
+#   ./docker.sh up        start in the background (builds the image the first time; restarts on its own)
 #   ./docker.sh down      stop
 #   ./docker.sh logs      follow the logs (Ctrl+C to stop following)
 #   ./docker.sh status    container state and health
@@ -9,6 +9,7 @@
 set -e
 cd "$(dirname "$0")"
 PORT="${BP_PORT:-8000}"
+export BP_UID="$(id -u)" BP_GID="$(id -g)"   # the container runs as you, so it can write data/ and logs/
 
 command -v docker >/dev/null 2>&1 || { echo "Docker not found: install Docker Desktop (or OrbStack) first."; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker is not running: open Docker Desktop (or OrbStack) and try again."; exit 1; }
@@ -27,7 +28,7 @@ wait_healthy() {
     echo ""; echo "Not healthy yet: check ./docker.sh logs"; return 1
 }
 
-up() {
+up() {   # $1: extra flag for compose (update passes --build)
     [ -f .env ] || { cp .env.example .env; echo "Created .env from .env.example: add your Kite (and Telegram) keys, then run again."; exit 1; }
     mkdir -p data logs
     if ! running && command -v lsof >/dev/null 2>&1 && lsof -ti "tcp:$PORT" >/dev/null 2>&1; then
@@ -35,7 +36,7 @@ up() {
         echo "every alert twice."
         exit 1
     fi
-    docker compose up -d --build
+    docker compose up -d $1
     wait_healthy
 }
 
@@ -45,6 +46,6 @@ case "${1:-up}" in
     logs) docker compose logs -f --tail 200 ;;
     status) docker compose ps; curl -fs "http://127.0.0.1:$PORT/health" && echo "" || echo "health: not answering" ;;
     restart) docker compose restart && wait_healthy ;;
-    update) git pull --ff-only && up ;;
+    update) git pull --ff-only && up --build ;;
     *) sed -n '2,8p' "$0"; exit 1 ;;
 esac
