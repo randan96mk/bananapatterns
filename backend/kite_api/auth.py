@@ -1,9 +1,7 @@
 """Kite access-token lifecycle.
 
 A Kite access token is valid until 06:00 IST the next morning (not midnight),
-and only one token per app is active: logging in here also invalidates the
-token AlgoTrade-v3 holds if both share the API key, so a login here is handed
-on to AlgoTrade (see login_link.hand_over).
+and only one token per Kite app is active: a new login replaces the previous one.
 """
 
 from datetime import datetime, time, timedelta

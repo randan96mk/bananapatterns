@@ -44,7 +44,7 @@ def session_ok(state) -> bool:
         return True
 
 
-def confirm_login(notifier: Notifier, issued_at: datetime, handover: dict) -> bool:
+def confirm_login(notifier: Notifier, issued_at: datetime) -> bool:
     expires = auth.expiry_for(issued_at)
     return notifier.send(f"login-ok|{issued_at.isoformat(timespec='seconds')}", "login",
-                         msg.login_ok_alert(expires.astimezone(IST), handover))
+                         msg.login_ok_alert(expires.astimezone(IST)))

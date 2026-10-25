@@ -3,7 +3,6 @@
 #   ./start.sh            dev:  backend :8000 (auto-reload) + Vite dev server :3000
 #   ./start.sh --prod     build frontend, backend :8000 serves everything
 #   ./start.sh --backend  backend only
-# Shares port 8000 and the Kite app with AlgoTrade-v3: stop that first.
 set -e
 cd "$(dirname "$0")"
 MODE="${1:-dev}"
