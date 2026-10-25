@@ -270,6 +270,10 @@ class AlertsConfig:
     profit_zone_pct: float = 20.0          # gain from your average: consider selling part
     extended_pct: float = 25.0             # close this far above the 50-day line: extended
     failed_days: int = 3                   # back under the pivot within N sessions of buying: failed breakout
+    # Results calendar (NSE board meetings, fetched in the evening job): gap risk around results
+    results_calendar: bool = True          # fetch the calendar and show "Results ..." on cards, alerts and plan
+    results_warn_sessions: int = 5         # stock alerts / plan / cards warn when results are this close
+    results_guard_sessions: int = 1        # guard: warn on a held stock this many sessions before its results
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

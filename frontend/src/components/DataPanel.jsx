@@ -6,6 +6,15 @@ export default function DataPanel({ hasToken, onDataChanged }) {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [evs, setEvs] = useState(null);
+  const loadEvents = () => api.eventsStatus().then(setEvs).catch(() => setEvs(null));
+  useEffect(() => { loadEvents(); }, []);
+  const refreshEvents = async () => {
+    setBusy(true); setMsg('Fetching the NSE results calendar…');
+    try { const r = await api.refreshEvents(); setMsg(`Results calendar: ${r.stored} events stored.`); await loadEvents(); }
+    catch (e) { setMsg(e.message); }
+    setBusy(false);
+  };
 
   const load = async () => {
     try { setSt(await api.ingestStatus()); } catch (e) { setMsg(e.message); }
@@ -57,6 +66,12 @@ export default function DataPanel({ hasToken, onDataChanged }) {
           Full refetch
         </button>
         {running && <button className="btn danger" onClick={() => act(api.cancelSync, 'Cancelling')}>Cancel</button>}
+      </div>
+      <div className="row small">
+        <span className="muted">Results calendar (NSE board meetings): {evs?.last_fetch
+          ? `${evs.upcoming_results} upcoming results · fetched ${evs.last_fetch.slice(0, 16).replace('T', ' ')}`
+          : 'not fetched yet'} · refreshed by the evening job</span>
+        <button className="btn ghost" disabled={busy} onClick={refreshEvents}>Refresh results calendar</button>
       </div>
       {!hasToken && <p className="muted">Log in with Kite first.</p>}
       {msg && <p className="msg">{msg}</p>}

@@ -31,17 +31,18 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 9. [Stage board (Screens home)](#stage-board-screens-home)
 10. [RS rating and Trend Template](#rs-rating-and-trend-template)
 11. [VCP screen](#vcp-screen)
-12. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
-13. [REST API](#rest-api)
-14. [CLI](#cli)
-15. [Configuration](#configuration)
-16. [Frontend](#frontend)
-17. [Testing](#testing)
-18. [Troubleshooting](#troubleshooting)
-19. [Roadmap](#roadmap)
-20. [Decisions log](#decisions-log)
-21. [Development log](#development-log)
-
+12. [Cup & handle screen](#cup--handle-screen)
+13. [Results calendar](#results-calendar)
+14. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+15. [REST API](#rest-api)
+16. [CLI](#cli)
+17. [Configuration](#configuration)
+18. [Frontend](#frontend)
+19. [Testing](#testing)
+20. [Troubleshooting](#troubleshooting)
+21. [Roadmap](#roadmap)
+22. [Decisions log](#decisions-log)
+23. [Development log](#development-log)
 ---
 
 ## Quick start (Mac)
@@ -445,6 +446,26 @@ once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, nea
 close check, the daily plan and the position guard, with the cup's own stop (handle low − 1%) and a
 "Cup · handle · vol · stop" line. A name on several screens alerts once per kind, from the most specific screen
 (VCP, then Cup & handle, then Bases).
+
+## Results calendar
+
+`backend/ingest/events.py` keeps NSE's board-meeting calendar (`/api/event-calendar`: the exchange's own public
+data; results, dividends, fund raising) in the `corp_events` table. The evening job refreshes it before the alerts
+(10 days back to 45 days ahead); **Data → Refresh results calendar** does it by hand. A failed fetch keeps the stored
+calendar and never blocks the scan or alerts. Holding a swing trade through results risks a gap past the stop either
+way, so the next results date shows up where you decide:
+
+| Where | What |
+|---|---|
+| Grid cards, stage tables, positions, plan card | 📅 **Results 28 Oct** chip for results within 15 sessions; amber within `results_warn_sessions` (5) |
+| Stock alerts (breakout, near-pivot, forming, intraday, 15:15 check) | ⚠️ **Results Wed 28 Oct (in 3 sessions)**: a results gap can jump past the stop either way |
+| Decision chart | "R  Results Wed 28 Oct (in 3 sessions): gap risk" under Levels |
+| Top setups / morning plan | ⚠️ results line under the setup |
+| Position guard | 📅 once per results date, `results_guard_sessions` (1) before: decide whether to hold, trim or sell; the daily summary flags results within 5 sessions |
+
+Sessions count NSE trading days (Friday → Monday is the next session). Settings → alerts: `results_calendar`,
+`results_warn_sessions`, `results_guard_sessions`. API: `GET /api/events` (status), `GET /api/events?symbol=X`,
+`POST /api/events/refresh`.
 
 ## Telegram alerts and automatic jobs
 
@@ -1164,3 +1185,10 @@ of receiving it (a small change in that repo).
   lines, intraday "failed" alerts, the plan and the position guard; a "Cup … handle … stop" line on forming /
   near-pivot alerts; one alert per name and kind across screens (VCP > Cup > Bases).
 - 222 offline tests passing.
+
+### 2026-10-25: Results calendar
+- `backend/ingest/events.py` + `corp_events`: NSE event calendar, refreshed in the evening job (failure-safe) and from
+  the Data page; trading-session counts via the holiday calendar.
+- Results warnings on stock alerts (added in `Notifier.send`), the decision chart panel, the plan lines, the guard
+  (one alert per results date, plus the summary) and as 📅 chips on cards, tables, positions and the plan card.
+- Tests never touch the network (conftest blocks the fetch). 232 offline tests passing.

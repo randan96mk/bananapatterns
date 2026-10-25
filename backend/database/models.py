@@ -234,6 +234,18 @@ CREATE TABLE IF NOT EXISTS muted (
     until TEXT NOT NULL
 );
 
+-- NSE event calendar: board meetings for results / dividends / fund raising (backend/ingest/events.py).
+CREATE TABLE IF NOT EXISTS corp_events (
+    symbol TEXT NOT NULL,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    descr TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, date, purpose)
+);
+CREATE INDEX IF NOT EXISTS idx_corp_events_kind_date ON corp_events (kind, date);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

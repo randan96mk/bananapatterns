@@ -276,6 +276,13 @@ def _coil_text(c: Optional[dict]) -> str:
     return f"🌀 coiled ({day}, volume {c['volume_x']:.2f}×)"
 
 
+def results_short(r: dict) -> str:
+    """'results Tue 28 Oct' for list lines."""
+    from datetime import date
+    d = date.fromisoformat(r["date"])
+    return f"results {d.strftime('%a')} {d.day} {d.strftime('%b')}"
+
+
 def _plan_line(n: int, i: dict) -> str:
     tag = {"A": "🅰️ ", "B": "🅱️ "}.get(i.get("tier"), "")
     bits = [f"{n}. {tag}<b>{escape(i['symbol'])}</b> {escape(i.get('base_label') or '')}: close above "
@@ -283,6 +290,8 @@ def _plan_line(n: int, i: dict) -> str:
             f"stop {rs(i['stop'])}"]
     if i.get("size"):
         bits.append(f" · ~{i['size']['qty']} sh")
+    if i.get("results"):
+        bits.append(f"\n    ⚠️ {escape(results_short(i['results']))}: a results gap can jump the stop")
     coil = _coil_text(i.get("coiled"))
     return "".join(bits) + (f"\n    {coil}" if coil else "")
 
@@ -344,11 +353,19 @@ def guard_alert(rule: str, pos: dict, ev: dict, cfg) -> str:
         "</i>"
 
 
+def guard_results(pos: dict, ev: dict, label: str) -> str:
+    return (f"📅 <b>{escape(pos['symbol'])}</b>: {escape(label)}. A results gap can jump past your stop "
+            f"{rs(pos['stop'])}: decide before the close whether to hold, trim or sell."
+            f"\n<i>{pos['qty']} sh · {ev['gain_pct']:+.1f}%" + (f" · {ev['r']:+.1f}R" if ev.get("r") is not None else "")
+            + "</i>")
+
+
 def guard_summary(rows: list, as_of: str) -> str:
     lines = [f"📒 <b>Your positions</b> (EOD {escape(as_of)})"]
     for pos, ev in rows:
         warn = " ⚠️" if any(ev["fire"].values()) else ""
         lines.append(f"<b>{escape(pos['symbol'])}</b> {pos['qty']} sh · {rs(ev['close'])} · {ev['gain_pct']:+.1f}%"
                      + (f" · {ev['r']:+.1f}R" if ev.get("r") is not None else "")
-                     + f" · day {ev['days']} · stop {rs(pos['stop'])}{warn}")
+                     + f" · day {ev['days']} · stop {rs(pos['stop'])}{warn}"
+                     + (f" · 📅 {escape(results_short(ev['results']))}" if ev.get("results") else ""))
     return "\n".join(lines)

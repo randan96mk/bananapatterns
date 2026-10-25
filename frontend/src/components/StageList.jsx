@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
+import ResultsTag from './ResultsTag';
 import StageGrid from './StageGrid';
 
 const pct = (v) => (v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
@@ -58,6 +59,7 @@ function Table({ screen, stage, selected, onSelect, shown }) {
             <td>{r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>}<b>{r.symbol}</b>
               {screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
               {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
+              <ResultsTag r={r.results} />
               <div className="muted small">{r.company}</div></td><td className="muted">{r.industry}</td>
             <td className="num">{rs(r.close)}</td>
             <td className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>{pct(r.change_pct)}</td>

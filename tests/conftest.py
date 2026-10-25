@@ -11,10 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend.config import IST  # noqa: E402
 
 
+def _offline(*a, **kw):
+    raise RuntimeError("no network in tests")
+
+
 @pytest.fixture(autouse=True)
 def tmp_db(tmp_path, monkeypatch):
     db = tmp_path / "test.db"
     monkeypatch.setenv("BP_DB_PATH", str(db))
+    monkeypatch.setattr("backend.ingest.events.refresh_from_nse", _offline)     # tests never call NSE
     from backend.database.models import init_db
     init_db()
     return db

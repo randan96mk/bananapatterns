@@ -39,6 +39,7 @@ from backend.alerts.login import send_login_link, session_ok
 from backend.alerts.priority import MarketContext, decorate, gate
 from backend.config import IST, AlertsConfig
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
+from backend.ingest import events
 from backend.ingest import holidays as hol
 from backend.ingest import universe as uni
 from backend.kite_api.auth import EXPIRY_TIME
@@ -260,6 +261,8 @@ class Scheduler:
                 self.record("eod", today, "retry", f"latest bar {as_of}; retrying in 30 min", started)
             return {"status": "no_bar", "as_of": as_of}
 
+        if st.config.alerts.results_calendar:
+            self.refresh_events()
         sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
                              st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
         if st.config.alerts.position_guard:
@@ -267,6 +270,15 @@ class Scheduler:
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
+
+    @staticmethod
+    def refresh_events() -> Optional[int]:
+        """NSE results calendar for the alerts; a failure keeps the stored calendar."""
+        try:
+            return events.refresh_from_nse()
+        except Exception as exc:
+            logger.warning("Results calendar refresh failed (%s); keeping the stored one", exc)
+            return None
 
     def run_guard(self, as_of: Optional[str] = None) -> dict:
         """Sync your Kite holdings (read-only) and check the sell rules. Never raises."""
