@@ -183,23 +183,37 @@ def classify_vcp(candles: list[dict], bases: list[Base], rs: Optional[int], tren
     return res, v.to_dict()
 
 
+def _classify_shaped(candles: list[dict], found: list[Base], rs: Optional[int], trend_passed: int,
+                     screen_cfg: ScreenConfig, pcfg, what: str) -> tuple[StageResult, Optional[dict]]:
+    """Stages for a shaped pattern (cup, flag): forming within pcfg.max_dist_to_pivot of its pivot,
+    no minimum length, and the pattern's RS / Trend Template minimums. Returns (result, shape or None)."""
+    from dataclasses import replace
+
+    cfg = replace(screen_cfg, max_dist_to_pivot=pcfg.max_dist_to_pivot, min_forming_weeks=0)
+    res = classify(candles, found, cfg)
+    if res.stage is None:
+        return res, None
+    pat = found[-1] if res.stage == "forming" else next(b for b in reversed(found) if b.breakout is not None)
+    fails = []
+    if rs is None or rs < pcfg.min_rs:
+        fails.append(f"RS {rs} < {pcfg.min_rs}")
+    if trend_passed < pcfg.min_trend_checks:
+        fails.append(f"trend {trend_passed} < {pcfg.min_trend_checks}")
+    if fails:
+        res.stage, res.reason = None, f"{what}, but " + "; ".join(fails)
+    return res, pat.shape
+
+
 def classify_cup(candles: list[dict], cups: list[Base], rs: Optional[int], trend_passed: int,
                  screen_cfg: ScreenConfig, cup_cfg) -> tuple[StageResult, Optional[dict]]:
     """Stage on the Cup & handle screen (cups from engine/cups.py). Forming = in the handle within
     cup_cfg.max_dist_to_pivot of the handle high; RS and Trend Template minimums as for VCP.
     Returns (result, cup shape dict or None)."""
-    from dataclasses import replace
+    return _classify_shaped(candles, cups, rs, trend_passed, screen_cfg, cup_cfg, "cup with handle")
 
-    cfg = replace(screen_cfg, max_dist_to_pivot=cup_cfg.max_dist_to_pivot, min_forming_weeks=0)
-    res = classify(candles, cups, cfg)
-    if res.stage is None:
-        return res, None
-    cup = cups[-1] if res.stage == "forming" else next(b for b in reversed(cups) if b.breakout is not None)
-    fails = []
-    if rs is None or rs < cup_cfg.min_rs:
-        fails.append(f"RS {rs} < {cup_cfg.min_rs}")
-    if trend_passed < cup_cfg.min_trend_checks:
-        fails.append(f"trend {trend_passed} < {cup_cfg.min_trend_checks}")
-    if fails:
-        res.stage, res.reason = None, "cup with handle, but " + "; ".join(fails)
-    return res, cup.shape
+
+def classify_flag(candles: list[dict], flags: list[Base], rs: Optional[int], trend_passed: int,
+                  screen_cfg: ScreenConfig, flag_cfg) -> tuple[StageResult, Optional[dict]]:
+    """Stage on the Bull flag screen (flags from engine/flags.py). Forming = in the flag within
+    flag_cfg.max_dist_to_pivot of the flag high; RS and Trend Template minimums from flag_cfg."""
+    return _classify_shaped(candles, flags, rs, trend_passed, screen_cfg, flag_cfg, "bull flag")

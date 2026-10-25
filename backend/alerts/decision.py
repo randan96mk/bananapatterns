@@ -47,19 +47,21 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                      rs: Optional[int] = None, tt_passed: int = 0, tt_of: int = 8,
                      bases_cfg: BaseConfig, vcp_cfg: VcpConfig, alerts_cfg: AlertsConfig,
                      ended: Optional[dict] = None, live: Optional[dict] = None,
-                     size_factor: float = 1.0, size_note: str = "", cup: Optional[dict] = None) -> Optional[dict]:
+                     size_factor: float = 1.0, size_note: str = "", cup: Optional[dict] = None,
+                     flag: Optional[dict] = None) -> Optional[dict]:
     """Everything the decision chart and message need, or None if there is no base.
 
     live: intraday {ltp, open, high, low, volume} for today's still-forming candle; for close_check also
           {pace, range, verdict} from backend.alerts.intraday.close_verdict.
     ended: played out {date, reason, gain_pct, peak_pct}.
     cup: the Cup & handle screen's shape (engine/cups.py); the chart then shows that cup, not a box base.
+    flag: the Bull flag screen's shape (engine/flags.py); the chart shows the pole and the flag channel.
     """
-    if cup:
-        base = _cup_base(candles, cup, kind, bases_cfg)
+    if cup or flag:
+        base = _cup_base(candles, cup, kind, bases_cfg) if cup else _flag_base(candles, flag, kind, bases_cfg)
         if base is None:
             return None
-        v = SimpleNamespace(stop=cup["stop"], contractions=[], qualifies=True, shrinking=None, dryup=None,
+        v = SimpleNamespace(stop=(cup or flag)["stop"], contractions=[], qualifies=True, shrinking=None, dryup=None,
                             tightening=None)
     else:
         bases = detect_bases(candles, bases_cfg)
@@ -91,13 +93,25 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                    (True, f"Handle {h['depth_pct']:.1f}% deep, {h['bars']} sessions, upper half"),
                    ((h["volume_x"] if h["volume_x"] is not None else 9) <= 1.0,
                     f"Handle volume dried up {h['volume_x'] or 0:.2f}×")]
+    elif flag:
+        p_, f_ = flag["pole"], flag["flag"]
+        checks += [(True, f"Pole +{p_['gain_pct']:.0f}% in {p_['bars']} sessions"
+                          + (f" on {p_['volume_x']:.1f}× volume" if p_.get("volume_x") is not None else "")),
+                   (True, f"Flag {f_['bars']} sessions, −{f_['depth_pct']:.1f}% ({f_['retrace_pct']:.0f}% of the pole)"),
+                   ((f_["volume_x"] if f_["volume_x"] is not None else 9) <= 0.8,
+                    f"Flag volume dried up {f_['volume_x'] or 0:.2f}× the pole's")]
+        if flag.get("htf"):
+            checks.append((True, "High-tight flag: pole +90% within 8 weeks"))
+        if flag.get("post_results"):
+            checks.append((True, "Post-results flag: the results are already out"))
     else:
         checks += [(bool(v.shrinking), "Pullbacks shrinking " + (" → ".join(f"{d:.0f}%" for d in depths) or "(none)")),
               ((v.dryup or 9) <= vcp_cfg.max_dryup, f"Volume dried up {v.dryup if v.dryup is not None else 0:.2f}× "
                                                     f"(≤ {vcp_cfg.max_dryup:g})"),
               ((v.tightening or 9) <= vcp_cfg.max_tightening,
                f"Range tightening {v.tightening if v.tightening is not None else 0:.2f}× (≤ {vcp_cfg.max_tightening:g})")]
-    pattern = "cup & handle" if cup else ("VCP ✓" if v.qualifies else "not a VCP")
+    pattern = ("cup & handle" if cup else ("high-tight flag" if flag.get("htf") else "bull flag") if flag
+               else ("VCP ✓" if v.qualifies else "not a VCP"))
     bo = base.breakout
     if bo is not None and kind in BREAKOUT_KINDS:
         checks += [(bo.volume_ok, f"Breakout volume {bo.volume_ratio or 0:.1f}× (≥ 1.5)"),
@@ -150,12 +164,15 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
             watch = ["Volume or the close may not confirm the breakout.",
                      "Wait for the 18:30 confirmation or a better day.", f"Counts only on a close above {_rs(pivot)}."]
     else:                                                         # forming / near_pivot
-        verdict = ("Cup & handle forming ✓" if cup else "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)")
+        verdict = ("Cup & handle forming ✓" if cup else f"{pattern.capitalize()} forming ✓" if flag
+                   else "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)")
         vcolor = UP if v.qualifies else ACC
-        fail_at = cup["handle"]["low"] if cup else (v.contractions[-1]["low"] if v.contractions else stop)
+        fail_at = (cup["handle"]["low"] if cup else flag["flag"]["low"] if flag
+                   else (v.contractions[-1]["low"] if v.contractions else stop))
+        where = "handle low" if cup else "flag low" if flag else "last pullback low"
         watch = [f"Trigger: a CLOSE above {_rs(pivot)} on ≥ 1.5× volume.",
-                 f"Setup fails on a close below {_rs(fail_at)} ({'handle low' if cup else 'last pullback low'}).",
-                 f"Now {abs(ext):.1f}% under the pivot."]
+                 f"Setup fails on a close below {_rs(fail_at)} ({where}).",
+                 f"Now {abs(ext):.1f}% under the pivot." + (" Flags are fast: act within 1–3 sessions." if flag else "")]
 
     size = None
     if alerts_cfg.capital > 0 and alerts_cfg.risk_pct > 0:
@@ -166,6 +183,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
             size = {"qty": qty, "entry": entry, "risk_rs": qty * per_share, "value": qty * entry, "note": size_note}
 
     return {"symbol": symbol, "company": company, "industry": industry, "kind": kind, "base": base, "vcp": v, "cup": cup,
+            "flag": flag,
             "pivot": pivot, "stop": stop, "zone_top": zone_top, "close": close, "ext_pct": ext,
             "risk_pct": (close - stop) / close * 100, "ma50": ma50, "checks": checks, "verdict": verdict,
             "verdict_color": vcolor, "watch": watch, "size": size, "ended": ended, "live": live,
@@ -183,6 +201,26 @@ def _cup_base(candles: list[dict], cup: dict, kind: str, bases_cfg: BaseConfig) 
                 start_index=L, end_index=t, bars=t - L + 1, weeks=cup["cup"]["weeks"], pivot=pivot,
                 pivot_date=cup["right_lip"]["date"], low=low, low_date=cup["bottom"]["date"],
                 depth_pct=cup["cup"]["depth_pct"], vol_dryup=cup["handle"]["volume_x"], kind="cup", shape=cup)
+    return _with_breakout(base, candles, kind, bases_cfg)
+
+
+def _flag_base(candles: list[dict], flag: dict, kind: str, bases_cfg: BaseConfig) -> Optional[Base]:
+    """Rebuild the scan's flag as a Base on these candles (plus its breakout for breakout kinds)."""
+    idx = {c["date"]: i for i, c in enumerate(candles)}
+    P, t = idx.get(flag["pole"]["start"]), idx.get(flag["flag"]["end"])
+    if P is None or t is None:
+        return None
+    f_ = flag["flag"]
+    base = Base(number=1, status="forming", start_date=candles[P]["date"], end_date=candles[t]["date"],
+                start_index=P, end_index=t, bars=t - P + 1, weeks=max(1, (t - P) // 5), pivot=flag["pole"]["high"],
+                pivot_date=flag["pole"]["top"], low=f_["low"], low_date=f_["end"], depth_pct=f_["depth_pct"],
+                vol_dryup=f_["volume_x"], kind="flag", shape=flag)
+    return _with_breakout(base, candles, kind, bases_cfg)
+
+
+def _with_breakout(base: Base, candles: list[dict], kind: str, bases_cfg: BaseConfig) -> Optional[Base]:
+    """Breakout kinds: the first close above the pivot after the pattern; otherwise the distance to it."""
+    pivot, t = base.pivot, base.end_index
     if kind in BREAKOUT_KINDS:
         close = np.array([c["close"] for c in candles], dtype=float)
         after = np.nonzero(close[t + 1:] > pivot)[0]
@@ -269,6 +307,44 @@ def _handle_curve(R, M, E, lip, low, pivot, k=30):
     return np.array(xs), np.array(ys)
 
 
+def _draw_flag(ax, flag: dict, idx: dict, marks: list) -> list:
+    """The pole as a glowing arrow from P (its low) to T (its top), the flag as a shaded channel between two
+    parallel lines. Badges go into `marks`; returns the pole / flag labels as (text, xy, offsets, style) for
+    _place once the candles are known, so they don't sit on the price."""
+    from matplotlib.patches import FancyArrowPatch, Polygon
+    p_, f_ = flag["pole"], flag["flag"]
+    P_, T_ = idx.get(p_["start"]), idx.get(p_["top"])
+    (ts, y0), (te, y1) = f_["top_line"]
+    (_, b0), (_, b1) = f_["bot_line"]
+    a_, e_ = idx.get(ts), idx.get(te)
+    labels = []
+    if P_ is not None and T_ is not None:
+        for lw, al, ms in ((8, .15, 1), (2.4, .95, 18)):
+            ax.add_patch(FancyArrowPatch((P_, p_["low"]), (T_, p_["high"]), arrowstyle="-|>", mutation_scale=ms,
+                                         color=UP, lw=lw, alpha=al, zorder=5))
+        marks.append(_badge(ax, P_, p_["low"], "P", UP, dy=-16))
+        marks.append(_badge(ax, T_, p_["high"], "T", UP, dy=16))
+        labels.append((f"pole +{p_['gain_pct']:.0f}%\n{p_['bars']} sessions"
+                       + (f"\n{p_['volume_x']:.1f}× volume" if p_.get("volume_x") is not None else ""),
+                       ((P_ + T_) / 2, (p_["low"] + p_["high"]) / 2),
+                       [(-60, 10), (-80, 40), (-90, -20), (-130, 20), (-60, -60), (-150, 60), (-40, 80)],
+                       dict(color=UP, fontsize=9.5, fontweight="bold", ha="center", va="center",
+                            bbox=dict(boxstyle="round,pad=.3", fc=BG, ec=UP, alpha=.9))))
+    if a_ is not None and e_ is not None:
+        ax.add_patch(Polygon([(a_, y0), (e_, y1), (e_, b1), (a_, b0)], closed=True, fc=ACC, alpha=.10, ec="none",
+                             zorder=3))
+        for ya, yb in ((y0, y1), (b0, b1)):
+            ax.plot([a_, e_], [ya, yb], color=ACC, lw=6, alpha=.15, solid_capstyle="round", zorder=4)
+            ax.plot([a_, e_], [ya, yb], color=ACC, lw=2, solid_capstyle="round", zorder=5)
+        labels.append((f"flag −{f_['depth_pct']:.0f}%\n{f_['bars']} sessions"
+                       + (f"\nvol {f_['volume_x']:.2f}×" if f_.get("volume_x") is not None else ""),
+                       ((a_ + e_) / 2, (b0 + b1) / 2),
+                       [(0, -45), (30, -55), (-30, -60), (40, -90), (0, -100), (60, 30), (-60, -110)],
+                       dict(color=ACC, fontsize=9.5, fontweight="bold", ha="center", va="center",
+                            bbox=dict(boxstyle="round,pad=.3", fc=BG, ec=ACC, alpha=.9))))
+    return labels
+
+
 def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> bytes:
     if not charts.CHARTS_AVAILABLE:
         raise RuntimeError("matplotlib is not installed: run .venv/bin/pip install -r requirements.txt")
@@ -276,6 +352,8 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     live = ctx.get("live")
     if ctx.get("cup"):                                            # show the whole cup, left lip included
         bars = min(330, max(bars, len(candles) - ctx["base"].start_index + 15))
+    elif ctx.get("flag"):                                         # the pole and some of the trend before it
+        bars = min(330, max(bars, len(candles) - ctx["base"].start_index + 40))
     data = list(candles)
     if live:                                                      # today's still-forming candle
         data.append({"date": "LIVE", "open": live["open"], "high": live["high"], "low": live["low"],
@@ -309,18 +387,18 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     axp.set_facecolor(BG)
     axp.axis("off")
 
-    cup = ctx.get("cup")
+    cup, flag = ctx.get("cup"), ctx.get("flag")
     x0 = idx.get(base.start_date, 0 if base.start_date < view[0]["date"] else None)
     x1 = idx.get(base.end_date)
-    if x0 is not None and x1 is not None and not cup:
+    if x0 is not None and x1 is not None and not cup and not flag:
         ax.add_patch(Rectangle((x0 - .5, base.low), x1 - x0 + 1, pivot - base.low, fc=UP, alpha=.08, ec=UP, ls=":", lw=1))
     ax.axhspan(pivot, ctx["zone_top"], color=UP, alpha=.13, lw=0)
     ax.text(n * 0.62, ctx["zone_top"], "buy zone", color=UP, fontsize=9, ha="center", va="bottom")
     ax.axhline(pivot, color=UP, ls="--", lw=1.3)
-    ax.text(1.2, pivot, f" pivot {_rs(pivot)}", color=UP, fontsize=10, va="bottom", fontweight="bold")
+    levels = [ax.text(1.2, pivot, f" pivot {_rs(pivot)}", color=UP, fontsize=10, va="bottom", fontweight="bold")]
     _badge(ax, 0.5, pivot, 1, UP, dx=-2, dy=0)
     ax.axhline(stop, color=DOWN, ls="--", lw=1.1)
-    ax.text(1.2, stop, f" stop {_rs(stop)}", color=DOWN, fontsize=10, va="top", fontweight="bold")
+    levels.append(ax.text(1.2, stop, f" stop {_rs(stop)}", color=DOWN, fontsize=10, va="top", fontweight="bold"))
     _badge(ax, 0.5, stop, "S", DOWN, dx=-2, dy=0)
     ax.plot(x, ma50[off:], color=BLUE, lw=1.1, label="50-day")
     ax.plot(x, ma200[off:], color=ORANGE, lw=1.1, label="200-day")
@@ -361,12 +439,15 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
             ax.plot(hx, hy, color=ACC, lw=2.2, solid_capstyle="round", zorder=5)
             marks.append(ax.text(m_, cup["handle"]["low"], f"handle −{cup['handle']['depth_pct']:.0f}%",
                                  color=ACC, fontsize=9, ha="center", va="top", fontweight="bold"))
+    flag_labels = _draw_flag(ax, flag, idx, marks) if flag else []  # P -> T pole arrow and the flag channel
     ax.set_xlim(-1.5, n + 0.5)
     ax.set_ylim(*ax.get_ylim())                                     # freeze limits so boxes can be measured
     renderer = fig.canvas.get_renderer()
-    taken = [m.get_window_extent(renderer) for m in marks] + [ax.get_legend().get_window_extent(renderer)]
+    taken = [m.get_window_extent(renderer) for m in marks + levels] + [ax.get_legend().get_window_extent(renderer)]
     from matplotlib.transforms import Bbox
     taken += [Bbox(ax.transData.transform([(i - .45, lo[i]), (i + .45, h[i])])) for i in range(n)]   # candles
+    for text, xy, offsets, kw in flag_labels:                       # pole / flag labels, clear of the candles
+        _place(ax, taken, text, xy, offsets, **kw)
 
     kind = ctx["kind"]
     if base.breakout is not None and kind in BREAKOUT_KINDS and base.breakout.date in idx:
@@ -392,7 +473,17 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
            bbox=dict(boxstyle="round,pad=.3", fc=PANEL, ec=ACC if live else MUTED))
 
     axv.bar(x, vol, color=np.where(up, UP + "88", DOWN + "88"), width=.68)
-    if x0 is not None and x1 is not None:
+    if flag:
+        P_, T_, E_ = (idx.get(d) for d in (flag["pole"]["start"], flag["pole"]["top"], flag["flag"]["end"]))
+        if P_ is not None and T_ is not None:
+            axv.axvspan(P_ + .5, T_ + .5, color=UP, alpha=.08)
+            axv.text(P_ + 1, vol.max() * .82, "pole volume", color=UP, fontsize=9, fontweight="bold")
+        if T_ is not None and E_ is not None:
+            axv.axvspan(T_ + .5, E_ + .5, color=ACC, alpha=.08)
+            vx = flag["flag"]["volume_x"]
+            axv.text(E_ + .5, vol.max() * .6, f"dry-up {vx:.2f}× " if vx is not None else "flag ", color=ACC,
+                     fontsize=9, fontweight="bold", ha="right")
+    elif x0 is not None and x1 is not None:
         axv.axvspan(x0 - .5, x1 + .5, color=ACC, alpha=.08)
         right_side = x0 > n * 0.6
         label = f"volume dry-up {v.dryup:.2f}× " if v.dryup is not None else "base volume "

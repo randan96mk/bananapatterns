@@ -378,9 +378,9 @@ class Scheduler:
             as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
             rows = conn.execute(
                 f"SELECT symbol, payload FROM scan_results WHERE as_of = ? AND stage = 'forming' AND screen IN "
-                f"({','.join('?' * len(cfg.screens))}) ORDER BY CASE screen WHEN 'vcp' THEN 0 WHEN 'cup' THEN 1 ELSE 2 END",
+                f"({','.join('?' * len(cfg.screens))}) ORDER BY {msg.SCREEN_ORDER_SQL.format(col='screen')}",
                 (as_of, *cfg.screens)).fetchall()
-        cands = {}                                         # a name on several screens: the VCP, else the cup payload
+        cands = {}                                         # a name on several screens: VCP, else cup, else flag
         for r in rows:
             if r["symbol"] in stocks and r["symbol"] not in cands:
                 cands[r["symbol"]] = json.loads(r["payload"])

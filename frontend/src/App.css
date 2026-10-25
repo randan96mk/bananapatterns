@@ -289,3 +289,9 @@ body.modal-open { overflow: hidden; }
 .feeditem.g-funds.sell { border-left-color: var(--warn); }
 .feeditem.results { border-left: 3px solid var(--warn); }
 .feeditem.results.held { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+
+/* Bull flag on grid cards: pole arrow and flag channel */
+.mc-pole { stroke: var(--ok); stroke-width: 2; stroke-linecap: round; }
+.mc-arrowhead { fill: var(--ok); }
+.mc-flag { stroke: var(--accent-text); stroke-width: 1.6; stroke-linecap: round; }
+.mc-flag-fill { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: none; }

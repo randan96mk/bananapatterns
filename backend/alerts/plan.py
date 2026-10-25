@@ -42,7 +42,7 @@ def rank_score(p: dict, tier: Optional[str], coil: Optional[dict]) -> float:
 
 def candidates(as_of: str, screens: list[str]) -> list[dict]:
     """Forming names on the alert screens (VCP payload preferred when a name is on both)."""
-    order = {s: SCREEN_PREF.get(s, 3) for s in screens}
+    order = {s: SCREEN_PREF.get(s, len(SCREEN_PREF)) for s in screens}
     out = {}
     with get_db() as conn:
         rows = conn.execute(

@@ -205,7 +205,7 @@ def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bas
                                industry=p.get("industry") or "", rs=p.get("rs"), tt_passed=p.get("tt_passed") or 0,
                                tt_of=p.get("tt_of") or 8, bases_cfg=bases_cfg, vcp_cfg=vcp_cfg, alerts_cfg=cfg,
                                ended=ended, live=live, size_factor=size_factor, size_note=size_note,
-                               cup=p.get("cup"))
+                               cup=p.get("cup"), flag=p.get("flag"))
         if ctx is None:
             return None, None
         if cfg.results_calendar:

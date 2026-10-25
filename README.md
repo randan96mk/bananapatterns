@@ -32,19 +32,20 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 10. [RS rating and Trend Template](#rs-rating-and-trend-template)
 11. [VCP screen](#vcp-screen)
 12. [Cup & handle screen](#cup--handle-screen)
-13. [Results calendar](#results-calendar)
-14. [Exchange filings (news)](#exchange-filings-news)
-15. [Red flags and fund buying](#red-flags-and-fund-buying)
-16. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
-17. [REST API](#rest-api)
-18. [CLI](#cli)
-19. [Configuration](#configuration)
-20. [Frontend](#frontend)
-21. [Testing](#testing)
-22. [Troubleshooting](#troubleshooting)
-23. [Roadmap](#roadmap)
-24. [Decisions log](#decisions-log)
-25. [Development log](#development-log)
+13. [Bull flag screen](#bull-flag-screen)
+14. [Results calendar](#results-calendar)
+15. [Exchange filings (news)](#exchange-filings-news)
+16. [Red flags and fund buying](#red-flags-and-fund-buying)
+17. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+18. [REST API](#rest-api)
+19. [CLI](#cli)
+20. [Configuration](#configuration)
+21. [Frontend](#frontend)
+22. [Testing](#testing)
+23. [Troubleshooting](#troubleshooting)
+24. [Roadmap](#roadmap)
+25. [Decisions log](#decisions-log)
+26. [Development log](#development-log)
 ---
 
 ## Quick start (Mac)
@@ -448,6 +449,29 @@ once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, nea
 close check, the daily plan and the position guard, with the cup's own stop (handle low − 1%) and a
 "Cup · handle · vol · stop" line. A name on several screens alerts once per kind, from the most specific screen
 (VCP, then Cup & handle, then Bases).
+
+## Bull flag screen
+
+`backend/engine/flags.py` finds bull flags and high-tight flags, looking only at past bars: a sharp **pole**, then a
+short, quiet **flag**. Pick **Bull flag** in the screen dropdown; it uses the same stage cards, feed, grid, alerts,
+decision charts, A/B tiers, daily plan, position guard and News tab as VCP and Cup & handle. Rules in
+**Settings → flag**:
+
+| Part | Default rule |
+|---|---|
+| Pole | ≥ 20% rise in ≤ 30 sessions (from where the sharp move starts), on ≥ 1.2× the 50-day volume |
+| Flag | 5–25 sessions, ≤ 25% under the pole top and giving back ≤ 38% of the pole, drifting sideways / down |
+| Volume | flag volume ≤ 0.8× the pole's |
+| Pivot / stop | pivot = the flag's high (the pole top); stop = flag low − 1%, never more than 10% under the pivot |
+| Screen | Forming = in the flag within 6% of the pivot; RS ≥ 80 and Trend Template ≥ 5/8 |
+| Tags | **tight** (≤ 25% of the pole given back) · **HTF** high-tight flag (pole ≥ +90% within 8 weeks) · **post-results** (results came out during the pole, so the event risk is behind it) |
+
+Score (0–100): flag tightness 30, volume dry-up 20, pole strength 20, RS 20, flag length 10. The decision chart draws
+the pole as a glowing arrow from **P** to **T** and the flag as a shaded channel between two parallel lines, with
+pole and flag volume shaded underneath; grid cards draw the same in miniature. Flags are fast: the chart says to act
+within 1–3 sessions of the breakout. Bases cards get a **Flag** tag. Bull flag is an alert screen by default (saved
+settings get it once, after Cup & handle). Calibrated on the demo history: 107 flag breakouts across the Nifty 500 in
+~300 sessions (median pole +32% in 18 sessions, flag 8 sessions and 7% deep on 0.5× volume).
 
 ## Results calendar
 
@@ -1275,3 +1299,11 @@ of receiving it (a small change in that repo).
 ### 2026-10-25: News tab
 - Moves / News / Results tabs in the What-changed box; `backend/ingest/news.py` + `GET /api/news` (board scope: all
   screens and stages + held / watched). 271 offline tests passing.
+
+### 2026-10-25: Bull flag screen
+- `backend/engine/flags.py`: causal bull-flag detector (pole, flag channel, tight / HTF tags) returning bases (kind
+  "flag"); `classify_flag` (shared `_classify_shaped` with cups); a fourth scan screen `flag` with a post-results tag
+  from the results calendar / filings; `flag` settings section.
+- Decision chart (pole arrow, channel, volume shading, collision-free labels), grid cards, table columns, alerts
+  (flag stop and line, "Bull flag" header), tiers, plan, guard (flag low), News scope, one SQL screen order
+  (`SCREEN_ORDER_SQL`). 287 offline tests passing.

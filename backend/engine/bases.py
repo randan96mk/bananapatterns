@@ -69,11 +69,13 @@ class Base:
     vol_dryup: Optional[float]       # mean volume in base / mean volume of dryup_lookback bars before it
     dist_to_pivot_pct: Optional[float] = None   # forming only: (pivot - last close) / pivot, in %
     breakout: Optional[Breakout] = None
-    kind: str = "base"                          # "base" (box) | "cup" (cup with handle, engine/cups.py)
-    shape: Optional[dict] = None                # cup geometry: lips, bottom, handle (cups only)
+    kind: str = "base"                          # "base" (box) | "cup" (engine/cups.py) | "flag" (engine/flags.py)
+    shape: Optional[dict] = None                # cup / flag geometry (lips, handle / pole, flag channel)
 
     @property
     def label(self) -> str:
+        if self.kind == "flag":
+            return f"Flag · {(self.shape or {}).get('flag', {}).get('bars', self.bars)}d"
         return f"C&H · {self.weeks}w" if self.kind == "cup" else f"B{self.number} · {self.weeks}w"
 
     def to_dict(self) -> dict:
@@ -87,7 +89,7 @@ def _r(x, nd=2):
 
 
 def breakout_metrics(t: int, pivot: float, dates: list, high, low, close, vol, cfg: BaseConfig) -> Breakout:
-    """The Breakout record for a close above `pivot` at bar t (shared by box bases and cups)."""
+    """The Breakout record for a close above `pivot` at bar t (shared by box bases, cups and flags)."""
     sma50 = trailing_stat(vol, t, 50, np.mean)
     med20 = trailing_stat(vol, t, 20, np.median)
     r50 = vol[t] / sma50 if sma50 and not np.isnan(sma50) else None
