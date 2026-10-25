@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 from typing import Optional
@@ -15,10 +15,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
-from backend.database.models import get_candles, get_db, get_logs, get_runs, latest_universe
+from backend.database.models import get_candles, get_db, get_logs, get_runs, latest_universe, now_ist
 from backend.engine.bases import detect_bases
 from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
+from backend.ingest import events as ev
 from backend.ingest import universe as uni
 from backend.api import security
 from backend.kite_api import auth
@@ -450,6 +451,43 @@ def screens_summary(screen: str):
             "fresh_sessions": S().config.screen.fresh_sessions}
 
 
+RESULTS_HORIZON = 15                                  # sessions: cards show results due within ~3 weeks
+
+
+def _results_for(symbols: list[str]) -> dict[str, dict]:
+    """{symbol: {date, sessions, label, warn}} for results due within RESULTS_HORIZON sessions."""
+    cfg = S().config.alerts
+    if not cfg.results_calendar or not symbols:
+        return {}
+    out = {}
+    for sym, r in ev.upcoming_results(now_ist()[:10], symbols).items():
+        if r["sessions"] <= RESULTS_HORIZON:
+            out[sym] = dict(r, label=ev.results_label(r), warn=r["sessions"] <= cfg.results_warn_sessions)
+    return out
+
+
+@router.get("/events")
+def events_list(symbol: Optional[str] = None):
+    """The NSE event calendar: one stock's events (from 30 days ago), or the fetch status."""
+    if symbol:
+        since = (datetime.now(IST).date() - timedelta(days=30)).isoformat()
+        return {"symbol": symbol, "events": ev.for_symbol(symbol.upper(), since)}
+    with get_db() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM corp_events WHERE kind = 'results' AND date >= ?",
+                         (now_ist()[:10],)).fetchone()[0]
+    return {"last_fetch": ev.last_fetch(), "upcoming_results": n}
+
+
+@router.post("/events/refresh")
+def events_refresh():
+    """Fetch the NSE results / board-meeting calendar now."""
+    try:
+        n = ev.refresh_from_nse()
+    except Exception as exc:
+        raise HTTPException(502, f"NSE event calendar fetch failed: {exc}")
+    return {"stored": n, "last_fetch": ev.last_fetch()}
+
+
 @router.get("/screens/{screen}/results")
 def screens_results(screen: str, stage: str = Query(...)):
     _check_screen(screen)
@@ -463,8 +501,10 @@ def screens_results(screen: str, stage: str = Query(...)):
     from backend.engine import market
     with get_db() as conn:
         h = market.latest(conn, as_of) if as_of else None
+    results = _results_for([p["symbol"] for p in items])
     for p in items:                                   # A/B badge, same rule as the alerts
         p["tier"] = market.tier(p, h["status"] if h else None, S().config.alerts)
+        p["results"] = results.get(p["symbol"])
     if screen in ("vcp", "cup"):
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
@@ -522,7 +562,9 @@ class StopRequest(BaseModel):
 def positions_list():
     """Positions the guard follows (synced from Kite holdings after the evening scan, or Run guard now)."""
     from backend.alerts import guard
-    return {"positions": guard.positions()}
+    pos = guard.positions()
+    results = _results_for([p["symbol"] for p in pos])
+    return {"positions": [dict(p, results=results.get(p["symbol"])) for p in pos]}
 
 
 @router.put("/positions/{symbol}")

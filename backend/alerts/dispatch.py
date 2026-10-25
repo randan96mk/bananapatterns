@@ -31,6 +31,7 @@ KIND_TOGGLE = {"breakout": "breakout", "breakout_low_volume": "low_volume_breako
                "played_out": "played_out", "forming": "forming", "left": "left", "climbing": "below_pivot"}
 
 
+RESULTS_NOTE_KINDS = {"breakout", "breakout_low_volume", "forming", "near_pivot", "intraday", "close_check"}
 ACTION_KINDS = {"breakout", "breakout_low_volume", "forming", "near_pivot", "intraday", "close_check", "plan",
                 "climbing"}
 
@@ -78,6 +79,8 @@ class Notifier:
              buttons: Optional[list[tuple[str, str]]] = None) -> bool:
         if not self.ready or self.already_sent(key):
             return False
+        if symbol and kind in RESULTS_NOTE_KINDS:
+            html += results_note(symbol, self.cfg)
         ok, err = True, None
         try:
             if buttons is None and symbol and kind in ACTION_KINDS and self.cfg.alert_buttons:
@@ -105,6 +108,21 @@ class Notifier:
 
     def system(self, key: str, text: str) -> bool:
         return self.cfg.system and self.send(key, "system", msg.system_alert(text))
+
+
+def results_note(symbol: str, cfg: AlertsConfig, as_of: Optional[str] = None) -> str:
+    """'⚠️ Results Tue 28 Oct (in 3 sessions): ...' when the stock reports within results_warn_sessions."""
+    if not cfg.results_calendar:
+        return ""
+    from backend.ingest import events
+    try:
+        r = events.next_results(symbol, as_of or now_ist()[:10])
+    except Exception:
+        logger.exception("Results lookup failed for %s", symbol)
+        return ""
+    if not r or r["sessions"] > cfg.results_warn_sessions:
+        return ""
+    return f"\n⚠️ <b>{events.results_label(r)}</b>: a results gap can jump past the stop either way."
 
 
 _warned_no_charts = False
@@ -138,6 +156,10 @@ def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bas
                                cup=p.get("cup"))
         if ctx is None:
             return None, None
+        if cfg.results_calendar:
+            from backend.ingest import events
+            r = events.next_results(p["symbol"], now_ist()[:10])
+            ctx["results"] = events.results_label(r) if r and r["sessions"] <= cfg.results_warn_sessions else None
         png = None
         chart_kind = "intraday" if kind == "close_check" else kind      # one toggle covers both live charts
         if (force_image or (cfg.chart_images and chart_kind in cfg.chart_kinds)) and charts_available():

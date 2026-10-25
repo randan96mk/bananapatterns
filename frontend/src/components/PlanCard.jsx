@@ -1,4 +1,5 @@
 import React from 'react';
+import ResultsTag from './ResultsTag';
 
 const rs = (v) => (v == null ? '' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
 
@@ -17,6 +18,7 @@ export default function PlanCard({ plan, onSelect }) {
             <span>close above <b>{rs(i.pivot)}</b> <span className="muted">({i.dist_to_pivot_pct?.toFixed(1)}% away)</span></span>
             <span className="muted">zone to {rs(i.zone_top)} · stop {rs(i.stop)}{i.size ? ` · ~${i.size.qty} sh` : ''}</span>
             {i.coiled && <span className="tag warnbg">🌀 coiled {i.coiled.volume_x}×</span>}
+            <ResultsTag r={i.results} />
           </button>))}
       </div>
     </div>

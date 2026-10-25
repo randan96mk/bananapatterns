@@ -14,6 +14,7 @@ from backend.alerts.messages import SCREEN_PREF, setup_stop
 from backend.config import AlertsConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine import market
+from backend.ingest import events
 
 TOP_BONUS, COILED_BONUS, DIST_WEIGHT = 10.0, 8.0, 2.0
 
@@ -52,13 +53,20 @@ def candidates(as_of: str, screens: list[str]) -> list[dict]:
     return list(out.values())
 
 
+def soon(r: Optional[dict], cfg: AlertsConfig) -> Optional[dict]:
+    """The results entry when it falls within results_warn_sessions, else None."""
+    return r if r and r["sessions"] <= cfg.results_warn_sessions else None
+
+
 def build_plan(as_of: str, cfg: AlertsConfig, vcp_cfg: VcpConfig, tokens: dict[str, int]) -> list[dict]:
     """Top plan_top_n setups for the session after `as_of`, best first."""
     with get_db() as conn:
         h = market.latest(conn, as_of)
     status = h["status"] if h else None
     items = []
-    for p in candidates(as_of, cfg.screens):
+    cands = candidates(as_of, cfg.screens)
+    upcoming = events.upcoming_results(as_of, [p["symbol"] for p in cands]) if cfg.results_calendar else {}
+    for p in cands:
         tok = tokens.get(p["symbol"])
         with get_db() as conn:
             cs = get_candles(conn, tok, limit=60) if tok is not None else []
@@ -69,7 +77,8 @@ def build_plan(as_of: str, cfg: AlertsConfig, vcp_cfg: VcpConfig, tokens: dict[s
         items.append({"symbol": p["symbol"], "screen": p["screen"], "base_label": p.get("base_label"), "pivot": pivot,
                       "zone_top": round(pivot * (1 + cfg.buy_zone_pct), 2), "stop": stop, "close": p.get("close"),
                       "dist_to_pivot_pct": p.get("dist_to_pivot_pct"), "rs": p.get("rs"), "score": p.get("score"),
-                      "tier": t, "coiled": coil, "rank": rank_score(p, t, coil), "payload": p})
+                      "tier": t, "coiled": coil, "rank": rank_score(p, t, coil), "payload": p,
+                      "results": soon(upcoming.get(p["symbol"]), cfg)})
     items.sort(key=lambda i: -i["rank"])
     return items[:cfg.plan_top_n]
 

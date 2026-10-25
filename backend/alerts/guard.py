@@ -9,6 +9,7 @@ changed on the dashboard. Rules (each alert once; the stop alert repeats daily w
   profit    gain from the average >= profit_zone_pct: consider selling part
   extended  close >= extended_pct above the 50-day line
   failed    back under the pivot within failed_days sessions of first holding it
+  results   results due within results_guard_sessions (NSE calendar): a gap can jump the stop
 """
 
 import json
@@ -125,7 +126,9 @@ def evaluate(pos: dict, candles: list[dict], cfg: AlertsConfig) -> dict:
 def run(as_of: str, tokens: dict[str, int], cfg: AlertsConfig, notifier, decorate=lambda h: h) -> dict:
     """Evening checks for every followed position; sends rule alerts and one summary."""
     from backend.alerts import messages as msg
+    from backend.ingest import events
     rows, sent = [], 0
+    upcoming = events.upcoming_results(as_of, [p["symbol"] for p in positions()]) if cfg.results_calendar else {}
     for pos in positions():
         tok = tokens.get(pos["symbol"])
         with get_db() as conn:
@@ -144,6 +147,12 @@ def run(as_of: str, tokens: dict[str, int], cfg: AlertsConfig, notifier, decorat
             if notifier.send(key, "guard", decorate(msg.guard_alert(rule, pos, ev, cfg)), pos["symbol"]):
                 sent += 1
                 flags[rule] = ev["date"]
+        r = upcoming.get(pos["symbol"])
+        ev["results"] = r if r and r["sessions"] <= cfg.results_warn_sessions else None
+        if r and r["sessions"] <= cfg.results_guard_sessions and notifier.send(
+                f"guard|{pos['symbol']}|results|{r['date']}", "guard",
+                decorate(msg.guard_results(pos, ev, events.results_label(r))), pos["symbol"]):
+            sent += 1
         if flags != pos["flags"]:
             with get_db() as conn:
                 conn.execute("UPDATE guard_positions SET flags = ? WHERE symbol = ?", (json.dumps(flags), pos["symbol"]))

@@ -431,6 +431,8 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     if ctx["size"]:
         s = ctx["size"]
         line(f"     Size ≈ {s['qty']} sh @ {_rs(s['entry'])} · risk {_rs(s['risk_rs'])}", TEXT)
+    if ctx.get("results"):
+        line(f"R   {ctx['results']}: gap risk", ORANGE)
     y[0] -= .008
     line("WHAT TO WATCH", MUTED, 9, True, .034)
     for w in ctx["watch"]:
