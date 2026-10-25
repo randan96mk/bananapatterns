@@ -11,7 +11,18 @@ cd "$(dirname "$0")"
 PORT="${BP_PORT:-8000}"
 export BP_UID="$(id -u)" BP_GID="$(id -g)"   # the container runs as you, so it can write data/ and logs/
 
-command -v docker >/dev/null 2>&1 || { echo "Docker not found: install Docker Desktop (or OrbStack) first."; exit 1; }
+# Docker Desktop's "user" install puts the docker command in ~/.docker/bin, which a terminal opened earlier (or
+# one whose PATH lacks it) can't see; look in the usual Docker Desktop / OrbStack / Homebrew places too.
+for d in "$HOME/.docker/bin" "/Applications/Docker.app/Contents/Resources/bin" "$HOME/.orbstack/bin" \
+         "/usr/local/bin" "/opt/homebrew/bin"; do
+    [ -x "$d/docker" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
+done
+export PATH
+command -v docker >/dev/null 2>&1 || {
+    echo "Docker not found. Install Docker Desktop (or OrbStack) and open it; if it is installed, choose"
+    echo "Docker Desktop -> Settings -> Advanced -> System (requires password), then reopen this terminal."
+    exit 1
+}
 docker info >/dev/null 2>&1 || { echo "Docker is not running: open Docker Desktop (or OrbStack) and try again."; exit 1; }
 
 running() { [ "$(docker inspect -f '{{.State.Running}}' bananapatterns 2>/dev/null)" = "true" ]; }
