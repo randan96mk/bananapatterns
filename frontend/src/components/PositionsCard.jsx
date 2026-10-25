@@ -3,6 +3,7 @@ import * as api from '../services/api';
 import { useIsPhone } from '../useMedia';
 import ResultsTag from './ResultsTag';
 import NewsTag from './NewsTag';
+import FlagTags from './FlagTags';
 
 const rs = (v) => (v == null ? '' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
 const RULES = { stop: '🛑 stop', ma50: '📉 50-day', profit: '💰 profit zone', extended: '🎈 extended', failed: '⚠️ failed' };
@@ -29,6 +30,7 @@ export default function PositionsCard({ onSelect }) {
             <div className="row"><b className="link" onClick={() => onSelect(p.symbol)}>{p.symbol}</b>
               <ResultsTag r={p.results} />
               <NewsTag n={p.news} />
+              <FlagTags f={p.flags} />
               <span className="muted">{p.qty} sh @ {rs(p.avg_price)}</span></div>
             <label className="field">Stop <input className="stopinput" inputMode="decimal" defaultValue={p.stop}
               onBlur={(e) => Number(e.target.value) !== p.stop && saveStop(p.symbol, e.target.value)} />
@@ -42,7 +44,7 @@ export default function PositionsCard({ onSelect }) {
         <tbody>{rows.map((p) => (
           <tr key={p.symbol}>
             <td><b className="link" onClick={() => onSelect(p.symbol)}>{p.symbol}</b>
-              <ResultsTag r={p.results} /><NewsTag n={p.news} /></td>
+              <ResultsTag r={p.results} /><NewsTag n={p.news} /><FlagTags f={p.flags} /></td>
             <td className="num">{p.qty}</td><td className="num">{rs(p.avg_price)}</td><td className="num">{rs(p.pivot)}</td>
             <td><input className="stopinput" defaultValue={p.stop} onBlur={(e) => Number(e.target.value) !== p.stop
               && saveStop(p.symbol, e.target.value)} /> <span className="muted small">{p.stop_source}</span></td>

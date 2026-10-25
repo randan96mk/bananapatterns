@@ -21,6 +21,7 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setenv("BP_DB_PATH", str(db))
     monkeypatch.setattr("backend.ingest.events.refresh_from_nse", _offline)     # tests never call NSE
     monkeypatch.setattr("backend.ingest.filings.refresh_from_nse", _offline)
+    monkeypatch.setattr("backend.ingest.holders.refresh_from_nse", _offline)
     from backend.database.models import init_db
     init_db()
     return db

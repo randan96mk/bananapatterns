@@ -150,10 +150,13 @@ def history(conn, limit: int = 60) -> list[dict]:
 
 def tier(p: dict, status: Optional[str], cfg: AlertsConfig) -> str:
     """A: VCP or cup with handle qualifies, RS >= a_min_rs, trend >= a_min_trend, industry in the top a_top_industry_frac,
-    market not in correction. Otherwise B."""
+    market not in correction, no red flag (promoter selling, legal action, auditor exit, downgrade). Otherwise B."""
     vcp_ok = bool(p.get("vcp")) or bool(p.get("vcp_tag")) or bool(p.get("cup")) or bool(p.get("cup_tag"))
     rank, of = p.get("industry_rank"), p.get("industry_of")
     top_industry = rank is not None and of and rank <= max(1, ceil(of * cfg.a_top_industry_frac))
     ok = (vcp_ok and (p.get("rs") or 0) >= cfg.a_min_rs and (p.get("tt_passed") or 0) >= cfg.a_min_trend
           and top_industry and status != CORRECTION)
+    if ok and p.get("symbol"):
+        from backend.ingest import holders
+        ok = not holders.has_red(p["symbol"], cfg)
     return "A" if ok else "B"

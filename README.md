@@ -34,16 +34,17 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 12. [Cup & handle screen](#cup--handle-screen)
 13. [Results calendar](#results-calendar)
 14. [Exchange filings (news)](#exchange-filings-news)
-15. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
-16. [REST API](#rest-api)
-17. [CLI](#cli)
-18. [Configuration](#configuration)
-19. [Frontend](#frontend)
-20. [Testing](#testing)
-21. [Troubleshooting](#troubleshooting)
-22. [Roadmap](#roadmap)
-23. [Decisions log](#decisions-log)
-24. [Development log](#development-log)
+15. [Red flags and fund buying](#red-flags-and-fund-buying)
+16. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+17. [REST API](#rest-api)
+18. [CLI](#cli)
+19. [Configuration](#configuration)
+20. [Frontend](#frontend)
+21. [Testing](#testing)
+22. [Troubleshooting](#troubleshooting)
+23. [Roadmap](#roadmap)
+24. [Decisions log](#decisions-log)
+25. [Development log](#development-log)
 ---
 
 ## Quick start (Mac)
@@ -498,6 +499,29 @@ What you get:
   an **Exchange filings (30 days)** list in the stock chart window.
 
 API: `GET /api/filings` (status), `GET /api/filings?symbol=X&days=30`, `POST /api/filings/refresh`.
+
+## Red flags and fund buying
+
+`backend/ingest/holders.py` adds who is buying and selling, fetched with the filings job: NSE's daily **bulk / block
+deals** (`bulk.csv`, `block.csv`) and **big-holder disclosures** (SEBI SAST Reg 29: a holder crossing 5% or moving 2%+),
+stored in the `deals` table. **Data → Refresh deals** fetches them by hand. NSE's pledge and insider-trading feeds
+return empty data to scripts, so pledges are not covered.
+
+| Signal | Rule (Settings → alerts) | Effect |
+|---|---|---|
+| 🚩 Promoter sold X% | promoter sale ≥ `stake_change_min_pct` (1%) in `red_flag_days` (30) | **tier B**, alert line, chip |
+| 🚩 Regulatory / legal | a legal filing (orders passed, insolvency, litigation …), not one "in favour" of the company | tier B … |
+| 🚩 Auditor resigned / Rating downgrade | from the filings | tier B … |
+| 🏦 Fund bought ₹X Cr | a fund / institution net-bought ≥ `deal_min_cr` (₹5 Cr) in bulk / block deals in `deal_days` (10) | +4 plan rank, alert line, green chip |
+| 🏦 Fund stake up to X% | SAST: a fund raised its stake by ≥ 1% | as above |
+| 🏦 Fund sold … / stake down | the same, selling | caution chip and alert line |
+
+Funds are told apart from prop traders by name (mutual fund, insurance, pension, FPI houses …); a client who buys
+and sells the same stock on the same day nets out. A red flag keeps a stock at **tier B** (so it only appears in the
+digest unless watched) until it ages out. Stock alerts carry the 🚩 / 🏦 lines; held, watched and plan stocks get a
+message for each new one ("🚩 DDD · Promoter sold 2.4% (you hold it)"); chips show on cards, tables, positions and
+the plan card; the stock window's **Filings & deals** list shows every deal and disclosure. `red_flags` and `deals`
+switch them off. API: `GET /api/deals` (status), `GET /api/deals?symbol=X`, `POST /api/deals/refresh`.
 
 ## Telegram alerts and automatic jobs
 
@@ -1231,3 +1255,10 @@ of receiving it (a small change in that repo).
 - News lines on stock alerts (`news_note` in `Notifier.send`), filing alerts for held / watched / plan stocks
   (`Scheduler.alert_filings`), 📰 chips and a filings list in the chart window.
 - 253 offline tests passing.
+
+### 2026-10-25: Red flags and fund buying
+- `backend/ingest/holders.py` + `deals` table: bulk / block deals and SAST Reg 29 disclosures, fetched with the
+  filings job; `signals()` builds 🚩 red flags (promoter selling, legal, auditor exit, downgrade) and 🏦 fund moves.
+- A red flag holds a stock at tier B (`market.tier`); alert lines (`flags_note`), held / watched / plan messages
+  (`Scheduler.alert_deals`), plan rank +4 for fund buying, chips and a deals list in the stock window.
+- 268 offline tests passing.
