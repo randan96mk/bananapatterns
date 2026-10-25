@@ -30,6 +30,12 @@ const CUP_COLS = [['Score', (r) => r.score?.toFixed(0)], ['Cup', (r) => r.cup &&
   ['Handle', (r) => r.cup && `${pctv(r.cup.handle.depth_pct)} · ${r.cup.handle.bars}d`],
   ['Handle vol', (r) => x2(r.cup?.handle.volume_x)], ['Prior rise', (r) => r.cup && pctv(r.cup.prior_advance_pct)],
   ['Stop', (r) => rs(r.cup?.stop)]];
+const FLAG_COLS = [['Score', (r) => r.score?.toFixed(0)],
+  ['Pole', (r) => r.flag && `+${r.flag.pole.gain_pct.toFixed(0)}% · ${r.flag.pole.bars}d`],
+  ['Flag', (r) => r.flag && `${pctv(r.flag.flag.depth_pct)} · ${r.flag.flag.bars}d`],
+  ['Flag vol', (r) => x2(r.flag?.flag.volume_x)], ['Tags', (r) => r.flag && [r.flag.htf && 'HTF',
+    r.flag.tight && 'tight', r.flag.post_results && 'post-results'].filter(Boolean).join(' · ')],
+  ['Stop', (r) => rs(r.flag?.stop)]];
 
 const TITLES = { forming: 'Forming', fresh: 'Fresh breakouts', climbing: 'Climbing', played_out: 'Played out',
   fresh_low_volume: 'Low-volume breakouts (below the volume rule; not counted)' };
@@ -48,7 +54,7 @@ function Results({ view, ...props }) {
 
 function Table({ screen, stage, selected, onSelect, shown }) {
   const isVcp = screen === 'vcp';
-  const extra = { vcp: VCP_COLS, cup: CUP_COLS }[screen] || [];
+  const extra = { vcp: VCP_COLS, cup: CUP_COLS, flag: FLAG_COLS }[screen] || [];
   const cols = [...COLS[stage], ...extra];
   return (
     <div className="tablewrap">
@@ -61,6 +67,7 @@ function Table({ screen, stage, selected, onSelect, shown }) {
             <td>{r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>}<b>{r.symbol}</b>
               {screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
               {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
+              {screen === 'bases' && r.flag_tag && <span className="tag ok">Flag</span>}
               <ResultsTag r={r.results} />
               <NewsTag n={r.news} />
               <FlagTags f={r.flags} />

@@ -6,16 +6,18 @@ as-of date in scan_results / scan_changes (history for Phase 4).
 """
 
 import json
+from datetime import date, timedelta
 from typing import Optional
 
-from backend.config import BaseConfig, CupConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
+from backend.config import BaseConfig, CupConfig, FlagConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine.bases import detect_bases
 from backend.engine import market
 from backend.engine.cups import cup_score, detect_cups
 from backend.engine.rs import industry_ranks, rs_ratings, rs_score
 from backend.engine.scoring import vcp_score
-from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_cup, classify_vcp
+from backend.engine.flags import detect_flags, flag_score
+from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_cup, classify_flag, classify_vcp
 from backend.engine.trend_template import trend_template
 from backend.logging_config.logger import setup_logger
 
@@ -57,13 +59,29 @@ def change_line(symbol: str, y: Optional[StageResult], t: StageResult) -> Option
     return None
 
 
-SCREENS = ("bases", "vcp", "cup")
+SCREENS = ("bases", "vcp", "cup", "flag")
+
+
+def _results_days(conn) -> dict[str, list[str]]:
+    """{symbol: [results dates]} from the results calendar and results filings (both kept locally)."""
+    out: dict[str, set] = {}
+    for r in conn.execute("SELECT symbol, date AS d FROM corp_events WHERE kind = 'results' "
+                          "UNION SELECT symbol, substr(dt, 1, 10) AS d FROM filings WHERE kind = 'results'"):
+        out.setdefault(r["symbol"], set()).add(r["d"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def _post_results(days, shape: dict) -> bool:
+    """Results came out during the pole (or up to 3 days before it started): a post-results flag, the event
+    risk already behind it."""
+    start, top = date.fromisoformat(shape["pole"]["start"]), shape["pole"]["top"]
+    return any((start - timedelta(days=3)).isoformat() <= d <= top for d in days)
 
 
 def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict],
              trend_cfg: Optional[TrendConfig] = None, vcp_cfg: Optional[VcpConfig] = None,
              market_cfg: Optional[MarketConfig] = None, index_token: Optional[int] = None,
-             cup_cfg: Optional[CupConfig] = None) -> dict:
+             cup_cfg: Optional[CupConfig] = None, flag_cfg: Optional[FlagConfig] = None) -> dict:
     """symbols: [{symbol, instrument_token, company?, industry?}], e.g. resolve_universe(...)["stocks"].
 
     Produces both screens: "bases" (every base) and "vcp" (bases that pass the VCP rules).
@@ -74,9 +92,11 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
     vcp_cfg = vcp_cfg or VcpConfig()
     market_cfg = market_cfg or MarketConfig()
     cup_cfg = cup_cfg or CupConfig()
+    flag_cfg = flag_cfg or FlagConfig()
     with get_db() as conn:
         series = {s["symbol"]: get_candles(conn, s["instrument_token"]) for s in symbols}
         index = get_candles(conn, index_token) if index_token is not None else []
+        results_days = _results_days(conn)
     as_of = max((c[-1]["date"] for c in series.values() if c), default=None)
     if as_of is None:
         return {"as_of": None, "counts": {}, "changes": {}, "scanned": 0}
@@ -136,6 +156,20 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
         line = change_line(sym, cy, ct)
         if line:
             changes["cup"].append((s, line[0], line[1], ct))
+
+        flags_today, flags_yday = detect_flags(candles, flag_cfg, bases_cfg), detect_flags(prev, flag_cfg, bases_cfg)
+        ft, fshape = classify_flag(candles, flags_today, ratings[sym], tt["passed"], screen_cfg, flag_cfg)
+        fy, _ = classify_flag(prev, flags_yday, ratings[sym], tt["passed"], screen_cfg, flag_cfg)
+        fextra = {k: v for k, v in extra.items() if k not in ("vcp_tag", "cup_tag", "flag_tag")}
+        if fshape is not None:
+            fshape["post_results"] = _post_results(results_days.get(sym, ()), fshape)
+            fextra["flag"] = fshape
+            fextra["score"] = flag_score(fshape, ratings[sym], flag_cfg)
+            extra["flag_tag"] = ft.stage is not None  # shown as a "Flag" tag on the Bases screen
+        rows["flag"].append((s, ft, fextra))
+        line = change_line(sym, fy, ft)
+        if line:
+            changes["flag"].append((s, line[0], line[1], ft))
 
     counts = {k: {st: 0 for st in (*CARD_STAGES, "fresh_low_volume")} for k in SCREENS}
     for k in SCREENS:

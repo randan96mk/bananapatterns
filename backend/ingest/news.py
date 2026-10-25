@@ -1,6 +1,6 @@
 """The News tab: exchange news on the stocks that matter to you, in one list.
 
-Scope ("board stocks"): every stock in the latest scan on any screen (VCP, Cup & handle, Bases) at any stage,
+Scope ("board stocks"): every stock in the latest scan on any screen (VCP, Cup & handle, Bull flag, Bases) at any stage,
 plus the stocks you hold (position guard) or watch. Built from what is already stored, no extra NSE calls:
   results   📊 results filed                       filings
   deals     📦 order wins, 🤝 deals                 filings
@@ -18,10 +18,10 @@ from backend.ingest import events
 from backend.ingest import filings as fl
 from backend.ingest import holders
 
-SCREEN_NAMES = {"vcp": "VCP", "cup": "C&H", "bases": "Base"}
+SCREEN_NAMES = {"vcp": "VCP", "cup": "C&H", "flag": "Flag", "bases": "Base"}
 STAGE_NAMES = {"forming": "forming", "fresh": "fresh breakout", "fresh_low_volume": "low-vol breakout",
                "climbing": "climbing", "played_out": "played out", "below_pivot": "below pivot"}
-SCREEN_ORDER = {"vcp": 0, "cup": 1, "bases": 2}
+SCREEN_ORDER = {"vcp": 0, "cup": 1, "flag": 2, "bases": 3}
 GROUP = {"results": "results", "order": "deals", "deal": "deals", "rating": "other", "management": "other",
          "legal": "other", "exchange": "other"}
 ICONS = {"results": "📊", "order": "📦", "deal": "🤝", "rating": "🏷️", "management": "👔", "legal": "⚖️",

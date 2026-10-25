@@ -194,10 +194,10 @@ def test_cup_alerts_once_with_the_cup_stop():
 def test_alert_screens_default_and_migration():
     from backend.config import AppConfig, load_config, save_config
     from backend.database.models import set_setting
-    assert AlertsConfig().screens == ["vcp", "cup"]
+    assert AlertsConfig().screens == ["vcp", "cup", "flag"]
     with get_db() as conn:
         set_setting(conn, "config.alerts", json.dumps({"screens": ["vcp", "bases"]}))      # saved before cups
-    assert load_config().alerts.screens == ["vcp", "cup", "bases"]
+    assert load_config().alerts.screens == ["vcp", "cup", "flag", "bases"]
     cfg = load_config()
     cfg.alerts.screens = ["vcp"]                                                         # you untick it later
     save_config(cfg)

@@ -27,6 +27,8 @@ function MiniChart({ s, r }) {
   return (
     <svg className="minichart" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img"
          aria-label={`${r.symbol} last ${n} sessions`}>
+      <defs><marker id="mc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5"
+                    orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className="mc-arrowhead" /></marker></defs>
       {r.cup && (() => {                                     // cup: a smooth U from lip to lip, then the handle
         const L = idx(r.cup.left_lip.date), B = idx(r.cup.bottom.date), R = idx(r.cup.right_lip.date);
         const he = idx(r.cup.handle.end);
@@ -61,7 +63,22 @@ function MiniChart({ s, r }) {
           {handle && <><polyline className="mc-handle-glow" points={handle} /><polyline className="mc-handle" points={handle} /></>}
         </>);
       })()}
-      {!r.cup && b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (
+      {r.flag && (() => {                                    // flag: P -> T pole arrow, then the flag channel
+        const pl = r.flag.pole, fl = r.flag.flag;
+        const P = idx(pl.start), T = idx(pl.top);
+        const [[ta, y0], [te, y1]] = fl.top_line, [[, b0_], [, b1_]] = fl.bot_line;
+        const a = idx(ta), e = idx(te);
+        return (<>
+          {P >= 0 && T >= 0 && <line className="mc-pole" x1={x(P)} y1={y(pl.low)} x2={x(T)} y2={y(pl.high)}
+                                     markerEnd="url(#mc-arrow)" />}
+          {a >= 0 && e >= 0 && <>
+            <polygon className="mc-flag-fill" points={`${x(a)},${y(y0)} ${x(e)},${y(y1)} ${x(e)},${y(b1_)} ${x(a)},${y(b0_)}`} />
+            <line className="mc-flag" x1={x(a)} y1={y(y0)} x2={x(e)} y2={y(y1)} />
+            <line className="mc-flag" x1={x(a)} y1={y(b0_)} x2={x(e)} y2={y(b1_)} />
+          </>}
+        </>);
+      })()}
+      {!r.cup && !r.flag && b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (
         <rect x={b0 * step} y={y(r.pivot)} width={(b1 - b0 + 1) * step} height={y(r.base_low) - y(r.pivot)}
               className="mc-box" />)}
       {r.pivot != null && <line x1={b0 >= 0 ? b0 * step : 0} x2={W} y1={y(r.pivot)} y2={y(r.pivot)} className="mc-pivot" />}
@@ -90,7 +107,7 @@ function MiniChart({ s, r }) {
 
 // The stage-specific lines under the chart.
 function Facts({ r, stage, isVcp }) {
-  const cup = r.cup;
+  const cup = r.cup, flag = r.flag;
   const pulls = (r.vcp?.contractions || []).map((c) => Math.round(c.depth_pct)).join('→');
   const lines = {
     forming: [`${r.dist_to_pivot_pct?.toFixed(1)}% under ${rs(r.pivot)}`, `Depth ${r.depth_pct?.toFixed(1)}%`],
@@ -107,7 +124,7 @@ function Facts({ r, stage, isVcp }) {
       {(lines[st] || []).map((l) => <div key={l}>{l}</div>)}
       <div className="muted">
         {[r.rs != null && `RS ${r.rs}`, r.tt_of && `Trend ${r.tt_passed}/${r.tt_of}`,
-          (isVcp || cup) && r.score != null && `Score ${r.score.toFixed(0)}`].filter(Boolean).join(' · ')}
+          (isVcp || cup || flag) && r.score != null && `Score ${r.score.toFixed(0)}`].filter(Boolean).join(' · ')}
       </div>
       {isVcp && (pulls || r.vcp?.dryup != null) && (
         <div className="muted">{[pulls && `Pullbacks ${pulls}`, r.vcp?.dryup != null && `Dry-up ${x2(r.vcp.dryup)}`,
@@ -115,6 +132,9 @@ function Facts({ r, stage, isVcp }) {
       {cup && (
         <div className="muted">{`Cup ${cup.cup.depth_pct.toFixed(0)}% · ${cup.cup.weeks}w · handle ${cup.handle.depth_pct.toFixed(1)}%`
           + `${cup.handle.volume_x != null ? ` · vol ${x2(cup.handle.volume_x)}` : ''} · stop ${rs(cup.stop)}`}</div>)}
+      {flag && (
+        <div className="muted">{`Pole +${flag.pole.gain_pct.toFixed(0)}% · ${flag.pole.bars}d · flag −${flag.flag.depth_pct.toFixed(1)}%`
+          + ` · ${flag.flag.bars}d${flag.flag.volume_x != null ? ` · vol ${x2(flag.flag.volume_x)}` : ''} · stop ${rs(flag.stop)}`}</div>)}
     </div>
   );
 }
@@ -138,6 +158,10 @@ export default function StageGrid({ screen, stage, asOf, rows, selected, onSelec
                 : 'B setup: digest only'}>{r.tier}</span>}
               <b>{r.symbol}</b>{screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
               {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
+              {screen === 'bases' && r.flag_tag && <span className="tag ok">Flag</span>}
+              {r.flag?.htf && <span className="tag ok" title="High-tight flag: pole +90% within 8 weeks">HTF</span>}
+              {r.flag?.tight && !r.flag?.htf && <span className="tag" title="Gave back 25% of the pole or less">tight</span>}
+              {r.flag?.post_results && <span className="tag" title="Results came out during the pole">post-results</span>}
               <span className="right muted small">{r.base_label}</span>
             </div>
             <div className="muted small sc-sub">{r.company}{r.industry ? ` · ${r.industry}` : ''}</div>

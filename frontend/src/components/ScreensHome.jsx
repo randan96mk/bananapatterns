@@ -59,6 +59,7 @@ export default function ScreensHome({ hasData }) {
         <select value={screen} onChange={(e) => { setScreen(e.target.value); setSelected(null); }}>
           <option value="vcp">VCP</option>
           <option value="cup">Cup &amp; handle</option>
+          <option value="flag">Bull flag</option>
           <option value="bases">Bases (all)</option>
         </select>
         <button className="btn ghost" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : 'Rescan'}</button>
@@ -81,6 +82,8 @@ export default function ScreensHome({ hasData }) {
               vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.',
               cup: 'Cups with a handle: U-shaped 12–33% cups of 7–65 weeks after a 30%+ rise, with a tight, quiet handle in '
                 + 'the upper half — tap a stage to see the names.',
+              flag: 'Bull flags: a 20%+ pole in up to 6 weeks on volume, then a 1–5 week flag that gives back at most 38% '
+                + 'on drying volume (HTF = +90% pole) — tap a stage to see the names.',
             }[screen] || 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
             <div className="boardgrid">
               <div className="cards">
@@ -103,7 +106,7 @@ export default function ScreensHome({ hasData }) {
                 </div>
                 {tab === 'news' && <>
                   <div className="muted small">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board
-                    stocks (VCP, Cup &amp; handle, Bases) + held / watched</div>
+                    stocks (VCP, Cup &amp; handle, Bull flag, Bases) + held / watched</div>
                   <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : (phone ? 4 : 8)} />
                   {(news?.items.length || 0) > (phone ? 4 : 8) && <button className="linkbtn"
                     onClick={() => setFullFeed(!fullFeed)}>

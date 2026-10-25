@@ -127,7 +127,7 @@ export default function AlertsPanel() {
         <div className="row">
           <label className="muted">chat_id <input value={cfg.chat_id} onChange={(e) => setCfg({ ...cfg, chat_id: e.target.value })} /></label>
           <span className="muted">screens</span>
-          {[['vcp', 'VCP'], ['cup', 'Cup & handle'], ['bases', 'Bases']].map(([k, label]) => (
+          {[['vcp', 'VCP'], ['cup', 'Cup & handle'], ['flag', 'Bull flag'], ['bases', 'Bases']].map(([k, label]) => (
             <label key={k} className="muted"><input type="checkbox" checked={cfg.screens.includes(k)}
               onChange={(e) => {
                 const next = e.target.checked ? [...cfg.screens, k] : cfg.screens.filter((x) => x !== k);

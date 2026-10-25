@@ -172,6 +172,30 @@ class CupConfig:
 
 
 @dataclass
+class FlagConfig:
+    """Bull flag / high-tight flag: a sharp pole, then a short, quiet pullback. Bars are trading sessions."""
+    min_pole_gain: float = 0.20            # pole: low -> top at least +20% ...
+    pole_max_bars: int = 30                # ... within this many sessions
+    pole_min_bars: int = 3
+    pole_min_volume: float = 1.2           # pole volume / 50-day average before it
+    flag_min_bars: int = 5
+    flag_max_bars: int = 25
+    max_flag_depth: float = 0.25           # flag low at most this far under the pole top
+    max_retrace: float = 0.38              # ... and at most this share of the pole given back
+    tight_retrace: float = 0.25            # "tight" tag (and full tightness score) at or under this
+    max_flag_volume: float = 0.8           # flag volume / pole volume (dry-up)
+    max_flag_rise: float = 0.03            # the flag's fitted line may rise at most this much: a flag drifts
+    htf_min_gain: float = 0.90             # high-tight flag: pole +90% ...
+    htf_max_bars: int = 40                 # ... within 40 sessions, flag no deeper than max of 25%
+    max_dist_to_pivot: float = 0.06        # Forming: close within this under the flag high
+    stop_buffer: float = 0.01              # stop = flag low - 1%, never more than max_stop under the pivot
+    max_stop: float = 0.10
+    min_rs: int = 80
+    min_trend_checks: int = 5
+    history_bars: int = 300                # how far back breakouts are looked for
+
+
+@dataclass
 class VcpConfig:
     """VCP screen dials (classic Minervini VCP; metric definitions in backend/engine/vcp.py).
 
@@ -207,7 +231,7 @@ class AlertsConfig:
     """Telegram alerts and the automatic jobs. The bot token lives in .env (TELEGRAM_BOT_TOKEN)."""
     enabled: bool = True
     chat_id: str = ""                      # found with "Detect chat ID" (or set TELEGRAM_CHAT_ID in .env)
-    screens: list = field(default_factory=lambda: ["vcp", "cup"])
+    screens: list = field(default_factory=lambda: ["vcp", "cup", "flag"])
     breakout: bool = True                  # fresh breakout (volume-confirmed)
     low_volume_breakout: bool = False
     below_pivot: bool = True
@@ -314,7 +338,8 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
-                      "vcp": VcpConfig, "cup": CupConfig, "alerts": AlertsConfig, "market": MarketConfig}
+                      "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
+                      "market": MarketConfig}
 
 
 @dataclass
@@ -326,6 +351,7 @@ class AppConfig:
     trend: TrendConfig = field(default_factory=TrendConfig)
     vcp: VcpConfig = field(default_factory=VcpConfig)
     cup: CupConfig = field(default_factory=CupConfig)
+    flag: FlagConfig = field(default_factory=FlagConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
@@ -398,4 +424,11 @@ def load_config(config: AppConfig | None = None) -> AppConfig:
                 screens.insert(screens.index("vcp") + 1, "cup")
                 set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
             set_setting(conn, "migrated.alerts_cup", "1")
+        if not get_setting(conn, "migrated.alerts_flag"):       # and the bull flag screen, after the cup
+            screens = config.alerts.screens
+            if "vcp" in screens and "flag" not in screens:
+                at = screens.index("cup") + 1 if "cup" in screens else screens.index("vcp") + 1
+                screens.insert(at, "flag")
+                set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
+            set_setting(conn, "migrated.alerts_flag", "1")
     return config

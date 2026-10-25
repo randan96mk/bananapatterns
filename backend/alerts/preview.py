@@ -3,6 +3,7 @@
 import json
 from typing import Optional
 
+from backend.alerts.messages import SCREEN_ORDER_SQL
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, latest_universe
 
@@ -38,7 +39,7 @@ def alert_chart(cfg: AppConfig, symbol: str, kind: str = "auto") -> tuple[Option
         candles = get_candles(conn, row["instrument_token"])
         scan = conn.execute("SELECT r.stage, r.payload FROM scan_results r WHERE r.symbol = ? AND r.as_of = "
                             "(SELECT MAX(as_of) FROM scan_runs) "
-                            "ORDER BY CASE r.screen WHEN 'vcp' THEN 0 WHEN 'cup' THEN 1 ELSE 2 END LIMIT 1",
+                            "ORDER BY " + SCREEN_ORDER_SQL.format(col="r.screen") + " LIMIT 1",
                             (symbol,)).fetchone()
         m = conn.execute("SELECT rs, tt_passed FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1",
                          (symbol,)).fetchone()
