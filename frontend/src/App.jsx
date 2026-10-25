@@ -8,6 +8,7 @@ import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
 import * as api from './services/api';
+import { applyMode, getMode } from './theme';
 
 const TABS = [
   ['screens', 'Screens'],
@@ -24,6 +25,8 @@ export default function App() {
   const [universe, setUniverse] = useState(null);
   const [selected, setSelected] = useState(null);
   const [backendErr, setBackendErr] = useState('');
+  const [mode, setMode] = useState(getMode);
+  const pickMode = (m) => { setMode(m); applyMode(m); };
 
   const loadKite = useCallback(async (verify = false) => {
     try { setKite(await api.kiteStatus(verify)); setBackendErr(''); } catch (e) { setBackendErr(e.message); }
@@ -46,6 +49,11 @@ export default function App() {
         <nav>{TABS.map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>))}
         </nav>
+        <span className="seg themeseg" role="group" aria-label="Theme">
+          {[['auto', '◐ Auto'], ['light', '☀ Light'], ['dark', '☾ Dark']].map(([m, label]) => (
+            <button key={m} className={mode === m ? 'active' : ''} aria-pressed={mode === m}
+                    onClick={() => pickMode(m)}>{label}</button>))}
+        </span>
       </header>
       {backendErr ? <div className="kitebar warn">Backend unreachable: {backendErr}. Is `python run.py` running?</div>
         : <KiteBar status={kite} onChange={setKite} />}

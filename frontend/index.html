@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // set the theme before the first paint (no dark/light flash); see src/theme.js
+      (function () {
+        var m = 'auto';
+        try { m = localStorage.getItem('bp.theme') || 'auto'; } catch (e) {}
+        if (m === 'auto') m = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.dataset.theme = m;
+      })();
+    </script>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍌</text></svg>" />
     <title>Banana Patterns</title>
   </head>
