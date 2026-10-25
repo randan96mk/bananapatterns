@@ -5,6 +5,7 @@ import StageList from './StageList';
 import MarketCard from './MarketCard';
 import PlanCard from './PlanCard';
 import PositionsCard from './PositionsCard';
+import { useIsPhone } from '../useMedia';
 
 const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
@@ -19,6 +20,7 @@ export default function ScreensHome({ hasData }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [mkt, setMkt] = useState(null);
+  const phone = useIsPhone();
   const [plan, setPlan] = useState(null);
 
   const load = useCallback(async () => {
@@ -88,14 +90,14 @@ export default function ScreensHome({ hasData }) {
                 <div className="row"><b>What changed since last close</b>
                   <span className="muted">({fmtDate(feed?.as_of)}) · end of day · {rows.length} moves</span></div>
                 {rows.length === 0 && <p className="muted">No stage moves today.</p>}
-                {(fullFeed ? rows : rows.slice(0, 6)).map((r, i) => (
+                {(fullFeed ? rows : rows.slice(0, phone ? 3 : 6)).map((r, i) => (
                   <div key={i} className={`feeditem k-${r.kind}`} onClick={() => setSelected(r.symbol)}>
                     <span>{r.text}</span>
                     <span className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>
                       ₹{r.close?.toLocaleString('en-IN')} {r.change_pct != null && `${r.change_pct > 0 ? '+' : ''}${r.change_pct.toFixed(1)}%`}</span>
                   </div>
                 ))}
-                {rows.length > 6 && <button className="linkbtn" onClick={() => setFullFeed(!fullFeed)}>
+                {rows.length > (phone ? 3 : 6) && <button className="linkbtn" onClick={() => setFullFeed(!fullFeed)}>
                   {fullFeed ? 'Show less' : `Show the full feed (${rows.length}) ›`}</button>}
               </div>
             </div>

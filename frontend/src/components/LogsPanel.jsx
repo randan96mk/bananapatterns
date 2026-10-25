@@ -18,13 +18,13 @@ export default function LogsPanel() {
         <button className="btn ghost" onClick={load}>Refresh</button>
         <span className="muted">Full INFO log: logs/bananapatterns.log</span>
       </div>
-      <table className="grid small">
+      <div className="hscroll"><table className="grid small">
         <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Message</th></tr></thead>
         <tbody>{logs.map((l) => (
           <tr key={l.id}><td>{l.timestamp.replace('T', ' ').slice(0, 19)}</td>
             <td className={`lvl-${l.level}`}>{l.level}</td><td>{l.source}</td><td>{l.message}</td></tr>))}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 }

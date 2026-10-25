@@ -29,6 +29,9 @@ const PRIORITY_FIELDS = [['a_min_rs', 'A needs RS ≥'], ['a_min_trend', 'A need
   ['a_top_industry_frac', 'A needs industry in top (0.33 = third)']];
 const SIZE_FIELDS = [['buy_zone_pct', 'Buy zone above pivot (0.05 = 5%)'],
   ['capital', 'Capital ₹ for position size (0 = off)'], ['risk_pct', 'Risk per trade (0.01 = 1%)']];
+// Phone keyboards: a time picker for HH:MM fields, the number pad for numbers.
+const inputKind = (k) => (/(_time|intraday_start|intraday_end)$/.test(k) ? { type: 'time' }
+  : k === 'chat_id' ? {} : { inputMode: 'decimal' });
 const strip = (h) => h.replace(/<[^>]+>/g, '');
 const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout'], ['near_pivot', '🎯 Near pivot'],
   ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Back below pivot'], ['played_out', '🏁 Played out'],
@@ -194,13 +197,13 @@ export default function AlertsPanel() {
                   : cfg.chart_kinds.filter((x) => x !== k) })} /> {label}</label>))}
             {SIZE_FIELDS.map(([k, label]) => (
               <label key={k} className="toggle field">{label}
-                <input value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
+                <input {...inputKind(k)} value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
                        onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
           </div>
           <div><h4>A/B priority</h4>
             {PRIORITY_FIELDS.map(([k, label]) => (
               <label key={k} className="toggle field">{label}
-                <input value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
+                <input {...inputKind(k)} value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
                        onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
             <label className="toggle field">B setups
               <select value={cfg.b_alerts} onChange={(e) => save({ b_alerts: e.target.value })}>
@@ -215,7 +218,7 @@ export default function AlertsPanel() {
           <div><h4>Timing</h4>
             {FIELDS.map(([k, label]) => (
               <label key={k} className="toggle field">{label}
-                <input value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
+                <input {...inputKind(k)} value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
                        onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
           </div>
         </div>
@@ -232,25 +235,25 @@ export default function AlertsPanel() {
           <button className="btn ghost" onClick={load}>Refresh</button>
         </div>
         <p className="muted small">Jobs run only while this app is open and the Mac is awake (see README: pmset wake schedule).</p>
-        <table className="grid small">
+        <div className="hscroll"><table className="grid small">
           <thead><tr><th>Job</th><th>Date</th><th>Started</th><th>Status</th><th>Message</th></tr></thead>
           <tbody>{(jobs?.runs || []).map((r) => (
             <tr key={r.id}><td>{r.job}</td><td>{r.run_date}</td><td>{r.started_at.replace('T', ' ').slice(0, 16)}</td>
               <td className={`s-${r.status}`}>{r.status}</td><td className="wrap">{r.message}</td></tr>))}
           </tbody>
-        </table>
+        </table></div>
       </div>
 
       <div className="panel">
         <h3>Sent alerts</h3>
-        <table className="grid small">
+        <div className="hscroll"><table className="grid small">
           <thead><tr><th>Time</th><th>Kind</th><th>Symbol</th><th>OK</th><th>Text</th></tr></thead>
           <tbody>{log.map((r) => (
             <tr key={r.key}><td>{r.sent_at.replace('T', ' ').slice(0, 16)}</td><td>{r.kind}</td><td>{r.symbol}</td>
               <td className={r.ok ? 'up' : 'down'}>{r.ok ? '✓' : `✗ ${r.error || ''}`}</td>
               <td className="wrap">{strip(r.text).slice(0, 220)}</td></tr>))}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </>
   );

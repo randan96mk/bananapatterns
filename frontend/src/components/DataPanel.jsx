@@ -78,7 +78,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       )}
 
       <h4>Recent runs</h4>
-      <table className="grid small">
+      <div className="hscroll"><table className="grid small">
         <thead><tr><th>#</th><th>Kind</th><th>Status</th><th>Started</th><th>Done</th><th>Failed</th><th>Message</th></tr></thead>
         <tbody>
           {(st?.runs || []).map((r) => (
@@ -87,7 +87,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
               <td>{r.failed}</td><td>{r.message}</td></tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 }
