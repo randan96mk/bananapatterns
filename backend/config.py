@@ -74,7 +74,7 @@ class IngestConfig:
 
 @dataclass
 class ServerConfig:
-    host: str = "127.0.0.1"
+    host: str = field(default_factory=lambda: os.getenv("BP_HOST", "127.0.0.1"))   # Docker: 0.0.0.0
     backend_port: int = 8000
     frontend_port: int = 3000
 

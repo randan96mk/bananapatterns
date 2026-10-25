@@ -26,6 +26,12 @@ if [ "$MODE" != "--backend" ] && command -v npm >/dev/null 2>&1; then
     fi
 fi
 
+# The Docker copy (./docker.sh) uses the same port, database and Telegram bot: never run both
+if command -v docker >/dev/null 2>&1 && [ "$(docker inspect -f '{{.State.Running}}' bananapatterns 2>/dev/null)" = "true" ]; then
+    echo "Banana Patterns is running in Docker. Stop it first (./docker.sh down) or keep using that copy."
+    exit 1
+fi
+
 # Free our ports only (not every uvicorn on the machine)
 for port in 8000 3000; do
     pids=$(lsof -ti tcp:$port 2>/dev/null || true)
