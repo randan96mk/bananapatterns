@@ -1,0 +1,24 @@
+# Banana Patterns with Docker (Mac now, a cloud server later): ./docker.sh up
+# Your existing data/, logs/ and config/ folders are mounted in, so the same database, settings and Kite
+# token are used as with ./start.sh. Run one copy at a time: two copies would send every alert twice.
+services:
+  banana:
+    build: .
+    image: bananapatterns:latest
+    container_name: bananapatterns
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Asia/Kolkata
+    ports:
+      - "127.0.0.1:${BP_PORT:-8000}:8000"     # this computer only; Kite redirect stays localhost:8000
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config                   # the NSE holiday list refreshes here
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

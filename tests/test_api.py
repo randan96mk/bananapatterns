@@ -134,3 +134,11 @@ def test_config_roundtrip_and_validation(api):
     assert t["min_rs"] == 80 and t["rs_weights"] == [0.25] * 4 and t["rs_periods"] == [63, 126, 189, 252]
     r = tc.put("/api/config/bases", json={"reset_on_undercut": "false", "vol_baseline": "median20"}).json()
     assert r["reset_on_undercut"] is False and r["vol_baseline"] == "median20"
+
+
+def test_server_host_from_env(monkeypatch):
+    from backend.config import ServerConfig
+    monkeypatch.delenv("BP_HOST", raising=False)
+    assert ServerConfig().host == "127.0.0.1"                          # the Mac: this computer only
+    monkeypatch.setenv("BP_HOST", "0.0.0.0")
+    assert ServerConfig().host == "0.0.0.0"                            # Docker: reachable through the port map

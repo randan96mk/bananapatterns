@@ -21,31 +21,32 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 
 ## Contents
 1. [Quick start (Mac)](#quick-start-mac)
-2. [Daily workflow](#daily-workflow)
-3. [Architecture](#architecture)
-4. [Project layout (code guide)](#project-layout-code-guide)
-5. [Database schema](#database-schema)
-6. [Kite Connect integration](#kite-connect-integration)
-7. [Data pipeline](#data-pipeline)
-8. [Base detection (engine)](#base-detection-engine)
-9. [Stage board (Screens home)](#stage-board-screens-home)
-10. [RS rating and Trend Template](#rs-rating-and-trend-template)
-11. [VCP screen](#vcp-screen)
-12. [Cup & handle screen](#cup--handle-screen)
-13. [Bull flag screen](#bull-flag-screen)
-14. [Results calendar](#results-calendar)
-15. [Exchange filings (news)](#exchange-filings-news)
-16. [Red flags and fund buying](#red-flags-and-fund-buying)
-17. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
-18. [REST API](#rest-api)
-19. [CLI](#cli)
-20. [Configuration](#configuration)
-21. [Frontend](#frontend)
-22. [Testing](#testing)
-23. [Troubleshooting](#troubleshooting)
-24. [Roadmap](#roadmap)
-25. [Decisions log](#decisions-log)
-26. [Development log](#development-log)
+2. [Run with Docker](#run-with-docker-mac-later-a-cloud-server)
+3. [Daily workflow](#daily-workflow)
+4. [Architecture](#architecture)
+5. [Project layout (code guide)](#project-layout-code-guide)
+6. [Database schema](#database-schema)
+7. [Kite Connect integration](#kite-connect-integration)
+8. [Data pipeline](#data-pipeline)
+9. [Base detection (engine)](#base-detection-engine)
+10. [Stage board (Screens home)](#stage-board-screens-home)
+11. [RS rating and Trend Template](#rs-rating-and-trend-template)
+12. [VCP screen](#vcp-screen)
+13. [Cup & handle screen](#cup--handle-screen)
+14. [Bull flag screen](#bull-flag-screen)
+15. [Results calendar](#results-calendar)
+16. [Exchange filings (news)](#exchange-filings-news)
+17. [Red flags and fund buying](#red-flags-and-fund-buying)
+18. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+19. [REST API](#rest-api)
+20. [CLI](#cli)
+21. [Configuration](#configuration)
+22. [Frontend](#frontend)
+23. [Testing](#testing)
+24. [Troubleshooting](#troubleshooting)
+25. [Roadmap](#roadmap)
+26. [Decisions log](#decisions-log)
+27. [Development log](#development-log)
 ---
 
 ## Quick start (Mac)
@@ -69,6 +70,38 @@ Then in the dashboard (http://localhost:3000):
 
 > The Kite developer console redirect URL is `http://localhost:8000/api/kite/callback`. Only one token per Kite
 > app is active: if another program uses the same API key, a login in either one logs the other out.
+
+## Run with Docker (Mac, later a cloud server)
+
+The same app in one container: the dashboard is built inside the image and served by the backend on port 8000,
+with the scheduler, Telegram bot and alerts running as usual. Your existing `data/`, `logs/` and `config/`
+folders are mounted in, so it uses the **same database, settings and Kite login** as `./start.sh`.
+
+**One time:** install [Docker Desktop](https://www.docker.com/products/docker-desktop/) or
+[OrbStack](https://orbstack.dev) (both free for personal use; pick the Apple Silicon or Intel build) and open it.
+Keep your `.env` as it is: it is read at start-up and never copied into the image.
+
+```bash
+./docker.sh up        # first time builds the image (~3-5 min), then starts it in the background
+./docker.sh logs      # follow what it is doing (Ctrl+C stops following, not the app)
+./docker.sh status    # running / healthy?
+./docker.sh update    # after a PR is merged: git pull + rebuild + restart (~1 min)
+./docker.sh down      # stop
+```
+
+- Dashboard: **http://localhost:8000**. The port is open to this Mac only, and the Kite redirect URL stays
+  `http://localhost:8000/api/kite/callback` (no Kite console change).
+- It restarts on its own after a crash, and starts again whenever Docker Desktop / OrbStack starts (set it to
+  open at login).
+- **Run one copy only.** `./docker.sh up` refuses while port 8000 is busy, and `./start.sh` refuses while the
+  Docker copy runs: two copies would send every alert twice. If you use the launchd agent
+  (`scripts/macos/`), unload it when switching to Docker.
+- A sleeping Mac pauses Docker as well; for alerts with the Mac off, the same image runs on a cloud server.
+- Back to the normal way at any time: `./docker.sh down`, then `./start.sh`.
+- Files: `Dockerfile` (Node stage builds the dashboard, Python 3.12 slim runs the app as a non-root user,
+  IST time zone, `/health` check), `docker-compose.yml` (restart policy, `.env`, the three folders, log
+  rotation), `.dockerignore` (keeps `.env`, `data/`, `logs/`, `node_modules`, `.venv` out of the image),
+  `docker.sh`. `BP_HOST=0.0.0.0` inside the container; `./start.sh` keeps `127.0.0.1`.
 
 ## Daily workflow
 
@@ -112,6 +145,7 @@ whenever they were issued.
 bananapatterns/
 ├─ run.py                     uvicorn entry (BP_DEV=1 → auto-reload)
 ├─ setup.sh / start.sh        one-time setup / launcher (dev, --prod, --backend)
+├─ Dockerfile, docker-compose.yml, .dockerignore, docker.sh   run in Docker (see "Run with Docker")
 ├─ requirements.txt  .env.example  pytest.ini  .vscode/tasks.json
 ├─ backend/
 │  ├─ main.py                 FastAPI app, lifespan restores today's token, serves frontend/build
@@ -1301,3 +1335,7 @@ ready for it.
 - Banana Patterns no longer hands Kite tokens to AlgoTrade-v3: `ALGOTRADE_URL`, `login_link.hand_over` and the
   handover status / Telegram line are gone. It keeps its own Kite login, Telegram login links and the paste-token
   box; the same API key can be used as long as no other program logs in with it at the same time.
+
+### 2026-10-25: Docker
+- `Dockerfile` (two stages), `docker-compose.yml`, `.dockerignore`, `docker.sh`; `ServerConfig.host` from
+  `BP_HOST`; `start.sh` refuses while the Docker copy runs. Same port, database, settings and Kite redirect URL.
