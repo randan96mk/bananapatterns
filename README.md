@@ -1099,7 +1099,6 @@ of receiving it (a small change in that repo).
   (shared by the dashboard and the bot).
 - 200 offline tests passing.
 
-
 ### 2026-10-25: Light and dark mode
 - Header theme switch (Auto / Light / Dark); light palette, remaining hard-coded colours moved to CSS variables;
   the candle chart and base boxes follow the theme. WCAG AA contrast checked for every text colour.
