@@ -186,7 +186,7 @@ class FakeClient:
 class LoginState:
     def __init__(self, **client):
         self.config = AppConfig()
-        self.config.alerts = AlertsConfig(chat_id="42", intraday=False)
+        self.config.alerts = AlertsConfig(chat_id="42", intraday=False, filings=False)
         self.config.kite = KiteConfig(api_key="key123", api_secret="sec")
         self.client = FakeClient(**client)
         self.token_source = "db"

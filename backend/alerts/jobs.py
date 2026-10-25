@@ -40,6 +40,7 @@ from backend.alerts.priority import MarketContext, decorate, gate
 from backend.config import IST, AlertsConfig
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
 from backend.ingest import events
+from backend.ingest import filings
 from backend.ingest import holidays as hol
 from backend.ingest import universe as uni
 from backend.kite_api.auth import EXPIRY_TIME
@@ -50,6 +51,9 @@ logger = setup_logger("jobs")
 DONE = ("ok", "partial", "failed", "no_session")      # statuses that end a job for the day
 MARKET_CLOSE = time(15, 30)
 volume_pace = itd.volume_pace                          # re-exported (projection with the NSE volume curve)
+
+
+FILINGS_START, FILINGS_END = time(7, 0), time(23, 0)
 
 
 def hm(s: str) -> time:
@@ -66,7 +70,7 @@ def login_slots_due(now: datetime, cfg: AlertsConfig, done_today: set, day_ok: b
 
 def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
              last_intraday: Optional[datetime] = None, not_before: Optional[dict] = None,
-             last_login_check: Optional[datetime] = None) -> list[str]:
+             last_login_check: Optional[datetime] = None, last_filings: Optional[datetime] = None) -> list[str]:
     """Which jobs should run at `now` (pure; used by the loop and the tests)."""
     t, nb = now.time(), not_before or {}
     jobs = []
@@ -93,6 +97,9 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
         jobs.append("gap_check")
     if now.weekday() == cfg.universe_refresh_weekday and ready("weekly") and t >= time(10, 0):
         jobs.append("weekly")
+    if (cfg.filings and FILINGS_START <= t < FILINGS_END
+            and (last_filings is None or now - last_filings >= timedelta(minutes=cfg.filings_interval_min))):
+        jobs.append("filings")                             # every day: results often come out in the evening
     if login_slots_due(now, cfg, done_today, login_day):
         jobs.append("login")
     if (cfg.login_links and cfg.login_heads_up and login_day and ready("login_headsup")
@@ -112,6 +119,7 @@ class Scheduler:
         self.notifier_factory = notifier_factory or Notifier
         self.last_intraday: Optional[datetime] = None
         self.last_login_check: Optional[datetime] = None
+        self.last_filings: Optional[datetime] = None
         self.not_before: dict[str, datetime] = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -138,7 +146,7 @@ class Scheduler:
         now = now or self.clock()
         today = now.date()
         jobs = due_jobs(now, self.state.config.alerts, self.done_today(today), hol.is_trading_day(today),
-                        self.last_intraday, self.not_before, self.last_login_check)
+                        self.last_intraday, self.not_before, self.last_login_check, self.last_filings)
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -270,6 +278,35 @@ class Scheduler:
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
+
+    def run_filings(self, now: datetime) -> dict:
+        """Fetch new NSE filings; push the important ones on stocks you watch, hold or have in the plan."""
+        self.last_filings = now
+        cfg = self.state.config.alerts
+        try:
+            new = filings.refresh_from_nse()
+        except Exception as exc:
+            logger.warning("Filings fetch failed (%s); keeping the stored ones", exc)
+            return {"status": "failed", "error": str(exc)}
+        sent = self.alert_filings(new, now) if cfg.filings_alerts else 0
+        return {"status": "ok", "new": len(new), "sent": sent}
+
+    def alert_filings(self, new: list[dict], now: datetime) -> int:
+        """One message per important filing (from the last 24 h) on a stock you hold, watch or have in the plan."""
+        scope = {p["symbol"]: "you hold it" for p in guard.positions()}
+        with get_db() as conn:
+            for r in conn.execute("SELECT symbol FROM watchlist"):
+                scope.setdefault(r["symbol"], "on your watchlist")
+        for i in pl.latest_plan()[1]:
+            scope.setdefault(i["symbol"], "in the plan")
+        since = (now - timedelta(hours=24)).replace(tzinfo=None).isoformat()
+        notifier, sent = self.notifier(), 0
+        for f in sorted(new, key=lambda f: f["dt"]):
+            why = scope.get(f["symbol"])
+            if why and f["kind"] in filings.IMPORTANT and f["dt"] >= since and notifier.send(
+                    f"filing|{f['seq_id']}", "filing", msg.filing_alert(f, why), f["symbol"]):
+                sent += 1
+        return sent
 
     @staticmethod
     def refresh_events() -> Optional[int]:

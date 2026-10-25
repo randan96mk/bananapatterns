@@ -274,6 +274,11 @@ class AlertsConfig:
     results_calendar: bool = True          # fetch the calendar and show "Results ..." on cards, alerts and plan
     results_warn_sessions: int = 5         # stock alerts / plan / cards warn when results are this close
     results_guard_sessions: int = 1        # guard: warn on a held stock this many sessions before its results
+    # Exchange filings (NSE corporate announcements): news lines on alerts, 📰 on cards, filing alerts
+    filings: bool = True
+    filings_interval_min: int = 15         # fetched every N minutes, 07:00-23:00, every day
+    filings_alerts: bool = True            # push important filings on stocks you watch, hold or have in the plan
+    news_days: int = 3                     # "recent" for alert news lines and card chips (calendar days)
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

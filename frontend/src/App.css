@@ -265,3 +265,6 @@ body.modal-open { overflow: hidden; }
 .mc-cup-glow, .mc-handle-glow { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; opacity: .18; }
 .mc-cup-glow { stroke: var(--ok); }
 .mc-handle-glow { stroke: var(--accent); }
+
+.filings { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow-y: auto; font-size: 13px; }
+.filings li { padding: 4px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }

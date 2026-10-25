@@ -20,6 +20,7 @@ from backend.engine.bases import detect_bases
 from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
 from backend.ingest import events as ev
+from backend.ingest import filings as fl
 from backend.ingest import universe as uni
 from backend.api import security
 from backend.kite_api import auth
@@ -466,6 +467,38 @@ def _results_for(symbols: list[str]) -> dict[str, dict]:
     return out
 
 
+def _news_for(symbols: list[str]) -> dict[str, dict]:
+    """{symbol: newest important NSE filing in the last news_days}, for the 📰 chips."""
+    cfg = S().config.alerts
+    if not cfg.filings or not symbols:
+        return {}
+    since = (datetime.now(IST).date() - timedelta(days=cfg.news_days)).isoformat()
+    return fl.latest_important(symbols, since)
+
+
+@router.get("/filings")
+def filings_list(symbol: Optional[str] = None, days: int = Query(30, ge=1, le=120)):
+    """One stock's NSE filings (important ones and updates, newest first), or the fetch status."""
+    since = (datetime.now(IST).date() - timedelta(days=days)).isoformat()
+    if symbol:
+        return {"symbol": symbol.upper(), "filings": fl.recent(symbol.upper(), since)}
+    with get_db() as conn:
+        n = conn.execute(f"SELECT COUNT(*) FROM filings WHERE dt >= ? AND kind IN "
+                         f"({','.join('?' * len(fl.IMPORTANT))})",
+                         (datetime.now(IST).date().isoformat(), *fl.IMPORTANT)).fetchone()[0]
+    return {"last_fetch": fl.last_fetch(), "important_today": n}
+
+
+@router.post("/filings/refresh")
+def filings_refresh():
+    """Fetch new NSE filings now (no alerts are sent from here; the scheduler does that)."""
+    try:
+        new = fl.refresh_from_nse()
+    except Exception as exc:
+        raise HTTPException(502, f"NSE filings fetch failed: {exc}")
+    return {"new": len(new), "last_fetch": fl.last_fetch()}
+
+
 @router.get("/events")
 def events_list(symbol: Optional[str] = None):
     """The NSE event calendar: one stock's events (from 30 days ago), or the fetch status."""
@@ -502,9 +535,11 @@ def screens_results(screen: str, stage: str = Query(...)):
     with get_db() as conn:
         h = market.latest(conn, as_of) if as_of else None
     results = _results_for([p["symbol"] for p in items])
+    news = _news_for([p["symbol"] for p in items])
     for p in items:                                   # A/B badge, same rule as the alerts
         p["tier"] = market.tier(p, h["status"] if h else None, S().config.alerts)
         p["results"] = results.get(p["symbol"])
+        p["news"] = news.get(p["symbol"])
     if screen in ("vcp", "cup"):
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
@@ -563,8 +598,9 @@ def positions_list():
     """Positions the guard follows (synced from Kite holdings after the evening scan, or Run guard now)."""
     from backend.alerts import guard
     pos = guard.positions()
-    results = _results_for([p["symbol"] for p in pos])
-    return {"positions": [dict(p, results=results.get(p["symbol"])) for p in pos]}
+    syms = [p["symbol"] for p in pos]
+    results, news = _results_for(syms), _news_for(syms)
+    return {"positions": [dict(p, results=results.get(p["symbol"]), news=news.get(p["symbol"])) for p in pos]}
 
 
 @router.put("/positions/{symbol}")

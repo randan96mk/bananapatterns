@@ -54,3 +54,6 @@ export const getLogs = (level) => req('GET', `/api/logs?limit=200${level ? `&lev
 export const eventsStatus = () => req('GET', '/api/events');
 export const stockEvents = (symbol) => req('GET', `/api/events?symbol=${encodeURIComponent(symbol)}`);
 export const refreshEvents = () => req('POST', '/api/events/refresh');
+export const filingsStatus = () => req('GET', '/api/filings');
+export const stockFilings = (symbol) => req('GET', `/api/filings?symbol=${encodeURIComponent(symbol)}`);
+export const refreshFilings = () => req('POST', '/api/filings/refresh');

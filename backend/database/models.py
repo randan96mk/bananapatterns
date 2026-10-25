@@ -246,6 +246,19 @@ CREATE TABLE IF NOT EXISTS corp_events (
 );
 CREATE INDEX IF NOT EXISTS idx_corp_events_kind_date ON corp_events (kind, date);
 
+-- NSE corporate announcements (backend/ingest/filings.py), kept KEEP_DAYS.
+CREATE TABLE IF NOT EXISTS filings (
+    seq_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    dt TEXT NOT NULL,
+    category TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_filings_symbol_dt ON filings (symbol, dt);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

@@ -7,11 +7,21 @@ export default function DataPanel({ hasToken, onDataChanged }) {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [evs, setEvs] = useState(null);
-  const loadEvents = () => api.eventsStatus().then(setEvs).catch(() => setEvs(null));
+  const [fils, setFils] = useState(null);
+  const loadEvents = () => {
+    api.eventsStatus().then(setEvs).catch(() => setEvs(null));
+    api.filingsStatus().then(setFils).catch(() => setFils(null));
+  };
   useEffect(() => { loadEvents(); }, []);
   const refreshEvents = async () => {
     setBusy(true); setMsg('Fetching the NSE results calendar…');
     try { const r = await api.refreshEvents(); setMsg(`Results calendar: ${r.stored} events stored.`); await loadEvents(); }
+    catch (e) { setMsg(e.message); }
+    setBusy(false);
+  };
+  const refreshFilings = async () => {
+    setBusy(true); setMsg('Fetching NSE filings…');
+    try { const r = await api.refreshFilings(); setMsg(`Filings: ${r.new} new.`); await loadEvents(); }
     catch (e) { setMsg(e.message); }
     setBusy(false);
   };
@@ -72,6 +82,12 @@ export default function DataPanel({ hasToken, onDataChanged }) {
           ? `${evs.upcoming_results} upcoming results · fetched ${evs.last_fetch.slice(0, 16).replace('T', ' ')}`
           : 'not fetched yet'} · refreshed by the evening job</span>
         <button className="btn ghost" disabled={busy} onClick={refreshEvents}>Refresh results calendar</button>
+      </div>
+      <div className="row small">
+        <span className="muted">Exchange filings (NSE announcements): {fils?.last_fetch
+          ? `${fils.important_today} important today · fetched ${fils.last_fetch.slice(0, 16).replace('T', ' ')}`
+          : 'not fetched yet'} · every 15 min, 07:00–23:00</span>
+        <button className="btn ghost" disabled={busy} onClick={refreshFilings}>Refresh filings</button>
       </div>
       {!hasToken && <p className="muted">Log in with Kite first.</p>}
       {msg && <p className="msg">{msg}</p>}
