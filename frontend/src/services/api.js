@@ -60,3 +60,4 @@ export const refreshFilings = () => req('POST', '/api/filings/refresh');
 export const dealsStatus = () => req('GET', '/api/deals');
 export const stockDeals = (symbol) => req('GET', `/api/deals?symbol=${encodeURIComponent(symbol)}`);
 export const refreshDeals = () => req('POST', '/api/deals/refresh');
+export const getNews = () => req('GET', '/api/news');

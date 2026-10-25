@@ -500,6 +500,14 @@ def filings_refresh():
     return {"new": len(new), "last_fetch": fl.last_fetch()}
 
 
+@router.get("/news")
+def news(days: Optional[int] = Query(None, ge=1, le=30)):
+    """The News tab: filings, red flags, fund moves and upcoming results for the board stocks (every stock on the
+    VCP, Cup & handle and Bases screens, plus held / watched)."""
+    from backend.ingest import news as nw
+    return nw.board_news(S().config.alerts, days)
+
+
 @router.get("/deals")
 def deals_list(symbol: Optional[str] = None, days: int = Query(30, ge=1, le=120)):
     """One stock's bulk / block deals and holder disclosures with its signals, or the fetch status."""

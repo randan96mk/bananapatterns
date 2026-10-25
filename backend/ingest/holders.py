@@ -188,6 +188,19 @@ def _fund_moves(rows: list[dict], min_cr: float) -> list[dict]:
     return out
 
 
+def filing_red_label(f: dict) -> Optional[str]:
+    """The red-flag label for a filing (legal action not in the company's favour, auditor resignation, rating
+    downgrade), else None."""
+    c, txt = f["category"].lower(), (f["text"] or "").lower()
+    if f["kind"] == "legal" and "in favour" not in txt and "in favor" not in txt:
+        return "Regulatory / legal"
+    if f["kind"] == "management" and "auditor" in f"{c} {txt}" and "resign" in f"{c} {txt}":
+        return "Auditor resigned"
+    if f["kind"] == "rating" and "downgrad" in f"{c} {txt}":
+        return "Rating downgrade"
+    return None
+
+
 def signals(symbols: list[str], cfg, today: Optional[str] = None) -> dict[str, dict]:
     """{symbol: {red: [...], buy: [...], sell: [...]}} (each item {date, label, text}), only symbols with any."""
     if not symbols or not (cfg.red_flags or cfg.deals):
@@ -202,7 +215,7 @@ def signals(symbols: list[str], cfg, today: Optional[str] = None) -> dict[str, d
         deals = [dict(r) for r in conn.execute(f"SELECT * FROM deals WHERE symbol IN ({qs}) AND date >= ?",
                                                (*symbols, min(red_since, deal_since)))]
         fil = [dict(r) for r in conn.execute(
-            f"SELECT symbol, dt, kind, category, text FROM filings WHERE symbol IN ({qs}) AND dt >= ? "
+            f"SELECT symbol, dt, kind, category, text, url FROM filings WHERE symbol IN ({qs}) AND dt >= ? "
             f"AND kind IN ('legal', 'management', 'rating')", (*symbols, red_since))] if cfg.red_flags else []
     out: dict[str, dict] = {}
 
@@ -216,18 +229,12 @@ def signals(symbols: list[str], cfg, today: Optional[str] = None) -> dict[str, d
                 after = f" (now {d['after_pct']:.1f}%)" if d["after_pct"] is not None else ""
                 add(d["symbol"], "red", {"date": d["date"], "label": f"Promoter sold {d['pct']:.1f}%",
                                          "text": f"{d['client']} sold {d['pct']:.2f}%{after}, disclosed "
-                                                 f"{_short(d['date'])}"})
+                                                 f"{_short(d['date'])}", "url": d["url"]})
         for f in fil:
-            c, txt = f["category"].lower(), f["text"].lower()
-            label = None
-            if f["kind"] == "legal" and "in favour" not in txt and "in favor" not in txt:
-                label = "Regulatory / legal"
-            elif f["kind"] == "management" and "auditor" in f"{c} {txt}" and "resign" in f"{c} {txt}":
-                label = "Auditor resigned"
-            elif f["kind"] == "rating" and "downgrad" in f"{c} {txt}":
-                label = "Rating downgrade"
+            label = filing_red_label(f)
             if label:
-                add(f["symbol"], "red", {"date": f["dt"][:10], "label": label, "text": f["text"] or f["category"]})
+                add(f["symbol"], "red", {"date": f["dt"][:10], "label": label, "text": f["text"] or f["category"],
+                                         "url": f.get("url") or ""})
     if cfg.deals:
         recent = [d for d in deals if d["date"] >= deal_since]
         by_sym: dict[str, list] = {}
