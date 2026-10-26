@@ -33,20 +33,21 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 11. [RS rating and Trend Template](#rs-rating-and-trend-template)
 12. [VCP screen](#vcp-screen)
 13. [Cup & handle screen](#cup--handle-screen)
-14. [Bull flag screen](#bull-flag-screen)
-15. [Results calendar](#results-calendar)
-16. [Exchange filings (news)](#exchange-filings-news)
-17. [Red flags and fund buying](#red-flags-and-fund-buying)
-18. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
-19. [REST API](#rest-api)
-20. [CLI](#cli)
-21. [Configuration](#configuration)
-22. [Frontend](#frontend)
-23. [Testing](#testing)
-24. [Troubleshooting](#troubleshooting)
-25. [Roadmap](#roadmap)
-26. [Decisions log](#decisions-log)
-27. [Development log](#development-log)
+14. [Index ticker bar](#index-ticker-bar)
+15. [Bull flag screen](#bull-flag-screen)
+16. [Results calendar](#results-calendar)
+17. [Exchange filings (news)](#exchange-filings-news)
+18. [Red flags and fund buying](#red-flags-and-fund-buying)
+19. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+20. [REST API](#rest-api)
+21. [CLI](#cli)
+22. [Configuration](#configuration)
+23. [Frontend](#frontend)
+24. [Testing](#testing)
+25. [Troubleshooting](#troubleshooting)
+26. [Roadmap](#roadmap)
+27. [Decisions log](#decisions-log)
+28. [Development log](#development-log)
 ---
 
 ## Quick start (Mac)
@@ -476,6 +477,21 @@ once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, nea
 close check, the daily plan and the position guard, with the cup's own stop (handle low − 1%) and a
 "Cup · handle · vol · stop" line. A name on several screens alerts once per kind, from the most specific screen
 (VCP, then Cup & handle, then Bases).
+
+## Index ticker bar
+
+A strip under the top menu on every page: **Nifty 50 · Nifty 500 · Bank Nifty · India VIX · Sensex** with the
+price, today's change (points and %), a small line of today's 5-minute moves against the previous close (dashed),
+and a **▲ / ▼ 50D** tag for above / below the 50-day average. India VIX is amber with **fear ↑** when it rises (a
+rising VIX is a warning, not good news). The corner shows **● Live · NSE open** and the update time, or
+Pre-open / Closed / Holiday. Click an index to open its chart, like a stock. On a phone the boxes scroll sideways.
+
+How (`backend/ingest/indices.py`, `GET /api/indices`): one Kite quote call for all five, cached ~25 s; the
+dashboard polls every 30 s while the market is open (5 min otherwise), so nothing runs when it isn't open in a
+browser. Sparklines come from today's 5-minute candles (refreshed every 5 min while open). Daily candles for each
+index are kept in `candles_daily` and topped up once a day (three years the first time), which gives the 50-day
+average and the chart; Sensex (BSE) gets its own instruments row. Without a Kite login the bar shows the last
+stored closes ("log in for live"). Charts hide the volume pane for indices (they have none).
 
 ## Bull flag screen
 
@@ -1341,3 +1357,8 @@ ready for it.
 ### 2026-10-25: Docker
 - `Dockerfile` (two stages), `docker-compose.yml`, `.dockerignore`, `docker.sh`; `ServerConfig.host` from
   `BP_HOST`; `start.sh` refuses while the Docker copy runs. Same port, database, settings and Kite redirect URL.
+
+### 2026-10-26: Index ticker bar
+- `backend/ingest/indices.py` (`IndexTicker`: quote cache, daily history top-up, 5-minute sparklines, market
+  status), `KiteClient.historical_intraday`, `GET /api/indices`; `IndexTicker.jsx` under the header with
+  click-to-chart. Stock chart hides an all-zero volume pane. 292 offline tests passing.
