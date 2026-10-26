@@ -32,6 +32,7 @@ from typing import Callable, Optional
 
 from backend.alerts import guard
 from backend.alerts import intraday as itd
+from backend.alerts import live as lv
 from backend.alerts import plan as pl
 from backend.alerts import messages as msg
 from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
@@ -121,6 +122,7 @@ class Scheduler:
         self.last_intraday: Optional[datetime] = None
         self.last_login_check: Optional[datetime] = None
         self.last_filings: Optional[datetime] = None
+        self.last_holdings: Optional[datetime] = None          # live guard: last Kite holdings re-read
         self.not_before: dict[str, datetime] = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -403,7 +405,8 @@ class Scheduler:
             live = {"ltp": ltp, "open": ohlc.get("open") or ltp, "high": max(ohlc.get("high") or ltp, ltp),
                     "low": min(ohlc.get("low") or ltp, ltp), "volume": vol or 0}
             items.append({"symbol": sym, "p": dict(cands[sym], symbol=sym), "token": stocks[sym]["instrument_token"],
-                          "ltp": ltp, "live": live, "vol": vol})
+                          "ltp": ltp, "live": live, "vol": vol, "vwap": q.get("average_price"),
+                          "day_pct": lv.day_pct(q)})
         iq = quotes.get(index_key) or {}
         prev = (iq.get("ohlc") or {}).get("close")
         index_today = round((iq["last_price"] / prev - 1) * 100, 2) if iq.get("last_price") and prev else None
@@ -428,11 +431,15 @@ class Scheduler:
         st, cfg, today = self.state, self.state.config.alerts, now.date().isoformat()
         res = self._forming_quotes()
         if res["status"] != "ok":
-            return {k: v for k, v in res.items() if k != "items"}
+            out = {k: v for k, v in res.items() if k != "items"}
+            if res["status"] != "no_login" and cfg.live_guard and cfg.position_guard:
+                out["guard"] = self._live_guard(now)        # positions are watched even with no Forming names
+            return out
         notifier, sent, failed, held = self.notifier(), 0, 0, 0
         mc, sizing = self._market(res.get("index_today"))
         with get_db() as conn:
             day_flags = itd.flags(conn, today)
+        upgraded = 0
         for it in res["items"]:
             sym, p, ltp = it["symbol"], it["p"], it["ltp"]
             fl = day_flags.get(sym, set())
@@ -441,6 +448,9 @@ class Scheduler:
                     itd.set_flag(conn, today, sym, "crossed", f"{ltp}")
                 key = f"{today}|intraday|{sym}"
                 if notifier.already_sent(key):
+                    # a 🟡 Wait that turns 🟢 gets one ⬆️ note; nothing else repeats
+                    if cfg.entry_checklist and "entry_wait" in fl and "entry_valid" not in fl:
+                        upgraded += self._entry_upgrade(it, now, res.get("index_today"), mc, sizing)
                     continue                             # skip the chart work for names already alerted today
                 send_ok, t = gate("intraday", p, mc, cfg)
                 if not send_ok:
@@ -448,14 +458,21 @@ class Scheduler:
                     continue
                 hist, avg = self._history(it["token"])
                 pace = volume_pace(it["vol"], avg, now)
+                ck = self._checklist(it, pace, now, res.get("index_today")) if cfg.entry_checklist else None
+                stop = self._entry_stop(p)
                 png, ctx = decision_for(hist, p, "intraday", cfg, st.config.bases, st.config.vcp,
                                         live=it["live"], **sizing) if hist else (None, None)
                 html = msg.intraday_alert(p, ltp, it["vol"], pace, avg, ctx,
                                           volume=itd.volume_verdict(pace, cfg.intraday_volume_mult),
                                           zone_top=p["pivot"] * (1 + cfg.buy_zone_pct),
-                                          check_time=cfg.close_check_time if cfg.close_check else "evening")
+                                          check_time=cfg.close_check_time if cfg.close_check else "evening",
+                                          ck=ck, stop=stop, size=lv.size(ltp, stop, cfg, mc.size_factor)
+                                          if ck and ck["verdict"] == "valid" else None, size_note=mc.size_note)
                 if notifier.send(key, "intraday", decorate(html, "intraday", t, mc), sym, png):
                     sent += 1
+                    if ck and ck["verdict"]:
+                        with get_db() as conn:
+                            itd.set_flag(conn, today, sym, f"entry_{ck['verdict']}", f"{ltp}|{ck['passed']}")
             elif ("crossed" in fl and ltp < p["pivot"] * (1 - cfg.failed_buffer_pct)
                   and notifier.already_sent(f"{today}|intraday|{sym}")):     # only names you were told about
                 with get_db() as conn:
@@ -465,7 +482,152 @@ class Scheduler:
                                          decorate(msg.failed_alert(p, ltp, it["live"]["high"], stop), "failed", None,
                                                   mc), sym):
                     failed += 1
-        return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed, "held": held}
+        guarded = self._live_guard(now, res.get("index_today")) if cfg.live_guard and cfg.position_guard else {}
+        return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed, "held": held,
+                "upgraded": upgraded, "guard": guarded}
+
+    # --- entry checklist and live guard (market hours) ---
+
+    def _entry_stop(self, p: dict) -> float:
+        """The setup's stop (VCP / cup / flag), else pivot - max_stop: the same rule the guard starts from."""
+        return msg.setup_stop(p) or round(p["pivot"] * (1 - self.state.config.vcp.max_stop), 2)
+
+    def _checklist(self, it: dict, pace: Optional[float], now: datetime, index_pct: Optional[float]) -> dict:
+        orh = self.state.live.or_high(it["symbol"], it["token"], now)
+        return lv.checklist(it["ltp"], it["p"]["pivot"], self.state.config.alerts, it.get("vwap"), pace,
+                            it.get("day_pct"), index_pct, orh)
+
+    def _entry_upgrade(self, it: dict, now: datetime, index_pct: Optional[float], mc, sizing: dict) -> int:
+        """One ⬆️ note when a name told 🟡 Wait earlier today now passes all five checks."""
+        cfg, today, sym = self.state.config.alerts, now.date().isoformat(), it["symbol"]
+        _, avg = self._history(it["token"])
+        ck = self._checklist(it, volume_pace(it["vol"], avg, now), now, index_pct)
+        if ck["verdict"] != "valid":
+            return 0
+        with get_db() as conn:
+            if not itd.set_flag(conn, today, sym, "entry_valid", f"{it['ltp']}"):
+                return 0
+        stop = self._entry_stop(it["p"])
+        html = msg.entry_upgrade(it["p"], it["ltp"], ck, stop, lv.size(it["ltp"], stop, cfg, mc.size_factor),
+                                 mc.size_note)
+        return int(self.notifier().send(f"{today}|entry-up|{sym}", "intraday",
+                                        decorate(html, "intraday", None, mc), sym))
+
+    def _position_quotes(self, positions: list[dict]) -> dict:
+        """{symbol: quote} for the followed positions plus the Nifty 500 ('_index'), one Kite call."""
+        stocks = {s["symbol"]: s for s in uni.resolve_universe(self.state.config.ingest)["stocks"]}
+        keys = {f"NSE:{(stocks.get(p['symbol']) or {}).get('tradingsymbol', p['symbol'])}": p["symbol"]
+                for p in positions}
+        index_key = f"NSE:{uni.INDEX_NAME}"
+        q = self.state.client.quote(list(keys) + [index_key]) or {}
+        out = {sym: dict(q[k], token=(stocks.get(sym) or {}).get("instrument_token")) for k, sym in keys.items()
+               if (q.get(k) or {}).get("last_price")}
+        out["_index"] = q.get(index_key) or {}
+        return out
+
+    def _sync_holdings(self, now: datetime) -> int:
+        """Re-read Kite holdings every holdings_refresh_min; announce positions bought since the last read."""
+        cfg = self.state.config.alerts
+        if self.last_holdings and now - self.last_holdings < timedelta(minutes=cfg.holdings_refresh_min):
+            return 0
+        self.last_holdings = now
+        try:
+            changes = guard.sync(guard.kite_holdings(self.state.client), self.state.config.vcp)
+        except Exception as exc:
+            logger.warning("Live guard: holdings re-read failed: %s", exc)
+            return 0
+        added = [p for p in guard.positions() if p["symbol"] in changes["added"]]
+        if not added:
+            return 0
+        key = f"{now.date()}|guard-new|{'+'.join(sorted(changes['added']))}"
+        return int(self.notifier().send(key, "guard", msg.new_positions_alert(added)))
+
+    def _live_guard(self, now: datetime, index_pct: Optional[float] = None) -> dict:
+        """Positions under their stop or under heavy selling: one alert per stock per day, with buttons."""
+        cfg, today = self.state.config.alerts, now.date().isoformat()
+        new = self._sync_holdings(now)
+        positions = guard.positions()
+        if not positions:
+            return {"positions": 0, "new": new}
+        try:
+            quotes = self._position_quotes(positions)
+        except Exception as exc:
+            logger.warning("Live guard quote failed: %s", exc)
+            return {"positions": len(positions), "error": str(exc)[:200], "new": new}
+        idx = lv.day_pct(quotes.get("_index") or {}) if index_pct is None else index_pct
+        notifier, sent = self.notifier(), 0
+        with get_db() as conn:
+            day_flags = itd.flags(conn, today)
+        for pos in positions:
+            q, sym = quotes.get(pos["symbol"]), pos["symbol"]
+            if not q or "g_quiet" in day_flags.get(sym, set()):
+                continue
+            ltp, dp = q["last_price"], lv.day_pct(q)
+            pace = volume_pace(q.get("volume") or q.get("volume_traded"), lv.avg_volume(q.get("token")), now)
+            r = lv.r_multiple(pos, ltp)
+            buttons = [("📈 Chart", None, f"c:{sym}"), ("🔕 Quiet today", None, f"q:{sym}")]
+            for rule in lv.guard_rules(pos, ltp, dp, pace, cfg):
+                flag = {"under_stop": "g_under", "heavy": "g_heavy"}[rule]
+                with get_db() as conn:
+                    if not itd.set_flag(conn, today, sym, flag, f"{ltp}"):
+                        continue
+                html = (msg.live_stop_alert(pos, ltp, r, pace, cfg.hard_stop, cfg.close_check_time)
+                        if rule == "under_stop" else msg.heavy_selling_alert(pos, ltp, dp, pace, idx, r))
+                if notifier.send(f"{today}|live-{rule}|{sym}", "guard", html, sym, buttons=buttons):
+                    sent += 1
+        return {"positions": len(positions), "sent": sent, "new": new}
+
+    def _gap_positions(self, now: datetime) -> dict:
+        """09:10: positions that open under their stop (a gap the stop can't protect against)."""
+        cfg, today = self.state.config.alerts, now.date().isoformat()
+        positions = [p for p in guard.positions() if p.get("stop")]
+        if not (cfg.live_guard and cfg.position_guard and positions):
+            return {"positions": 0}
+        quotes = self._position_quotes(positions)
+        broken, ok = [], 0
+        for pos in positions:
+            q = quotes.get(pos["symbol"])
+            open_px = ((q or {}).get("ohlc") or {}).get("open") or (q or {}).get("last_price")
+            if not open_px:
+                continue
+            if open_px < pos["stop"]:
+                broken.append((pos, open_px))
+                with get_db() as conn:
+                    itd.set_flag(conn, today, pos["symbol"], "g_gap", f"{open_px}")
+            else:
+                ok += 1
+        sent = bool(broken) and self.notifier().send(f"{today}|gap-positions", "guard",
+                                                     msg.gap_positions(broken, ok))
+        return {"positions": len(positions), "under": len(broken), "sent": sent}
+
+    def _close_positions(self, now: datetime) -> dict:
+        """15:15: positions that were under the stop or sold off heavily today: still under -> exit; back above -> ✅."""
+        cfg, today = self.state.config.alerts, now.date().isoformat()
+        if not (cfg.live_guard and cfg.position_guard):
+            return {}
+        with get_db() as conn:
+            day_flags = itd.flags(conn, today)
+        positions = guard.positions()
+        if not positions:
+            return {}
+        quotes = self._position_quotes(positions)
+        rows, fine = [], []
+        for pos in positions:
+            q, fl = quotes.get(pos["symbol"]), day_flags.get(pos["symbol"], set())
+            if not q:
+                continue
+            ltp = q["last_price"]
+            if pos.get("stop") and ltp < pos["stop"]:
+                rows.append((pos, ltp, "under_stop"))
+            elif fl & {"g_under", "g_gap"}:
+                rows.append((pos, ltp, "recovered"))
+            elif "g_heavy" in fl:
+                rows.append((pos, ltp, "heavy"))
+            else:
+                fine.append(pos["symbol"])
+        sent = bool(rows) and self.notifier().send(f"{today}|close-positions", "guard",
+                                                   msg.close_positions(rows, fine))
+        return {"flagged": len(rows), "sent": sent}
 
     def run_close_check(self, now: datetime) -> dict:
         """15:15: holding / weak / extended for every Forming name above its pivot. Up to 3 holding names
@@ -488,8 +650,9 @@ class Scheduler:
             pace = volume_pace(it["vol"], avg, now)
             rng = itd.day_range(ltp, live["low"], live["high"])
             verdict = itd.close_verdict(ltp, p["pivot"], zone_top, pace, rng, cfg)
+            ck = self._checklist(it, pace, now, res.get("index_today")) if cfg.entry_checklist else None
             items.append(dict(it, hist=hist, pace=pace, rng=rng, verdict=verdict, zone_top=zone_top,
-                              pivot=p["pivot"]))
+                              pivot=p["pivot"], ck=ck))
         mc, sizing = self._market(res.get("index_today"))
         for i in items:
             i["send_ok"], i["tier"] = gate("close_check", i["p"], mc, cfg)
@@ -508,7 +671,7 @@ class Scheduler:
             live = dict(i["live"], pace=i["pace"], range=i["rng"], verdict=i["verdict"])
             png, ctx = decision_for(i["hist"], i["p"], "close_check", cfg, st.config.bases, st.config.vcp,
                                     live=live, **sizing) if i["hist"] else (None, None)
-            html = msg.close_alert(i["p"], i["verdict"], i["ltp"], i["pace"], i["rng"], i["zone_top"], ctx)
+            html = msg.close_alert(i["p"], i["verdict"], i["ltp"], i["pace"], i["rng"], i["zone_top"], ctx, i["ck"])
             if notifier.send(f"{today}|close|{i['symbol']}", "close_check", decorate(html, "close_check", i["tier"], mc),
                              i["symbol"], png):
                 sent += 1
@@ -517,8 +680,14 @@ class Scheduler:
                 f"{today}|close-summary", "close_check", decorate(msg.close_summary(listable, rest), "summary", None, mc)):
             sent += 1
         counts = {v: sum(i["verdict"] == v for i in items) for v in order}
-        self.record("close_check", today, "ok", f"above pivot {len(items)}: {counts}; sent {sent}", started)
-        return {"status": "ok", "above": len(items), "counts": counts, "sent": sent}
+        try:
+            pos_res = self._close_positions(now)               # positions under the stop / sold off today
+        except Exception as exc:
+            logger.warning("15:15 positions check failed: %s", exc)
+            pos_res = {"error": str(exc)[:200]}
+        self.record("close_check", today, "ok", f"above pivot {len(items)}: {counts}; sent {sent}; "
+                    f"positions {pos_res}", started)
+        return {"status": "ok", "above": len(items), "counts": counts, "sent": sent, "positions": pos_res}
 
     def run_top_setups(self, now: datetime, force: bool = False) -> dict:
         """After today's evening scan: rank, save the plan, send the Top N (header + one chart each)."""
@@ -569,12 +738,20 @@ class Scheduler:
         """After the pre-open session: how each plan name opened (one Kite quote call)."""
         st, today, started = self.state, now.date(), now_ist()
         plan_as_of, items = pl.latest_plan(before=today.isoformat())
-        if not items:
+        if not items and not guard.positions():
             self.record("gap_check", today, "ok", "no plan", started)
             return {"status": "no_plan"}
         if not st.token_valid():
             self.record("gap_check", today, "failed", "Kite login missing at the opening check", started)
             return {"status": "no_login"}
+        try:
+            pos_res = self._gap_positions(now)                 # positions opening under their stop
+        except Exception as exc:
+            logger.warning("Opening check (positions) failed: %s", exc)
+            pos_res = {"error": str(exc)[:200]}
+        if not items:
+            self.record("gap_check", today, "ok", f"no plan; positions {pos_res}", started)
+            return {"status": "no_plan", "positions": pos_res}
         stocks = {s["symbol"]: s for s in uni.resolve_universe(st.config.ingest)["stocks"]}
         keys = {f"NSE:{stocks[i['symbol']].get('tradingsymbol', i['symbol'])}": i for i in items
                 if i["symbol"] in stocks}
@@ -592,8 +769,9 @@ class Scheduler:
             if verdict:
                 results.append((i, open_px, verdict))
         sent = bool(results) and self.notifier().send(f"{today}|gap", "plan", msg.gap_check(results))
-        self.record("gap_check", today, "ok", f"{len(results)} of {len(keys)} worth a note; sent {sent}", started)
-        return {"status": "ok", "notes": len(results), "sent": sent}
+        self.record("gap_check", today, "ok", f"{len(results)} of {len(keys)} worth a note; sent {sent}; "
+                    f"positions {pos_res}", started)
+        return {"status": "ok", "notes": len(results), "sent": sent, "positions": pos_res}
 
     def run_weekly(self, now: datetime) -> dict:
         today, started, st = now.date(), now_ist(), self.state

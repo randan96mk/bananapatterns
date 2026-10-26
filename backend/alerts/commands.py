@@ -78,12 +78,13 @@ class BotCommands:
         return notifier.send(f"bot|{uuid.uuid4().hex}", "bot", html)
 
     def handle_button(self, cq: dict, notifier: Notifier) -> bool:
-        """📌 Watch / 🔕 Mute / 📈 Chart / ✅ I bought under an alert (own chat only)."""
+        """📌 Watch / 🔕 Mute / 📈 Chart / ✅ I bought / 🔕 Quiet today under an alert (own chat only)."""
         chat = str(((cq.get("message") or {}).get("chat") or {}).get("id"))
         if chat != notifier.chat_id:
             return False
         action, _, sym = (cq.get("data") or "").partition(":")
-        toast = {"w": self.watch, "m": self.mute, "c": self.chart, "b": self.bought}.get(action, lambda s, n: "")(
+        toast = {"w": self.watch, "m": self.mute, "c": self.chart, "b": self.bought, "q": self.quiet}.get(
+            action, lambda s, n: "")(
             sym, notifier)
         try:
             notifier.client.answer_callback(cq["id"], toast)
@@ -106,6 +107,13 @@ class BotCommands:
             conn.execute("INSERT OR REPLACE INTO muted (symbol, until) VALUES (?, ?)", (sym, until))
             conn.execute("DELETE FROM watchlist WHERE symbol = ?", (sym,))
         return f"🔕 Muted {sym} until {until} (sell-side alerts still come)."
+
+    def quiet(self, sym: str, notifier: Notifier) -> str:
+        """🔕 Quiet today (live guard alerts): no more live alerts on this stock today."""
+        from backend.alerts import intraday as itd
+        with get_db() as conn:
+            itd.set_flag(conn, self.clock().date().isoformat(), sym, "g_quiet")
+        return f"🔕 No more live alerts on {sym} today (the evening guard still runs)."
 
     def chart(self, sym: str, notifier: Notifier) -> str:
         from backend.alerts.preview import alert_chart

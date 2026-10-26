@@ -62,3 +62,5 @@ export const stockDeals = (symbol) => req('GET', `/api/deals?symbol=${encodeURIC
 export const refreshDeals = () => req('POST', '/api/deals/refresh');
 export const getNews = () => req('GET', '/api/news');
 export const getIndices = () => req('GET', '/api/indices');
+export const getToday = () => req('GET', '/api/today');
+export const getTodaySparks = () => req('GET', '/api/today/sparks');

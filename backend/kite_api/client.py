@@ -173,14 +173,15 @@ class KiteClient:
         return [by_date[d] for d in sorted(by_date)]
 
     def historical_intraday(self, token: int, day: date, interval: str = "5minute", label: str = "") -> list[dict]:
-        """One day's intraday candles [{time 'HH:MM', close}] ascending (index sparklines)."""
+        """One day's intraday candles [{time 'HH:MM', close, high, low, volume}] ascending (sparklines, opening range)."""
         rows = self._call(self.hist_bucket, f"historical_data({label or token} {day} {interval})",
                           self.kite.historical_data, token, f"{day} 09:00:00", f"{day} 15:35:00", interval)
         out = []
         for r in rows:
             t = r["date"]
             out.append({"time": t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)[11:16],
-                        "close": float(r["close"])})
+                        "close": float(r["close"]), "high": float(r.get("high") or r["close"]),
+                        "low": float(r.get("low") or r["close"]), "volume": r.get("volume") or 0})
         return out
 
     # --- core ---

@@ -205,6 +205,13 @@ class FakeState:
     def token_valid(self):
         return self._token
 
+    @property
+    def live(self):                       # as AppState.live: opening ranges / sparklines cache
+        if not hasattr(self, "_live"):
+            from backend.alerts.live import LiveBoard
+            self._live = LiveBoard(self)
+        return self._live
+
     def run_sync_blocking(self):
         return {"status": self.snap_status, "message": "m", "failed": 0, "errors": []}
 
