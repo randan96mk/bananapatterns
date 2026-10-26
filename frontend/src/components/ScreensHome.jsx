@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import * as api from '../services/api';
 import StockChart from './StockChart';
-import StageList from './StageList';
+import StageList, { StagePeek } from './StageList';
 import MarketCard from './MarketCard';
 import PlanCard from './PlanCard';
 import PositionsCard from './PositionsCard';
@@ -16,6 +16,8 @@ export default function ScreensHome({ hasData }) {
   const [summary, setSummary] = useState(null);
   const [feed, setFeed] = useState(null);
   const [stage, setStage] = useState('fresh');
+  const [picked, setPicked] = useState(false);          // phone: the user tapped a stage (no more auto-pick)
+  const [peekAll, setPeekAll] = useState(false);        // phone: full list / grid instead of the top 3
   const [selected, setSelected] = useState(null);
   const [fullFeed, setFullFeed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -45,99 +47,155 @@ export default function ScreensHome({ hasData }) {
 
   const c = summary?.counts || {};
   const n = summary?.fresh_sessions || 5;
+  // phone: open on the first stage that has names, until the user taps one
+  useEffect(() => {
+    if (!phone || picked || !summary?.counts) return;
+    const first = ['fresh', 'forming', 'climbing', 'played_out'].find((id) => (summary.counts[id] || 0) > 0);
+    if (first && (summary.counts[stage] || 0) === 0) setStage(first);
+  }, [phone, picked, summary, stage]);
+  const pickStage = (id) => { setStage(id); setSelected(null); setPicked(true); setPeekAll(false); };
+  const pickScreen = (id) => { setScreen(id); setSelected(null); setPicked(false); setPeekAll(false); };
+  // [id, title, sub, short sub for the phone's 2x2 grid]
   const CARDS = [
-    ['forming', 'Forming', 'pausing in a tight range under its lid'],
-    ['fresh', 'Fresh breakouts', `cleared it in the last ${n} sessions`],
-    ['climbing', 'Climbing', 'broke out earlier — the breakout is holding'],
-    ['played_out', 'Played out', 'ended recently: below the 50-day line or 8% under the pivot'],
+    ['forming', 'Forming', 'pausing in a tight range under its lid', 'tight, under its lid'],
+    ['fresh', 'Fresh breakouts', `cleared it in the last ${n} sessions`, `last ${n} sessions`],
+    ['climbing', 'Climbing', 'broke out earlier — the breakout is holding', 'breakout holding'],
+    ['played_out', 'Played out', 'ended recently: below the 50-day line or 8% under the pivot', 'below 50d / −8%'],
   ];
+  const SCREENS = [['vcp', 'VCP', 'VCP'], ['cup', 'Cup & handle', 'Cup'], ['flag', 'Bull flag', 'Flag'],
+    ['bases', 'Bases (all)', 'Bases']];
   const rows = feed?.rows || [];
+  const headline = `${c.fresh || 0} fresh breakout${c.fresh === 1 ? '' : 's'}`;
+
+  const notices = <>
+    {summary?.stale && <span className="warn">Board is older than the data (latest bar {fmtDate(summary.latest_bar)}): rescan.</span>}
+    {err && <span className="warn">{err}</span>}
+  </>;
+  const toolbar = phone ? (
+    <div className="row toolbar spills">
+      {SCREENS.map(([id, , short]) => (
+        <button key={id} className={`spill ${screen === id ? 'on' : ''}`} aria-pressed={screen === id}
+                onClick={() => pickScreen(id)}>{short}</button>))}
+      <button className="spill icon" disabled={busy} onClick={rescan} aria-label="Rescan" title="Rescan">
+        {busy ? '…' : '↻'}</button>
+      {notices}
+    </div>
+  ) : (
+    <div className="row toolbar">
+      <select value={screen} onChange={(e) => pickScreen(e.target.value)}>
+        {SCREENS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+      </select>
+      <button className="btn ghost" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : 'Rescan'}</button>
+      {notices}
+      <span className="right updated">Updated EOD · {fmtDate(summary?.as_of)}</span>
+    </div>
+  );
+  const noScan = (
+    <p>No scan yet. {hasData ? <>Press <b>{phone ? '↻' : 'Rescan'}</b>.</> : <>Load data first: <b>Data → Refresh universe → Sync candles</b>.</>}</p>);
+  const cards = (
+    <div className="cards">
+      {CARDS.map(([id, title, sub, short]) => (
+        <button key={id} className={`card ${stage === id ? 'active' : ''} ${(c[id] ?? 0) === 0 ? 'zero' : ''}`}
+                onClick={() => pickStage(id)}>
+          <span className="tap">tap to view ›</span>
+          <span className="count">{c[id] ?? 0}</span>
+          <span className="title">{title}</span>
+          <span className="sub">{phone ? short : sub}{id === 'fresh' && c.fresh_low_volume ? ` · +${c.fresh_low_volume} on low volume` : ''}</span>
+        </button>
+      ))}
+    </div>);
+  const feedBox = (
+    <div className="feed">
+      <div className="tabs" role="tablist">
+        {[['moves', 'Moves', rows.length], ['news', 'News', news?.items.length],
+          ['results', 'Results', news?.results.length]].map(([id, label, k]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`}
+                  onClick={() => { setTab(id); setFullFeed(false); }}>
+            {label}{k != null && <span className="count">{k}</span>}</button>))}
+      </div>
+      {tab === 'news' && <>
+        <div className="muted small">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board
+          stocks (VCP, Cup &amp; handle, Bull flag, Bases) + held / watched</div>
+        <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : (phone ? 4 : 8)} />
+        {(news?.items.length || 0) > (phone ? 4 : 8) && <button className="linkbtn"
+          onClick={() => setFullFeed(!fullFeed)}>
+          {fullFeed ? 'Show less' : `Show the full feed (${news.items.length}) ›`}</button>}
+      </>}
+      {tab === 'results' && <>
+        <div className="muted small">Board stocks reporting results soon: a results gap can jump the stop</div>
+        <ResultsList data={news} onSelect={setSelected} />
+      </>}
+      {tab === 'moves' && <>
+        <div className="row"><b>What changed since last close</b>
+          <span className="muted">({fmtDate(feed?.as_of)}) · end of day · {rows.length} moves</span></div>
+        {rows.length === 0 && <p className="muted">No stage moves today.</p>}
+        {(fullFeed ? rows : rows.slice(0, phone ? 3 : 6)).map((r, i) => (
+          <div key={i} className={`feeditem k-${r.kind}`} onClick={() => setSelected(r.symbol)}>
+            <span>{r.text}</span>
+            <span className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>
+              ₹{r.close?.toLocaleString('en-IN')} {r.change_pct != null && `${r.change_pct > 0 ? '+' : ''}${r.change_pct.toFixed(1)}%`}</span>
+          </div>
+        ))}
+        {rows.length > (phone ? 3 : 6) && <button className="linkbtn" onClick={() => setFullFeed(!fullFeed)}>
+          {fullFeed ? 'Show less' : `Show the full feed (${rows.length}) ›`}</button>}
+      </>}
+    </div>);
+  const chart = selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />;
+  const listProps = { screen, stage, asOf: summary?.as_of, selected, onSelect: setSelected };
+
+  // Phone: ticker (App) -> screen pills -> market line -> stage cards -> names in that stage -> moves / news /
+  // results -> plan -> positions. Desktop / tablet keep the original order.
+  if (phone) {
+    return (
+      <>
+        {toolbar}
+        <MarketCard data={mkt} />
+        <div className="panel board">
+          {!summary?.as_of ? noScan : <>
+            <div className="headline">{headline} <span className="muted">· last {n} sessions · EOD {fmtDate(summary.as_of)}</span></div>
+            {cards}
+          </>}
+        </div>
+        {summary?.as_of && (peekAll
+          ? <StageList {...listProps} onLess={() => setPeekAll(false)} />
+          : <StagePeek {...listProps} count={c[stage] ?? 0} onAll={() => setPeekAll(true)} />)}
+        {chart}
+        {summary?.as_of && <div className="panel">{feedBox}</div>}
+        <PlanCard plan={plan} onSelect={setSelected} />
+        <PositionsCard onSelect={setSelected} />
+      </>
+    );
+  }
 
   return (
     <>
-      <div className="row toolbar">
-        <select value={screen} onChange={(e) => { setScreen(e.target.value); setSelected(null); }}>
-          <option value="vcp">VCP</option>
-          <option value="cup">Cup &amp; handle</option>
-          <option value="flag">Bull flag</option>
-          <option value="bases">Bases (all)</option>
-        </select>
-        <button className="btn ghost" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : 'Rescan'}</button>
-        {summary?.stale && <span className="warn">Board is older than the data (latest bar {fmtDate(summary.latest_bar)}): rescan.</span>}
-        {err && <span className="warn">{err}</span>}
-        <span className="right updated">Updated EOD · {fmtDate(summary?.as_of)}</span>
-      </div>
+      {toolbar}
 
       <MarketCard data={mkt} />
       <PlanCard plan={plan} onSelect={setSelected} />
       <PositionsCard onSelect={setSelected} />
 
       <div className="panel board">
-        {!summary?.as_of ? (
-          <p>No scan yet. {hasData ? <>Press <b>Rescan</b>.</> : <>Load data first: <b>Data → Refresh universe → Sync candles</b>.</>}</p>
-        ) : (
+        {!summary?.as_of ? noScan : (
           <>
-            <h2>{c.fresh || 0} fresh breakout{c.fresh === 1 ? '' : 's'} in the last {n} sessions.</h2>
+            <h2>{headline} in the last {n} sessions.</h2>
             <p className="muted">{{
-              vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.',
-              cup: 'Cups with a handle: U-shaped 12–33% cups of 7–65 weeks after a 30%+ rise, with a tight, quiet handle in '
-                + 'the upper half — tap a stage to see the names.',
-              flag: 'Bull flags: a 20%+ pole in up to 6 weeks on volume, then a 1–5 week flag that gives back at most 38% '
-                + 'on drying volume (HTF = +90% pole) — tap a stage to see the names.',
-            }[screen] || 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
+            vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.',
+            cup: 'Cups with a handle: U-shaped 12–33% cups of 7–65 weeks after a 30%+ rise, with a tight, quiet handle in '
+              + 'the upper half — tap a stage to see the names.',
+            flag: 'Bull flags: a 20%+ pole in up to 6 weeks on volume, then a 1–5 week flag that gives back at most 38% '
+              + 'on drying volume (HTF = +90% pole) — tap a stage to see the names.',
+          }[screen] || 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
             <div className="boardgrid">
-              <div className="cards">
-                {CARDS.map(([id, title, sub]) => (
-                  <button key={id} className={`card ${stage === id ? 'active' : ''}`} onClick={() => { setStage(id); setSelected(null); }}>
-                    <span className="tap">tap to view ›</span>
-                    <span className="count">{c[id] ?? 0}</span>
-                    <span className="title">{title}</span>
-                    <span className="sub">{sub}{id === 'fresh' && c.fresh_low_volume ? ` · +${c.fresh_low_volume} on low volume` : ''}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="feed">
-                <div className="tabs" role="tablist">
-                  {[['moves', 'Moves', rows.length], ['news', 'News', news?.items.length],
-                    ['results', 'Results', news?.results.length]].map(([id, label, n]) => (
-                    <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`}
-                            onClick={() => { setTab(id); setFullFeed(false); }}>
-                      {label}{n != null && <span className="count">{n}</span>}</button>))}
-                </div>
-                {tab === 'news' && <>
-                  <div className="muted small">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board
-                    stocks (VCP, Cup &amp; handle, Bull flag, Bases) + held / watched</div>
-                  <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : (phone ? 4 : 8)} />
-                  {(news?.items.length || 0) > (phone ? 4 : 8) && <button className="linkbtn"
-                    onClick={() => setFullFeed(!fullFeed)}>
-                    {fullFeed ? 'Show less' : `Show the full feed (${news.items.length}) ›`}</button>}
-                </>}
-                {tab === 'results' && <>
-                  <div className="muted small">Board stocks reporting results soon: a results gap can jump the stop</div>
-                  <ResultsList data={news} onSelect={setSelected} />
-                </>}
-                {tab === 'moves' && <>
-                <div className="row"><b>What changed since last close</b>
-                  <span className="muted">({fmtDate(feed?.as_of)}) · end of day · {rows.length} moves</span></div>
-                {rows.length === 0 && <p className="muted">No stage moves today.</p>}
-                {(fullFeed ? rows : rows.slice(0, phone ? 3 : 6)).map((r, i) => (
-                  <div key={i} className={`feeditem k-${r.kind}`} onClick={() => setSelected(r.symbol)}>
-                    <span>{r.text}</span>
-                    <span className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>
-                      ₹{r.close?.toLocaleString('en-IN')} {r.change_pct != null && `${r.change_pct > 0 ? '+' : ''}${r.change_pct.toFixed(1)}%`}</span>
-                  </div>
-                ))}
-                {rows.length > (phone ? 3 : 6) && <button className="linkbtn" onClick={() => setFullFeed(!fullFeed)}>
-                  {fullFeed ? 'Show less' : `Show the full feed (${rows.length}) ›`}</button>}
-                </>}
-              </div>
+              {cards}
+              {feedBox}
             </div>
           </>
         )}
       </div>
 
-      {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}
-      {summary?.as_of && <StageList screen={screen} stage={stage} asOf={summary.as_of} selected={selected} onSelect={setSelected} />}
+      {chart}
+      {summary?.as_of && <StageList {...listProps} />}
     </>
   );
 }

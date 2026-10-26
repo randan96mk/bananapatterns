@@ -223,13 +223,30 @@ details.fold > .basecard { border-top: none; margin-top: 0; padding-top: 0; }
   .mstatus { cursor: pointer; min-height: 32px; }
   .mshort, .mchev { display: inline; font-weight: 400; }
   .marketcard:not(.open) .msignals, .marketcard .mhist { display: none; }
-  .marketcard .row > span:not(.mhist) { flex-basis: 100%; }
+  .mword { display: none; }
+  .panel.marketcard { padding: 6px 12px; }
+  .marketcard:not(.open) .row > span { display: none; }
+  .marketcard.open .row > span:not(.mhist) { flex-basis: 100%; }
 
   /* board */
   .panel { padding: 12px; border-radius: 10px; }
-  .board h2, .board .headline { font-size: 18px; }
-  .card { min-height: 92px; padding: 12px; } .card .count { font-size: 26px; }
+  .board h2 { font-size: 18px; }
+  .board .headline { font-size: 16px; margin-bottom: 8px; }
+  /* stage cards: compact 2x2 (count | title + short line) */
+  .card { min-height: 0; padding: 9px 11px; display: grid; grid-template-columns: auto 1fr; column-gap: 10px;
+    align-items: center; }
+  .card .tap { display: none; }
+  .card .count { grid-row: 1 / 3; margin: 0; font-size: 26px; min-width: 22px; }
+  .card .title { font-size: 13px; line-height: 1.2; }
+  .card .sub { font-size: 11px; font-style: normal; }
+  .card.zero .count { color: var(--muted); }
   .cards { gap: 8px; }
+  /* screen pills + rescan */
+  .toolbar.spills { gap: 6px; }
+  .spill { min-height: 36px; }
+  /* the Moves / News / Results box sits in its own panel */
+  .panel > .feed { border: 0; padding: 0; background: none; }
+
   .stockgrid { grid-template-columns: 1fr; }
   .planrow { flex-direction: column; align-items: flex-start; gap: 2px; }
 
@@ -319,4 +336,37 @@ body.modal-open { overflow: hidden; }
   color: var(--muted); white-space: nowrap; }
 .tstat .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 5px; }
 .tstat .dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
-@media (max-width: 599px) { .tk { min-width: 150px; padding: 8px 12px; } .tk-spark, .tstat { display: none; } }
+.tstat-line { display: none; }
+.tstat-line .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 5px; }
+.tstat-line .dot.on { background: var(--ok); }
+/* phone: swipeable chips (about three in view), status line under them */
+@media (max-width: 599px) {
+  .tk-spark, .tstat { display: none; }
+  .ticker { border: 0; background: none; gap: 6px; margin: 8px -12px 0; padding: 0 12px; }
+  .tk { flex: none; min-width: 0; width: 112px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--panel); }
+  .tk:last-of-type { margin-right: 12px; }
+  .tk .nm { font-size: 10px; }
+  .tk .ma { margin-left: 3px; }
+  .tk .chabs { display: none; }          /* the % only: the points don't fit a chip */
+  .tstat-line { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted);
+    margin: 4px 2px 6px; }
+}
+
+/* Phone home: screen pills, stage peek, plan and position rows */
+.spill { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 999px; padding: 6px 12px;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.spill.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+.spill.icon { margin-left: auto; width: 36px; padding: 0; font-size: 16px; }
+.board .headline { font-weight: 700; }
+.board .headline .muted { font-weight: 400; font-size: 12px; }
+.peekrow, .posrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0;
+  border-top: 1px solid var(--rowline); padding: 9px 0; color: var(--text); font: inherit; cursor: pointer; }
+.posrow { cursor: default; }
+.pk-left { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; flex: 1; }
+.pk-left .tag { margin-left: 0; }
+.posrow .pk-left { flex-direction: column; align-items: flex-start; }
+.pk-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.posrow .stopinput { width: 92px; text-align: right; }
+.peek .linkbtn, .plancard .linkbtn { margin-top: 6px; }

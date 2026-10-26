@@ -508,7 +508,8 @@ A strip under the top menu on every page: **Nifty 50 · Nifty 500 · Bank Nifty 
 price, today's change (points and %), a small line of today's 5-minute moves against the previous close (dashed),
 and a **▲ / ▼ 50D** tag for above / below the 50-day average. India VIX is amber with **fear ↑** when it rises (a
 rising VIX is a warning, not good news). The corner shows **● Live · NSE open** and the update time, or
-Pre-open / Closed / Holiday. Click an index to open its chart, like a stock. On a phone the boxes scroll sideways.
+Pre-open / Closed / Holiday. Click an index to open its chart, like a stock. On a phone the indices are small chips (about three in view, % change
+only) that scroll sideways, with the status line under them.
 
 How (`backend/ingest/indices.py`, `GET /api/indices`): one Kite quote call for all five, cached ~25 s; the
 dashboard polls every 30 s while the market is open (5 min otherwise), so nothing runs when it isn't open in a
@@ -985,8 +986,12 @@ chart images stay dark.
 **On a phone** (under 600 px wide) the app switches to a mobile layout:
 - A bottom tab bar (Screens · Alerts · Data · More). More opens a sheet with Universe, Settings, Logs and the theme.
 - The Kite bar shrinks to a status pill and Login, with the rest behind "⋯".
-- The market card shrinks to one line; tap it for the signals.
-- The feed shows 3 items, the grid one card per row, and positions show as cards.
+- The Screens page is reordered for a phone: index ticker → screen pills (VCP · Cup · Flag · Bases) and ↻ rescan →
+  the market on one line (status, breadth, 52-week highs / lows; tap for the signals) → the four stage cards as a
+  compact 2×2 grid → the first 3 names in the selected stage right under them ("Show all" opens the full grid /
+  table) → Moves / News / Results → the plan and the positions as one row per stock (stop still editable). It opens
+  on the first stage that has names. Tablets and desktops keep the original order.
+- The feed shows 3 items and the grid one card per row.
 - Tables keep the symbol column pinned while the rest scrolls sideways.
 - The stock chart opens full-screen, with the Trend / VCP / Base panels folded.
 - Touch targets are at least 44 px, inputs use 16 px text (no iOS zoom), time fields use the phone's time picker and
@@ -1394,3 +1399,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   14-day rotation, Telegram on failure, `--install-cron`), `scripts/pull-backups.sh`; `./docker.sh rebuild`.
 - Fix (PR #28): `/api/positions` returned red-flag signals under the guard's `flags`, blanking the dashboard;
   they are now `signals`.
+
+### 2026-10-27: Phone layout for the Screens page
+- Phones (< 600 px): ticker chips first, screen pills, one-line market, compact stage cards with the top names of the
+  chosen stage under them (`StagePeek`), then Moves / News / Results, plan and positions as one-line rows. Desktop
+  unchanged. Checked with real renders at 390 px and 1280 px.

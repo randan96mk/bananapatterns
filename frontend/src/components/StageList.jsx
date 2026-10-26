@@ -84,6 +84,45 @@ function Table({ screen, stage, selected, onSelect, shown }) {
   );
 }
 
+// Phone: the selected stage's first names as one-line rows under the stage cards; "Show all" opens StageList.
+const stopOf = (r) => r.vcp?.stop ?? r.cup?.stop ?? r.flag?.stop;
+const PEEK = {   // [main figure, small line] per stage
+  forming: (r) => [`${rs(r.pivot)} pivot`, [r.dist_to_pivot_pct != null && `${r.dist_to_pivot_pct.toFixed(1)}% away`,
+    stopOf(r) != null && `stop ${rs(stopOf(r))}`].filter(Boolean).join(' · ')],
+  fresh: (r) => [`${pct(r.gain_from_pivot_pct)} from pivot`, [`broke out ${r.breakout_date}`,
+    r.volume_ratio != null && `vol ${r.volume_ratio.toFixed(1)}x`].filter(Boolean).join(' · ')],
+  climbing: (r) => [`${pct(r.gain_from_pivot_pct)} from pivot`,
+    `${r.sessions_since_breakout ?? '?'} sessions · peak ${pct(r.peak_gain_pct)}`],
+  played_out: (r) => [`ended ${r.ended_date || ''}`, r.ended_reason || ''],
+};
+const PEEK_N = 3;
+
+export function StagePeek({ screen, stage, asOf, onSelect, count, onAll }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { setRows(null); api.screenResults(screen, stage).then((d) => setRows(d.rows)).catch(() => setRows([])); },
+    [screen, stage, asOf]);
+  const shaped = ['vcp', 'cup', 'flag'].includes(screen);
+  return (
+    <div className="panel peek">
+      <div className="row"><b>{TITLES[stage]} · {count}</b>
+        <span className="right muted small">{shaped ? 'best setups first' : 'stage order'}</span></div>
+      {!rows ? <p className="muted">Loading…</p> : !rows.length ? <p className="muted">None as of {asOf}.</p> : (
+        rows.slice(0, PEEK_N).map((r) => {
+          const [main, sub] = (PEEK[stage] || PEEK.forming)(r);
+          return (
+            <button key={r.symbol} className="peekrow" onClick={() => onSelect(r.symbol)}>
+              <span className="pk-left"><b>{r.symbol}</b>
+                {r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>}
+                <ResultsTag r={r.results} /><NewsTag n={r.news} /><FlagTags f={r.flags} /></span>
+              <span className="pk-right">{main}<span className="muted small">{sub}</span></span>
+            </button>);
+        }))}
+      {(rows?.length || 0) > 0 && <button className="linkbtn" onClick={onAll}>
+        {rows.length > PEEK_N ? `Show all ${rows.length}` : 'Open'} · grid with mini charts ›</button>}
+    </div>
+  );
+}
+
 const VIEW_KEY = 'bp.stageView';
 const loadView = () => { try { return localStorage.getItem(VIEW_KEY) || 'grid'; } catch { return 'grid'; } };
 
@@ -104,6 +143,7 @@ export default function StageList(props) {
           <option value="default">{props.screen === 'vcp' ? 'Score' : 'Stage order'}</option>
           <option value="rs">RS rating</option>
         </select>
+        {props.onLess && <button className="linkbtn" onClick={props.onLess}>Show less</button>}
       </div>
       <Results {...props} sort={sort} view={view} />
       {props.stage === 'fresh' && (
