@@ -6,6 +6,7 @@
 #   ./docker.sh status    container state and health
 #   ./docker.sh update    git pull, rebuild and restart (after a PR is merged)
 #   ./docker.sh restart   restart without rebuilding
+#   ./docker.sh rebuild   rebuild from the code as it is now (no git pull), e.g. after checking out an older version
 set -e
 cd "$(dirname "$0")"
 PORT="${BP_PORT:-8000}"
@@ -58,5 +59,6 @@ case "${1:-up}" in
     status) docker compose ps; curl -fs "http://127.0.0.1:$PORT/health" && echo "" || echo "health: not answering" ;;
     restart) docker compose restart && wait_healthy ;;
     update) git pull --ff-only && up --build ;;
-    *) sed -n '2,8p' "$0"; exit 1 ;;
+    rebuild) up --build ;;
+    *) sed -n '2,9p' "$0"; exit 1 ;;
 esac

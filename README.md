@@ -22,6 +22,7 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 ## Contents
 1. [Quick start (Mac)](#quick-start-mac)
 2. [Run with Docker](#run-with-docker-mac-later-a-cloud-server)
+   - [Cloud (Oracle + Tailscale)](#cloud-oracle--tailscale): full runbook in [docs/CLOUD.md](docs/CLOUD.md)
 3. [Daily workflow](#daily-workflow)
 4. [Architecture](#architecture)
 5. [Project layout (code guide)](#project-layout-code-guide)
@@ -72,6 +73,28 @@ Then in the dashboard (http://localhost:3000):
 > The Kite developer console redirect URL is `http://localhost:8000/api/kite/callback`. Only one token per Kite
 > app is active: if another program uses the same API key, a login in either one logs the other out.
 
+## Cloud (Oracle + Tailscale)
+
+The app runs 24×7 on a free **Oracle Cloud** server (Ubuntu 24.04 ARM, Docker) and is opened from the Mac,
+iPhone and Android at `https://banana.<tailnet>.ts.net`, a private **Tailscale** address with HTTPS that nobody
+outside your Tailscale account can reach. **[docs/CLOUD.md](docs/CLOUD.md)** is the complete runbook: first-time
+setup step by step (Oracle account, network, server, Tailscale, deploy key, switch-over from the Mac, phones),
+daily use, updating after a merged PR, rollback, backups and restore, maintenance, troubleshooting and a command
+cheat sheet.
+
+The short version, on the server (`ssh ubuntu@banana`, `cd ~/bananapatterns`):
+```bash
+./docker.sh update                 # after a PR is merged: pull + rebuild + restart
+./docker.sh status | logs          # is it healthy / what is it doing
+scripts/backup.sh                  # backup now (nightly at 23:30 via cron: scripts/backup.sh --install-cron)
+```
+Scripts: `scripts/server-setup.sh` (prepares a fresh Ubuntu server: updates, IST clock, swap, Docker, Tailscale,
+deploy key, reachability check), `scripts/backup.sh` (database + `.env` + `config/`, integrity-checked, 14 days,
+Telegram on failure), `scripts/pull-backups.sh` (copies the server's backups to the Mac).
+Run **one copy** only: the cloud and the Mac share one Kite API key, one Kite redirect URL and one Telegram bot.
+
+---
+
 ## Run with Docker (Mac, later a cloud server)
 
 The same app in one container: the dashboard is built inside the image and served by the backend on port 8000,
@@ -87,6 +110,7 @@ Keep your `.env` as it is: it is read at start-up and never copied into the imag
 ./docker.sh logs      # follow what it is doing (Ctrl+C stops following, not the app)
 ./docker.sh status    # running / healthy?
 ./docker.sh update    # after a PR is merged: git pull + rebuild + restart (~1 min)
+./docker.sh rebuild   # rebuild from the code as it is (no pull), e.g. after checking out an older version
 ./docker.sh down      # stop
 ```
 
@@ -1015,6 +1039,7 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 | Evening job didn't run | The app must be open and the Mac awake at 18:30 (see "Keeping the Mac ready"); it catches up when opened later that evening. Check Alerts → Automatic jobs. |
 | Port 8000 busy | `start.sh` frees 8000/3000. Otherwise `lsof -ti tcp:8000 \| xargs kill`. |
 | Details of a failure | Logs tab (WARNING+), full log in `logs/bananapatterns.log` |
+| Anything on the cloud server (blank page, can't reach the site, Kite redirect, backups, out of capacity) | [docs/CLOUD.md → Troubleshooting](docs/CLOUD.md#part-6-troubleshooting) |
 
 ---
 
@@ -1056,10 +1081,9 @@ days: sync → scan → persist results and diffs. NSE holiday calendar. Alert w
 missing. Optional NSE CM-UDiFF bhavcopy cross-check later in the evening (unadjusted, so compare
 only on days without corporate actions). Note: a sleeping Mac will not run jobs (`pmset` wake schedule or keep awake).
 
-### Next: cloud deployment
-Run the app on a small always-on server (e.g. Oracle Cloud Always Free) with HTTPS, so login links work from
-any device and jobs run with the Mac off. `PUBLIC_BASE_URL`, `BP_DASHBOARD_PASSWORD` and the login links are
-ready for it.
+### Cloud deployment *(done)*
+Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a runbook: see
+[Cloud (Oracle + Tailscale)](#cloud-oracle--tailscale) and [docs/CLOUD.md](docs/CLOUD.md).
 
 ### Later (only after approval)
 - **Market context:** breadth, sector rotation, industry map, all breakouts today, regime filter
@@ -1362,3 +1386,11 @@ ready for it.
 - `backend/ingest/indices.py` (`IndexTicker`: quote cache, daily history top-up, 5-minute sparklines, market
   status), `KiteClient.historical_intraday`, `GET /api/indices`; `IndexTicker.jsx` under the header with
   click-to-chart. Stock chart hides an all-zero volume pane. 292 offline tests passing.
+
+### 2026-10-26: Cloud (Oracle + Tailscale)
+- Live on Oracle Cloud Always Free (Hyderabad, A1.Flex ARM, Ubuntu 24.04, Docker), private HTTPS via `tailscale
+  serve`; Kite redirect and `PUBLIC_BASE_URL` on the tailnet address; reached from Mac, iPhone and Android.
+- `docs/CLOUD.md` runbook; `scripts/server-setup.sh`, `scripts/backup.sh` (online SQLite backup, integrity check,
+  14-day rotation, Telegram on failure, `--install-cron`), `scripts/pull-backups.sh`; `./docker.sh rebuild`.
+- Fix (PR #28): `/api/positions` returned red-flag signals under the guard's `flags`, blanking the dashboard;
+  they are now `signals`.
