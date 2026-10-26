@@ -45,6 +45,15 @@ class AppState:
         self.token_source: Optional[str] = None
         self.scan_lock = threading.Lock()
         self.scheduler = None                 # backend.alerts.jobs.Scheduler, set at startup
+        self._ticker = None
+
+    @property
+    def ticker(self):
+        """The index ticker bar (Nifty 50 / 500, Bank Nifty, India VIX, Sensex), created on first use."""
+        if self._ticker is None:
+            from backend.ingest.indices import IndexTicker
+            self._ticker = IndexTicker(self.client)
+        return self._ticker
 
     def start_sync(self, force_full: bool = False, symbols: Optional[list[str]] = None) -> threading.Thread:
         """Background candle sync followed by a scan (the Sync button and the evening job)."""
@@ -497,6 +506,12 @@ def news(days: Optional[int] = Query(None, ge=1, le=30)):
     VCP, Cup & handle and Bases screens, plus held / watched)."""
     from backend.ingest import news as nw
     return nw.board_news(S().config.alerts, days)
+
+
+@router.get("/indices")
+def indices():
+    """The ticker bar: live quotes when logged in to Kite (cached ~25 s), else the last stored closes."""
+    return S().ticker.snapshot(live=S().token_valid())
 
 
 @router.get("/deals")

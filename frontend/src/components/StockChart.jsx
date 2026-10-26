@@ -91,9 +91,11 @@ export default function StockChart({ symbol, onClose }) {
       setInfo(d);
       const cs = d.candles;
       candles.setData(cs.map((c) => ({ time: c.date, open: c.open, high: c.high, low: c.low, close: c.close })));
-      vol.setData(cs.map((c) => ({
+      const hasVolume = cs.some((c) => c.volume > 0);                // indices have none
+      vol.applyOptions({ visible: hasVolume, lastValueVisible: hasVolume, priceLineVisible: hasVolume });
+      vol.setData(hasVolume ? cs.map((c) => ({
         time: c.date, value: c.volume, color: c.close >= c.open ? `${pal.up}55` : `${pal.down}55`,
-      })));
+      })) : []);
       MAS.forEach(([n], i) => lines[i].setData(sma(cs, n)));
       chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, cs.length - 260), to: cs.length + 5 });
       if (!cs.length) return;

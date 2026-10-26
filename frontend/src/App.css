@@ -295,3 +295,28 @@ body.modal-open { overflow: hidden; }
 .mc-arrowhead { fill: var(--ok); }
 .mc-flag { stroke: var(--accent-text); stroke-width: 1.6; stroke-linecap: round; }
 .mc-flag-fill { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: none; }
+
+/* Index ticker bar */
+.ticker { display: flex; align-items: stretch; border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  margin: 10px 0 2px; overflow-x: auto; scrollbar-width: none; }
+.ticker::-webkit-scrollbar { display: none; }
+.tk { flex: 1 0 auto; min-width: 168px; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: none;
+  border: 0; border-right: 1px solid var(--border); color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.tk:hover { background: var(--hover); }
+.tk-body { display: flex; flex-direction: column; }
+.tk .nm { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .3px; text-transform: uppercase; white-space: nowrap; }
+.tk .px { font-size: 15px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tk .ch { font-size: 12px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tk .ch.warn { color: var(--warn); }
+.tk .ma { font-size: 10px; padding: 0 5px; border-radius: 4px; margin-left: 4px; vertical-align: 1px; }
+.tk .ma.ok { background: var(--ok-bg); color: var(--ok); } .tk .ma.bad { background: var(--bad-bg); color: var(--bad); }
+.tk .ma.warnbg { background: var(--warn-bg); color: var(--warn); }
+.tk-spark { width: 64px; height: 26px; flex: none; }
+.tk-spark polyline { fill: none; stroke-width: 1.6; stroke: var(--ok); }
+.tk-spark.down polyline { stroke: var(--bad); } .tk-spark.warn polyline { stroke: var(--warn); }
+.tk-prev { stroke: var(--border-strong); stroke-dasharray: 2 2; stroke-width: 1; }
+.tstat { flex: none; display: flex; flex-direction: column; justify-content: center; padding: 6px 14px; font-size: 11px;
+  color: var(--muted); white-space: nowrap; }
+.tstat .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 5px; }
+.tstat .dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+@media (max-width: 599px) { .tk { min-width: 150px; padding: 8px 12px; } .tk-spark, .tstat { display: none; } }

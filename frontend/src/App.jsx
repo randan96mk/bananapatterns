@@ -3,6 +3,7 @@ import KiteBar from './components/KiteBar';
 import UniverseTable from './components/UniverseTable';
 import ScreensHome from './components/ScreensHome';
 import StockChart from './components/StockChart';
+import IndexTicker from './components/IndexTicker';
 import DataPanel from './components/DataPanel';
 import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
@@ -27,6 +28,7 @@ export default function App() {
   const [kite, setKite] = useState(null);
   const [universe, setUniverse] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [indexChart, setIndexChart] = useState(null);
   const [backendErr, setBackendErr] = useState('');
   const [mode, setMode] = useState(getMode);
   const pickMode = (m) => { setMode(m); applyMode(m); };
@@ -63,6 +65,8 @@ export default function App() {
         </nav>}
         {!phone && themeSwitch}
       </header>
+      {!backendErr && <IndexTicker onSelect={(s) => setIndexChart(indexChart === s ? null : s)} />}
+      {indexChart && <StockChart symbol={indexChart} onClose={() => setIndexChart(null)} />}
       {backendErr ? <div className="kitebar warn">Backend unreachable: {backendErr}. Is `python run.py` running?</div>
         : <KiteBar status={kite} onChange={setKite} />}
       <main>
