@@ -770,6 +770,49 @@ average −8% when there's no setup); you can change a stop on the Screens home.
 Plus one evening line per position: price, gain %, R multiple, days held, stop. Sold positions drop off.
 **Run guard now** (Alerts tab) syncs and checks on demand.
 
+### Market hours: live guard, entry checklist, Today page
+
+`backend/alerts/live.py`, run from the 5-minute intraday job, the 09:10 opening check and the 15:15 close check
+(read-only Kite quotes and history, never orders).
+
+**Live position guard** (`live_guard`; each alert once per stock per day, kept across restarts in `intraday_flags`):
+
+| Alert | When |
+|---|---|
+| 🔻 Under stop | the price trades below your stop. Unconfirmed until the close (the 15:15 check says whether it recovered); with `hard_stop` on it says "exit now" |
+| ⚠️ Heavy selling | down `live_drop_pct` (4%) or more today on `live_drop_volume` (2×) normal volume for the time of day, still above the stop |
+| 🌅 Opened under stop | at the 09:10 opening check: a gap the stop can't protect against |
+| 🕒 Positions at 15:15 | names that were under the stop or sold off today: still under → "your rule says exit, act before 15:30"; back above → ✅. Sent only when something needs you |
+| 🆕 Now following | Kite holdings are re-read every `holdings_refresh_min` (30) in market hours, so today's buy is guarded within the half hour |
+
+The live alerts carry **📈 Chart** and **🔕 Quiet today** (no more live alerts on that stock today; the evening guard
+still runs). One extra Kite quote call per 5-minute tick covers every position.
+
+**Entry checklist** (`entry_checklist`) on every intraday heads-up and the 15:15 check:
+
+| Check | Passes when |
+|---|---|
+| Buy zone | within pivot … +`buy_zone_pct` (5%) |
+| VWAP | above Kite's average traded price for the day |
+| Volume | on pace for ≥ `intraday_volume_mult` (1.5×) the 50-day average (NSE volume curve) |
+| Leader | up more than the Nifty 500 today |
+| Opening range | over the high of the first `opening_range_min` (30) minutes (one 5-minute history call per stock per day) |
+
+🟢 **Valid entry** = all five · 🔴 **Skip** = beyond the buy zone, or under VWAP on weak volume (pace < 1×) ·
+🟡 **Wait** = the rest (a check without data yet counts as not passed). A valid entry adds **🎯 Buy up to** (top of
+the zone), the stop (the setup's, else pivot −8%) and, with `capital` set, the **quantity** and ₹ at risk
+(capital × `risk_pct` × the market size factor: ½ under pressure, ¼ in a correction). A 🟡 that turns 🟢 later
+the same day gets one **⬆️ now a valid entry** note. Breakouts still count only on a close above the pivot.
+
+**Today page** (⚡ Today tab; on a phone it takes the Data slot in the bottom bar, Data moves to More):
+market strip (status, Nifty 500 and VIX today, size note), your positions (live price, day %, R, stop distance,
+under stop / recovered / heavy selling) and the plan plus Forming names within `today_near_pct` (3%) of their pivot
+(live price, % vs pivot, VWAP ▲/▼, volume pace, vs Nifty, the verdict and quantity; tap a setup for its checklist).
+Today's 5-minute line next to each name, with the stop or pivot dashed. It refreshes every 30 s while NSE is open
+(`GET /api/today`: one Kite quote call, cached 25 s; sparklines `GET /api/today/sparks`, cached 5 min) and shows the
+names without prices when there is no Kite login. The Screens positions card shows the same live price, chip and a
+stop-distance bar while the market is open.
+
 ### Buttons and bot commands
 
 Stock alerts carry four buttons (`alert_buttons`), answered by the bot poller (`backend/alerts/commands.py`, your
@@ -781,6 +824,7 @@ chat only):
 | 🔕 Mute | no buy-side alerts for `mute_days` (30); sell-side alerts still come |
 | 📈 Chart | sends the decision chart for its current stage |
 | ✅ I bought | the position guard follows it from the last close (stop from the setup); it becomes Kite-backed once your holdings show it |
+| 🔕 Quiet today | (live guard alerts) no more live alerts on that stock today |
 
 Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
 `/mute SYM`, `/chart SYM`, `/help`.
@@ -831,7 +875,8 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
-| GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows; change a stop |
+| GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
+| GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
@@ -960,6 +1005,8 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
 | `position_guard` / `profit_zone_pct` / `extended_pct` / `failed_days` | true / 20 / 25 / 3 | position guard rules |
+| `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
+| `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -984,7 +1031,8 @@ before the first paint (no flash). The candle chart reads the theme colours and 
 chart images stay dark.
 
 **On a phone** (under 600 px wide) the app switches to a mobile layout:
-- A bottom tab bar (Screens · Alerts · Data · More). More opens a sheet with Universe, Settings, Logs and the theme.
+- A bottom tab bar (Screens · ⚡ Today · Alerts · More). More opens a sheet with Universe, Data, Settings, Logs and the
+  theme.
 - The Kite bar shrinks to a status pill and Login, with the rest behind "⋯".
 - The Screens page is reordered for a phone: index ticker → screen pills (VCP · Cup · Flag · Bases) and ↻ rescan →
   the market on one line (status, breadth, 52-week highs / lows; tap for the signals) → the four stage cards as a
@@ -1404,3 +1452,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Phones (< 600 px): ticker chips first, screen pills, one-line market, compact stage cards with the top names of the
   chosen stage under them (`StagePeek`), then Moves / News / Results, plan and positions as one-line rows. Desktop
   unchanged. Checked with real renders at 390 px and 1280 px.
+
+### 2026-10-27: Market hours: live guard, entry checklist, Today page
+- `backend/alerts/live.py`: entry checklist and verdict (zone, VWAP, volume pace, vs Nifty 500, opening range), size,
+  live guard rules, `LiveBoard` (cached quotes, opening ranges, sparklines). `KiteClient.historical_intraday` returns
+  high / low / volume too.
+- Scheduler: live position guard on the intraday tick (under stop, heavy selling, holdings re-read with "now
+  following"), positions in the 09:10 opening check and the 15:15 check, checklist on heads-ups and the 15:15 check,
+  one ⬆️ upgrade note, 🔕 Quiet today button.
+- `GET /api/today`, `/api/today/sparks`, live fields on `/api/positions`; ⚡ Today page; live price, chip and stop bar
+  on the positions card; new Alerts settings. 304 offline tests passing.

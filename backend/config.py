@@ -294,6 +294,16 @@ class AlertsConfig:
     profit_zone_pct: float = 20.0          # gain from your average: consider selling part
     extended_pct: float = 25.0             # close this far above the 50-day line: extended
     failed_days: int = 3                   # back under the pivot within N sessions of buying: failed breakout
+    # Live guard (market hours, read-only): positions checked on every intraday tick
+    live_guard: bool = True
+    live_drop_pct: float = 4.0             # heavy selling: down this % or more today ...
+    live_drop_volume: float = 2.0          # ... on this x normal volume for the time of day (still above the stop)
+    holdings_refresh_min: int = 30         # re-read Kite holdings in market hours, so today's buys are guarded
+    hard_stop: bool = False                # under-stop alert says "exit now" (else: unconfirmed until the close)
+    # Entry checklist on intraday heads-ups and the 15:15 check, and the Today page
+    entry_checklist: bool = True           # zone / VWAP / volume pace / vs Nifty 500 / opening range -> verdict
+    opening_range_min: int = 30            # "over the first N minutes' high"
+    today_near_pct: float = 3.0            # Today page: Forming names within this % under their pivot
     # Results calendar (NSE board meetings, fetched in the evening job): gap risk around results
     results_calendar: bool = True          # fetch the calendar and show "Results ..." on cards, alerts and plan
     results_warn_sessions: int = 5         # stock alerts / plan / cards warn when results are this close

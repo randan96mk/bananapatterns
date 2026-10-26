@@ -46,6 +46,7 @@ class AppState:
         self.scan_lock = threading.Lock()
         self.scheduler = None                 # backend.alerts.jobs.Scheduler, set at startup
         self._ticker = None
+        self._live = None
 
     @property
     def ticker(self):
@@ -54,6 +55,14 @@ class AppState:
             from backend.ingest.indices import IndexTicker
             self._ticker = IndexTicker(self.client)
         return self._ticker
+
+    @property
+    def live(self):
+        """The Today page / live positions board (quotes, opening ranges, sparklines), created on first use."""
+        if self._live is None:
+            from backend.alerts.live import LiveBoard
+            self._live = LiveBoard(self)
+        return self._live
 
     def start_sync(self, force_full: bool = False, symbols: Optional[list[str]] = None) -> threading.Thread:
         """Background candle sync followed by a scan (the Sync button and the evening job)."""
@@ -641,9 +650,35 @@ def positions_list():
     pos = guard.positions()
     syms = [p["symbol"] for p in pos]
     results, news, signals = _results_for(syms), _news_for(syms), hd.signals(syms, S().config.alerts)
+    live = {}                                         # market hours: live price and guard state
+    from backend.ingest.indices import market_status
+    if pos and S().token_valid() and market_status(S().live.clock()) == "open":
+        try:
+            live = {p["symbol"]: p["live"] for p in S().live.snapshot(live=True)["positions"]}
+        except Exception as exc:
+            logger.info("Live positions: %s", exc)
     # `flags` stays the guard's alerts-sent record; red flags / fund moves go under `signals`
     return {"positions": [dict(p, results=results.get(p["symbol"]), news=news.get(p["symbol"]),
-                               signals=signals.get(p["symbol"])) for p in pos]}
+                               signals=signals.get(p["symbol"]), live=live.get(p["symbol"])) for p in pos]}
+
+
+@router.get("/today")
+def today_board():
+    """The Today page: positions (live guard state), plan and near-pivot names with the entry checklist, market
+    strip. Live quotes while there is a Kite login (one cached call), else the names only."""
+    return S().live.snapshot(live=S().token_valid())
+
+
+@router.get("/today/sparks")
+def today_sparks():
+    """Today's 5-minute closes for the Today page names (Kite history, cached 5 min)."""
+    from backend.ingest.indices import market_status
+    st = S()
+    now = st.live.clock()
+    if not st.token_valid() or market_status(now) == "holiday":
+        return {"sparks": {}}
+    positions, setups = st.live.names()
+    return {"sparks": st.live.sparks([*positions, *setups], now)}
 
 
 @router.put("/positions/{symbol}")

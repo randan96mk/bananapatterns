@@ -14,6 +14,9 @@ const GROUPS = [
   ['Daily plan', [['top_setups', '🎯 Top setups after the evening scan'], ['morning_plan', '☀️ Morning plan'],
     ['gap_check', '🔔 Opening (gap) check'], ['position_guard', '📒 Position guard (Kite holdings, read-only)'],
     ['alert_buttons', '🔘 Buttons under alerts (Watch · Mute · Chart · I bought)']]],
+  ['Market hours', [['live_guard', '🔻 Live position guard (under stop, heavy selling, 09:10 and 15:15 checks)'],
+    ['hard_stop', '🛑 Hard stop: under-stop alert says "exit now" (off: unconfirmed until the close)'],
+    ['entry_checklist', '✅ Entry checklist on heads-ups (zone · VWAP · volume · vs Nifty · opening range)']]],
 ];
 const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time', 'Evening job (IST)'],
   ['reminder_time', 'Login reminder (IST)'], ['intraday_start', 'Intraday from'], ['intraday_end', 'Intraday until'],
@@ -21,7 +24,10 @@ const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time'
   ['intraday_volume_mult', 'Volume needed (× 50-day avg)'], ['failed_buffer_pct', 'Failed below pivot by (0.01 = 1%)'],
   ['close_min_range', 'Close check: min place in day range (0–1)'], ['top_setups_time', 'Top setups at'],
   ['plan_top_n', 'How many top setups'], ['profit_zone_pct', 'Guard: profit zone at (+%)'],
-  ['extended_pct', 'Guard: extended above 50-day (%)'], ['failed_days', 'Guard: failed if under pivot within (days)'], ['morning_plan_time', 'Morning plan at'], ['gap_check_time', 'Opening check at'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)']];
+  ['extended_pct', 'Guard: extended above 50-day (%)'], ['failed_days', 'Guard: failed if under pivot within (days)'], ['morning_plan_time', 'Morning plan at'], ['gap_check_time', 'Opening check at'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)'],
+  ['live_drop_pct', 'Live guard: heavy selling at (−% today)'], ['live_drop_volume', 'Live guard: … on volume (× normal)'],
+  ['holdings_refresh_min', 'Live guard: re-read holdings every (min)'],
+  ['opening_range_min', 'Checklist: opening range (first N min)'], ['today_near_pct', 'Today page: near pivot within (%)']];
 const CHART_KINDS = [['breakout', '🚀 Breakout'], ['breakout_low_volume', '⚠️ Low-volume breakout'],
   ['near_pivot', '🎯 Near pivot'], ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Below pivot'],
   ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday + 15:15']];

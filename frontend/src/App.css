@@ -366,7 +366,48 @@ body.modal-open { overflow: hidden; }
 .pk-left { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; flex: 1; }
 .pk-left .tag { margin-left: 0; }
 .posrow .pk-left { flex-direction: column; align-items: flex-start; }
+.posrow .pk-left > span:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .pk-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right;
   font-variant-numeric: tabular-nums; white-space: nowrap; }
 .posrow .stopinput { width: 92px; text-align: right; }
 .peek .linkbtn, .plancard .linkbtn { margin-top: 6px; }
+
+/* Today page (market hours): market strip, positions, plan + near-pivot setups */
+.today { display: flex; flex-direction: column; gap: 0; max-width: 820px; }
+.tdmarket { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; border-left: 4px solid var(--border); }
+.tdmarket.m-uptrend { border-left-color: var(--ok); } .tdmarket.m-pressure { border-left-color: var(--warn); }
+.tdmarket.m-correction { border-left-color: var(--bad); }
+.tdmarket .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 5px; }
+.tdmarket .dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+.tdsize { flex-basis: 100%; }
+.tdsec { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin: 12px 2px 6px; }
+.tdlist { padding: 2px 14px; }
+.tdrow { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: 0; border-top: 1px solid var(--rowline);
+  padding: 10px 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.tdlist > .tdrow:first-child, .tdlist > div:first-child > .tdrow { border-top: 0; }
+.tdrow.alert { background: color-mix(in srgb, var(--bad) 6%, transparent); margin: 0 -14px; padding: 10px 14px; width: calc(100% + 28px); }
+.tdl { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.tdl .tag, .tdl .tier { margin-left: 6px; }
+.tdr { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tdspark { width: 64px; height: 24px; flex: none; }
+.tdspark polyline { fill: none; stroke-width: 1.6; stroke: var(--ok); } .tdspark.down polyline { stroke: var(--bad); }
+.tdspark line { stroke: var(--border-strong); stroke-dasharray: 2 2; stroke-width: 1; }
+.vd { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 5px; margin-left: 6px; white-space: nowrap; }
+.vd.g { background: var(--ok-bg); color: var(--ok); } .vd.y { background: var(--warn-bg); color: var(--warn); }
+.vd.r { background: var(--bad-bg); color: var(--bad); }
+.today .chips { margin: 0; gap: 4px; }
+.today .c { font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--hover); color: var(--muted); }
+.today .c.ok { background: var(--ok-bg); color: var(--ok); } .today .c.bad { background: var(--bad-bg); color: var(--bad); }
+.tdchecks { padding: 4px 0 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.tdfoot { text-align: center; margin-top: 8px; }
+
+/* Positions card: how far above the stop (live) */
+.stopbar { display: block; width: 100%; max-width: 160px; height: 4px; border-radius: 2px; background: var(--rowline); margin-top: 4px; }
+.grid .stopbar { margin-left: auto; width: 90px; }
+.stopbar i { display: block; height: 4px; border-radius: 2px; background: var(--ok); }
+.stopbar i.warn { background: var(--warn); } .stopbar i.bad { background: var(--bad); }
+@media (max-width: 599px) {
+  .tdlist { padding: 2px 12px; }
+  .tdrow.alert { margin: 0 -12px; padding: 10px 12px; width: calc(100% + 24px); }
+  .tdrow { gap: 8px; }
+}

@@ -8,14 +8,16 @@ import DataPanel from './components/DataPanel';
 import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
+import TodayPage from './components/TodayPage';
 import * as api from './services/api';
 import { applyMode, getMode } from './theme';
 import { useIsPhone } from './useMedia';
 
 // Phone: these sit in the bottom bar; the rest go under "More".
-const PHONE_TABS = ['screens', 'alerts', 'data'];
+const PHONE_TABS = ['screens', 'today', 'alerts'];
 const TABS = [
   ['screens', 'Screens'],
+  ['today', '⚡ Today'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['alerts', 'Alerts'],
@@ -71,6 +73,7 @@ export default function App() {
         : <KiteBar status={kite} onChange={setKite} />}
       <main>
         {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
+        {tab === 'today' && <TodayPage />}
         {tab === 'universe' && (
           <>
             {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}
@@ -92,7 +95,7 @@ export default function App() {
               <div className="sheetrow"><span className="muted">Theme</span>{themeSwitch}</div>
             </div>)}
           <nav className="bottomnav">
-            {[['screens', '📊', 'Screens'], ['alerts', '🔔', 'Alerts'], ['data', '🗄', 'Data']].map(([id, icon, label]) => (
+            {[['screens', '📊', 'Screens'], ['today', '⚡', 'Today'], ['alerts', '🔔', 'Alerts']].map(([id, icon, label]) => (
               <button key={id} className={tab === id && !more ? 'active' : ''} onClick={() => go(id)}>
                 <span aria-hidden="true">{icon}</span>{label}</button>))}
             <button className={more || !PHONE_TABS.includes(tab) ? 'active' : ''} onClick={() => setMore(!more)}>

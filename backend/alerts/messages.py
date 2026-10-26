@@ -93,7 +93,8 @@ VOLUME_LINE = {"strong": "🟢 <b>Strong volume</b>: on pace for {pace}. A real 
 
 def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optional[float],
                    avg_vol: Optional[float], ctx: Optional[dict] = None, volume: Optional[str] = None,
-                   zone_top: Optional[float] = None, check_time: str = "15:15") -> str:
+                   zone_top: Optional[float] = None, check_time: str = "15:15", ck: Optional[dict] = None,
+                   size: Optional[dict] = None, stop: Optional[float] = None, size_note: str = "") -> str:
     lines = [f"{ICONS['intraday']} <b>{escape(p['symbol'])}</b> trading {rs(ltp)}, "
              f"{(ltp / p['pivot'] - 1) * 100:+.1f}% above its {rs(p['pivot'])} pivot ({escape(p['base_label'])})",
              "<b>Unconfirmed</b>: a breakout counts only on a close above the pivot."]
@@ -105,6 +106,12 @@ def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optio
     if vol_so_far is not None and avg_vol:
         lines.append(f"Volume so far {vol_so_far / avg_vol:.1f}× the 50-day average"
                      + (f", on pace for {pace:.1f}×" if pace else ""))
+    if ck and ck["verdict"]:
+        lines += checklist_lines(ck)
+        if ck["verdict"] == "valid":
+            lines.append(action_line(ck, stop, size, size_note))
+        elif ck["verdict"] == "wait":
+            lines.append("<i>You'll get a note if it turns green today.</i>")
     tail = _tail(p)
     if tail:
         lines.append(f"<i>{tail}</i>")
@@ -167,6 +174,105 @@ def login_ok_alert(expires: datetime) -> str:
     return f"✅ <b>Kite connected</b> · valid until {expires:%H:%M %d %b}"
 
 
+VERDICT = {"valid": "🟢 <b>Valid entry</b>", "wait": "🟡 <b>Wait</b>", "skip": "🔴 <b>Skip</b>"}
+
+
+def checklist_lines(ck: dict) -> list[str]:
+    """'🟡 Wait · 3 of 5' and one ✅ / ❌ / ⏳ line per check (live.checklist)."""
+    head = f"{VERDICT[ck['verdict']]} · {ck['passed']} of {ck['of']}"
+    if ck["verdict"] == "skip":
+        head += f": {escape(ck['reason'])}"
+    return [head] + [f"{'✅' if ok else '⏳' if ok is None else '❌'} {escape(text)}" for _, ok, text in ck["checks"]]
+
+
+def action_line(ck: dict, stop: Optional[float], size: Optional[dict], size_note: str = "") -> str:
+    """🎯 Buy up to (top of the zone) · stop · qty and ₹ at risk (qty only when capital is set)."""
+    line = f"🎯 <b>Buy up to {rs(ck['zone_top'])}</b> (top of the buy zone)"
+    if stop:
+        line += f" · stop {rs(stop)}"
+    if size and size["qty"] > 0:
+        line += f"\n<b>Qty {size['qty']}</b> · risk ₹{size['risk_rs']:,}" + (f" ({escape(size_note)})" if size_note else "")
+    return line
+
+
+def entry_upgrade(p: dict, ltp: float, ck: dict, stop: Optional[float], size: Optional[dict],
+                  size_note: str = "") -> str:
+    """⬆️ a 🟡 Wait name that is now 🟢 valid."""
+    return "\n".join([f"⬆️ <b>{escape(p['symbol'])}</b> now a 🟢 <b>valid entry</b> at {rs(ltp)} "
+                      f"({ck['ext_pct']:+.1f}% over the {rs(p['pivot'])} pivot, unconfirmed until the close)"]
+                     + checklist_lines(ck)[1:] + [action_line(ck, stop, size, size_note)])
+
+
+# --- live position guard (market hours) ---
+
+def _pos_tail(pos: dict, ltp: float, r: Optional[float], pace: Optional[float]) -> str:
+    gain = (ltp / pos["avg_price"] - 1) * 100 if pos.get("avg_price") else None
+    bits = [f"{pos['qty']} sh" if pos.get("qty") else "followed", f"{gain:+.1f}% from your {rs(pos['avg_price'])}"
+            if gain is not None else None, f"{r:+.1f}R" if r is not None else None,
+            f"volume {pace:.1f}× pace" if pace else None]
+    return "<i>" + " · ".join(b for b in bits if b) + "</i>"
+
+
+def live_stop_alert(pos: dict, ltp: float, r: Optional[float], pace: Optional[float], hard: bool,
+                    check_time: str = "15:15") -> str:
+    head = (f"🔻 <b>{escape(pos['symbol'])}</b> trading {rs(ltp)}, <b>under your stop</b> {rs(pos['stop'])} "
+            f"({(ltp / pos['stop'] - 1) * 100:+.1f}%).")
+    body = ("Hard stop: your rule says exit now." if hard else
+            f"Unconfirmed until the close: the {escape(check_time)} check says whether it recovered. "
+            "A hard stop says exit now.")
+    return "\n".join([head, body, _pos_tail(pos, ltp, r, pace)])
+
+
+def heavy_selling_alert(pos: dict, ltp: float, day_pct: float, pace: float, index_pct: Optional[float],
+                        r: Optional[float]) -> str:
+    above = (ltp / pos["stop"] - 1) * 100 if pos.get("stop") else None
+    lines = [f"⚠️ <b>{escape(pos['symbol'])}</b> {day_pct:+.1f}% today at {rs(ltp)} on <b>{pace:.1f}× normal volume</b> "
+             "for the time of day: heavy selling."
+             + (f" Still above your stop {rs(pos['stop'])} ({above:.1f}% below)." if above is not None else "")]
+    if index_pct is not None:
+        lines.append(f"Nifty 500 {index_pct:+.1f}% today" + (": the stock is much weaker." if day_pct < index_pct - 2
+                                                              else "."))
+    lines.append(_pos_tail(pos, ltp, r, None))
+    return "\n".join(lines)
+
+
+def new_positions_alert(rows: list[dict]) -> str:
+    """🆕 positions picked up from Kite during market hours."""
+    lines = ["🆕 <b>Now following</b> (new in your Kite holdings)"]
+    for p in rows:
+        lines.append(f"<b>{escape(p['symbol'])}</b> {p['qty']} sh @ {rs(p['avg_price'])} · stop {rs(p['stop'])} "
+                     f"({escape(p['stop_source'])}" + (f", risk {(1 - p['stop'] / p['avg_price']) * 100:.1f}%"
+                                                      if p.get("avg_price") else "") + ")")
+    lines.append("<i>Edit a stop on the dashboard; the live guard watches it from now on.</i>")
+    return "\n".join(lines)
+
+
+def gap_positions(broken: list[tuple[dict, float]], ok_count: int) -> str:
+    lines = ["🌅 <b>Opening check · your positions</b>"]
+    for pos, open_px in broken:
+        lines.append(f"🔻 <b>{escape(pos['symbol'])}</b> opened {rs(open_px)}, <b>under your stop</b> {rs(pos['stop'])} "
+                     f"({(open_px / pos['stop'] - 1) * 100:+.1f}%). A stop can't protect a gap: decide now.")
+    if ok_count:
+        lines.append(f"✅ {ok_count} other{'s' if ok_count > 1 else ''} opened above {'their stops' if ok_count > 1 else 'its stop'}.")
+    return "\n".join(lines)
+
+
+def close_positions(rows: list[tuple[dict, float, str]], fine: list[str]) -> str:
+    """15:15 positions check: rows (pos, ltp, state under_stop / recovered / heavy)."""
+    lines = ["🕒 <b>Positions at 15:15</b> · act before 15:30"]
+    for pos, ltp, state in rows:
+        sym, stop = escape(pos["symbol"]), rs(pos["stop"])
+        if state == "under_stop":
+            lines.append(f"🔻 <b>{sym}</b> {rs(ltp)}, still under the stop {stop}: <b>your rule says exit</b>.")
+        elif state == "recovered":
+            lines.append(f"✅ <b>{sym}</b> {rs(ltp)}, back above the stop {stop}.")
+        else:
+            lines.append(f"⚠️ <b>{sym}</b> {rs(ltp)}, sold off on heavy volume today; above the stop {stop}.")
+    if fine:
+        lines.append(f"<i>{escape(', '.join(fine))}: fine.</i>")
+    return "\n".join(lines)
+
+
 def failed_alert(p: dict, ltp: float, day_high: Optional[float], stop: Optional[float]) -> str:
     lines = [f"⚠️ <b>{escape(p['symbol'])}: breakout failing.</b> Back at {rs(ltp)}, below the {rs(p['pivot'])} pivot"
              + (f" (today's high {rs(day_high)})." if day_high else "."),
@@ -183,11 +289,13 @@ CLOSE_HEAD = {"holding": "✅ <b>{sym}: breakout holding into the close</b>",
 
 
 def close_alert(p: dict, verdict: str, ltp: float, pace: Optional[float], rng: Optional[float],
-                zone_top: float, ctx: Optional[dict] = None) -> str:
+                zone_top: float, ctx: Optional[dict] = None, ck: Optional[dict] = None) -> str:
     lines = [CLOSE_HEAD[verdict].format(sym=escape(p["symbol"])),
              f"{rs(ltp)}, {(ltp / p['pivot'] - 1) * 100:+.1f}% over the {rs(p['pivot'])} pivot "
              f"({escape(p['base_label'])}) · volume on pace {_pace(pace)} · "
              f"range {f'{rng:.2f}' if rng is not None else 'n/a'}"]
+    if ck and ck["verdict"]:
+        lines += checklist_lines(ck)
     if verdict == "holding":
         lines.append(f"Buy zone {rs(p['pivot'])} – {rs(zone_top)} · act before 15:30. The 18:30 scan confirms it.")
     elif verdict == "weak":
