@@ -23,7 +23,9 @@ export default function MarketCard({ data }) {
     <div className={`panel marketcard m-${h.status} ${open ? 'open' : ''}`}>
       <div className="row">
         <button className={`mstatus ${cls}`} aria-expanded={open} onClick={() => setOpen(!open)}>
-          Market {label}{h.breadth?.above_50_pct != null && <span className="mshort"> · breadth {h.breadth.above_50_pct}%</span>}
+          <span className="mword">Market </span>{label}
+          {h.breadth?.above_50_pct != null && <span className="mshort"> · breadth {h.breadth.above_50_pct}%</span>}
+          <span className="mshort"> · 52w H/L {br.new_highs ?? '–'}/{br.new_lows ?? '–'}</span>
           <span className="mchev" aria-hidden="true"> ▾</span></button>
         {prev && <span className="muted small">was {prev}</span>}
         {ix.change_pct != null && <span className={`small ${ix.change_pct >= 0 ? 'up' : 'down'}`}>

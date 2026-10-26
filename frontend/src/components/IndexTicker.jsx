@@ -32,7 +32,10 @@ export default function IndexTicker({ onSelect }) {
   }, []);
   if (!d || !d.items?.length) return null;
   const time = d.as_of ? d.as_of.slice(11, 19) : '';
+  const status = d.live ? STATUS[d.status] : 'Last close · log in for live';
+  const when = d.live ? `updated ${time}` : (d.items.find((i) => i.date)?.date || '');
   return (
+    <>
     <div className="ticker" role="list" aria-label="Indices">
       {d.items.map((i) => {
         if (i.missing) return null;
@@ -52,15 +55,20 @@ export default function IndexTicker({ onSelect }) {
                       {i.above_ma50 ? '▲' : '▼'} 50d</span>}
               </span>
               <span className="px">{fmt(i.last)}</span>
-              <span className={`ch ${cls}`}>{i.change == null ? '' : `${sign}${fmt(i.change)} (${sign}${fmt(i.change_pct)}%)`}</span>
+              <span className={`ch ${cls}`}>{i.change != null && <>
+                <span className="chabs">{sign}{fmt(i.change)} (</span>{sign}{fmt(i.change_pct)}%<span className="chabs">)</span>
+              </>}</span>
             </span>
           </button>);
       })}
       <div className="tstat">
-        <div><span className={`dot ${d.status === 'open' && d.live ? 'on' : ''}`} />
-          {d.live ? STATUS[d.status] : 'Last close · log in for live'}</div>
-        <div>{d.live ? `updated ${time}` : (d.items.find((i) => i.date)?.date || '')}</div>
+        <div><span className={`dot ${d.status === 'open' && d.live ? 'on' : ''}`} />{status}</div>
+        <div>{when}</div>
       </div>
     </div>
+    {/* phone: the status sits under the swipeable chips */}
+    <div className="tstat-line"><span><span className={`dot ${d.status === 'open' && d.live ? 'on' : ''}`} />{status}
+      {when ? ` · ${when}` : ''}</span><span>swipe for more ›</span></div>
+    </>
   );
 }
