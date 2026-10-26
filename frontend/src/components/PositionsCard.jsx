@@ -30,13 +30,13 @@ export default function PositionsCard({ onSelect }) {
             <div className="row"><b className="link" onClick={() => onSelect(p.symbol)}>{p.symbol}</b>
               <ResultsTag r={p.results} />
               <NewsTag n={p.news} />
-              <FlagTags f={p.flags} />
+              <FlagTags f={p.signals} />
               <span className="muted">{p.qty} sh @ {rs(p.avg_price)}</span></div>
             <label className="field">Stop <input className="stopinput" inputMode="decimal" defaultValue={p.stop}
               onBlur={(e) => Number(e.target.value) !== p.stop && saveStop(p.symbol, e.target.value)} />
               <span className="muted small">{p.stop_source}</span></label>
             <div className="small muted">since {p.first_seen}{p.pivot ? ` · pivot ${rs(p.pivot)}` : ''}
-              {Object.keys(p.flags).length > 0 && ` · ${Object.keys(p.flags).map((k) => RULES[k] || k).join(' · ')}`}</div>
+              {Object.keys(p.flags || {}).length > 0 && ` · ${Object.keys(p.flags || {}).map((k) => RULES[k] || k).join(' · ')}`}</div>
           </div>))}</div>
       ) : (
       <div className="tablewrap"><table className="grid"><thead><tr><th>Symbol</th><th className="num">Qty</th>
@@ -44,12 +44,12 @@ export default function PositionsCard({ onSelect }) {
         <tbody>{rows.map((p) => (
           <tr key={p.symbol}>
             <td><b className="link" onClick={() => onSelect(p.symbol)}>{p.symbol}</b>
-              <ResultsTag r={p.results} /><NewsTag n={p.news} /><FlagTags f={p.flags} /></td>
+              <ResultsTag r={p.results} /><NewsTag n={p.news} /><FlagTags f={p.signals} /></td>
             <td className="num">{p.qty}</td><td className="num">{rs(p.avg_price)}</td><td className="num">{rs(p.pivot)}</td>
             <td><input className="stopinput" defaultValue={p.stop} onBlur={(e) => Number(e.target.value) !== p.stop
               && saveStop(p.symbol, e.target.value)} /> <span className="muted small">{p.stop_source}</span></td>
             <td className="muted">{p.first_seen}</td>
-            <td className="small">{Object.keys(p.flags).map((k) => RULES[k] || k).join(' · ')}</td>
+            <td className="small">{Object.keys(p.flags || {}).map((k) => RULES[k] || k).join(' · ')}</td>
           </tr>))}</tbody></table></div>
       )}
     </div>

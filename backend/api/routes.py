@@ -640,9 +640,10 @@ def positions_list():
     from backend.alerts import guard
     pos = guard.positions()
     syms = [p["symbol"] for p in pos]
-    results, news, flags = _results_for(syms), _news_for(syms), hd.signals(syms, S().config.alerts)
+    results, news, signals = _results_for(syms), _news_for(syms), hd.signals(syms, S().config.alerts)
+    # `flags` stays the guard's alerts-sent record; red flags / fund moves go under `signals`
     return {"positions": [dict(p, results=results.get(p["symbol"]), news=news.get(p["symbol"]),
-                               flags=flags.get(p["symbol"])) for p in pos]}
+                               signals=signals.get(p["symbol"])) for p in pos]}
 
 
 @router.put("/positions/{symbol}")
