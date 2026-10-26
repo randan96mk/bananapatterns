@@ -97,10 +97,17 @@ def test_positions_api(monkeypatch):
     from fastapi.testclient import TestClient
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
-    guard.sync({"X": {"qty": 1, "avg": 10.0}}, VcpConfig())
+    guard.sync({"X": {"qty": 1, "avg": 10.0}, "Y": {"qty": 2, "avg": 20.0}}, VcpConfig())
+    from backend.database.models import get_db, now_ist
+    with get_db() as conn:                                  # a promoter sale: a red flag on Y only
+        conn.execute("INSERT INTO deals (date, symbol, client, side, qty, price, source, pct, promoter, fetched_at) "
+                     "VALUES (?, 'Y', 'Promoter', 'SELL', 1, 1, 'sast', 2.0, 1, 'x')", (now_ist()[:10],))
     from backend import main
     with TestClient(main.app) as tc:
-        assert tc.get("/api/positions").json()["positions"][0]["symbol"] == "X"
+        pos = {p["symbol"]: p for p in tc.get("/api/positions").json()["positions"]}
+        assert set(pos) == {"X", "Y"}
+        assert pos["X"]["flags"] == {} and pos["X"]["signals"] is None      # the guard's record is never replaced
+        assert pos["Y"]["flags"] == {} and pos["Y"]["signals"]["red"]
         assert tc.put("/api/positions/X", json={"stop": 9.5}).json() == {"symbol": "X", "stop": 9.5}
         assert tc.put("/api/positions/X", json={"stop": -1}).status_code == 422
         assert tc.put("/api/positions/NOPE", json={"stop": 1}).status_code == 404
