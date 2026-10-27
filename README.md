@@ -103,7 +103,7 @@ cd ~/bananapatterns
 
 ### Every day
 
-Kite logs out at **6:00 AM IST** every day. Tap **🔑 Log in to Kite** in Telegram (sent at 6:01 AM and 8:45 AM
+Kite logs out at **6:00 AM AM IST** every day. Tap **🔑 Log in to Kite** in Telegram (sent at 6:01 AM AM and 8:45 AM AM
 when needed), or send `/login` to the bot, or use **Login with Kite** on the dashboard. Nothing to run on the server.
 
 ### After a PR is merged (update the app)
@@ -273,8 +273,8 @@ Keep your `.env` as it is: it is read at start-up and never copied into the imag
 
 | When (IST) | What |
 |---|---|
-| Any time after 6:00 AM | Log in to Kite (tokens die at **6:00 AM IST** every day) |
-| After ~3:45 PM | **Sync candles**. Before 3:45 PM today's bar is still forming, so the sync stops at yesterday. |
+| Any time after 6:00 AM AM | Log in to Kite (tokens die at **6:00 AM AM IST** every day) |
+| After ~3:45 AM PM | **Sync candles**. Before 3:45 AM PM today's bar is still forming, so the sync stops at yesterday. |
 | Weekly / on index rebalances | **Refresh universe** (stored as a dated snapshot) |
 
 Phase 4 automates the evening sync and alerts you if the day's login is missing.
@@ -300,7 +300,7 @@ Phase 4 automates the evening sync and alerts you if the day's login is missing.
 **Stack:** Python 3.12+, FastAPI, SQLite (WAL), pandas/numpy (Phase 2), `kiteconnect` 5.2.2,
 httpx, pytest; React 19, Vite 6, lightweight-charts 5.
 
-Banana Patterns is standalone: it reads market data only and places no orders. Kite tokens die at 6:00 AM IST,
+Banana Patterns is standalone: it reads market data only and places no orders. Kite tokens die at 6:00 AM AM IST,
 whenever they were issued.
 
 ---
@@ -377,14 +377,14 @@ calls the SDK, and classifies failures using pykiteconnect's own exception types
 `historical_daily()` splits ranges into ≤`chunk_days` (2,000) windows. 8 years means 2 calls per symbol.
 It normalises dates to IST `YYYY-MM-DD` and de-duplicates. An empty list means "no bars", not an error.
 
-**`kite_api/auth.py`**. `last_expiry_boundary(now)` is the most recent 6:00 AM IST, and a token is fresh
-if it was issued after it. A token issued at 1:00 AM dies at 6:00 AM the same morning. One issued at 7:00 PM lives until 6:00 AM next day.
+**`kite_api/auth.py`**. `last_expiry_boundary(now)` is the most recent 6:00 AM AM IST, and a token is fresh
+if it was issued after it. A token issued at 1:00 AM AM dies at 6:00 AM AM the same morning. One issued at 7:00 AM PM lives until 6:00 AM AM next day.
 
 **`ingest/candles.py`**. See [Data pipeline](#data-pipeline).
 
 **`api/routes.py`**. `AppState.token_source` is `db` (browser login or pasted token, expiry known),
 `env` (`KITE_ACCESS_TOKEN`, expiry unknown) or `None`. `token_valid()` drops a DB token as soon as
-6:00 AM passes, even if the server has been running all night.
+6:00 AM AM passes, even if the server has been running all night.
 
 ---
 
@@ -636,7 +636,7 @@ shows cup depth and length, the U-shape, the handle and its volume. Cups appear 
 tag. Only cups *with* a handle count (no cup-without-handle).
 
 **Alerts.** Cup & handle is on in **Alerts → screens** by default next to VCP (an existing saved setting gets it added
-once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, near-pivot, intraday heads-up, the 3:15 PM
+once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, near-pivot, intraday heads-up, the 3:15 AM PM
 close check, the daily plan and the position guard, with the cup's own stop (handle low − 1%) and a
 "Cup · handle · vol · stop" line. A name on several screens alerts once per kind, from the most specific screen
 (VCP, then Cup & handle, then Bases).
@@ -691,7 +691,7 @@ way, so the next results date shows up where you decide:
 | Where | What |
 |---|---|
 | Grid cards, stage tables, positions, plan card | 📅 **Results 28 Oct** chip for results within 15 sessions; amber within `results_warn_sessions` (5) |
-| Stock alerts (breakout, near-pivot, forming, intraday, 3:15 PM check) | ⚠️ **Results Wed 28 Oct (in 3 sessions)**: a results gap can jump past the stop either way |
+| Stock alerts (breakout, near-pivot, forming, intraday, 3:15 AM PM check) | ⚠️ **Results Wed 28 Oct (in 3 sessions)**: a results gap can jump past the stop either way |
 | Decision chart | "R  Results Wed 28 Oct (in 3 sessions): gap risk" under Levels |
 | Top setups / morning plan | ⚠️ results line under the setup |
 | Position guard | 📅 once per results date, `results_guard_sessions` (1) before: decide whether to hold, trim or sell; the daily summary flags results within 5 sessions |
@@ -704,7 +704,7 @@ Sessions count NSE trading days (Friday → Monday is the next session). Setting
 
 `backend/ingest/filings.py` keeps NSE's corporate announcements (`/api/corporate-announcements`: what each company
 has told the exchange) in the `filings` table for 120 days. The `filings` job fetches new ones every
-`filings_interval_min` (15) from 7:00 AM to 11:00 PM on every day (results often come out in the evening or on a
+`filings_interval_min` (15) from 7:00 AM AM to 11:00 AM PM on every day (results often come out in the evening or on a
 Saturday); **Data → Refresh filings** does it by hand. A failed fetch keeps what is stored. Each filing gets a kind
 from NSE's category and text:
 
@@ -721,7 +721,7 @@ from NSE's category and text:
 | (noise) | newspaper copies, analyst-meet schedules, trading window, ESOPs, certificates | hidden |
 
 What you get:
-- **News line on stock alerts** (breakout, near-pivot, forming, intraday, 3:15 PM check): "📰 Results 24 Oct · Order win
+- **News line on stock alerts** (breakout, near-pivot, forming, intraday, 3:15 AM PM check): "📰 Results 24 Oct · Order win
   22 Oct" from the last `news_days` (3), with the most telling filing's text. A breakout with none says
   "📰 No exchange filings in 3 days: a move on no news."
 - **Filing alerts** (`filings_alerts`): every important filing (last 24 h) on a stock you **hold** (position guard),
@@ -788,8 +788,8 @@ never block a real alert, and show in the Sent-alerts log as `test`. A wrong tok
 | 📋 Daily digest | the four counts + the whole "what changed since last close" list | on |
 | ⚡ Intraday heads-up | during market hours the price trades above a Forming name's pivot; **unconfirmed** until the close. Says 🟢 strong / 🟡 average / 🟡 weak volume (day's projected volume vs `intraday_volume_mult`) or ⛔ extended (above the buy zone: don't chase) | on |
 | ⚠️ Failed breakout | a name that crossed its pivot today falls `failed_buffer_pct` (1%) back under it: don't buy / honour the stop | on (with intraday) |
-| 🕒 Act-before-close check | at 3:15 PM, for every Forming name above its pivot: ✅ **holding** (volume on pace ≥ 1.5× and price in the upper half of the day's range), 🟡 weak, or ⛔ extended, with the decision chart and buy zone, so you can act before 3:30 PM. Up to 3 names get their own message; more go in one summary. At 6:30 PM the breakout alert says "✓ flagged at 3:15 PM", and a 3:15 PM "holding" name that didn't confirm gets "✗ didn't confirm on the close" | on |
-| ⚙️ System | Kite login missing (3:30 PM), evening job waiting / failed / partial, no bar from Kite, Nifty 500 additions/removals | on |
+| 🕒 Act-before-close check | at 3:15 AM PM, for every Forming name above its pivot: ✅ **holding** (volume on pace ≥ 1.5× and price in the upper half of the day's range), 🟡 weak, or ⛔ extended, with the decision chart and buy zone, so you can act before 3:30 AM PM. Up to 3 names get their own message; more go in one summary. At 6:30 AM PM the breakout alert says "✓ flagged at 3:15 AM PM", and a 3:15 AM PM "holding" name that didn't confirm gets "✗ didn't confirm on the close" | on |
+| ⚙️ System | Kite login missing (3:30 AM PM), evening job waiting / failed / partial, no bar from Kite, Nifty 500 additions/removals | on |
 | ⚠️ Low-volume breakout · ▫️ Left a card | below the volume rule · dropped off a card (noisy) | off |
 
 Every alert is sent **once** (`sent_alerts` key), so rescans and restarts don't repeat it. A failed send is retried on
@@ -818,18 +818,18 @@ current stage, or choose one). These are the screen's rules, not advice.
 
 ### Kite login link
 
-Kite sessions end at **6:00 AM IST** whatever time you log in, so a session that lasts the day can only
-start after 6:00 AM. The bot sends a **🔑 Log in to Kite** button. Tap it on the Mac or phone, log in on Zerodha's
+Kite sessions end at **6:00 AM AM IST** whatever time you log in, so a session that lasts the day can only
+start after 6:00 AM AM. The bot sends a **🔑 Log in to Kite** button. Tap it on the Mac or phone, log in on Zerodha's
 page, and the token is saved. You get a "✅ Kite connected" page and a Telegram
 confirmation.
 
 | When (IST, trading days) | Sent if |
 |---|---|
-| 5:45 AM heads-up "session ends at 6:00 AM" *(off by default)* | a token is active |
-| 6:01 AM link: "new Kite day" | Kite doesn't accept a session |
-| 8:45 AM link: "still not logged in" | the 6:01 AM link wasn't used |
-| 3:30 PM reminder and the 6:30 PM evening job | still no login (now with the link) |
-| any time 6:00 AM–11:00 PM (checked every 30 min) | Kite rejects the held session (logged out / revoked) |
+| 5:45 AM AM heads-up "session ends at 6:00 AM AM" *(off by default)* | a token is active |
+| 6:01 AM AM link: "new Kite day" | Kite doesn't accept a session |
+| 8:45 AM AM link: "still not logged in" | the 6:01 AM AM link wasn't used |
+| 3:30 AM PM reminder and the 6:30 AM PM evening job | still no login (now with the link) |
+| any time 6:00 AM AM–11:00 AM PM (checked every 30 min) | Kite rejects the held session (logged out / revoked) |
 | `/login` to the bot, or **Send login link now** | on demand (`/status` shows the session) |
 
 - **Checked, not assumed:** before each link the app asks Kite (`profile`) whether the session works. A
@@ -870,7 +870,7 @@ today's Nifty 500 move, and the digest has a fuller block.
 **A/B priority** (`backend/alerts/priority.py`):
 - A setup: VCP qualifies, RS ≥ 85, Trend Template ≥ 7/8, industry in the top third, market not in correction.
 - A setups alert at once, tagged 🅰️. B setups go to the digest only (or send, tagged 🅱️, or off).
-- Tiered alerts: breakout, near pivot, forming, intraday heads-up, 3:15 PM check (B names appear in its summary).
+- Tiered alerts: breakout, near pivot, forming, intraday heads-up, 3:15 AM PM check (B names appear in its summary).
 - Sell-side alerts (below pivot, played out, failed breakout, didn't confirm) are always sent.
 - In a correction, buy alerts carry a caution (or are muted with `correction_mode: mute_buys`).
 - With `capital` set, sizes follow the market: ×1 uptrend, ×½ under pressure, ×¼ in correction.
@@ -886,9 +886,9 @@ last bar is an NR7 (narrowest range of the last 7) or an inside day, on volume �
 
 | When (trading days) | Message |
 |---|---|
-| 7:00 PM (waits for the evening scan) | 🎯 Top 5 for the next session: trigger, buy zone, stop, size, tier, coiled; then a decision chart each. The list is saved (`daily_plan`) |
-| 8:50 AM | ☀️ Today's plan: market line and the saved triggers |
-| 9:10 AM | 🔔 Opening check for the plan names: ⛔ gapping above the buy zone (don't chase), 🟢 opening above the pivot, 🔻 below the stop (skip) |
+| 7:00 AM PM (waits for the evening scan) | 🎯 Top 5 for the next session: trigger, buy zone, stop, size, tier, coiled; then a decision chart each. The list is saved (`daily_plan`) |
+| 8:50 AM AM | ☀️ Today's plan: market line and the saved triggers |
+| 9:10 AM AM | 🔔 Opening check for the plan names: ⛔ gapping above the buy zone (don't chase), 🟢 opening above the pivot, 🔻 below the stop (skip) |
 
 The Screens home shows the plan; Alerts → Daily plan has the switches and times, plus **Top setups now**.
 
@@ -911,23 +911,23 @@ Plus one evening line per position: price, gain %, R multiple, days held, stop. 
 
 ### Market hours: live guard, entry checklist, Today page
 
-`backend/alerts/live.py`, run from the 5-minute intraday job, the 9:10 AM opening check and the 3:15 PM close check
+`backend/alerts/live.py`, run from the 5-minute intraday job, the 9:10 AM AM opening check and the 3:15 AM PM close check
 (read-only Kite quotes and history, never orders).
 
 **Live position guard** (`live_guard`; each alert once per stock per day, kept across restarts in `intraday_flags`):
 
 | Alert | When |
 |---|---|
-| 🔻 Under stop | the price trades below your stop. Unconfirmed until the close (the 3:15 PM check says whether it recovered); with `hard_stop` on it says "exit now" |
+| 🔻 Under stop | the price trades below your stop. Unconfirmed until the close (the 3:15 AM PM check says whether it recovered); with `hard_stop` on it says "exit now" |
 | ⚠️ Heavy selling | down `live_drop_pct` (4%) or more today on `live_drop_volume` (2×) normal volume for the time of day, still above the stop |
-| 🌅 Opened under stop | at the 9:10 AM opening check: a gap the stop can't protect against |
-| 🕒 Positions at 3:15 PM | names that were under the stop or sold off today: still under → "your rule says exit, act before 3:30 PM"; back above → ✅. Sent only when something needs you |
+| 🌅 Opened under stop | at the 9:10 AM AM opening check: a gap the stop can't protect against |
+| 🕒 Positions at 3:15 AM PM | names that were under the stop or sold off today: still under → "your rule says exit, act before 3:30 AM PM"; back above → ✅. Sent only when something needs you |
 | 🆕 Now following | Kite holdings are re-read every `holdings_refresh_min` (30) in market hours, so today's buy is guarded within the half hour |
 
 The live alerts carry **📈 Chart** and **🔕 Quiet today** (no more live alerts on that stock today; the evening guard
 still runs). One extra Kite quote call per 5-minute tick covers every position.
 
-**Entry checklist** (`entry_checklist`) on every intraday heads-up and the 3:15 PM check:
+**Entry checklist** (`entry_checklist`) on every intraday heads-up and the 3:15 AM PM check:
 
 | Check | Passes when |
 |---|---|
@@ -972,12 +972,12 @@ Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (lis
 
 | Job | When | What |
 |---|---|---|
-| Login reminder | trading days 3:30 PM → 6:30 PM | alerts once if today's Kite token is missing |
-| Evening job | trading days from 6:30 PM | sync candles → scan → alerts. Without a login it alerts once and retries every 15 min until 11:00 PM; if Kite has no bar for today yet it retries every 30 min until 10:30 PM ("no session" after). Catches up if the app is opened later that evening. |
-| Intraday heads-up | trading days 9:20 AM–3:25 PM, every 5 min | one Kite quote call for the Forming names (quote API 1 req/s); heads-up and failed-breakout alerts |
-| Close check | trading days 3:15 PM | one quote call; holding / weak / extended verdicts (see the alerts table) |
-| Weekly refresh | Sundays from 10:00 AM | NSE holiday list + Nifty 500 refresh, index-change alert |
-| Kite login links | 6:01 AM / 8:45 AM, session check every 30 min | see [Kite login link](#kite-login-link) |
+| Login reminder | trading days 3:30 AM PM → 6:30 AM PM | alerts once if today's Kite token is missing |
+| Evening job | trading days from 6:30 AM PM | sync candles → scan → alerts. Without a login it alerts once and retries every 15 min until 11:00 AM PM; if Kite has no bar for today yet it retries every 30 min until 10:30 AM PM ("no session" after). Catches up if the app is opened later that evening. |
+| Intraday heads-up | trading days 9:20 AM AM–3:25 AM PM, every 5 min | one Kite quote call for the Forming names (quote API 1 req/s); heads-up and failed-breakout alerts |
+| Close check | trading days 3:15 AM PM | one quote call; holding / weak / extended verdicts (see the alerts table) |
+| Weekly refresh | Sundays from 10:00 AM AM | NSE holiday list + Nifty 500 refresh, index-change alert |
+| Kite login links | 6:01 AM AM / 8:45 AM AM, session check every 30 min | see [Kite login link](#kite-login-link) |
 
 Trading days = weekdays minus NSE equity holidays (`config/nse_holidays.json`, the official NSE holiday-master list,
 refreshed weekly; special sessions such as Diwali Muhurat are handled by checking that Kite returned a bar).
@@ -1210,7 +1210,7 @@ heads-up (once per day). VCP tests (tests/test_vcp.py): a textbook 20 → 10 →
 swings are causal, the VCP classifier judges breakouts on the bar before, scoring order, and the scan-table migration.
 Stage tests (tests/test_stages.py) cover each card's rule, low-volume breakouts, both played-out triggers and the
 window expiring, below-pivot, the climber-forming-next-base precedence, the liquidity/history gates, feed sentences,
-and a scan that stores results and changes. Other coverage: throttle spacing, the 6:00 AM IST rule, date chunking, retry/abort classification,
+and a scan that stores results and changes. Other coverage: throttle spacing, the 6:00 AM AM IST rule, date chunking, retry/abort classification,
 universe parsing/fallback/joining, full → incremental → up-to-date sync, split → full refetch, the
 empty-response guard, per-symbol failure recording, auth abort, and the API end to end
 (login callback → universe → background sync → universe/candles endpoints → token expiry while running).
@@ -1220,7 +1220,7 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 | Symptom | Fix |
 |---|---|
 | `setup.sh`: "Python 3.12+ not found" | macOS's `python3` is 3.9. `brew install python@3.12`, or `BP_PYTHON=/path/to/python3.12 ./setup.sh` |
-| "Kite login required" after a night | Expected: tokens die at 6:00 AM IST. Log in again. |
+| "Kite login required" after a night | Expected: tokens die at 6:00 AM AM IST. Log in again. |
 | Run `aborted`: permission denied | Historical data needs the Kite Connect plan on this API key. |
 | Kite logged out during the day | Another program logged in with the same API key (one token per app). Log in again. |
 | Universe refresh fails (NSE 403) | Save the CSV to `config/ind_nifty500list.csv` (see config/README.md). |
@@ -1228,7 +1228,7 @@ empty-response guard, per-symbol failure recording, auth abort, and the API end 
 | Symbols listed as *unmatched* | Usually a rename or suspension. Check the NSE symbol vs Kite's tradingsymbol. |
 | Backend won't start: `ModuleNotFoundError` (e.g. matplotlib) after `git pull` | A new dependency: `./start.sh` now installs it automatically when `requirements.txt` changes; or run `.venv/bin/pip install -r requirements.txt`. Without matplotlib the app still runs and alerts go out as text. |
 | No Telegram alerts | Alerts tab: token set? chat set? "Ready"? Then Send test message; check the Sent alerts log for errors. |
-| Evening job didn't run | The app must be open and the Mac awake at 6:30 PM (see "Keeping the Mac ready"); it catches up when opened later that evening. Check Alerts → Automatic jobs. |
+| Evening job didn't run | The app must be open and the Mac awake at 6:30 AM PM (see "Keeping the Mac ready"); it catches up when opened later that evening. Check Alerts → Automatic jobs. |
 | Port 8000 busy | `start.sh` frees 8000/3000. Otherwise `lsof -ti tcp:8000 \| xargs kill`. |
 | Details of a failure | Logs tab (WARNING+), full log in `logs/bananapatterns.log` |
 | Anything on the cloud server (blank page, can't reach the site, Kite redirect, backups, out of capacity) | [docs/CLOUD.md → Troubleshooting](docs/CLOUD.md#part-6-troubleshooting) |
@@ -1268,7 +1268,7 @@ contraction ratio, volume vs prior pace); dial sliders with named presets; what-
 feed; watchlist ("waiting well").
 
 ### Phase 4: daily EOD job and alerts *(core done: Telegram alerts, evening job, reminders, intraday heads-up, holiday calendar)*
-Scheduler (APScheduler in-process, or launchd so it survives restarts) around 6:00 PM–7:00 PM IST on trading
+Scheduler (APScheduler in-process, or launchd so it survives restarts) around 6:00 AM PM–7:00 AM PM IST on trading
 days: sync → scan → persist results and diffs. NSE holiday calendar. Alert when the day's Kite login is
 missing. Optional NSE CM-UDiFF bhavcopy cross-check later in the evening (unadjusted, so compare
 only on days without corporate actions). Note: a sleeping Mac will not run jobs (`pmset` wake schedule or keep awake).
@@ -1303,7 +1303,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 | 2026-10-23 | Backfill depth **8 years** (2 calls/symbol), so the later backtester has history |
 | 2026-10-23 | Phase 1 ships a minimal React UI (login, data pipeline, universe table, chart) |
 | 2026-10-23 | Vite instead of create-react-app (CRA deprecated); still React 19 + lightweight-charts |
-| 2026-10-23 | Token validity = issued after the last **6:00 AM IST** (fixes AlgoTrade's calendar-day check) |
+| 2026-10-23 | Token validity = issued after the last **6:00 AM AM IST** (fixes AlgoTrade's calendar-day check) |
 | 2026-10-23 | Corporate actions handled by overlap re-check → full refetch, not a separate CA feed |
 | 2026-10-23 | Ingest series EQ + BE (trade-for-trade equities); exclude REITs (RR) from the stock universe (dial) |
 | 2026-10-23 | Mark every close above the pivot as a breakout (tag weak/low-volume ones); the BREAKOUT stage and the screen keep the ≥ 1.5× volume rule |
@@ -1333,7 +1333,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Checked that both NSE Nifty 500 CSV URLs respond. The live file has 501 rows including 2 BE and 3 REIT (RR)
   rows, which led to the `include_series` dial and the `SYMBOL-BE` join.
 - Built: config sections persisted to SQLite; WAL schema; logger (WARNING+ to DB); Kite client with token
-  bucket, retries and error classification; the 6:00 AM IST token rule; universe snapshots and symbol join;
+  bucket, retries and error classification; the 6:00 AM AM IST token rule; universe snapshots and symbol join;
   candle sync with adjustment detection, empty-response guard and EOD cutoff; REST API; CLI; React shell.
 - Bugs found while testing and fixed: a token-bucket float-drift infinite loop (elapsed·rate landing at
   0.9999999 with a sub-ULP sleep); the run progress counter counting an aborted symbol as done.
@@ -1452,8 +1452,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 ### 2026-10-24: Kite login link in Telegram
 - One-time login links (`backend/kite_api/login_link.py`, table `login_links`): Kite's `redirect_params`
   carries a nonce; links work once for 15 minutes and a newer link supersedes older ones.
-- Schedule: 6:01 AM and 8:45 AM links when Kite doesn't accept a session (missed slots catch up as one), an optional
-  5:45 AM heads-up, a session check every 30 min, and links in the 3:30 PM reminder and the evening job.
+- Schedule: 6:01 AM AM and 8:45 AM AM links when Kite doesn't accept a session (missed slots catch up as one), an optional
+  5:45 AM AM heads-up, a session check every 30 min, and links in the 3:30 AM PM reminder and the evening job.
 - The token is handed to AlgoTrade-v3 (`ALGOTRADE_URL`, its existing `POST /api/kite/token`), since both share one
   Kite app. Telegram confirms the login and the handover.
 - Bot commands `/login`, `/status`. `PUBLIC_BASE_URL` for phone / cloud use, `BP_DASHBOARD_PASSWORD` (HTTP Basic).
@@ -1464,10 +1464,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Volume projection now follows a typical NSE intraday volume curve (heavy open and close), so morning
   projections are no longer inflated (`backend/alerts/intraday.py`).
 - The intraday heads-up says strong / average / weak volume, or extended (don't chase).
-- New failed-breakout alert (crossed, then 1% back under the pivot) and the 3:15 PM close check (holding / weak /
+- New failed-breakout alert (crossed, then 1% back under the pivot) and the 3:15 AM PM close check (holding / weak /
   extended, decision chart with the live candle, summary when more than 3 names). Day flags in `intraday_flags`,
   so restarts don't repeat alerts.
-- 6:30 PM breakout alerts refer back to the 3:15 PM verdict; "didn't confirm" when a 3:15 PM "holding" name fails on
+- 6:30 AM PM breakout alerts refer back to the 3:15 AM PM verdict; "didn't confirm" when a 3:15 AM PM "holding" name fails on
   the close.
 - 145 offline tests passing.
 
@@ -1488,8 +1488,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 
 ### 2026-10-25: Daily plan
 - `backend/alerts/plan.py`: ranking with the A bonus and "coiled" (NR7 / inside day on dried-up volume near the
-  pivot), saved per scan in `daily_plan`. Jobs: Top N at 7:00 PM (after the evening scan), 8:50 AM morning plan,
-  9:10 AM opening (gap) check. Screens home plan panel, `/api/plan`, Alerts settings.
+  pivot), saved per scan in `daily_plan`. Jobs: Top N at 7:00 AM PM (after the evening scan), 8:50 AM AM morning plan,
+  9:10 AM AM opening (gap) check. Screens home plan panel, `/api/plan`, Alerts settings.
 - 190 offline tests passing.
 
 ### 2026-10-25: Position guard
@@ -1541,7 +1541,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 
 ### 2026-10-25: Exchange filings
 - `backend/ingest/filings.py` + `filings` table: NSE corporate announcements sorted into kinds; a 15-minute `filings`
-  job (7:00 AM-11:00 PM, every day).
+  job (7:00 AM AM-11:00 AM PM, every day).
 - News lines on stock alerts (`news_note` in `Notifier.send`), filing alerts for held / watched / plan stocks
   (`Scheduler.alert_filings`), 📰 chips and a filings list in the chart window.
 - 253 offline tests passing.
@@ -1597,13 +1597,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   live guard rules, `LiveBoard` (cached quotes, opening ranges, sparklines). `KiteClient.historical_intraday` returns
   high / low / volume too.
 - Scheduler: live position guard on the intraday tick (under stop, heavy selling, holdings re-read with "now
-  following"), positions in the 9:10 AM opening check and the 3:15 PM check, checklist on heads-ups and the 3:15 PM check,
+  following"), positions in the 9:10 AM AM opening check and the 3:15 AM PM check, checklist on heads-ups and the 3:15 AM PM check,
   one ⬆️ upgrade note, 🔕 Quiet today button.
 - `GET /api/today`, `/api/today/sparks`, live fields on `/api/positions`; ⚡ Today page; live price, chip and stop bar
   on the positions card; new Alerts settings. 304 offline tests passing.
 
 ### 2026-10-27: 12-hour IST times
-- Everything you read says 6:01 AM / 3:15 PM: Telegram alerts, chart images, the bot, the Kite callback page
+- Everything you read says 6:01 AM AM / 3:15 AM PM: Telegram alerts, chart images, the bot, the Kite callback page
   (`backend/timefmt.py`), and the dashboard (`frontend/src/timefmt.js`: ticker, Today page, Kite bar, Data, Alerts
   log, jobs, Logs; timestamps are read as IST whatever the device's time zone). Time settings stay 24-hour `HH:MM`
   inputs, each with its 12-hour value shown next to it. Alerts follow the configured check / scan / intraday times.
