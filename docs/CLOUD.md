@@ -415,7 +415,8 @@ ping -c 3 banana                      # is it reachable?
 scripts/pull-backups.sh               # copy the server's backups to ~/banana-backups-cloud
 ```
 
-**Server** (`cd ~/bananapatterns`)
+**Server**: log in first with `ssh ubuntu@banana` from the Mac (skip it if your prompt already shows
+`ubuntu@banana`), then `cd ~/bananapatterns`
 ```bash
 ./docker.sh status                    # running / healthy
 ./docker.sh logs                      # follow the app log (Ctrl+C stops following)

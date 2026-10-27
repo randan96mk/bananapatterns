@@ -77,21 +77,160 @@ Then in the dashboard (http://localhost:3000):
 
 The app runs 24×7 on a free **Oracle Cloud** server (Ubuntu 24.04 ARM, Docker) and is opened from the Mac,
 iPhone and Android at `https://banana.<tailnet>.ts.net`, a private **Tailscale** address with HTTPS that nobody
-outside your Tailscale account can reach. **[docs/CLOUD.md](docs/CLOUD.md)** is the complete runbook: first-time
-setup step by step (Oracle account, network, server, Tailscale, deploy key, switch-over from the Mac, phones),
-daily use, updating after a merged PR, rollback, backups and restore, maintenance, troubleshooting and a command
-cheat sheet.
+outside your Tailscale account can reach. This section is the command guide; **[docs/CLOUD.md](docs/CLOUD.md)** has
+the full runbook (Oracle console clicks, troubleshooting table, maintenance).
 
-The short version, on the server (`ssh ubuntu@banana`, `cd ~/bananapatterns`):
-```bash
-./docker.sh update                 # after a PR is merged: pull + rebuild + restart
-./docker.sh status | logs          # is it healthy / what is it doing
-scripts/backup.sh                  # backup now (nightly at 23:30 via cron: scripts/backup.sh --install-cron)
-```
-Scripts: `scripts/server-setup.sh` (prepares a fresh Ubuntu server: updates, IST clock, swap, Docker, Tailscale,
-deploy key, reachability check), `scripts/backup.sh` (database + `.env` + `config/`, integrity-checked, 14 days,
-Telegram on failure), `scripts/pull-backups.sh` (copies the server's backups to the Mac).
+Every block below says **where** to run it:
+- 🍎 **Mac**: the Terminal app on your Mac (prompt ends with `%`, e.g. `you@Mac ~ %`)
+- 🖥 **Server**: the cloud server, after Step 0 (prompt `ubuntu@banana:~$`)
+
 Run **one copy** only: the cloud and the Mac share one Kite API key, one Kite redirect URL and one Telegram bot.
+
+### Step 0: log in to the server (before any 🖥 Server command)
+
+**Already logged in?** If your Terminal prompt shows `ubuntu@banana`, skip this step.
+
+🍎 Mac (Tailscale on, in the menu bar):
+```bash
+ssh ubuntu@banana                  # over Tailscale; or: ssh ubuntu@<public-ip>
+```
+Enter your SSH key passphrase if you set one. To leave the server later: `exit`.
+
+🖥 Server: go to the app folder (every 🖥 command below runs from here):
+```bash
+cd ~/bananapatterns
+```
+
+### Every day
+
+Kite logs out at **6:00 AM IST** every day. Tap **🔑 Log in to Kite** in Telegram (sent at 6:01 AM and 8:45 AM
+when needed), or send `/login` to the bot, or use **Login with Kite** on the dashboard. Nothing to run on the server.
+
+### After a PR is merged (update the app)
+
+🖥 Server (after Step 0):
+```bash
+./docker.sh update                 # git pull + rebuild + restart, about 3-5 min
+./docker.sh status                 # "healthy" and {"status":"ok"} = done
+```
+Then reload the dashboard (Mac: ⌘⇧R; iPhone: close the app and reopen it). If `update` stops with "local changes
+would be overwritten" on `config/nse_holidays.json`:
+```bash
+git checkout -- config/nse_holidays.json && ./docker.sh update
+```
+
+### Check that it's running / see what it's doing
+
+🖥 Server (after Step 0):
+```bash
+./docker.sh status                 # container state + health
+./docker.sh logs                   # live log (Ctrl+C stops following, not the app)
+./docker.sh restart                # after editing .env
+tailscale serve status             # https://banana.<tailnet>.ts.net -> 127.0.0.1:8000
+df -h / ; free -h                  # disk and memory
+```
+🍎 Mac: `ping -c 3 banana` (is the server reachable?) and open `https://banana.<tailnet>.ts.net`.
+
+### Backups
+
+🖥 Server (after Step 0):
+```bash
+scripts/backup.sh                  # back up now: database + .env + config/, checked, kept 14 days
+scripts/backup.sh --list           # the backups kept (~/banana-backups/YYYY-MM-DD)
+scripts/backup.sh --install-cron   # once: every night at 11:30 PM IST (skip if crontab -l shows it)
+tail -20 logs/backup.log           # history; a failure also comes to Telegram
+```
+🍎 Mac, in the bananapatterns folder (copy the server's backups to the Mac, e.g. weekly):
+```bash
+cd ~/bananapatterns && git pull && scripts/pull-backups.sh      # -> ~/banana-backups-cloud/
+```
+
+### Restore a backup
+
+🖥 Server (after Step 0):
+```bash
+./docker.sh down
+ls ~/banana-backups                                              # pick a day
+mv data/bananapatterns.db data/bananapatterns.db.broken
+rm -f data/bananapatterns.db-wal data/bananapatterns.db-shm
+gunzip -c ~/banana-backups/<day>/bananapatterns.db.gz > data/bananapatterns.db
+./docker.sh up
+```
+
+### Roll back to an earlier version
+
+🖥 Server (after Step 0):
+```bash
+git log --oneline -10              # pick the last good commit
+git checkout <commit> && ./docker.sh rebuild
+git checkout main && ./docker.sh update                          # later, back to the latest
+```
+
+### Edit a setting in .env (Kite / Telegram keys, URLs, dashboard password)
+
+🖥 Server (after Step 0):
+```bash
+nano .env                          # Ctrl+O Enter to save, Ctrl+X to exit
+chmod 600 .env && ./docker.sh restart
+```
+Never paste the contents of `.env` anywhere: it holds your keys.
+
+### Server maintenance (monthly)
+
+🖥 Server (after Step 0):
+```bash
+sudo apt-get update && sudo apt-get -y full-upgrade              # Ubuntu updates
+cat /var/run/reboot-required       # prints a line when a reboot is due ...
+sudo reboot                        # ... then reboot (after 11:30 PM or at a weekend); app + Tailscale come back
+docker image prune -f              # remove old app images after updates
+```
+
+### First-time setup (once; already done for the current server)
+
+Skip this unless you are setting up a new server. Console steps in [docs/CLOUD.md](docs/CLOUD.md#part-1-first-time-setup).
+
+1. **Oracle console**: Budget alert → Pay As You Go → **VCN Wizard** (`banana-vcn`, "with Internet Connectivity")
+   → Create instance: Ubuntu 24.04, VM.Standard.A1.Flex 2 OCPU / 12 GB (baseline 100%), public subnet, public IPv4
+   on, your SSH public key, 50 GB boot volume.
+2. 🍎 Mac: an SSH key (skip if `ls ~/.ssh/id_ed25519.pub` shows one) and the setup script:
+   ```bash
+   ssh-keygen -t ed25519 -C "banana-oracle"
+   pbcopy < ~/.ssh/id_ed25519.pub                                # paste it into Oracle's "SSH keys"
+   cd ~/bananapatterns && scp scripts/server-setup.sh ubuntu@<public-ip>:
+   ssh ubuntu@<public-ip>
+   ```
+3. 🖥 Server: updates, IST clock, swap, Docker, Tailscale (open the printed link, same account as the Mac), deploy
+   key, NSE / Kite / Telegram check:
+   ```bash
+   bash server-setup.sh
+   exit                                                          # log out and in again for docker without sudo
+   ```
+4. **Tailscale admin** (login.tailscale.com/admin): Machines → `banana` → Disable key expiry; DNS → MagicDNS and
+   HTTPS Certificates on.
+5. **GitHub** → bananapatterns → Settings → Deploy keys → Add the key `server-setup.sh` printed (write access off).
+6. 🖥 Server (after Step 0, but before `cd ~/bananapatterns`, which doesn't exist yet):
+   ```bash
+   git clone git@github.com:randan96mk/bananapatterns.git ~/bananapatterns && cd ~/bananapatterns
+   cp .env.example .env && ./docker.sh up                        # first build 5-10 min
+   sudo tailscale serve --bg 8000
+   ```
+7. **Move the data from the Mac** (after the evening scan). 🖥 Server: `./docker.sh down && mv data data.empty`.
+   🍎 Mac:
+   ```bash
+   cd ~/bananapatterns && ./docker.sh down
+   rsync -av --progress .env config data ubuntu@banana:~/bananapatterns/
+   ```
+   🖥 Server: set the URLs, then start:
+   ```bash
+   URL=https://banana.<tailnet>.ts.net
+   sed -i "s|^KITE_REDIRECT_URL=.*|KITE_REDIRECT_URL=$URL/api/kite/callback|" .env
+   grep -q '^PUBLIC_BASE_URL=' .env && sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=$URL|" .env || echo "PUBLIC_BASE_URL=$URL" >> .env
+   chmod 600 .env && ./docker.sh up
+   scripts/backup.sh && scripts/backup.sh --install-cron
+   ```
+8. **Kite developer console**: Redirect URL = `https://banana.<tailnet>.ts.net/api/kite/callback`. Then log in to Kite
+   from the dashboard.
+9. **Phones**: install Tailscale (same account), open the URL, Share → Add to Home Screen.
 
 ---
 
