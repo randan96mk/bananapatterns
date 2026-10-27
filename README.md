@@ -954,8 +954,22 @@ stop-distance bar while the market is open.
 
 ### Track record
 
-`backend/engine/track.py`. Every breakout the screens would have shown, the trade the swing rules make from it,
-and the portfolio those trades add up to (the 📈 Track record tab comes in the next PR; the data and API are here).
+`backend/engine/track.py` and the **📈 Track record** tab (on a phone: More → Track record). Every breakout the
+screens would have shown, the trade the swing rules make from it, and the portfolio those trades add up to.
+
+**The tab:**
+- **Filters:** period 1W · 1M · 3M · 6M · 1Y (by breakout date), pattern, tier, status (running / closed / no entry);
+  everything below follows them.
+- **Status line:** breakouts → entered · ⛔ no entry → closed (won · lost) · running · waiting for the next open.
+- **Summary:** win rate, average winner / loser, expectancy in R, average 1W / 2W / 1M / 3M run, holding days,
+  profit factor.
+- **Curve:** the account under the swing rules vs Nifty 500 buy and hold, with "Where you would be" (return, what
+  ₹10L became, worst drawdown, months up, cash idle) and expectancy by market state.
+- **By pattern:** signals, win rate, average runs, stopped %, expectancy.
+- **Trades by stock** (newest first): re-entries numbered, entry, stop, a sparkline (stop dashed, dots at 🎯 half and
+  the exit), 1W–3M, result in % and R, status, and the exit timeline (🔒 breakeven → 🎯 half → 📉 / ⏱ exit, or the
+  next step while it runs). Tap a trade for its chart with the entry and stop lines and the trade's markers.
+- **Rebuild** link: rebuilds the history on purpose (e.g. after changing a pattern setting).
 
 **Signals.** The stored candles are replayed with the same detectors (they are causal: a breakout is known on its
 own bar). A signal is a volume-confirmed close above a pivot that passed the screen's gates **as of that date**:
@@ -1653,4 +1667,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `backend/engine/track.py`: causal replay of the last year's breakouts gated as of each date, the swing trade rules,
   portfolio curve vs Nifty 500, stats; `track_signals` table built once and added to by the evening job;
   `/api/track`, `/api/track/trades`, `/api/track/rebuild`; track record line on alerts. 320 offline tests passing.
+
+### 2026-10-27: Track record tab
+- `TrackPage.jsx`: filters, status line, summary, curve vs Nifty 500, by pattern / market, trades grouped by stock with
+  sparklines and exit timelines; phone layout; `StockChart` `trade` prop (entry / stop lines, trade markers).
+  `/api/track/trades` returns each trade's sparkline closes; `/api/track` returns the rules.
 

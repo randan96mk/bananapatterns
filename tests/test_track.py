@@ -123,6 +123,22 @@ def test_build_finds_the_breakout_and_trades_it(monkeypatch):
     assert t["trade_no"] == 1 and t["entry_date"] > t["breakout_date"] and t["events"][0]["kind"] == "entry"
 
 
+def test_trades_api_carries_the_sparkline(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("BP_NO_STATIC", "1")
+    monkeypatch.setenv("BP_NO_SCHEDULER", "1")
+    setup_db(monkeypatch, {"BRK": breakout_series()})
+    from backend import main
+    with TestClient(main.app) as tc:
+        main_state = __import__("backend.api.routes", fromlist=["S"]).S()
+        main_state.config.bases, main_state.config.screen = app_config().bases, app_config().screen
+        main_state.config.track = app_config().track
+        track.build(main_state.config)
+        t = tc.get("/api/track/trades").json()["stocks"][0]["trades"][0]
+        assert t["spark"]["d"][3] == t["entry_date"] and len(t["spark"]["d"]) == len(t["spark"]["c"]) > 10
+        assert tc.get("/api/track").json()["rules"]["book_half_pct"] == 20.0
+
+
 def test_replay_is_causal(monkeypatch):
     full = breakout_series()
     setup_db(monkeypatch, {"BRK": full})

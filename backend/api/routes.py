@@ -705,17 +705,35 @@ def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", s
     rs = _track_rows(period, pattern, tier, status)
     with get_db() as conn:
         meta = {k: get_setting(conn, f"track.{k}") for k in ("built_at", "updated_at", "as_of")}
-    return {"built": bool(meta["built_at"]), **meta, "progress": track.status(), "period": period.lower(),
+    rules = {k: getattr(S().config.track, k) for k in ("breakeven_pct", "book_half_pct", "exit_ma", "max_hold", "max_stop")}
+    return {"built": bool(meta["built_at"]), **meta, "progress": track.status(), "period": period.lower(), "rules": rules,
             **track.stats(rs), "by_pattern": track.split(rs, "pattern"), "by_market": track.split(rs, "market"),
             "portfolio": track.portfolio(rs, S().config)}
 
 
 @router.get("/track/trades")
 def track_trades(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all"):
-    """Trades grouped by stock (newest first), each with its exit timeline."""
+    """Trades grouped by stock (newest first), each with its exit timeline and the closes for its sparkline
+    (a few sessions before the entry to a few after the exit, or to today while it runs)."""
+    from datetime import date as _date, timedelta as _td
     groups: dict[str, list] = {}
     for r in _track_rows(period, pattern, tier, status):
         groups.setdefault(r["symbol"], []).append(r)
+    tokens = {s["symbol"]: s["instrument_token"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
+    with get_db() as conn:
+        for sym, ts in groups.items():
+            if sym not in tokens:
+                continue
+            first = min(t["breakout_date"] for t in ts)
+            cs = get_candles(conn, tokens[sym], start=(_date.fromisoformat(first) - _td(days=10)).isoformat())
+            dates = [c["date"] for c in cs]
+            for t in ts:
+                if t["status"] in ("in_trade", "pending") or not t.get("entry_date") or t["entry_date"] not in dates:
+                    continue
+                i = dates.index(t["entry_date"])
+                end = dates.index(t["exit_date"]) if t.get("exit_date") in dates else min(len(cs) - 1, i + 63)
+                lo, hi = max(0, i - 3), min(len(cs), end + 4)
+                t["spark"] = {"d": dates[lo:hi], "c": [c["close"] for c in cs[lo:hi]]}
     return {"stocks": [{"symbol": sym, "trades": ts} for sym, ts in groups.items()]}
 
 
