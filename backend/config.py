@@ -336,6 +336,7 @@ class TrackConfig:
     max_hold: int = 63                     # sessions; still-open trades are valued here ("3M mark")
     capital: float = 1_000_000.0           # portfolio curve: starting capital
     risk_pct: float = 0.01                 # ... risk per trade, sized by the stop
+    position_cap: float = 0.20             # ... and never more than this share of the account in one stock (0 = off)
     max_positions: int = 10                # ... open at once; a new signal is skipped when full
 
 

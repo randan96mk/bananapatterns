@@ -213,7 +213,7 @@ export default function TrackPage() {
 
       <div className="trcmp">
         <div className="panel"><h3>If you followed these swing rules vs Nifty 500</h3>
-          <div className="muted small">{lakh(set$.capital)} start · {((set$.risk_pct ?? 0.01) * 100).toFixed(1)}% risk per trade, sized by the stop · max {set$.max_positions} open positions</div>
+          <div className="muted small">{lakh(set$.capital)} start · {((set$.risk_pct ?? 0.01) * 100).toFixed(1)}% risk per trade, sized by the stop{set$.position_cap ? `, max ${Math.round(set$.position_cap * 100)}% per position` : ''} · max {set$.max_positions} open positions</div>
           <Curve p={p} />
           <div className="muted small"><span className="up"><b>━ Swing rules {pct(sv.return)}</b></span> &nbsp; ╍ Nifty 500 {pct(nv.return)} (buy and hold)
             {p.skipped ? ` · ${p.skipped} signals skipped (positions full or no cash)` : ''}</div></div>
@@ -230,6 +230,18 @@ export default function TrackPage() {
             {(d.by_market || []).map((m) => <span key={m.market}>{MKT[m.market]} {m.market} <b className={cls(m.expectancy_r)}>{rr(m.expectancy_r) || '—'}</b></span>)}
           </div></div>
       </div>
+
+      {p.sizing?.length > 0 && (
+        <div className="panel"><h3>Sizing comparison <span className="muted small">· the same trades, sized four ways</span></h3>
+          <div className="tablewrap"><table className="grid trsize"><thead><tr><th>Sizing</th><th className="num">Return</th>
+            {phone ? <><th className="num">Worst fall</th><th className="num">Ret ÷ fall</th><th className="num">Skip</th></>
+              : <><th className="num">Worst drawdown</th><th className="num">Return ÷ drawdown</th><th className="num">Signals skipped</th></>}</tr></thead>
+            <tbody>{p.sizing.map((x) => (
+              <tr key={x.label} className={x.current ? 'cur' : ''}><td>{x.label}{x.current && <span className="trnow">{phone ? 'used' : 'used above'}</span>}</td>
+                <td className={`num ${cls(x.return)}`}><b>{pct(x.return)}</b></td><td className="num down">{pct(x.drawdown)}</td>
+                <td className="num">{x.ratio != null ? x.ratio.toFixed(2) : '—'}</td><td className="num">{x.skipped}</td></tr>))}
+            </tbody></table></div>
+          <div className="muted small">Return ÷ drawdown: return earned per 1% of worst fall; higher is smoother. A cap stops a tight stop from putting too much of the account in one stock.</div></div>)}
 
       <div className="panel"><h3>By pattern</h3>
         <div className="tablewrap"><table className="grid trpat"><thead><tr><th>Pattern</th><th className="num">Signals</th>
