@@ -9,7 +9,6 @@ import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
 import TodayPage from './components/TodayPage';
-import TrackPage from './components/TrackPage';
 import * as api from './services/api';
 import { applyMode, getMode } from './theme';
 import { useIsPhone } from './useMedia';
@@ -19,7 +18,6 @@ const PHONE_TABS = ['screens', 'today', 'alerts'];
 const TABS = [
   ['screens', 'Screens'],
   ['today', '⚡ Today'],
-  ['track', '📈 Track record'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['alerts', 'Alerts'],
@@ -76,7 +74,6 @@ export default function App() {
       <main>
         {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
         {tab === 'today' && <TodayPage />}
-        {tab === 'track' && <TrackPage />}
         {tab === 'universe' && (
           <>
             {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}

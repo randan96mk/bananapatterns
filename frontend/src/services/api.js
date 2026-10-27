@@ -64,8 +64,3 @@ export const getNews = () => req('GET', '/api/news');
 export const getIndices = () => req('GET', '/api/indices');
 export const getToday = () => req('GET', '/api/today');
 export const getTodaySparks = () => req('GET', '/api/today/sparks');
-const trackQuery = (f) => new URLSearchParams(f).toString();
-export const getTrack = (f) => req('GET', `/api/track?${trackQuery(f)}`);
-export const getTrackTrades = (f) => req('GET', `/api/track/trades?${trackQuery(f)}`);
-export const rebuildTrack = () => req('POST', '/api/track/rebuild');
-export const buildIntradayTrack = (rebuild = false) => req('POST', `/api/track/intraday/build?rebuild=${rebuild}`);
