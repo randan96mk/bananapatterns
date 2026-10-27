@@ -340,6 +340,25 @@ class TrackConfig:
     max_positions: int = 10                # ... open at once; a new signal is skipped when full
 
 
+@dataclass
+class IntradayConfig:
+    """Intraday entry backtest: the swing watchlist bought on the breakout day from 5-minute candles."""
+    or_minutes: int = 15                   # opening range: the first 15 minutes (its low is a stop candidate)
+    entry_start: str = "09:30"             # first entry candle starts here (IST, 24-hour internally)
+    entry_end: str = "13:30"               # ... and the last one ends here
+    max_ext_pct: float = 3.0               # no entry more than this over the pivot
+    gap_max_pct: float = 3.0               # no entry on a day that opened this much over the last close
+    volume_pace: float = 1.5               # projected day volume, x the 50-day average, at the entry candle
+    max_stop_pct: float = 1.5              # stop = closer of the opening-range low and the candle low; wider: skip
+    target_pct: float = 2.0                # sell book_frac here, then the stop goes to the entry
+    book_frac: float = 0.5
+    atr_mult: float = 2.0                  # the rest trails highest high - atr_mult x ATR(atr_len)
+    atr_len: int = 14
+    max_hold: int = 63                     # sessions; still open: valued at that close ("3M mark")
+    max_new_per_day: int = 4               # portfolio: new entries per day
+    fetch_sessions: int = 15               # 5-minute candles fetched per request after an entry
+
+
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
                "top_setups_time", "morning_plan_time", "gap_check_time")
 
@@ -367,7 +386,8 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
-                      "market": MarketConfig, "track": TrackConfig}
+                      "market": MarketConfig, "track": TrackConfig,
+                      "intraday": IntradayConfig}
 
 
 @dataclass
@@ -383,6 +403,7 @@ class AppConfig:
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     track: TrackConfig = field(default_factory=TrackConfig)
+    intraday: IntradayConfig = field(default_factory=IntradayConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

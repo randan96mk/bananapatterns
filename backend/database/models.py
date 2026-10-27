@@ -310,6 +310,58 @@ CREATE TABLE IF NOT EXISTS track_signals (
 );
 CREATE INDEX IF NOT EXISTS idx_track_date ON track_signals (breakout_date);
 
+-- Intraday entry backtest: the same columns per rule set (i5m / iday); breakout_date = the day the price crossed
+-- the pivot (a watchlist name), entered from 5-minute candles.
+CREATE TABLE IF NOT EXISTS track_intraday (
+    rules TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    breakout_date TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    pivot REAL NOT NULL,
+    pattern_stop REAL NOT NULL,
+    tier TEXT,
+    market TEXT,
+    rs INTEGER,
+    tt_passed INTEGER,
+    base_label TEXT,
+    volume_ratio REAL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    trade_no INTEGER,
+    entry_date TEXT,
+    entry REAL,
+    stop REAL,
+    exit_date TEXT,
+    result_pct REAL,
+    r REAL,
+    days INTEGER,
+    mfe REAL,
+    mae REAL,
+    snaps TEXT NOT NULL DEFAULT '{}',
+    events TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (rules, symbol, breakout_date)
+);
+CREATE INDEX IF NOT EXISTS idx_track_intraday_date ON track_intraday (rules, breakout_date);
+
+-- 5-minute candles, fetched only for the days the intraday backtest needs; candles_5m_days marks the days
+-- fetched (a day with no candles is still marked, so it isn't asked for again).
+CREATE TABLE IF NOT EXISTS candles_5m (
+    instrument_token INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (instrument_token, ts)
+);
+CREATE TABLE IF NOT EXISTS candles_5m_days (
+    instrument_token INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    PRIMARY KEY (instrument_token, day)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

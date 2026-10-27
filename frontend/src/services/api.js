@@ -68,3 +68,4 @@ const trackQuery = (f) => new URLSearchParams(f).toString();
 export const getTrack = (f) => req('GET', `/api/track?${trackQuery(f)}`);
 export const getTrackTrades = (f) => req('GET', `/api/track/trades?${trackQuery(f)}`);
 export const rebuildTrack = () => req('POST', '/api/track/rebuild');
+export const buildIntradayTrack = (rebuild = false) => req('POST', `/api/track/intraday/build?rebuild=${rebuild}`);

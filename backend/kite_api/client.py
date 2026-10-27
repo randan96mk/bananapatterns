@@ -184,6 +184,24 @@ class KiteClient:
                         "low": float(r.get("low") or r["close"]), "volume": r.get("volume") or 0})
         return out
 
+    def historical_bars(self, token: int, start: date, end: date, interval: str = "5minute",
+                        label: str = "") -> list[dict]:
+        """Intraday candles for the sessions [start, end] (90-day requests, under Kite's 100-day limit):
+        [{ts 'YYYY-MM-DD HH:MM' IST, open, high, low, close, volume}] ascending."""
+        out = {}
+        for c_start, c_end in _date_chunks(start, end, 90):
+            rows = self._call(self.hist_bucket, f"historical_data({label or token} {c_start}..{c_end} {interval})",
+                              self.kite.historical_data, token, f"{c_start} 09:00:00", f"{c_end} 15:35:00", interval)
+            for r in rows:
+                t = r["date"]
+                if hasattr(t, "strftime"):
+                    ts = (t.astimezone(IST) if getattr(t, "tzinfo", None) else t).strftime("%Y-%m-%d %H:%M")
+                else:
+                    ts = str(t)[:16]
+                out[ts] = {"ts": ts, "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]),
+                           "close": float(r["close"]), "volume": int(r.get("volume") or 0)}
+        return [out[k] for k in sorted(out)]
+
     # --- core ---
 
     def _call(self, bucket: Optional[TokenBucket], what: str, fn, *args, **kwargs):

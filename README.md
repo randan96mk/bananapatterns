@@ -1006,6 +1006,29 @@ above"). Columns: return, worst drawdown, return ÷ drawdown (higher is smoother
 background, in seconds. The evening job then adds new breakouts and re-runs only pending / running trades from their
 entry with the new candle; closed rows never change. `POST /api/track/rebuild` rebuilds on purpose.
 
+### Intraday entry backtest
+
+The **Rules** chips on the Track record tab switch between the swing record and two intraday rule sets, which buy the
+same watchlist on the breakout day from 5-minute candles (`backend/engine/track_intraday.py`). Only the trail differs:
+
+| Step | Rule (`intraday.*` settings) |
+|---|---|
+| Watchlist | each evening: setups still intact and within `today_near_pct` (3%) under the pivot, with the swing gates as of that evening. The next day counts when its high crosses the pivot, **including days it closes back under it** (a failed breakout costs a stop) |
+| Entry | the first 5-minute candle from `entry_start` (9:30 AM) ending by `entry_end` (1:30 PM) that closes over the pivot, at most `max_ext_pct` (3%) over it, over VWAP, volume on pace for `volume_pace` (1.5×) the 50-day average, Nifty 500 above its opening price. No entry on a gap over `gap_max_pct` (3%). Entry = that candle's close |
+| Stop | the closer of the first-`or_minutes` (15) low and the candle's low; more than `max_stop_pct` (1.5%) away → that candle is passed over |
+| Target | `book_frac` (50%) sold at +`target_pct` (2%); the stop moves to the entry. A candle touching both the stop and the target counts as the stop |
+| The rest | out at the entry, or on a close under highest high − `atr_mult` (2) × ATR(`atr_len` 14): **5-min trail** on 5-minute candles, **daily trail** on daily closes; `max_hold` (63) sessions → "3M mark" |
+| Portfolio | as the swing curve (₹10L, 1% risk, max 20% per position, max 10 open), at most `max_new_per_day` (4) new entries a day; same-day events run in time order |
+
+One trade per stock at a time; a pivot that was traded is not traded again. **Rule sets compared** puts the swing and
+both intraday sets side by side for the same filters (trades, win rate, avg win / loss, profit factor, expectancy,
+return, worst drawdown, return ÷ drawdown).
+
+**Running it.** The first run is the **Run the intraday backtest** button on the tab (needs that day's Kite login):
+it fetches 5-minute candles from Kite for the crossing days only (about 3,000 requests at ~3 a second, 15–20 minutes,
+stored in `candles_5m`, roughly 50 MB). After that the evening job adds each new day. `POST /api/track/intraday/build`
+(`?rebuild=true` re-runs from scratch, re-using the stored candles).
+
 **Alert line.** Breakout, heads-up, 3:15 PM check and plan alerts end with the record of similar closed trades:
 *📈 Track record (1Y): VCP · tier A · uptrend → 61% won, +0.71R avg, 38 trades* (falling back to pattern + tier,
 then pattern; fewer than `track_min_trades` (10): "too few past trades to judge"). `track_line` turns it off.
@@ -1207,6 +1230,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
 | `track_line` / `track_min_trades` | true / 10 | track record line on alerts |
 | `track.*`: `window_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` | 365 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 | track record rules and portfolio |
+| `intraday.*`: `or_minutes` / `entry_start` / `entry_end` / `max_ext_pct` / `gap_max_pct` / `volume_pace` / `max_stop_pct` / `target_pct` / `book_frac` / `atr_mult` / `atr_len` / `max_hold` / `max_new_per_day` / `fetch_sessions` | 15 / 9:30 AM / 1:30 PM / 3 / 3 / 1.5 / 1.5 / 2 / 0.5 / 2 / 14 / 63 / 4 / 15 | intraday entry backtest (times stored as "09:30" / "13:30") |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -1684,3 +1708,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `portfolio()` replays the book via `_book()`; `/api/track` `portfolio.sizing` compares four options (`SIZING`):
   return, worst drawdown, return ÷ drawdown, skipped. Shown as **Sizing comparison** on the Track record tab.
 
+### 2026-10-27: Intraday entry backtest (phase 1)
+- `backend/engine/track_intraday.py`: the evening watchlist replayed causally (`detect_bases(states=)` records each
+  evening's base; `find_cup` / `find_flag` at k-1), pivot crosses including failed ones, entry / stop / target /
+  ATR trail on 5-minute candles, two rule sets (`i5m`, `iday`) in `track_intraday`.
+- 5-minute candles fetched only where needed (`KiteClient.historical_bars`, `candles_5m`, `candles_5m_days`).
+- `/api/track?rules=`, `rule_sets`; `/api/track/trades?rules=`; `POST /api/track/intraday/build`; evening update.
+- `_book()` runs same-day events in time order and caps new entries a day. Track tab: Rules chips, **Rule sets
+  compared**, the run button with progress, entry / booking / exit times, failed crosses folded per stock.
