@@ -3,6 +3,14 @@ stop, part booked at a small target and the rest on an ATR trail. Two rule sets 
 i5m (5-minute ATR) and iday (daily ATR); iday_s50 / iday_s75 are iday with the stop at least 0.5% / 0.75% under the
 entry (a closer one is moved down to that). The results sit next to the swing rules on the Track record tab.
 
+Nifty 500 filter  every rule set also runs with a filter on the index at the entry candle ("@up" / "@strong" keys):
+             any     the intraday rules' own check: the Nifty 500 over its opening price
+             up      the Nifty 500 over today's open AND over yesterday's close
+             strong  up, AND over its own first-or_minutes high (the index broke out of its opening range)
+           The swing rules ("swing@up" / "swing@strong") then buy at the first 5-minute close from entry_start to
+           swing_entry_end on the session after the breakout while the filter holds (inside the buy zone, over
+           the stop), instead of at the open; the rest of the swing rules are unchanged.
+
 Watchlist  each evening (day k-1): setups still intact and within today_near_pct under their pivot. Box bases
            as detect_bases knew them that evening; cups / flags ending that evening (find_cup / find_flag at
            k-1). Same gates as the swing record, as of k-1: liquidity, trend line, RS, Trend Template, the VCP
@@ -47,10 +55,29 @@ from backend.timefmt import ampm
 logger = setup_logger("track_intraday")
 
 VARIANTS = {"i5m": ("i5m", 0.0), "iday": ("iday", 0.0), "iday_s50": ("iday", 0.5), "iday_s75": ("iday", 0.75)}
-RULES = tuple(VARIANTS)                                  # rule set -> (trail, minimum stop distance %)
+FILTERS = ("any", "up", "strong")                        # the Nifty 500 filter (see the module docstring)
+
+
+def key(base: str, nifty: str = "any") -> str:
+    """Rule set key: 'iday_s50', 'iday_s50@up', 'swing@strong' ... (plain 'swing' is the swing record itself)."""
+    return base if nifty == "any" else f"{base}@{nifty}"
+
+
+def parse(rules: str) -> tuple[str, str]:
+    base, _, nifty = rules.partition("@")
+    return base, nifty or "any"
+
+
+RULES = tuple(key(b, n) for b in VARIANTS for n in FILTERS) + ("swing@up", "swing@strong")   # stored here
 NAMES = {"swing": "Swing · 8% stop", "i5m": "Intraday · 5-min ATR trail", "iday": "Intraday · daily ATR trail",
          "iday_s50": "Intraday · daily trail · stop ≥ 0.5%", "iday_s75": "Intraday · daily trail · stop ≥ 0.75%"}
-VERSION = "2"                                            # the rule sets above; another version re-runs the backtest
+FILTER_NAMES = {"any": "", "up": " · Nifty 500 up", "strong": " · Nifty 500 strong up"}
+VERSION = "3"                                            # the rule sets above; another version re-runs the backtest
+
+
+def name(rules: str) -> str:
+    base, nifty = parse(rules)
+    return NAMES[base] + FILTER_NAMES[nifty]
 PATTERNS = track.PATTERNS
 FINAL = track.FINAL
 
@@ -189,11 +216,39 @@ class FiveMin:
 # --- entry and trade --------------------------------------------------------------------------------
 
 WHY = {"ext": "more than {ext:g}% over the pivot", "vwap": "under VWAP", "volume": "volume pace under {pace:g}×",
-       "index": "Nifty 500 under its open", "stop": "stop more than {stop:g}% away"}
+       "index": "Nifty 500 under its open", "index_up": "Nifty 500 not up (under its open or yesterday's close)",
+       "index_strong": "Nifty 500 not over its first-15-minute high", "index_data": "no Nifty 500 candles",
+       "stop": "stop more than {stop:g}% away"}
+
+
+def index_ok(idx: Optional[list], t: str, idx_prev: Optional[float], mode: str, or_minutes: int) -> Optional[str]:
+    """None when the Nifty 500 filter passes on the candle starting at t, else the WHY key. Uses the index candle
+    that started at t (or the last one before it): only what was known when that stock candle closed."""
+    if not idx:
+        return None if mode == "any" else "index_data"
+    cur = None
+    for x in idx:
+        if x["t"] > t:
+            break
+        cur = x
+    if cur is None:
+        return None if mode == "any" else "index_data"
+    c, day_open = cur["close"], idx[0]["open"]
+    if mode == "any":
+        return "index" if c < day_open else None
+    if c <= day_open or (idx_prev is not None and c <= idx_prev):
+        return "index_up"
+    if mode == "strong":
+        or_end = _plus("09:15", or_minutes)
+        or_high = max((x["high"] for x in idx if x["t"] < or_end), default=None)
+        if or_high is None or t < or_end or c <= or_high:
+            return "index_strong"
+    return None
 
 
 def find_entry(bars: list[dict], idx: Optional[list], pivot: float, prev_close: float, day_open: float,
-               avg_vol: Optional[float], day: str, cfg) -> tuple[Optional[dict], Optional[str]]:
+               avg_vol: Optional[float], day: str, cfg, idx_prev: Optional[float] = None,
+               mode: str = "any") -> tuple[Optional[dict], Optional[str]]:
     """The first 5-minute candle that triggers the entry (see the module docstring), or (None, why not)."""
     if not bars:
         return None, "no 5-minute candles for the day"
@@ -203,8 +258,6 @@ def find_entry(bars: list[dict], idx: Optional[list], pivot: float, prev_close: 
     or_end = _plus("09:15", cfg.or_minutes)
     or_lows = [x["low"] for x in bars if x["t"] < or_end]
     or_low = min(or_lows) if or_lows else None
-    idx_open = idx[0]["open"] if idx else None
-    idx_at = {x["t"]: x["close"] for x in idx or []}
     cum_v = cum_pv = 0.0
     fails: Counter = Counter()
     for i, x in enumerate(bars):
@@ -230,8 +283,9 @@ def find_entry(bars: list[dict], idx: Optional[list], pivot: float, prev_close: 
         if pace is None or pace < cfg.volume_pace:
             fails["volume"] += 1
             continue
-        if idx_open is not None and x["t"] in idx_at and idx_at[x["t"]] < idx_open:
-            fails["index"] += 1
+        bad = index_ok(idx, x["t"], idx_prev, mode, cfg.or_minutes)
+        if bad:
+            fails[bad] += 1
             continue
         lows = [v for v in (or_low, x["low"]) if v is not None and v < c]
         stop = max(lows) if lows else None
@@ -244,6 +298,36 @@ def find_entry(bars: list[dict], idx: Optional[list], pivot: float, prev_close: 
     top = fails.most_common(1)[0][0]
     return None, "crossed the pivot, but " + WHY[top].format(ext=cfg.max_ext_pct, pace=cfg.volume_pace,
                                                              stop=cfg.max_stop_pct)
+
+
+def swing_entry(bars: list[dict], idx: Optional[list], idx_prev: Optional[float], mode: str, pivot: float,
+                pattern_stop: float, cfg, max_stop: float, buy_zone_pct: float) -> tuple[Optional[tuple], str]:
+    """Swing rules with the Nifty 500 filter: (price, 'HH:MM') of the first 5-minute close from entry_start to
+    swing_entry_end while the filter holds, inside the buy zone and over the stop; or (None, why not)."""
+    if not bars:
+        return None, "no 5-minute candles for the day"
+    zone_top, fails = pivot * (1 + buy_zone_pct), Counter()
+    for x in bars:
+        end = _plus(x["t"], 5)
+        if x["t"] < cfg.entry_start:
+            continue
+        if end > cfg.swing_entry_end:
+            break
+        bad = index_ok(idx, x["t"], idx_prev, mode, cfg.or_minutes)
+        c = x["close"]
+        if bad:
+            fails[bad] += 1
+        elif c > zone_top:
+            fails["zone"] += 1
+        elif c <= max(pattern_stop, c * (1 - max_stop)):
+            fails["stop"] += 1
+        else:
+            return (c, end), ""
+    if not fails:
+        return None, "no 5-minute candle in the entry window"
+    top = fails.most_common(1)[0][0]
+    text = {"zone": "beyond the buy zone", "stop": "at or under the stop"}.get(top) or WHY[top]
+    return None, f"by {ampm(cfg.swing_entry_end)}: {text}"
 
 
 def _atr_daily(b: track.Bars, j: int, n: int) -> Optional[float]:
@@ -364,8 +448,12 @@ UPSERT = ("INSERT OR REPLACE INTO track_intraday (rules, symbol, breakout_date, 
 
 
 def _replay(u: track.Universe, sym: str, rules: str, stored: list[dict], new: list[dict], five: FiveMin,
-            idx: Optional[FiveMin]) -> list[tuple]:
-    """Re-run the open and pending trades and place the new crosses for one stock and rule set."""
+            idx: Optional[FiveMin], iprev=lambda d: None) -> list[tuple]:
+    """Re-run the open and pending trades and place the new crosses (or, for swing@..., breakouts) for one stock
+    and rule set. iprev(day) = the Nifty 500's close the session before."""
+    base, mode = parse(rules)
+    if base == "swing":
+        return _replay_swing(u, sym, rules, stored, new, five, idx, iprev)
     cfg, icfg = u.cfg, u.cfg.intraday
     b = track.Bars(u.series[sym], cfg.track.exit_ma)
     rows = sorted([dict(r, _stored=True) for r in stored] + new, key=lambda r: r["breakout_date"])
@@ -393,8 +481,9 @@ def _replay(u: track.Universe, sym: str, rules: str, stored: list[dict], new: li
         else:
             ib = idx.day(d, ahead=60) if idx is not None else None
             avg = float(b.vol[max(0, k - 50):k].mean()) if k else None
-            e, why = find_entry(bars, ib, r["pivot"], float(b.close[k - 1]), float(b.open[k]), avg, d, icfg)
-            trail, min_stop = VARIANTS[rules]
+            e, why = find_entry(bars, ib, r["pivot"], float(b.close[k - 1]), float(b.open[k]), avg, d, icfg,
+                                iprev(d), mode)
+            trail, min_stop = VARIANTS[base]
             if e and min_stop and e["stop"] > e["price"] * (1 - min_stop / 100):
                 e = dict(e, stop=e["price"] * (1 - min_stop / 100))     # give the trade room: move a close stop down
             trade = simulate(b, k, e, five, icfg, trail) if e else {"status": "no_entry", "reason": why}
@@ -404,6 +493,49 @@ def _replay(u: track.Universe, sym: str, rules: str, stored: list[dict], new: li
             no = trade_no
             busy_until = trade["exit_date"] or "open"
             traded.add(r["pivot"])
+        out.append((rules, *track._row_values(r, trade, no)))
+    return out
+
+
+def _replay_swing(u: track.Universe, sym: str, rules: str, stored: list[dict], new: list[dict], five: FiveMin,
+                  idx: Optional[FiveMin], iprev) -> list[tuple]:
+    """track._replay_symbol with the Nifty 500 filtered entry (swing_entry) on the session after the breakout."""
+    cfg = u.cfg
+    _, mode = parse(rules)
+    b = track.Bars(u.series[sym], cfg.track.exit_ma)
+    rows = sorted([dict(r, _stored=True) for r in stored] + new, key=lambda r: r["breakout_date"])
+    busy_until, trade_no, out = None, 0, []
+    for r in rows:
+        if r.get("_stored") and r["status"] in FINAL:
+            if r["status"] in ("won", "lost"):
+                trade_no = max(trade_no, r.get("trade_no") or 0)
+                busy_until = r.get("exit_date")
+            continue
+        t = b.index(r["breakout_date"])
+        if t is None:
+            continue
+        if busy_until is not None and (busy_until == "open" or busy_until >= r["breakout_date"]):
+            out.append((rules, *track._row_values(r, {"status": "in_trade", "reason": "breakout while a trade was open"},
+                                                 None)))
+            continue
+        if t + 1 >= len(b.dates):
+            trade = {"status": "pending", "reason": "entry next session, if the Nifty 500 is up"}
+        else:
+            d = b.dates[t + 1]
+            bars = five.day(d)
+            if bars is None:
+                trade = {"status": "pending", "reason": "5-minute candles not fetched yet (needs a Kite login)"}
+            else:
+                ib = idx.day(d, ahead=60) if idx is not None else None
+                ent, why = swing_entry(bars, ib, iprev(d), mode, r["pivot"], r["pattern_stop"], cfg.intraday,
+                                       cfg.track.max_stop, cfg.alerts.buy_zone_pct)
+                trade = (track.simulate(b, t, r["pivot"], r["pattern_stop"], cfg.track, cfg.alerts.buy_zone_pct,
+                                        entry=ent) if ent else {"status": "no_entry", "reason": why})
+        no = None
+        if trade["status"] in ("running", "won", "lost"):
+            trade_no += 1
+            no = trade_no
+            busy_until = trade["exit_date"] or "open"
         out.append((rules, *track._row_values(r, trade, no)))
     return out
 
@@ -442,6 +574,8 @@ def build(config: AppConfig, client, rebuild: bool = False) -> dict:
         start = since if not built or not last else max(since, last)
         index_dates = [c["date"] for c in u.index]
         idx = FiveMin(client, index_token, uni.INDEX_NAME, index_dates) if index_token is not None else None
+        prev_close = {d: u.index[i - 1]["close"] for i, d in enumerate(index_dates) if i}
+        iprev = prev_close.get
         _status["total"] = len(u.series)
         rows, added, pending = [], 0, 0
         for i, sym in enumerate(sorted(u.series)):
@@ -450,15 +584,21 @@ def build(config: AppConfig, client, rebuild: bool = False) -> dict:
             except Exception:
                 logger.exception("Intraday backtest: watchlist for %s failed", sym)
                 crosses = []
+            try:
+                breakouts = track.find_signals(u, sym, start)
+            except Exception:
+                logger.exception("Intraday backtest: breakouts for %s failed", sym)
+                breakouts = []
             five = FiveMin(client, tokens[sym], sym, u.dates[sym])
             for rules in RULES:
                 mine = stored.get((rules, sym), [])
                 have = {r["breakout_date"] for r in mine}
-                new = [s for s in crosses if s["breakout_date"] not in have]
+                new = [s for s in (breakouts if parse(rules)[0] == "swing" else crosses)
+                       if s["breakout_date"] not in have]
                 if rules == RULES[0]:
                     added += len(new)
                 if new or any(r["status"] not in FINAL for r in mine):
-                    got = _replay(u, sym, rules, mine, new, five, idx)
+                    got = _replay(u, sym, rules, mine, new, five, idx, iprev)
                     pending += sum(1 for g in got if g[12] == "pending")   # status, after rules
                     rows += got
             _status["done"] = i + 1
@@ -504,7 +644,7 @@ def stale_reason(config: AppConfig) -> Optional[str]:
         v = get_setting(conn, "track_intraday.version") or "1/365"
     ver, days = (v.split("/") + ["365"])[:2]
     if ver != VERSION:
-        return "new rule sets were added (the stop-minimum variants and costs)"
+        return "new rule sets were added (the Nifty 500 filter on every rule set)"
     if days != str(config.track.history_days):
         return f"the history changed to {config.track.history_days} days"
     return None

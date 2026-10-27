@@ -9,6 +9,8 @@ const PATTERNS = [['all', 'All patterns'], ['vcp', 'VCP'], ['cup', 'Cup'], ['fla
 const TIERS = [['all', 'All tiers'], ['A', 'Tier A'], ['B', 'Tier B']];
 const RULES = [['swing', 'Swing · 8% stop'], ['i5m', 'Intraday · 5-min trail'], ['iday', 'Intraday · daily trail'],
   ['iday_s50', 'Daily trail · stop ≥ 0.5%'], ['iday_s75', 'Daily trail · stop ≥ 0.75%']];
+const NIFTY = [['any', 'Any'], ['up', 'Up'], ['strong', 'Strong up']];
+const NIFTY_TEXT = { up: 'over its open and yesterday\'s close', strong: 'over its open, yesterday\'s close and its first-15-minute high' };
 const STATUSES = [['all', 'All'], ['running', 'Running'], ['closed', 'Closed'], ['no_entry', 'No entry']];
 const STOCKS_SHOWN = 60;
 const PNAME = { vcp: 'VCP', cup: 'Cup', flag: 'Flag', bases: 'Bases' };
@@ -106,8 +108,8 @@ function statusChip(t) {
 function timeline(t, rules, set) {
   const intra = set && set !== 'swing';
   if (t.status === 'no_entry') {
-    if (intra) return `⛔ ${t.reason}`;
     const raw = (t.events || []).find((e) => e.kind === 'raw');
+    if (intra || !raw) return `⛔ ${t.reason}`;
     return `${t.reason}: not chased.${raw?.pct != null ? ` Raw run since: ${pct(raw.pct)}` : ''}`;
   }
   if (t.status === 'pending') {
@@ -134,7 +136,7 @@ function timeline(t, rules, set) {
     else if (kinds.includes('breakeven')) parts.push(`stop at entry ${rs(t.entry)} · next: 🎯 ½ at +${rules?.book_half_pct ?? 20}% (${rs(t.entry * (1 + (rules?.book_half_pct ?? 20) / 100))})`);
     else parts.push(`stop ${rs(t.stop)} · next: 🔒 breakeven at +${rules?.breakeven_pct ?? 10}% (${rs(t.entry * (1 + (rules?.breakeven_pct ?? 10) / 100))})`);
   }
-  return parts.length ? parts.join(' → ') : intra ? `Entered ${at(t.events?.[0]).slice(2)}` : 'Entered at the open';
+  return parts.length ? parts.join(' → ') : t.events?.[0]?.time ? `Entered ${at(t.events[0]).slice(2)}` : 'Entered at the open';
 }
 
 // Intraday: the crosses that didn't trigger an entry, folded into one line per stock.
@@ -163,7 +165,7 @@ function groupSummary(ts) {
 // The 📈 Track record tab: every breakout of the last year under the swing rules, and where they'd have got you.
 export default function TrackPage() {
   const phone = useIsPhone();
-  const [f, setF] = useState({ period: '1y', pattern: 'all', tier: 'all', status: 'all', rules: 'swing' });
+  const [f, setF] = useState({ period: '1y', pattern: 'all', tier: 'all', status: 'all', rules: 'swing', nifty: 'any' });
   const [d, setD] = useState(null);
   const [trades, setTrades] = useState(null);
   const [err, setErr] = useState('');
@@ -189,18 +191,21 @@ export default function TrackPage() {
   }, [f]);
 
   const started = () => setD({ ...d, progress: { state: 'building', done: 0, total: 0 } });
-  const rebuild = () => (intra ? api.buildIntradayTrack(true) : api.rebuildTrack()).then(started)
+  const rebuild = () => (d.rules_set !== 'swing' ? api.buildIntradayTrack(true) : api.rebuildTrack()).then(started)
     .catch((e) => setErr(e.message));
   const runIntraday = () => api.buildIntradayTrack().then(started).then(() => setF({ ...f }))
     .catch((e) => setErr(e.message));
 
   if (!d) return <div className="panel">{err ? <span className="warn">{err}</span> : 'Loading…'}</div>;
   const prog = d.progress || {};
-  const intra = d.rules_set ? d.rules_set !== 'swing' : f.rules !== 'swing';
+  const base = d.base || f.rules;                      // swing / i5m / iday ... (d.rules_set adds the Nifty 500 filter)
+  const intra = base !== 'swing';
   const ruleChips = (
     <div className="trfilters trrules"><span className="muted small">Rules</span>
-      <Chips items={RULES} value={f.rules} onChange={set('rules')} /></div>);
-  if (!d.built && intra && !loading) {
+      <Chips items={RULES} value={f.rules} onChange={set('rules')} />
+      <span className="sep" /><span className="muted small">Nifty 500</span>
+      <Chips items={NIFTY} value={f.nifty} onChange={set('nifty')} /></div>);
+  if (!d.built && d.rules_set && d.rules_set !== 'swing' && !loading) {
     const running = prog.state && prog.state !== 'idle';
     return (
       <div className="track">{ruleChips}
@@ -251,7 +256,7 @@ export default function TrackPage() {
       <div className="trstatus">
         <span className="s"><b>{c.breakouts ?? 0}</b> {intra ? 'pivot crosses' : 'breakouts'}</span><span className="ar">→</span>
         <span className="s"><b>{c.entered ?? 0}</b> entered</span>
-        <span className="s"><b>{c.no_entry ?? 0}</b> ⛔ no entry{intra ? '' : ' (gapped)'}</span><span className="ar">→</span>
+        <span className="s"><b>{c.no_entry ?? 0}</b> ⛔ no entry{intra || d.nifty !== 'any' ? '' : ' (gapped)'}</span><span className="ar">→</span>
         <span className="s"><b>{c.closed ?? 0}</b> closed: <span className="up">{c.won ?? 0} won</span> · <span className="down">{c.lost ?? 0} lost</span></span>
         <span className="s"><b className="up">{c.running ?? 0}</b> 🟢 running</span>
         {c.pending > 0 && <span className="s"><b>{c.pending}</b> ⏳ {intra ? 'waiting for 5-min candles' : 'entry next open'}</span>}
@@ -274,7 +279,8 @@ export default function TrackPage() {
           <div className="tablewrap"><table className="grid trsize trrs"><thead><tr><th>Rules</th>
             {!phone && <><th className="num">Trades</th><th className="num">Avg win · loss</th><th className="num">Profit factor</th></>}
             <th className="num">Win</th>{!phone && <th className="num">Expectancy</th>}<th className="num">{phone ? 'Net / trade' : 'Per trade, after costs'}</th><th className="num">Return</th>
-            {!phone && <th className="num">Worst drawdown</th>}<th className="num">{phone ? 'Ret ÷ fall' : 'Return ÷ drawdown'}</th></tr></thead>
+            {!phone && <th className="num">Worst drawdown</th>}{!(phone && f.nifty !== 'any') && <th className="num">{phone ? 'Ret ÷ fall' : 'Return ÷ drawdown'}</th>}
+            {f.nifty !== 'any' && <th className="num">{phone ? 'No filter' : 'Return without the filter'}</th>}</tr></thead>
             <tbody>{d.rule_sets.map((x) => (
               <tr key={x.rules} className={x.rules === f.rules ? 'cur' : ''} onClick={() => set('rules')(x.rules)}>
                 <td>{x.name}{x.rules === f.rules && <span className="trnow">shown</span>}</td>
@@ -286,10 +292,12 @@ export default function TrackPage() {
                 <td className={`num ${cls(x.net_avg_pct)}`}>{pct(x.net_avg_pct, 2)}</td>
                 <td className={`num ${cls(x.return)}`}><b>{pct(x.return)}</b></td>
                 {!phone && <td className="num down">{pct(x.drawdown)}</td>}
-                <td className="num">{x.ratio != null ? x.ratio.toFixed(2) : '—'}</td></tr>))}
+                {!(phone && f.nifty !== 'any') && <td className="num">{x.ratio != null ? x.ratio.toFixed(2) : '—'}</td>}
+                {f.nifty !== 'any' && <td className={`num muted ${cls(x.return_any)}`}>{pct(x.return_any)}</td>}</tr>))}
             </tbody></table></div>
           <div className="muted small">Trades = closed trades. Per trade, return and drawdown are after costs: {d.costs?.cost_pct}% a round trip
-            (STT, stamp duty, exchange, GST, DP) plus {d.costs?.slippage_pct}% slippage on every fill. Return and drawdown use the portfolio
+            held overnight (STT, stamp duty, exchange, GST, DP), {d.costs?.intraday_cost_pct}% when bought and sold the same day (charged as
+            intraday), plus {d.costs?.slippage_pct}% slippage on every fill. Return and drawdown use the portfolio
             rules below (₹10L, 1% risk, max 20% per position{set$.max_new_per_day ? `, at most ${set$.max_new_per_day} new entries a day` : ''}).
             Expectancy (R) is before costs.</div></div>)}
 
@@ -349,14 +357,14 @@ export default function TrackPage() {
                 <span className="trc1"><span className="muted small">{day(t.breakout_date)}{t.trade_no ? ` #${t.trade_no}` : ''}</span>
                   <span className={`pt p-${t.pattern}`}>{PNAME[t.pattern]}</span><span className={`tier t-${t.tier}`}>{t.tier}</span>
                   <span>{MKT[t.market] || ''}</span><span className="right">{statusChip(t)}</span></span>
-                {t.entry != null && <span className="trc2"><span className="small">entry {rs(t.entry)}{intra && t.events?.[0]?.time ? ` (${ampm(t.events[0].time)})` : ''} · stop {rs(t.stop)}</span><Spark t={t} />
+                {t.entry != null && <span className="trc2"><span className="small">entry {rs(t.entry)}{t.events?.[0]?.time ? ` (${ampm(t.events[0].time)})` : ''} · stop {rs(t.stop)}</span><Spark t={t} />
                   <b className={cls(t.result_pct)}>{t.status === 'no_entry' ? '' : `${pct(t.result_pct)} ${rr(t.r)}`}</b></span>}
-                <span className="trc3 muted small">{timeline(t, d.rules, f.rules)}</span>
+                <span className="trc3 muted small">{timeline(t, d.rules, base)}</span>
               </button>))}
           </div>))
           : (
           <div className="tablewrap"><table className="grid trtrades"><thead><tr><th>{intra ? 'Crossed' : 'Breakout'}</th><th>Pattern · tier · mkt</th>
-            <th className="num">{intra ? 'Entry (5-min close)' : 'Entry (next open)'}</th><th className="num">Stop</th><th>Run</th>
+            <th className="num">{intra || d.nifty !== 'any' ? 'Entry (5-min close)' : 'Entry (next open)'}</th><th className="num">Stop</th><th>Run</th>
             {SNAPS.map(([k, l]) => <th key={k} className="num">{l}</th>)}<th className="num">Result</th><th>Status</th></tr></thead>
             <tbody>{(trades || []).slice(0, limit).map((g) => (
               <React.Fragment key={g.symbol}>
@@ -370,14 +378,14 @@ export default function TrackPage() {
                       <td className="muted">{day(t.breakout_date)} {t.trade_no ? <b>#{t.trade_no}</b> : ''}</td>
                       <td><span className={`pt p-${t.pattern}`}>{PNAME[t.pattern]}</span> <span className={`tier t-${t.tier}`}>{t.tier}</span> {MKT[t.market] || ''}</td>
                       <td className="num">{t.status === 'no_entry' || !t.entry ? '—' : rs(t.entry)}
-                        {intra && t.events?.[0]?.time && <div className="muted small">{ampm(t.events[0].time)}</div>}</td>
+                        {t.events?.[0]?.time && <div className="muted small">{ampm(t.events[0].time)}</div>}</td>
                       <td className="num">{t.stop ? <>{rs(t.stop)}<div className="muted small">{pct((t.stop / t.entry - 1) * 100)}</div></> : '—'}</td>
                       <td><Spark t={t} /></td>
                       {SNAPS.map(([k]) => <td key={k} className={`num ${cls(t.snaps?.[k])}`}>{pct(t.snaps?.[k])}</td>)}
                       <td className="num"><b className={cls(t.result_pct)}>{t.status === 'no_entry' || t.status === 'pending' ? '—' : `${pct(t.result_pct)} · ${rr(t.r)}`}</b></td>
                       <td>{statusChip(t)}</td>
                     </tr>
-                    <tr className="tl"><td /><td colSpan={10}>{timeline(t, d.rules, f.rules)}</td></tr>
+                    <tr className="tl"><td /><td colSpan={10}>{timeline(t, d.rules, base)}</td></tr>
                   </React.Fragment>)))}
               </React.Fragment>))}
             </tbody></table></div>)}
@@ -389,8 +397,8 @@ export default function TrackPage() {
           <p className="muted small">The watchlist is rebuilt for each evening of the past year (only today's Nifty 500 members:
             a slight optimistic bias); a day counts when the high crossed the pivot, even if it closed back under it. Entry
             on the first 5-minute close over the pivot between {ampm(d.rules?.entry_start)} and {ampm(d.rules?.entry_end)}, over VWAP, volume
-            pace {d.rules?.volume_pace}×+, at most {d.rules?.max_ext_pct}% over the pivot, no gap over {d.rules?.gap_max_pct}%, Nifty 500 over its
-            open; stop = the closer of the first-{d.rules?.or_minutes}-minute low and the candle low, at most {d.rules?.max_stop_pct}% away
+            pace {d.rules?.volume_pace}×+, at most {d.rules?.max_ext_pct}% over the pivot, no gap over {d.rules?.gap_max_pct}%, Nifty 500 {NIFTY_TEXT[d.nifty] || 'over its open'};
+            stop = the closer of the first-{d.rules?.or_minutes}-minute low and the candle low, at most {d.rules?.max_stop_pct}% away
             {d.rules?.min_stop_pct ? ` and at least ${d.rules.min_stop_pct}% (a closer one is moved down)` : ''};
             {' '}{Math.round((d.rules?.book_frac ?? 0.5) * 100)}% booked at +{d.rules?.target_pct}%, then the stop at the entry and the rest on a close under
             the highest high − {d.rules?.atr_mult} × ATR({d.rules?.atr_len}); stop and target in one candle count as the stop.
@@ -400,7 +408,10 @@ export default function TrackPage() {
           date, and only today's Nifty 500 members are included (a slight optimistic bias). Rules: entry at the next open
           (no entry beyond the buy zone), pattern stop capped at {((d.rules?.max_stop ?? 0.08) * 100).toFixed(0)}%, breakeven
           at +{d.rules?.breakeven_pct}%, half at +{d.rules?.book_half_pct}%, the rest on a close below
-          the {d.rules?.exit_ma}-day, {d.rules?.max_hold}-session mark.</p>)}
+          the {d.rules?.exit_ma}-day, {d.rules?.max_hold}-session mark.
+          {d.nifty && d.nifty !== 'any' && ` With the Nifty 500 filter the entry is instead the first 5-minute close from
+            ${ampm(d.rules?.entry_start)} to ${ampm(d.rules?.swing_entry_end)} on the session after the breakout while the Nifty 500 is
+            ${NIFTY_TEXT[d.nifty]} (inside the buy zone, over the stop).`}</p>)}
       </div>
     </div>
   );

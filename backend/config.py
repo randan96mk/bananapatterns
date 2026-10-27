@@ -339,6 +339,7 @@ class TrackConfig:
     position_cap: float = 0.20             # ... and never more than this share of the account in one stock (0 = off)
     max_positions: int = 10                # ... open at once; a new signal is skipped when full
     cost_pct: float = 0.25                 # round trip, % of the traded value: STT, stamp duty, exchange, GST, DP
+    intraday_cost_pct: float = 0.06        # ... when bought and sold the same day (charged as intraday by Zerodha)
     slippage_pct: float = 0.05             # each fill, % worse than the rule's price
 
 
@@ -359,6 +360,7 @@ class IntradayConfig:
     max_hold: int = 63                     # sessions; still open: valued at that close ("3M mark")
     max_new_per_day: int = 4               # portfolio: new entries per day
     fetch_sessions: int = 15               # 5-minute candles fetched per request after an entry
+    swing_entry_end: str = "11:30"         # swing rules with a Nifty 500 filter: entry candle ends by this time
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

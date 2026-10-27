@@ -144,19 +144,65 @@ def test_same_day_entry_and_exit_close_the_position():
 
 def test_costs_per_trade_and_in_the_portfolio():
     from backend.config import TrackConfig
-    tc = TrackConfig()                                          # 0.25% round trip + 0.05% a fill: 0.175% a fill
-    k = 0.00175
-    r = {"status": "won", "events": [{"kind": "entry", "price": 100.0}, {"kind": "half", "price": 102.0, "frac": 0.5},
-                                     {"kind": "exit", "price": 101.0}]}
-    want = 0.5 * (102 * (1 - k) / (100 * (1 + k)) - 1) + 0.5 * (101 * (1 - k) / (100 * (1 + k)) - 1)
-    assert track.net_pct(r, tc) == pytest.approx(want * 100, abs=0.01) and track.net_pct(r, tc) < 1.5
+    tc = TrackConfig()                     # 0.05% slippage a fill; 0.25% overnight, 0.06% same day (round trip)
+    s, over, same = 0.0005, 0.0025, 0.0006
+    d0, d1 = "2026-03-02", "2026-03-03"
+    r = {"status": "won", "events": [{"kind": "entry", "date": d0, "price": 100.0},
+                                     {"kind": "half", "date": d0, "price": 102.0, "frac": 0.5},
+                                     {"kind": "exit", "date": d1, "price": 101.0}]}
+    buy = 100 * (1 + s)
+    want = 0.5 * (102 * (1 - s) / buy - 1 - same) + 0.5 * (101 * (1 - s) / buy - 1 - over)
+    assert track.net_pct(r, tc) == pytest.approx(want * 100, abs=0.01)
     assert track.net_pct(dict(r, status="running"), tc) is None
-    day = "2026-03-02"
-    row = {"symbol": "A", "breakout_date": day, "pattern": "bases", "tier": "A", "stop": 99.0}
-    by_day = {day: [({"kind": "entry", "date": day, "time": "10:00", "price": 100.0}, row),
-                    ({"kind": "exit", "date": day, "time": "11:00", "price": 100.0}, row)]}
-    curve = track._book([day], by_day, {}, 1_000_000, 10, 0.01, 0.20, fill=k)[0]
-    assert curve[-1] == pytest.approx(-0.2 * 2 * k * 100, abs=0.01)   # a 2L position, flat, pays two fills
+    row = {"symbol": "A", "breakout_date": d0, "pattern": "bases", "tier": "A", "stop": 99.0}
+    flat = {d0: [({"kind": "entry", "date": d0, "time": "10:00", "price": 100.0}, row),
+                 ({"kind": "exit", "date": d0, "time": "11:00", "price": 100.0}, row)]}
+    costs = track._costs(tc)
+    curve = track._book([d0], flat, {}, 1_000_000, 10, 0.01, 0.20, costs=costs)[0]
+    assert curve[-1] == pytest.approx(-0.2 * (2 * s + same) * 100, abs=0.01)    # a 2L position, flat, same day
+    held = {d0: flat[d0][:1], d1: [({"kind": "exit", "date": d1, "time": "11:00", "price": 100.0}, row)]}
+    curve = track._book([d0, d1], held, {"A": {d0: 100.0, d1: 100.0}}, 1_000_000, 10, 0.01, 0.20, costs=costs)[0]
+    assert curve[-1] == pytest.approx(-0.2 * (2 * s + over) * 100, abs=0.01)    # held overnight: delivery charges
+
+
+# --- the Nifty 500 filter ----------------------------------------------------------------------------
+
+IDX = five([(22000, 22030, 21990, 22020, 0), (22020, 22040, 22010, 22030, 0), (22030, 22050, 22020, 22040, 0),
+            (22040, 22045, 21980, 21990, 0), (22000, 22060, 21995, 22045, 0), (22045, 22080, 22040, 22075, 0)])
+# 9:15-9:25 opening range high 22050; 9:30 under its open (22000)... 9:35 over the open, 9:40 over the 22050 high
+
+
+def test_index_filter_modes():
+    assert ti.index_ok(IDX, "09:30", 21900, "any", 15) == "index"             # 21990: under its 22000 open
+    assert ti.index_ok(IDX, "09:25", 21900, "any", 15) is None
+    assert ti.index_ok(IDX, "09:30", 21900, "up", 15) == "index_up"
+    assert ti.index_ok(IDX, "09:35", 21900, "up", 15) is None                  # over open and yesterday's close
+    assert ti.index_ok(IDX, "09:35", 22100, "up", 15) == "index_up"           # under yesterday's close
+    assert ti.index_ok(IDX, "09:35", 21900, "strong", 15) == "index_strong"   # 22045 not over the 22050 high
+    assert ti.index_ok(IDX, "09:40", 21900, "strong", 15) is None
+    assert ti.index_ok([], "09:40", 21900, "strong", 15) == "index_data"
+    assert ti.index_ok([], "09:40", 21900, "any", 15) is None
+
+
+def test_entry_waits_for_the_nifty_500():
+    rows = OPEN_RANGE + [TRIGGER, (100.5, 100.8, 100.3, 100.6, 30_000), (100.6, 100.9, 100.4, 100.8, 30_000)]
+    e, _ = entry(rows, idx=IDX)                                                # any: 9:30 index 21990 < open
+    assert e["time"] == "09:40"
+    e, _ = ti.find_entry(five(rows), IDX, 100.0, 99.0, 99.5, 75_000, "2026-03-02", CFG, 21900, "strong")
+    assert e["time"] == "09:45"                                                # waits for the index breakout
+    e, why = ti.find_entry(five(rows), IDX, 100.0, 99.0, 99.5, 75_000, "2026-03-02", CFG, 22100, "up")
+    assert e is None and "Nifty 500 not up" in why
+
+
+def test_swing_entry_with_the_filter():
+    rows = OPEN_RANGE + [TRIGGER, (100.5, 100.8, 100.3, 100.6, 30_000), (100.6, 100.9, 100.4, 100.8, 30_000)]
+    ent, _ = ti.swing_entry(five(rows), IDX, 21900, "up", 100.0, 93.0, CFG, 0.08, 0.05)
+    assert ent == (100.6, "09:40")
+    ent, why = ti.swing_entry(five(rows), IDX, 21900, "up", 99.0, 93.0, CFG, 0.08, 0.005)
+    assert ent is None and "beyond the buy zone" in why                       # 100.6 / 100.8 > 99 x 1.005
+    t = track.simulate(daily([(99, 100, 98, 99.5), (99.5, 101, 99, 100.9), (100.9, 102, 100, 101.5)]), 0, 99.0,
+                       93.0, app_config().track, 0.05, entry=(100.6, "09:40"))
+    assert t["entry"] == 100.6 and t["events"][0]["time"] == "09:40" and t["stop"] == pytest.approx(93.0, abs=0.01)
 
 
 # --- the watchlist: failed crosses count -------------------------------------------------------------
@@ -220,10 +266,13 @@ def test_build_and_api(monkeypatch):
     assert track.build(cfg)["status"] == "ok"
     r = ti.build(cfg, fake)
     assert r["status"] == "ok" and r["added"] >= 2 and r["pending"] == 0
-    for rules in ti.RULES:
+    for rules in [k for k in ti.RULES if "@" not in k]:                # no Nifty 500 candles in this test
         got = {x["breakout_date"]: x for x in track.rows("1y", rules=rules)}
         assert cs[fail_i]["date"] in got                       # the failed cross is in the record
         assert any(x["status"] in ("won", "lost", "running") for x in got.values())
+    filtered = track.rows("1y", rules="iday@up") + track.rows("1y", rules="swing@strong")
+    assert filtered and all(x["status"] in ("no_entry", "in_trade") for x in filtered)
+    assert any("no Nifty 500 candles" in (x["reason"] or "") for x in filtered)
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM candles_5m").fetchone()[0] > 0
     calls = fake.calls
@@ -245,9 +294,14 @@ def test_build_and_api(monkeypatch):
         assert d["built"] and d["rules_set"] == "i5m" and d["rules"]["target_pct"] == 2.0
         assert [x["rules"] for x in d["rule_sets"]] == ["swing", "i5m", "iday", "iday_s50", "iday_s75"]
         assert all("net_avg_pct" in x for x in d["rule_sets"]) and d["stale"] is None
+        d = tc.get("/api/track?rules=iday_s50&nifty=up&period=1y").json()
+        assert d["built"] and d["rules_set"] == "iday_s50@up" and d["name"].endswith("Nifty 500 up")
+        assert all("return_any" in x for x in d["rule_sets"] if x["rules"] != "swing")
+        assert [x["key"] for x in d["rule_sets"]] == ["swing@up", "i5m@up", "iday@up", "iday_s50@up", "iday_s75@up"]
+        assert tc.get("/api/track?nifty=sideways").status_code == 422
         S().config.track.history_days = 365                          # another window: stale until re-run
         d = tc.get("/api/track?rules=iday").json()
-        assert not d["built"] and "365 days" in d["stale"] and len(d["rule_sets"]) == 0
+        assert not d["built"] and "365 days" in d["stale"] and len(d["rule_sets"]) <= 1
         S().config.track.history_days = cfg.track.history_days
         assert tc.get("/api/track?rules=nope").status_code == 422
         assert tc.post("/api/track/intraday/build").status_code == 400            # no Kite login in tests
