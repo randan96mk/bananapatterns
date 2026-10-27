@@ -64,7 +64,7 @@ def _track_if_missing(state: AppState) -> None:
     """Build the track record once (about a minute, in the background); later the evening job adds to it."""
     from backend.engine import track
     try:
-        if not track.built():
+        if not track.built() or track.stale(state.config):
             track.build(state.config)
     except Exception:
         logger.exception("Track record build failed")

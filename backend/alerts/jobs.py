@@ -286,7 +286,7 @@ class Scheduler:
             logger.exception("Track record update failed")
         try:                                       # intraday backtest: today's pivot crosses (once it was run)
             from backend.engine import track_intraday
-            if track_intraday.built() and st.client.has_token:
+            if track_intraday.built() and not track_intraday.stale_reason(st.config) and st.client.has_token:
                 sent["track_intraday"] = track_intraday.build(st.config, st.client).get("added")
         except Exception:
             logger.exception("Intraday backtest update failed")

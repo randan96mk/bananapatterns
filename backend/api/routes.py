@@ -684,7 +684,8 @@ def today_sparks():
 
 # --- Track record ---
 
-TRACK_RULES = ("swing", "i5m", "iday")
+TRACK_RULES = ("swing", "i5m", "iday", "iday_s50", "iday_s75")
+_track_memo: dict = {}          # (rule set, filters, build stamp, settings) -> its rows / stats / portfolio
 
 
 def _rules(rules: str) -> str:
@@ -713,38 +714,51 @@ def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", s
     on the same filters."""
     from backend.engine import track, track_intraday as ti
     from backend.database.models import get_setting
-    from dataclasses import asdict
     rules = _rules(rules)
     cfg = S().config
     with get_db() as conn:
         metas = {k: {m: get_setting(conn, f"{'track' if k == 'swing' else 'track_intraday'}.{m}")
                      for m in ("built_at", "updated_at", "as_of")} for k in TRACK_RULES}
-    sets = []
+    stale = ti.stale_reason(cfg)
+    ok = {k: bool(metas[k]["built_at"]) and (k == "swing" or not stale) for k in TRACK_RULES}
+    sets, cache = [], {}
+    settings = repr((asdict(cfg.track), asdict(cfg.intraday)))
     for key in TRACK_RULES:
-        if not metas[key]["built_at"]:
+        if not ok[key]:
+            continue
+        memo_key = (key, period.lower(), pattern.lower(), tier.upper(), status, metas[key]["updated_at"], settings)
+        if memo_key in _track_memo:                  # unchanged since the last build: re-use
+            sets.append(_track_memo[memo_key])
             continue
         rs = _track_rows(period, pattern, tier, status, key)
-        st = track.stats(rs)
-        pf = track.portfolio(rs, cfg, 0 if key == "swing" else cfg.intraday.max_new_per_day)
+        st = track.stats(rs, cfg.track)
+        pf = track.portfolio(rs, cfg, 0 if key == "swing" else cfg.intraday.max_new_per_day, cache)
         sv = (pf.get("compare") or {}).get("strategy") or {}
         dd = sv.get("drawdown")
+        if len(_track_memo) > 40:
+            _track_memo.clear()
         sets.append({"rules": key, "name": ti.NAMES[key], "rows": rs, "stats": st, "portfolio": pf,
                      "summary": {"rules": key, "name": ti.NAMES[key], "entered": st["counts"]["entered"],
                                  "closed": st["counts"]["closed"], "win_rate": st["win_rate"], "avg_win": st["avg_win"],
                                  "avg_loss": st["avg_loss"], "expectancy_r": st["expectancy_r"],
-                                 "profit_factor": st["profit_factor"], "return": sv.get("return"), "drawdown": dd,
+                                 "profit_factor": st["profit_factor"], "net_avg_pct": st["net_avg_pct"],
+                                 "return": sv.get("return"), "drawdown": dd,
                                  "ratio": round(sv["return"] / -dd, 2) if sv.get("return") is not None and dd else None}})
+        _track_memo[memo_key] = sets[-1]
     cur = next((x for x in sets if x["rules"] == rules), None)
     rs = cur["rows"] if cur else []
     meta = metas[rules]
     if rules == "swing":
         shown = {k: getattr(cfg.track, k) for k in ("breakeven_pct", "book_half_pct", "exit_ma", "max_hold", "max_stop")}
     else:
-        shown = asdict(cfg.intraday)
-    return {"built": bool(meta["built_at"]), **meta, "rules_set": rules, "name": ti.NAMES[rules],
+        shown = dict(asdict(cfg.intraday), min_stop_pct=ti.VARIANTS[rules][1], trail=ti.VARIANTS[rules][0])
+    return {"built": ok[rules], **meta, "rules_set": rules, "name": ti.NAMES[rules],
+            "stale": stale if rules != "swing" else None,
+            "costs": {"cost_pct": cfg.track.cost_pct, "slippage_pct": cfg.track.slippage_pct},
             "progress": (track if rules == "swing" else ti).status(), "period": period.lower(), "rules": shown,
             "kite": bool(S().client.has_token),
-            **track.stats(rs), "by_pattern": track.split(rs, "pattern"), "by_market": track.split(rs, "market"),
+            **(cur["stats"] if cur else track.stats(rs, cfg.track)), "by_pattern": track.split(rs, "pattern"),
+            "by_market": track.split(rs, "market"),
             "portfolio": cur["portfolio"] if cur else track.portfolio([], cfg),
             "rule_sets": [x["summary"] for x in sets] if len(sets) > 1 else []}
 
@@ -788,7 +802,8 @@ def track_rebuild():
 @router.post("/track/intraday/build")
 def track_intraday_build(rebuild: bool = False):
     """Run the intraday entry backtest in the background: the watchlist's pivot crosses over the last year, with
-    the 5-minute candles fetched from Kite (needs today's login; about 3,000 requests, ~15-20 minutes)."""
+    the 5-minute candles fetched from Kite (needs today's login; about 3,000 requests a year of history,
+    ~15-20 minutes; candles already stored are re-used). A build for older rule sets is re-run from scratch."""
     from backend.engine import track, track_intraday as ti
     st = S()
     if not track.built():

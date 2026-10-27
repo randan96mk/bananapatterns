@@ -4,11 +4,13 @@ import StockChart from './StockChart';
 import { ampm, stamp } from '../timefmt';
 import { useIsPhone } from '../useMedia';
 
-const PERIODS = [['1w', '1W'], ['1m', '1M'], ['3m', '3M'], ['6m', '6M'], ['1y', '1Y']];
+const PERIODS = [['1w', '1W'], ['1m', '1M'], ['3m', '3M'], ['6m', '6M'], ['1y', '1Y'], ['2y', '2Y']];
 const PATTERNS = [['all', 'All patterns'], ['vcp', 'VCP'], ['cup', 'Cup'], ['flag', 'Flag'], ['bases', 'Bases']];
 const TIERS = [['all', 'All tiers'], ['A', 'Tier A'], ['B', 'Tier B']];
-const RULES = [['swing', 'Swing · 8% stop'], ['i5m', 'Intraday · 5-min trail'], ['iday', 'Intraday · daily trail']];
+const RULES = [['swing', 'Swing · 8% stop'], ['i5m', 'Intraday · 5-min trail'], ['iday', 'Intraday · daily trail'],
+  ['iday_s50', 'Daily trail · stop ≥ 0.5%'], ['iday_s75', 'Daily trail · stop ≥ 0.75%']];
 const STATUSES = [['all', 'All'], ['running', 'Running'], ['closed', 'Closed'], ['no_entry', 'No entry']];
+const STOCKS_SHOWN = 60;
 const PNAME = { vcp: 'VCP', cup: 'Cup', flag: 'Flag', bases: 'Bases' };
 const MKT = { uptrend: '🟢', pressure: '🟡', correction: '🔴' };
 const SNAPS = [['1w', '1W'], ['2w', '2W'], ['1m', '1M'], ['3m', '3M']];
@@ -166,6 +168,7 @@ export default function TrackPage() {
   const [trades, setTrades] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);       // new filters: the old numbers stay, dimmed
+  const [limit, setLimit] = useState(STOCKS_SHOWN);     // stocks listed (a 2-year list is thousands of rows)
   const [chart, setChartState] = useState(null);      // {symbol, trade}: opens above the filters
   const setChart = (c) => { setChartState(c); if (c) window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const set = (k) => (v) => setF({ ...f, [k]: v });
@@ -173,6 +176,7 @@ export default function TrackPage() {
   useEffect(() => {
     let alive = true, timer;
     setLoading(true);
+    setLimit(STOCKS_SHOWN);
     const load = () => Promise.all([api.getTrack(f), api.getTrackTrades(f)])
       .then(([s, t]) => {
         if (!alive) return;
@@ -201,14 +205,16 @@ export default function TrackPage() {
     return (
       <div className="track">{ruleChips}
         <div className="panel"><h3>⚡ Intraday entry backtest</h3>
+          {d.stale && <p className="warn small">Re-run needed: {d.stale}. The 5-minute candles already fetched are re-used;
+            only the missing days are fetched.</p>}
           <p>The same watchlist, bought on the breakout day from 5-minute candles: entry from 9:30 AM to 1:30 PM on a
             5-minute close over the pivot (over VWAP, volume pace 1.5×+, at most 3% over the pivot), a stop of at most 1.5%,
             {' '}50% booked at +2%, the rest on an ATR trail (5-minute and daily, side by side with the swing rules).</p>
           <p className="muted small">It also counts the days a stock crossed its pivot but closed back under it. The 5-minute
-            candles are fetched from Kite for those days only: about 3,000 requests, 15–20 minutes, once. After that the
-            evening job adds each new day.</p>
+            candles are fetched from Kite for those days only: about 3,000 requests (15–20 minutes) for each year of history,
+            once; candles already fetched are re-used. After that the evening job adds each new day.</p>
           {running ? <p><b>Running…</b> {prog.total ? `${prog.done} of ${prog.total} stocks` : ''} <span className="muted small">{prog.message}</span></p>
-            : <><button className="btn primary" disabled={!d.kite} onClick={runIntraday}>Run the intraday backtest</button>
+            : <><button className="btn primary" disabled={!d.kite} onClick={runIntraday}>{d.stale ? 'Re-run the intraday backtest' : 'Run the intraday backtest'}</button>
               {!d.kite && <span className="muted small"> &nbsp;Log in to Kite first (it needs 5-minute candles).</span>}
               {prog.message && <p className="muted small">{prog.message}</p>}</>}
           {err && <div className="warn small">{err}</div>}</div></div>);
@@ -256,7 +262,7 @@ export default function TrackPage() {
       <div className="trkpis">
         <div className="k"><div className="v up">{d.win_rate != null ? `${d.win_rate.toFixed(0)}%` : '—'}</div><div className="l">win rate (closed trades)</div></div>
         <div className="k"><div className="v up">{pct(d.avg_win)}</div><div className="l">avg winner · <span className="down">{pct(d.avg_loss)}</span> avg loser</div></div>
-        <div className="k"><div className={`v ${cls(d.expectancy_r)}`}>{rr(d.expectancy_r) || '—'}</div><div className="l">expectancy per trade</div></div>
+        <div className="k"><div className={`v ${cls(d.expectancy_r)}`}>{rr(d.expectancy_r) || '—'}</div><div className="l">expectancy per trade{d.net_avg_pct != null ? <> · <span className={cls(d.net_avg_pct)}>{pct(d.net_avg_pct, 2)}</span> a trade after costs</> : ''}</div></div>
         <div className="k"><div className="v sm">{SNAPS.map(([k]) => pct(d.snaps?.[k])).join(' · ')}</div><div className="l">avg 1W · 2W · 1M · 3M run</div></div>
         <div className="k"><div className="v">{d.hold_days?.all != null ? days(d.hold_days.all) : '—'}</div>
           <div className="l">avg holding{d.hold_days?.won != null ? ` (winners ${Math.round(d.hold_days.won)} · losers ${Math.round(d.hold_days.lost ?? 0)})` : ''}</div></div>
@@ -267,7 +273,7 @@ export default function TrackPage() {
         <div className="panel"><h3>Rule sets compared <span className="muted small">· the same filters · tap a row to switch</span></h3>
           <div className="tablewrap"><table className="grid trsize trrs"><thead><tr><th>Rules</th>
             {!phone && <><th className="num">Trades</th><th className="num">Avg win · loss</th><th className="num">Profit factor</th></>}
-            <th className="num">Win</th><th className="num">Expectancy</th><th className="num">Return</th>
+            <th className="num">Win</th>{!phone && <th className="num">Expectancy</th>}<th className="num">{phone ? 'Net / trade' : 'Per trade, after costs'}</th><th className="num">Return</th>
             {!phone && <th className="num">Worst drawdown</th>}<th className="num">{phone ? 'Ret ÷ fall' : 'Return ÷ drawdown'}</th></tr></thead>
             <tbody>{d.rule_sets.map((x) => (
               <tr key={x.rules} className={x.rules === f.rules ? 'cur' : ''} onClick={() => set('rules')(x.rules)}>
@@ -276,16 +282,20 @@ export default function TrackPage() {
                   <td className="num"><span className="up">{pct(x.avg_win)}</span> · <span className="down">{pct(x.avg_loss)}</span></td>
                   <td className="num">{x.profit_factor ?? '—'}</td></>}
                 <td className="num">{x.win_rate != null ? `${x.win_rate.toFixed(0)}%` : '—'}</td>
-                <td className="num"><b className={cls(x.expectancy_r)}>{rr(x.expectancy_r) || '—'}</b></td>
+                {!phone && <td className="num"><b className={cls(x.expectancy_r)}>{rr(x.expectancy_r) || '—'}</b></td>}
+                <td className={`num ${cls(x.net_avg_pct)}`}>{pct(x.net_avg_pct, 2)}</td>
                 <td className={`num ${cls(x.return)}`}><b>{pct(x.return)}</b></td>
                 {!phone && <td className="num down">{pct(x.drawdown)}</td>}
                 <td className="num">{x.ratio != null ? x.ratio.toFixed(2) : '—'}</td></tr>))}
             </tbody></table></div>
-          <div className="muted small">Trades = closed trades. Return and drawdown use the portfolio rules below (₹10L, 1% risk, max 20% per position{set$.max_new_per_day ? `, at most ${set$.max_new_per_day} new entries a day` : ''}).</div></div>)}
+          <div className="muted small">Trades = closed trades. Per trade, return and drawdown are after costs: {d.costs?.cost_pct}% a round trip
+            (STT, stamp duty, exchange, GST, DP) plus {d.costs?.slippage_pct}% slippage on every fill. Return and drawdown use the portfolio
+            rules below (₹10L, 1% risk, max 20% per position{set$.max_new_per_day ? `, at most ${set$.max_new_per_day} new entries a day` : ''}).
+            Expectancy (R) is before costs.</div></div>)}
 
       <div className="trcmp">
         <div className="panel"><h3>If you followed {intra ? `the ${d.name} rules` : 'these swing rules'} vs Nifty 500</h3>
-          <div className="muted small">{lakh(set$.capital)} start · {((set$.risk_pct ?? 0.01) * 100).toFixed(1)}% risk per trade, sized by the stop{set$.position_cap ? `, max ${Math.round(set$.position_cap * 100)}% per position` : ''} · max {set$.max_positions} open positions</div>
+          <div className="muted small">{lakh(set$.capital)} start · {((set$.risk_pct ?? 0.01) * 100).toFixed(1)}% risk per trade, sized by the stop{set$.position_cap ? `, max ${Math.round(set$.position_cap * 100)}% per position` : ''} · max {set$.max_positions} open positions · after costs</div>
           <Curve p={p} />
           <div className="muted small"><span className="up"><b>━ {intra ? d.name : 'Swing rules'} {pct(sv.return)}</b></span> &nbsp; ╍ Nifty 500 {pct(nv.return)} (buy and hold)
             {p.skipped ? ` · ${p.skipped} signals skipped (positions full or no cash)` : ''}</div></div>
@@ -330,7 +340,7 @@ export default function TrackPage() {
 
       <div className="panel"><h3>Trades by stock <span className="muted small">· newest first · tap a trade for its chart</span></h3>
         {!trades?.length && <p className="muted">No breakouts for these filters.</p>}
-        {phone ? (trades || []).map((g) => (
+        {phone ? (trades || []).slice(0, limit).map((g) => (
           <div key={g.symbol} className="trgroup">
             <div className="trghead"><b>{g.symbol}</b> <span className="muted small">· {groupSummary(g.trades)}</span></div>
             {folded(g.trades).length > 0 && <div className="trfold muted small">{noEntryLine(folded(g.trades))}</div>}
@@ -348,7 +358,7 @@ export default function TrackPage() {
           <div className="tablewrap"><table className="grid trtrades"><thead><tr><th>{intra ? 'Crossed' : 'Breakout'}</th><th>Pattern · tier · mkt</th>
             <th className="num">{intra ? 'Entry (5-min close)' : 'Entry (next open)'}</th><th className="num">Stop</th><th>Run</th>
             {SNAPS.map(([k, l]) => <th key={k} className="num">{l}</th>)}<th className="num">Result</th><th>Status</th></tr></thead>
-            <tbody>{(trades || []).map((g) => (
+            <tbody>{(trades || []).slice(0, limit).map((g) => (
               <React.Fragment key={g.symbol}>
                 <tr className="grp"><td colSpan={11}><b>{g.symbol}</b> <span className="muted">· {groupSummary(g.trades)}</span></td></tr>
                 {folded(g.trades).length > 0 && <tr className="tl"><td colSpan={11}>{noEntryLine(folded(g.trades))}</td></tr>}
@@ -371,12 +381,17 @@ export default function TrackPage() {
                   </React.Fragment>)))}
               </React.Fragment>))}
             </tbody></table></div>)}
+        {trades?.length > limit && (
+          <p className="trmore"><button className="btn" onClick={() => setLimit(limit + STOCKS_SHOWN)}>
+            Show {Math.min(STOCKS_SHOWN, trades.length - limit)} more</button>
+            <span className="muted small"> &nbsp;{limit} of {trades.length} stocks shown</span></p>)}
         {intra ? (
           <p className="muted small">The watchlist is rebuilt for each evening of the past year (only today's Nifty 500 members:
             a slight optimistic bias); a day counts when the high crossed the pivot, even if it closed back under it. Entry
             on the first 5-minute close over the pivot between {ampm(d.rules?.entry_start)} and {ampm(d.rules?.entry_end)}, over VWAP, volume
             pace {d.rules?.volume_pace}×+, at most {d.rules?.max_ext_pct}% over the pivot, no gap over {d.rules?.gap_max_pct}%, Nifty 500 over its
-            open; stop = the closer of the first-{d.rules?.or_minutes}-minute low and the candle low, at most {d.rules?.max_stop_pct}% away;
+            open; stop = the closer of the first-{d.rules?.or_minutes}-minute low and the candle low, at most {d.rules?.max_stop_pct}% away
+            {d.rules?.min_stop_pct ? ` and at least ${d.rules.min_stop_pct}% (a closer one is moved down)` : ''};
             {' '}{Math.round((d.rules?.book_frac ?? 0.5) * 100)}% booked at +{d.rules?.target_pct}%, then the stop at the entry and the rest on a close under
             the highest high − {d.rules?.atr_mult} × ATR({d.rules?.atr_len}); stop and target in one candle count as the stop.
             {' '}{prog.state !== 'idle' ? '' : <button className="linkbtn" onClick={rebuild}>Re-run from scratch</button>}</p>
