@@ -82,12 +82,14 @@ class Bars:
         return i if i >= 0 and self.dates[i] == d else None
 
 
-def simulate(b: Bars, t: int, pivot: float, pattern_stop: float, cfg, buy_zone_pct: float) -> dict:
-    """The trade from a breakout at bar t (see the module docstring)."""
+def simulate(b: Bars, t: int, pivot: float, pattern_stop: float, cfg, buy_zone_pct: float,
+             entry: Optional[tuple] = None) -> dict:
+    """The trade from a breakout at bar t (see the module docstring). entry = (price, 'HH:MM'): bought during the
+    next session at that price and time instead of at its open (the Nifty 500 filtered rule sets)."""
     n, e = len(b.dates), t + 1
     if e >= n:
         return {"status": "pending", "reason": "entry at the next open"}
-    op = float(b.open[e])
+    op = float(entry[0]) if entry else float(b.open[e])
     zone_top = pivot * (1 + buy_zone_pct)
     stop0 = max(pattern_stop, op * (1 - cfg.max_stop))
     if op > zone_top or op <= stop0:
@@ -98,7 +100,7 @@ def simulate(b: Bars, t: int, pivot: float, pattern_stop: float, cfg, buy_zone_p
                 "raw_pct": _r((b.close[last] / op - 1) * 100)}
     stop, half, be = stop0, False, False
     realized, remaining = 0.0, 1.0
-    events = [{"kind": "entry", "date": b.dates[e], "price": _r(op)}]
+    events = [{"kind": "entry", "date": b.dates[e], "price": _r(op), **({"time": entry[1]} if entry else {})}]
     marks, exit_i, reason = {}, None, None
     target = op * (1 + cfg.book_half_pct / 100)
     for j in range(e, min(n, e + cfg.max_hold)):
@@ -488,19 +490,23 @@ def _avg(xs) -> Optional[float]:
     return round(sum(xs) / len(xs), 2) if xs else None
 
 
-def _fill(cfg) -> float:
-    """Cost of one fill as a fraction: slippage plus half the round-trip charges."""
-    return (cfg.slippage_pct + cfg.cost_pct / 2) / 100 if cfg is not None else 0.0
+def _costs(cfg) -> tuple:
+    """(slippage per fill, round-trip charges held overnight, round-trip charges bought and sold the same day), as
+    fractions. Zerodha charges a same-day buy and sell as intraday (STT 0.025% on the sale only, no DP charge)."""
+    if cfg is None:
+        return 0.0, 0.0, 0.0
+    return cfg.slippage_pct / 100, cfg.cost_pct / 100, cfg.intraday_cost_pct / 100
 
 
 def net_pct(r: dict, cfg) -> Optional[float]:
-    """A closed trade's result after costs (TrackConfig cost_pct / slippage_pct): the buy fills higher, every sale
-    lower. Partial sales use their `frac` (half = 0.5 when not stored)."""
+    """A closed trade's result after costs (TrackConfig): every fill slips slippage_pct against you; each part sold
+    pays the round-trip charges, at intraday rates when sold on the entry day. Partial sales use their `frac`
+    (half = 0.5 when not stored)."""
     evs = r.get("events") or []
     if r.get("status") not in ("won", "lost") or not evs or evs[0].get("kind") != "entry":
         return None
-    k = _fill(cfg)
-    buy, left, total = evs[0]["price"] * (1 + k), 1.0, 0.0
+    slip, overnight, same_day = _costs(cfg)
+    buy, day0, left, total = evs[0]["price"] * (1 + slip), evs[0].get("date"), 1.0, 0.0
     for e in evs[1:]:
         if e["kind"] == "half":
             f = e.get("frac", 0.5)
@@ -508,7 +514,7 @@ def net_pct(r: dict, cfg) -> Optional[float]:
             f = left
         else:
             continue
-        total += f * (e["price"] * (1 - k) / buy - 1)
+        total += f * (e["price"] * (1 - slip) / buy - 1 - (same_day if e.get("date") == day0 else overnight))
         left -= f
     return round(total * 100, 2)
 
@@ -553,11 +559,14 @@ SIZING = (("1% risk, cash-limited", 0.01, 0.0), ("0.75% risk", 0.0075, 0.0),
           ("1% risk, max 10% per position", 0.01, 0.10), ("1% risk, max 20% per position", 0.01, 0.20))
 
 
-def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, max_new_per_day=0, fill=0.0):
+def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, max_new_per_day=0,
+          costs=(0.0, 0.0, 0.0)):
     """Replay the trade events day by day on one account. Each entry risks `risk_pct` of equity to the stop, capped
     at `position_cap` of equity per position (0 = no cap) and by the cash left; at most max_new_per_day entries a
-    day (0 = any). Each fill costs `fill` (a fraction: slippage + charges). Events with a time (intraday) run in
-    time order. -> (curve %, cash share, taken, skipped)"""
+    day (0 = any). costs = _costs(): slippage on every fill, round-trip charges on each sale (intraday rates on
+    the entry day). Events with a time (intraday) run in time order. -> (curve %, cash share, taken, skipped)"""
+    slip, overnight, same_day = costs
+    bought: dict = {}
     order = {"exit": 0, "half": 1, "breakeven": 2, "entry": 3}           # sell before buying on the same day
     tier_rank = {"A": 0, "B": 1}
     cash, equity, pos = capital, capital, {}
@@ -577,17 +586,17 @@ def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, 
                 qty = floor(equity * risk_pct / (ev["price"] - r["stop"]))
                 if position_cap > 0:
                     qty = min(qty, floor(equity * position_cap / ev["price"]))
-                qty = min(qty, floor(cash / (ev["price"] * (1 + fill))))
+                qty = min(qty, floor(cash / (ev["price"] * (1 + slip))))
                 if qty <= 0:
                     skipped += 1
                     continue
-                cash -= qty * ev["price"] * (1 + fill)
-                pos[key] = qty
+                cash -= qty * ev["price"] * (1 + slip)
+                pos[key], bought[key] = qty, d
                 taken += 1
                 new_today += 1
             elif key in pos and ev["kind"] in ("half", "exit"):
                 q = int(pos[key] * ev.get("frac", 0.5)) if ev["kind"] == "half" else pos[key]
-                cash += q * ev["price"] * (1 - fill)
+                cash += q * ev["price"] * (1 - slip - (same_day if bought.get(key) == d else overnight))
                 pos[key] -= q
                 if pos[key] <= 0 or ev["kind"] == "exit":
                     pos.pop(key, None)
@@ -643,7 +652,7 @@ def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0, cache
         for ev in r["events"]:
             by_day.setdefault(ev["date"], []).append((ev, r))
     strategy, idle, taken, skipped = _book(days, by_day, closes, cfg.capital, cfg.max_positions, cfg.risk_pct,
-                                           cfg.position_cap, max_new_per_day, _fill(cfg))
+                                           cfg.position_cap, max_new_per_day, _costs(cfg))
     nifty = [round((c["close"] / index[0]["close"] - 1) * 100, 2) for c in index] if index else []
 
     def drawdown(curve):
@@ -669,7 +678,7 @@ def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0, cache
         current = (risk, cap) == (cfg.risk_pct, cfg.position_cap)
         curve, _, _, sk = ((strategy, idle, taken, skipped) if current else
                            _book(days, by_day, closes, cfg.capital, cfg.max_positions, risk, cap, max_new_per_day,
-                                 _fill(cfg)))
+                                 _costs(cfg)))
         ret, dd = (curve[-1] if curve else None), drawdown(curve)
         sizing.append({"label": label, "risk_pct": risk, "position_cap": cap, "return": ret, "drawdown": dd,
                        "ratio": round(ret / -dd, 2) if ret is not None and dd < 0 else None, "skipped": sk,

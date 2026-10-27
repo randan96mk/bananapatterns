@@ -688,10 +688,15 @@ TRACK_RULES = ("swing", "i5m", "iday", "iday_s50", "iday_s75")
 _track_memo: dict = {}          # (rule set, filters, build stamp, settings) -> its rows / stats / portfolio
 
 
-def _rules(rules: str) -> str:
-    if rules.lower() not in TRACK_RULES:
+def _rules(rules: str, nifty: str = "any") -> str:
+    """The rule set key for a base rule set and a Nifty 500 filter (any / up / strong), e.g. 'iday_s50@up'."""
+    from backend.engine import track_intraday as ti
+    rules, nifty = rules.lower(), nifty.lower()
+    if rules not in TRACK_RULES:
         raise HTTPException(422, f"rules must be one of {', '.join(TRACK_RULES)}")
-    return rules.lower()
+    if nifty not in ti.FILTERS:
+        raise HTTPException(422, f"nifty must be one of {', '.join(ti.FILTERS)}")
+    return ti.key(rules, nifty)
 
 
 def _track_rows(period: str, pattern: str, tier: str, status: str, rules: str = "swing") -> list[dict]:
@@ -706,70 +711,90 @@ def _track_rows(period: str, pattern: str, tier: str, status: str, rules: str = 
     return rs
 
 
+def _track_set(key: str, period: str, pattern: str, tier: str, status: str, stamp, cache: dict) -> dict:
+    """Rows, stats, portfolio and the comparison line of one rule set, kept until the next build."""
+    from backend.engine import track, track_intraday as ti
+    cfg = S().config
+    memo_key = (key, period.lower(), pattern.lower(), tier.upper(), status, stamp,
+                repr((asdict(cfg.track), asdict(cfg.intraday))))
+    if memo_key in _track_memo:
+        return _track_memo[memo_key]
+    rs = _track_rows(period, pattern, tier, status, key)
+    st = track.stats(rs, cfg.track)
+    pf = track.portfolio(rs, cfg, 0 if ti.parse(key)[0] == "swing" else cfg.intraday.max_new_per_day, cache)
+    sv = (pf.get("compare") or {}).get("strategy") or {}
+    dd = sv.get("drawdown")
+    if len(_track_memo) > 60:
+        _track_memo.clear()
+    _track_memo[memo_key] = {
+        "rules": key, "rows": rs, "stats": st, "portfolio": pf,
+        "summary": {"rules": ti.parse(key)[0], "key": key, "name": ti.name(key), "entered": st["counts"]["entered"],
+                    "closed": st["counts"]["closed"], "win_rate": st["win_rate"], "avg_win": st["avg_win"],
+                    "avg_loss": st["avg_loss"], "expectancy_r": st["expectancy_r"],
+                    "profit_factor": st["profit_factor"], "net_avg_pct": st["net_avg_pct"],
+                    "return": sv.get("return"), "drawdown": dd,
+                    "ratio": round(sv["return"] / -dd, 2) if sv.get("return") is not None and dd else None}}
+    return _track_memo[memo_key]
+
+
 @router.get("/track")
-def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all", rules: str = "swing"):
+def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all", rules: str = "swing",
+                  nifty: str = "any"):
     """Track record: status line, summary numbers, by pattern / market, and the portfolio curve vs Nifty 500.
-    The period (1w / 1m / 3m / 6m / 1y) filters by breakout date; the curve follows the same filters.
-    rules: swing (the swing record) or an intraday rule set (i5m / iday); rule_sets compares all built sets
-    on the same filters."""
+    The period (1w ... 2y) filters by breakout date; the curve follows the same filters.
+    rules: swing (the swing record) or an intraday rule set (i5m / iday / iday_s50 / iday_s75); nifty: the Nifty 500
+    filter at the entry (any / up / strong). rule_sets compares every built rule set with the same filters (and,
+    with a Nifty 500 filter, each one's return without it: return_any)."""
     from backend.engine import track, track_intraday as ti
     from backend.database.models import get_setting
-    rules = _rules(rules)
+    sel = _rules(rules, nifty)
+    nifty = ti.parse(sel)[1]
     cfg = S().config
     with get_db() as conn:
-        metas = {k: {m: get_setting(conn, f"{'track' if k == 'swing' else 'track_intraday'}.{m}")
-                     for m in ("built_at", "updated_at", "as_of")} for k in TRACK_RULES}
+        metas = {k: {m: get_setting(conn, f"{k}.{m}") for m in ("built_at", "updated_at", "as_of")}
+                 for k in ("track", "track_intraday")}
     stale = ti.stale_reason(cfg)
-    ok = {k: bool(metas[k]["built_at"]) and (k == "swing" or not stale) for k in TRACK_RULES}
+    meta_of = lambda k: metas["track" if k == "swing" else "track_intraday"]  # noqa: E731
+    ok = lambda k: bool(meta_of(k)["built_at"]) and (k == "swing" or not stale)  # noqa: E731
     sets, cache = [], {}
-    settings = repr((asdict(cfg.track), asdict(cfg.intraday)))
-    for key in TRACK_RULES:
-        if not ok[key]:
+    for base in TRACK_RULES:
+        k = ti.key(base, nifty)
+        if not ok(k):
             continue
-        memo_key = (key, period.lower(), pattern.lower(), tier.upper(), status, metas[key]["updated_at"], settings)
-        if memo_key in _track_memo:                  # unchanged since the last build: re-use
-            sets.append(_track_memo[memo_key])
-            continue
-        rs = _track_rows(period, pattern, tier, status, key)
-        st = track.stats(rs, cfg.track)
-        pf = track.portfolio(rs, cfg, 0 if key == "swing" else cfg.intraday.max_new_per_day, cache)
-        sv = (pf.get("compare") or {}).get("strategy") or {}
-        dd = sv.get("drawdown")
-        if len(_track_memo) > 40:
-            _track_memo.clear()
-        sets.append({"rules": key, "name": ti.NAMES[key], "rows": rs, "stats": st, "portfolio": pf,
-                     "summary": {"rules": key, "name": ti.NAMES[key], "entered": st["counts"]["entered"],
-                                 "closed": st["counts"]["closed"], "win_rate": st["win_rate"], "avg_win": st["avg_win"],
-                                 "avg_loss": st["avg_loss"], "expectancy_r": st["expectancy_r"],
-                                 "profit_factor": st["profit_factor"], "net_avg_pct": st["net_avg_pct"],
-                                 "return": sv.get("return"), "drawdown": dd,
-                                 "ratio": round(sv["return"] / -dd, 2) if sv.get("return") is not None and dd else None}})
-        _track_memo[memo_key] = sets[-1]
-    cur = next((x for x in sets if x["rules"] == rules), None)
+        one = _track_set(k, period, pattern, tier, status, meta_of(k)["updated_at"], cache)
+        line = dict(one["summary"])
+        if nifty != "any" and ok(base):
+            line["return_any"] = _track_set(base, period, pattern, tier, status, meta_of(base)["updated_at"],
+                                            cache)["summary"]["return"]
+        sets.append((one, line))
+    cur = next((one for one, _ in sets if one["rules"] == sel), None)
     rs = cur["rows"] if cur else []
-    meta = metas[rules]
-    if rules == "swing":
+    base, _ = ti.parse(sel)
+    if base == "swing":
         shown = {k: getattr(cfg.track, k) for k in ("breakeven_pct", "book_half_pct", "exit_ma", "max_hold", "max_stop")}
+        shown.update(nifty=nifty, entry_start=cfg.intraday.entry_start, swing_entry_end=cfg.intraday.swing_entry_end)
     else:
-        shown = dict(asdict(cfg.intraday), min_stop_pct=ti.VARIANTS[rules][1], trail=ti.VARIANTS[rules][0])
-    return {"built": ok[rules], **meta, "rules_set": rules, "name": ti.NAMES[rules],
-            "stale": stale if rules != "swing" else None,
-            "costs": {"cost_pct": cfg.track.cost_pct, "slippage_pct": cfg.track.slippage_pct},
-            "progress": (track if rules == "swing" else ti).status(), "period": period.lower(), "rules": shown,
+        shown = dict(asdict(cfg.intraday), min_stop_pct=ti.VARIANTS[base][1], trail=ti.VARIANTS[base][0], nifty=nifty)
+    return {"built": ok(sel), **meta_of(sel), "rules_set": sel, "base": base, "nifty": nifty, "name": ti.name(sel),
+            "stale": stale if sel != "swing" else None,
+            "costs": {"cost_pct": cfg.track.cost_pct, "intraday_cost_pct": cfg.track.intraday_cost_pct,
+                      "slippage_pct": cfg.track.slippage_pct},
+            "progress": (track if sel == "swing" else ti).status(), "period": period.lower(), "rules": shown,
             "kite": bool(S().client.has_token),
             **(cur["stats"] if cur else track.stats(rs, cfg.track)), "by_pattern": track.split(rs, "pattern"),
             "by_market": track.split(rs, "market"),
             "portfolio": cur["portfolio"] if cur else track.portfolio([], cfg),
-            "rule_sets": [x["summary"] for x in sets] if len(sets) > 1 else []}
+            "rule_sets": [line for _, line in sets] if len(sets) > 1 else []}
 
 
 @router.get("/track/trades")
-def track_trades(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all", rules: str = "swing"):
+def track_trades(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all", rules: str = "swing",
+                 nifty: str = "any"):
     """Trades grouped by stock (newest first), each with its exit timeline and the closes for its sparkline
     (a few sessions before the entry to a few after the exit, or to today while it runs)."""
     from datetime import date as _date, timedelta as _td
     groups: dict[str, list] = {}
-    for r in _track_rows(period, pattern, tier, status, _rules(rules)):
+    for r in _track_rows(period, pattern, tier, status, _rules(rules, nifty)):
         groups.setdefault(r["symbol"], []).append(r)
     tokens = {s["symbol"]: s["instrument_token"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
     with get_db() as conn:

@@ -107,7 +107,7 @@ def app_config():
 def free_config():
     """app_config() without trading costs (sizing tests count shares, not charges)."""
     c = app_config()
-    c.track = replace(c.track, cost_pct=0.0, slippage_pct=0.0)
+    c.track = replace(c.track, cost_pct=0.0, intraday_cost_pct=0.0, slippage_pct=0.0)
     return c
 
 

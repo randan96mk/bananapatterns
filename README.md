@@ -1002,8 +1002,10 @@ of the account in one stock.
 1% risk cash-limited, 0.75% risk, 1% risk with a 10% cap and 1% risk with a 20% cap (the default, marked "used
 above"). Columns: return, worst drawdown, return ÷ drawdown (higher is smoother) and signals skipped.
 
-**Costs.** Every return on the tab is after costs: `cost_pct` (0.25%) a round trip for STT, stamp duty, exchange
-charges, GST and the DP charge, plus `slippage_pct` (0.05%) on every fill (the buy fills higher, each sale lower).
+**Costs.** Every return on the tab is after costs: `cost_pct` (0.25%) a round trip held overnight (STT, stamp duty,
+exchange charges, GST and the DP charge), `intraday_cost_pct` (0.06%) for the part bought and sold the same day
+(Zerodha charges a same-day CNC buy and sell as intraday: STT 0.025% on the sale only, no DP charge), plus
+`slippage_pct` (0.05%) on every fill (the buy fills higher, each sale lower).
 The rule-set table also shows the average result per closed trade after costs; expectancy in R is before costs.
 
 **Built once, then added to.** At start-up (if never built, or built for another `history_days`) the last
@@ -1027,6 +1029,19 @@ noise exits):
 | Target | `book_frac` (50%) sold at +`target_pct` (2%); the stop moves to the entry. A candle touching both the stop and the target counts as the stop |
 | The rest | out at the entry, or on a close under highest high − `atr_mult` (2) × ATR(`atr_len` 14): **5-min trail** on 5-minute candles, **daily trail** on daily closes; `max_hold` (63) sessions → "3M mark" |
 | Portfolio | as the swing curve (₹10L, 1% risk, max 20% per position, max 10 open), at most `max_new_per_day` (4) new entries a day; same-day events run in time order |
+
+**Nifty 500 filter.** The **Nifty 500: Any · Up · Strong up** chips re-run every rule set with a check on the index at
+the entry candle (only what was known then):
+
+| Filter | The Nifty 500 must be |
+|---|---|
+| Any | the intraday rules' own check: over its opening price (the swing rules: no check, entry at the open) |
+| Up | over today's open **and** over yesterday's close |
+| Strong up | Up, **and** over its own first-15-minute high |
+
+With a filter, the swing rules buy at the first 5-minute close from 9:30 AM to `swing_entry_end` (11:30 AM) on the
+session after the breakout while the filter holds (inside the buy zone, over the stop) instead of at the open; no such
+candle is "no entry". The comparison table then adds **Return without the filter**.
 
 One trade per stock at a time; a pivot that was traded is not traded again. **Rule sets compared** puts the swing and
 both intraday sets side by side for the same filters (trades, win rate, avg win / loss, profit factor, expectancy,
@@ -1239,8 +1254,8 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
 | `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
 | `track_line` / `track_min_trades` | true / 10 | track record line on alerts |
-| `track.*`: `history_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `slippage_pct` | 730 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 / 0.25 / 0.05 | track record rules, portfolio and costs |
-| `intraday.*`: `or_minutes` / `entry_start` / `entry_end` / `max_ext_pct` / `gap_max_pct` / `volume_pace` / `max_stop_pct` / `target_pct` / `book_frac` / `atr_mult` / `atr_len` / `max_hold` / `max_new_per_day` / `fetch_sessions` | 15 / 9:30 AM / 1:30 PM / 3 / 3 / 1.5 / 1.5 / 2 / 0.5 / 2 / 14 / 63 / 4 / 15 | intraday entry backtest (times stored as "09:30" / "13:30") |
+| `track.*`: `history_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `intraday_cost_pct` / `slippage_pct` | 730 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 / 0.25 / 0.06 / 0.05 | track record rules, portfolio and costs |
+| `intraday.*`: `or_minutes` / `entry_start` / `entry_end` / `max_ext_pct` / `gap_max_pct` / `volume_pace` / `max_stop_pct` / `target_pct` / `book_frac` / `atr_mult` / `atr_len` / `max_hold` / `max_new_per_day` / `fetch_sessions` | 15 / 9:30 AM / 1:30 PM / 3 / 3 / 1.5 / 1.5 / 2 / 0.5 / 2 / 14 / 63 / 4 / 15 | intraday entry backtest (times stored as "09:30" / "13:30"); `swing_entry_end` 11:30 AM: the swing entry window with a Nifty 500 filter |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -1736,3 +1751,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   re-run button). 2Y period chip.
 - Speed: one query for all closes (`_closes`, shared between rule sets), the per-rule-set results kept until the
   next build, and the trade list shows 60 stocks at a time.
+
+### 2026-10-27: Nifty 500 filter on every rule set, same-day costs
+- `track_intraday`: `index_ok()` (any / up / strong at the entry candle), `find_entry(mode=)`, `swing_entry()` and
+  `_replay_swing()`; rule set keys `base@up` / `base@strong` (`key()`, `parse()`), 14 sets in `track_intraday`;
+  `VERSION` 3 (the tab asks for a re-run).
+- `track.simulate(entry=(price, time))` for a mid-session swing entry.
+- Costs: `_costs()` charges each sale's round trip at intraday rates when sold on the entry day
+  (`intraday_cost_pct` 0.06%), else delivery (`cost_pct`); `net_pct()` and `_book()` both.
+- `/api/track?nifty=` and `/api/track/trades?nifty=`; `rule_sets[].return_any`. Track tab: Nifty 500 chips,
+  **Return without the filter** column.
