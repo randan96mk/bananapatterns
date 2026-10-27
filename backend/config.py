@@ -304,9 +304,6 @@ class AlertsConfig:
     entry_checklist: bool = True           # zone / VWAP / volume pace / vs Nifty 500 / opening range -> verdict
     opening_range_min: int = 30            # "over the first N minutes' high"
     today_near_pct: float = 3.0            # Today page: Forming names within this % under their pivot
-    # Track record line on breakout / heads-up / close-check / plan alerts
-    track_line: bool = True
-    track_min_trades: int = 10             # fewer similar closed trades than this: "too few to judge"
     # Results calendar (NSE board meetings, fetched in the evening job): gap risk around results
     results_calendar: bool = True          # fetch the calendar and show "Results ..." on cards, alerts and plan
     results_warn_sessions: int = 5         # stock alerts / plan / cards warn when results are this close
@@ -323,44 +320,6 @@ class AlertsConfig:
     deals: bool = True                     # 🏦 funds buying / selling in bulk / block deals or raising stakes
     deal_days: int = 10
     deal_min_cr: float = 5.0               # net bulk / block value (₹ crore) a fund must trade to count
-
-
-@dataclass
-class TrackConfig:
-    """Track record: the swing rules replayed on every breakout, and the portfolio they make."""
-    history_days: int = 730                # how far back the record goes (swing and intraday)
-    max_stop: float = 0.08                 # stop = pattern stop, never more than this under the entry
-    breakeven_pct: float = 10.0            # a close this far up moves the stop to the entry
-    book_half_pct: float = 20.0            # sell half when the price reaches this gain
-    exit_ma: int = 50                      # after half is sold, the rest exits on a close under this SMA
-    max_hold: int = 63                     # sessions; still-open trades are valued here ("3M mark")
-    capital: float = 1_000_000.0           # portfolio curve: starting capital
-    risk_pct: float = 0.01                 # ... risk per trade, sized by the stop
-    position_cap: float = 0.20             # ... and never more than this share of the account in one stock (0 = off)
-    max_positions: int = 10                # ... open at once; a new signal is skipped when full
-    cost_pct: float = 0.25                 # round trip, % of the traded value: STT, stamp duty, exchange, GST, DP
-    intraday_cost_pct: float = 0.06        # ... when bought and sold the same day (charged as intraday by Zerodha)
-    slippage_pct: float = 0.05             # each fill, % worse than the rule's price
-
-
-@dataclass
-class IntradayConfig:
-    """Intraday entry backtest: the swing watchlist bought on the breakout day from 5-minute candles."""
-    or_minutes: int = 15                   # opening range: the first 15 minutes (its low is a stop candidate)
-    entry_start: str = "09:30"             # first entry candle starts here (IST, 24-hour internally)
-    entry_end: str = "13:30"               # ... and the last one ends here
-    max_ext_pct: float = 3.0               # no entry more than this over the pivot
-    gap_max_pct: float = 3.0               # no entry on a day that opened this much over the last close
-    volume_pace: float = 1.5               # projected day volume, x the 50-day average, at the entry candle
-    max_stop_pct: float = 1.5              # stop = closer of the opening-range low and the candle low; wider: skip
-    target_pct: float = 2.0                # sell book_frac here, then the stop goes to the entry
-    book_frac: float = 0.5
-    atr_mult: float = 2.0                  # the rest trails highest high - atr_mult x ATR(atr_len)
-    atr_len: int = 14
-    max_hold: int = 63                     # sessions; still open: valued at that close ("3M mark")
-    max_new_per_day: int = 4               # portfolio: new entries per day
-    fetch_sessions: int = 15               # 5-minute candles fetched per request after an entry
-    swing_entry_end: str = "11:30"         # swing rules with a Nifty 500 filter: entry candle ends by this time
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
@@ -390,8 +349,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
-                      "market": MarketConfig, "track": TrackConfig,
-                      "intraday": IntradayConfig}
+                      "market": MarketConfig}
 
 
 @dataclass
@@ -406,8 +364,6 @@ class AppConfig:
     flag: FlagConfig = field(default_factory=FlagConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
-    track: TrackConfig = field(default_factory=TrackConfig)
-    intraday: IntradayConfig = field(default_factory=IntradayConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

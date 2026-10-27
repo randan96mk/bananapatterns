@@ -277,74 +277,7 @@ CREATE TABLE IF NOT EXISTS deals (
 );
 CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
--- Track record: one row per breakout the screens would have shown (per stock and day), with the trade
--- the swing rules made from it. Closed rows (won / lost / no_entry / in_trade) never change.
-CREATE TABLE IF NOT EXISTS track_signals (
-    symbol TEXT NOT NULL,
-    breakout_date TEXT NOT NULL,
-    pattern TEXT NOT NULL,
-    pivot REAL NOT NULL,
-    pattern_stop REAL NOT NULL,
-    tier TEXT,
-    market TEXT,
-    rs INTEGER,
-    tt_passed INTEGER,
-    base_label TEXT,
-    volume_ratio REAL,
-    status TEXT NOT NULL,
-    reason TEXT,
-    trade_no INTEGER,
-    entry_date TEXT,
-    entry REAL,
-    stop REAL,
-    exit_date TEXT,
-    result_pct REAL,
-    r REAL,
-    days INTEGER,
-    mfe REAL,
-    mae REAL,
-    snaps TEXT NOT NULL DEFAULT '{}',
-    events TEXT NOT NULL DEFAULT '[]',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (symbol, breakout_date)
-);
-CREATE INDEX IF NOT EXISTS idx_track_date ON track_signals (breakout_date);
-
--- Intraday entry backtest: the same columns per rule set (i5m / iday); breakout_date = the day the price crossed
--- the pivot (a watchlist name), entered from 5-minute candles.
-CREATE TABLE IF NOT EXISTS track_intraday (
-    rules TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    breakout_date TEXT NOT NULL,
-    pattern TEXT NOT NULL,
-    pivot REAL NOT NULL,
-    pattern_stop REAL NOT NULL,
-    tier TEXT,
-    market TEXT,
-    rs INTEGER,
-    tt_passed INTEGER,
-    base_label TEXT,
-    volume_ratio REAL,
-    status TEXT NOT NULL,
-    reason TEXT,
-    trade_no INTEGER,
-    entry_date TEXT,
-    entry REAL,
-    stop REAL,
-    exit_date TEXT,
-    result_pct REAL,
-    r REAL,
-    days INTEGER,
-    mfe REAL,
-    mae REAL,
-    snaps TEXT NOT NULL DEFAULT '{}',
-    events TEXT NOT NULL DEFAULT '[]',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (rules, symbol, breakout_date)
-);
-CREATE INDEX IF NOT EXISTS idx_track_intraday_date ON track_intraday (rules, breakout_date);
-
--- 5-minute candles, fetched only for the days the intraday backtest needs; candles_5m_days marks the days
+-- 5-minute candles, fetched only for the days a backtest needs (backend/engine/backtest.py); candles_5m_days marks the days
 -- fetched (a day with no candles is still marked, so it isn't asked for again).
 CREATE TABLE IF NOT EXISTS candles_5m (
     instrument_token INTEGER NOT NULL,
@@ -385,6 +318,15 @@ def init_db(path: Optional[str] = None) -> None:
         _migrate_scan_tables(conn)
         conn.executescript(SCHEMA)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'kite'")   # kite / manual
+        _drop_track_record(conn)
+
+
+def _drop_track_record(conn) -> None:
+    """The Track record tab was removed (Oct 2026): drop its result tables and settings. The 5-minute candles stay."""
+    conn.execute("DROP TABLE IF EXISTS track_signals")
+    conn.execute("DROP TABLE IF EXISTS track_intraday")
+    conn.execute("DELETE FROM app_settings WHERE key LIKE 'track.%' OR key LIKE 'track\\_intraday.%' ESCAPE '\\' "
+                 "OR key IN ('config.track', 'config.intraday')")
 
 
 def _add_column(conn, table: str, column: str, decl: str) -> None:

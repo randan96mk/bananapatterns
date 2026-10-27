@@ -131,7 +131,7 @@ export default function StockChart({ symbol, onClose, trade }) {
       time: x.breakout.date, position: 'aboveBar', shape: 'arrowUp',
       color: x.breakout.volume_ok ? h.pal.up : h.pal.warn,
     })) : [];
-    // a trade from the Track record tab: entry, 🎯 half and exit markers
+    // a backtest trade: entry, 🎯 half and exit markers
     const tm = (trade?.events || []).filter((e) => e.date && e.date >= first && e.kind !== 'breakeven').map((e) => (
       e.kind === 'entry' ? { time: e.date, position: 'belowBar', shape: 'arrowUp', color: h.pal.text, text: 'Entry' }
         : e.kind === 'half' ? { time: e.date, position: 'aboveBar', shape: 'circle', color: h.pal.up, text: '½' }
@@ -141,7 +141,7 @@ export default function StockChart({ symbol, onClose, trade }) {
     if (h.pivotLine) h.pivotLine.applyOptions({ lineVisible: showBases, axisLabelVisible: showBases, title: showBases ? `pivot ₹${bases.latest.pivot.toFixed(2)}` : '' });
   }, [showBases, bases, info, trade]);
 
-  // a trade from the Track record tab: entry and stop lines
+  // a backtest trade: entry and stop lines
   useEffect(() => {
     const h = box.current && box.current.__bp;
     if (!h || !trade?.entry || !info) return undefined;

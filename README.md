@@ -952,112 +952,6 @@ Today's 5-minute line next to each name, with the stop or pivot dashed. It refre
 names without prices when there is no Kite login. The Screens positions card shows the same live price, chip and a
 stop-distance bar while the market is open.
 
-### Track record
-
-`backend/engine/track.py` and the **📈 Track record** tab (on a phone: More → Track record). Every breakout the
-screens would have shown, the trade the swing rules make from it, and the portfolio those trades add up to.
-
-**The tab:**
-- **Filters:** period 1W · 1M · 3M · 6M · 1Y (by breakout date), pattern, tier, status (running / closed / no entry);
-  everything below follows them.
-- **Status line:** breakouts → entered · ⛔ no entry → closed (won · lost) · running · waiting for the next open.
-- **Summary:** win rate, average winner / loser, expectancy in R, average 1W / 2W / 1M / 3M run, holding days,
-  profit factor.
-- **Curve:** the account under the swing rules vs Nifty 500 buy and hold, with "Where you would be" (return, what
-  ₹10L became, worst drawdown, months up, cash idle) and expectancy by market state.
-- **By pattern:** signals, win rate, average runs, stopped %, expectancy.
-- **Trades by stock** (newest first): re-entries numbered, entry, stop, a sparkline (stop dashed, dots at 🎯 half and
-  the exit), 1W–3M, result in % and R, status, and the exit timeline (🔒 breakeven → 🎯 half → 📉 / ⏱ exit, or the
-  next step while it runs). Tap a trade for its chart with the entry and stop lines and the trade's markers.
-- **Rebuild** link: rebuilds the history on purpose (e.g. after changing a pattern setting).
-
-**Signals.** The stored candles are replayed with the same detectors (they are causal: a breakout is known on its
-own bar). A signal is a volume-confirmed close above a pivot that passed the screen's gates **as of that date**:
-liquidity and the trend line; VCP rules on the base before the breakout; cup / flag RS and Trend Template
-minimums. RS ratings, the Trend Template, the industry rank, tier A/B and the market state are recomputed for that
-date (the breakout-success part of the market state isn't replayed; today's red flags don't apply). One signal per
-stock and day: VCP > Cup > Flag > Bases.
-
-**The trade** (`track` settings):
-
-| Step | Rule |
-|---|---|
-| Entry | the next session's open; ⛔ no entry beyond pivot + `buy_zone_pct` (5%) or at / under the stop |
-| 🛑 Stop | the pattern stop, never more than `max_stop` (8%) under the entry; exit on a close under it, at the open on a gap |
-| 🔒 Breakeven | a close +`breakeven_pct` (10%) moves the stop to the entry |
-| 🎯 Half | sell half when the price reaches +`book_half_pct` (20%) |
-| 📉 Rest | after the half: exit on a close under the `exit_ma` (50)-day SMA |
-| ⏱ 3M mark | still open after `max_hold` (63) sessions: valued at that close |
-
-One open trade per stock (a breakout during it is `in_trade`); after the exit, a new breakout is a re-entry.
-Snapshots at 1W / 2W / 1M / 3M (5 / 10 / 21 / 63 sessions; frozen at the exit). Result in % and R.
-
-**Portfolio** (the curve vs Nifty 500): `capital` ₹10L, `risk_pct` 1% of equity per trade sized by the stop,
-never more than `position_cap` (20%) of the account in one stock, `max_positions` 10; a signal is skipped when the
-cap is reached or cash runs out. With stops of up to 8% each position is at least 12.5% of the account, so cash
-usually allows about 8 positions. The 20% cap only bites on tight stops (under 5%), which would otherwise put 25%+
-of the account in one stock.
-
-**Sizing comparison.** The tab also runs the same trades through four sizing options, for the selected filters:
-1% risk cash-limited, 0.75% risk, 1% risk with a 10% cap and 1% risk with a 20% cap (the default, marked "used
-above"). Columns: return, worst drawdown, return ÷ drawdown (higher is smoother) and signals skipped.
-
-**Costs.** Every return on the tab is after costs: `cost_pct` (0.25%) a round trip held overnight (STT, stamp duty,
-exchange charges, GST and the DP charge), `intraday_cost_pct` (0.06%) for the part bought and sold the same day
-(Zerodha charges a same-day CNC buy and sell as intraday: STT 0.025% on the sale only, no DP charge), plus
-`slippage_pct` (0.05%) on every fill (the buy fills higher, each sale lower).
-The rule-set table also shows the average result per closed trade after costs; expectancy in R is before costs.
-
-**Built once, then added to.** At start-up (if never built, or built for another `history_days`) the last
-`history_days` (730, two years; the 2Y period chip shows all of it) are built in the
-background, in seconds. The evening job then adds new breakouts and re-runs only pending / running trades from their
-entry with the new candle; closed rows never change. `POST /api/track/rebuild` rebuilds on purpose.
-
-### Intraday entry backtest
-
-The **Rules** chips on the Track record tab switch between the swing record and two intraday rule sets, which buy the
-same watchlist on the breakout day from 5-minute candles (`backend/engine/track_intraday.py`). The rule sets differ
-only in the trail and the stop: **5-min trail**, **daily trail**, and the daily trail with the stop at least
-**0.5%** / **0.75%** under the entry (a closer stop is moved down to that, to test whether a little room stops the
-noise exits):
-
-| Step | Rule (`intraday.*` settings) |
-|---|---|
-| Watchlist | each evening: setups still intact and within `today_near_pct` (3%) under the pivot, with the swing gates as of that evening. The next day counts when its high crosses the pivot, **including days it closes back under it** (a failed breakout costs a stop) |
-| Entry | the first 5-minute candle from `entry_start` (9:30 AM) ending by `entry_end` (1:30 PM) that closes over the pivot, at most `max_ext_pct` (3%) over it, over VWAP, volume on pace for `volume_pace` (1.5×) the 50-day average, Nifty 500 above its opening price. No entry on a gap over `gap_max_pct` (3%). Entry = that candle's close |
-| Stop | the closer of the first-`or_minutes` (15) low and the candle's low; more than `max_stop_pct` (1.5%) away → that candle is passed over |
-| Target | `book_frac` (50%) sold at +`target_pct` (2%); the stop moves to the entry. A candle touching both the stop and the target counts as the stop |
-| The rest | out at the entry, or on a close under highest high − `atr_mult` (2) × ATR(`atr_len` 14): **5-min trail** on 5-minute candles, **daily trail** on daily closes; `max_hold` (63) sessions → "3M mark" |
-| Portfolio | as the swing curve (₹10L, 1% risk, max 20% per position, max 10 open), at most `max_new_per_day` (4) new entries a day; same-day events run in time order |
-
-**Nifty 500 filter.** The **Nifty 500: Any · Up · Strong up** chips re-run every rule set with a check on the index at
-the entry candle (only what was known then):
-
-| Filter | The Nifty 500 must be |
-|---|---|
-| Any | the intraday rules' own check: over its opening price (the swing rules: no check, entry at the open) |
-| Up | over today's open **and** over yesterday's close |
-| Strong up | Up, **and** over its own first-15-minute high |
-
-With a filter, the swing rules buy at the first 5-minute close from 9:30 AM to `swing_entry_end` (11:30 AM) on the
-session after the breakout while the filter holds (inside the buy zone, over the stop) instead of at the open; no such
-candle is "no entry". The comparison table then adds **Return without the filter**.
-
-One trade per stock at a time; a pivot that was traded is not traded again. **Rule sets compared** puts the swing and
-both intraday sets side by side for the same filters (trades, win rate, avg win / loss, profit factor, expectancy,
-return, worst drawdown, return ÷ drawdown).
-
-**Running it.** The first run is the **Run the intraday backtest** button on the tab (needs that day's Kite login):
-it fetches 5-minute candles from Kite for the crossing days only (about 3,000 requests a year of history at ~3 a
-second, 15–20 minutes a year, stored in `candles_5m`, roughly 50 MB a year). When the rule sets change (a new
-`VERSION`) or `history_days` changes, the tab says **Re-run needed** and the button re-runs it from scratch, re-using
-the stored candles; the evening job doesn't update a stale backtest. After that the evening job adds each new day. `POST /api/track/intraday/build`
-(`?rebuild=true` re-runs from scratch, re-using the stored candles).
-
-**Alert line.** Breakout, heads-up, 3:15 PM check and plan alerts end with the record of similar closed trades:
-*📈 Track record (1Y): VCP · tier A · uptrend → 61% won, +0.71R avg, 38 trades* (falling back to pattern + tier,
-then pattern; fewer than `track_min_trades` (10): "too few past trades to judge"). `track_line` turns it off.
-
 ### Buttons and bot commands
 
 Stock alerts carry four buttons (`alert_buttons`), answered by the bot poller (`backend/alerts/commands.py`, your
@@ -1121,7 +1015,6 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
 | GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
-| GET | `/api/track?period=1w\|1m\|3m\|6m\|1y&pattern=&tier=&status=` · `/api/track/trades` · POST `/api/track/rebuild` | track record: status line, summary, by pattern / market, portfolio curve vs Nifty 500; trades grouped by stock; rebuild |
 | GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
@@ -1253,9 +1146,6 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `position_guard` / `profit_zone_pct` / `extended_pct` / `failed_days` | true / 20 / 25 / 3 | position guard rules |
 | `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
 | `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
-| `track_line` / `track_min_trades` | true / 10 | track record line on alerts |
-| `track.*`: `history_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `intraday_cost_pct` / `slippage_pct` | 730 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 / 0.25 / 0.06 / 0.05 | track record rules, portfolio and costs |
-| `intraday.*`: `or_minutes` / `entry_start` / `entry_end` / `max_ext_pct` / `gap_max_pct` / `volume_pace` / `max_stop_pct` / `target_pct` / `book_frac` / `atr_mult` / `atr_len` / `max_hold` / `max_new_per_day` / `fetch_sessions` | 15 / 9:30 AM / 1:30 PM / 3 / 3 / 1.5 / 1.5 / 2 / 0.5 / 2 / 14 / 63 / 4 / 15 | intraday entry backtest (times stored as "09:30" / "13:30"); `swing_entry_end` 11:30 AM: the swing entry window with a Nifty 500 filter |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -1761,3 +1651,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   (`intraday_cost_pct` 0.06%), else delivery (`cost_pct`); `net_pct()` and `_book()` both.
 - `/api/track?nifty=` and `/api/track/trades?nifty=`; `rule_sets[].return_any`. Track tab: Nifty 500 chips,
   **Return without the filter** column.
+
+### 2026-10-27: Track record removed
+- The Track record tab, the swing and intraday backtest engines (`track.py`, `track_intraday.py`), their tables
+  (`track_signals`, `track_intraday`, dropped at start-up with their settings), the "📈 Track record" alert line,
+  the start-up / evening builds, `/api/track*` and the `track` / `intraday` settings are gone.
+- Kept for the next backtest: `backend/engine/backtest.py` (5-minute candles fetched once and stored in
+  `candles_5m`, the portfolio replay with sizing / per-position cap / same-day vs overnight costs, drawdown,
+  months up) and `KiteClient.historical_bars`.
