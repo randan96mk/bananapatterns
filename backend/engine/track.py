@@ -507,6 +507,55 @@ def split(rs: list[dict], key: str) -> list[dict]:
     return out
 
 
+SIZING = (("1% risk, cash-limited", 0.01, 0.0), ("0.75% risk", 0.0075, 0.0),
+          ("1% risk, max 10% per position", 0.01, 0.10), ("1% risk, max 20% per position", 0.01, 0.20))
+
+
+def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap):
+    """Replay the trade events day by day on one account. Each entry risks `risk_pct` of equity to the stop, capped
+    at `position_cap` of equity per position (0 = no cap) and by the cash left. -> (curve %, cash share, taken, skipped)"""
+    order = {"exit": 0, "half": 1, "breakeven": 2, "entry": 3}           # sell before buying on the same day
+    tier_rank = {"A": 0, "B": 1}
+    cash, equity, pos = capital, capital, {}
+    taken = skipped = 0
+    strategy, idle, last_px = [], [], {}
+    for d in days:
+        evs = sorted(by_day.get(d, []), key=lambda x: (order[x[0]["kind"]], tier_rank.get(x[1].get("tier"), 2),
+                                                        PATTERNS.index(x[1]["pattern"])))
+        for ev, r in evs:
+            key = (r["symbol"], r["breakout_date"])
+            if ev["kind"] == "entry":
+                if len(pos) >= max_positions or not r.get("stop") or ev["price"] <= r["stop"]:
+                    skipped += 1
+                    continue
+                qty = floor(equity * risk_pct / (ev["price"] - r["stop"]))
+                if position_cap > 0:
+                    qty = min(qty, floor(equity * position_cap / ev["price"]))
+                qty = min(qty, floor(cash / ev["price"]))
+                if qty <= 0:
+                    skipped += 1
+                    continue
+                cash -= qty * ev["price"]
+                pos[key] = qty
+                taken += 1
+            elif key in pos and ev["kind"] in ("half", "exit"):
+                q = pos[key] // 2 if ev["kind"] == "half" else pos[key]
+                cash += q * ev["price"]
+                pos[key] -= q
+                if pos[key] <= 0 or ev["kind"] == "exit":
+                    pos.pop(key, None)
+        value = 0.0
+        for (sym, _), q in pos.items():
+            px = closes.get(sym, {}).get(d)
+            if px is not None:
+                last_px[sym] = px
+            value += q * last_px.get(sym, 0.0)
+        equity = cash + value
+        strategy.append(round((equity / capital - 1) * 100, 2))
+        idle.append(cash / equity if equity else 1.0)
+    return strategy, idle, taken, skipped
+
+
 def portfolio(rs: list[dict], config: AppConfig) -> dict:
     """Daily account value if every signal in `rs` was taken under the portfolio rules, vs Nifty 500 buy and hold."""
     from backend.ingest import universe as uni
@@ -529,43 +578,8 @@ def portfolio(rs: list[dict], config: AppConfig) -> dict:
     for r in trades:
         for ev in r["events"]:
             by_day.setdefault(ev["date"], []).append((ev, r))
-    order = {"exit": 0, "half": 1, "breakeven": 2, "entry": 3}           # sell before buying on the same day
-    tier_rank = {"A": 0, "B": 1}
-    cash, equity, pos = cfg.capital, cfg.capital, {}
-    taken = skipped = 0
-    strategy, idle, last_px = [], [], {}
-    for d in days:
-        evs = sorted(by_day.get(d, []), key=lambda x: (order[x[0]["kind"]], tier_rank.get(x[1].get("tier"), 2),
-                                                        PATTERNS.index(x[1]["pattern"])))
-        for ev, r in evs:
-            key = (r["symbol"], r["breakout_date"])
-            if ev["kind"] == "entry":
-                if len(pos) >= cfg.max_positions or not r.get("stop") or ev["price"] <= r["stop"]:
-                    skipped += 1
-                    continue
-                qty = floor(equity * cfg.risk_pct / (ev["price"] - r["stop"]))
-                qty = min(qty, floor(cash / ev["price"]))
-                if qty <= 0:
-                    skipped += 1
-                    continue
-                cash -= qty * ev["price"]
-                pos[key] = qty
-                taken += 1
-            elif key in pos and ev["kind"] in ("half", "exit"):
-                q = pos[key] // 2 if ev["kind"] == "half" else pos[key]
-                cash += q * ev["price"]
-                pos[key] -= q
-                if pos[key] <= 0 or ev["kind"] == "exit":
-                    pos.pop(key, None)
-        value = 0.0
-        for (sym, _), q in pos.items():
-            px = closes.get(sym, {}).get(d)
-            if px is not None:
-                last_px[sym] = px
-            value += q * last_px.get(sym, 0.0)
-        equity = cash + value
-        strategy.append(round((equity / cfg.capital - 1) * 100, 2))
-        idle.append(cash / equity if equity else 1.0)
+    strategy, idle, taken, skipped = _book(days, by_day, closes, cfg.capital, cfg.max_positions, cfg.risk_pct,
+                                           cfg.position_cap)
     nifty = [round((c["close"] / index[0]["close"] - 1) * 100, 2) for c in index] if index else []
 
     def drawdown(curve):
@@ -586,6 +600,15 @@ def portfolio(rs: list[dict], config: AppConfig) -> dict:
             prev = v
         return up, total
 
+    sizing = []
+    for label, risk, cap in SIZING:
+        current = (risk, cap) == (cfg.risk_pct, cfg.position_cap)
+        curve, _, _, sk = ((strategy, idle, taken, skipped) if current else
+                           _book(days, by_day, closes, cfg.capital, cfg.max_positions, risk, cap))
+        ret, dd = (curve[-1] if curve else None), drawdown(curve)
+        sizing.append({"label": label, "risk_pct": risk, "position_cap": cap, "return": ret, "drawdown": dd,
+                       "ratio": round(ret / -dd, 2) if ret is not None and dd < 0 else None, "skipped": sk,
+                       "current": current})
     su, st = months_up(strategy)
     nu, nt = months_up(nifty) if nifty else (None, None)
     return {"dates": days, "strategy": strategy, "nifty": nifty, "taken": taken, "skipped": skipped,
@@ -597,7 +620,9 @@ def portfolio(rs: list[dict], config: AppConfig) -> dict:
                                   "value": round(cfg.capital * (1 + nifty[-1] / 100)) if nifty else None,
                                   "drawdown": drawdown(nifty) if nifty else None, "months_up": [nu, nt],
                                   "cash_idle": 0.0}},
-            "settings": {"capital": cfg.capital, "risk_pct": cfg.risk_pct, "max_positions": cfg.max_positions}}
+            "sizing": sizing,
+            "settings": {"capital": cfg.capital, "risk_pct": cfg.risk_pct, "max_positions": cfg.max_positions,
+                         "position_cap": cfg.position_cap}}
 
 
 def line(pattern: str, tier: Optional[str], mkt: Optional[str], min_trades: int = 10) -> Optional[str]:

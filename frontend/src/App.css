@@ -439,6 +439,10 @@ body.modal-open { overflow: hidden; }
 .trvs { width: 100%; border-collapse: collapse; font-size: 13px; }
 .trvs th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11.5px; padding: 3px 6px; }
 .trvs td { padding: 5px 6px; border-top: 1px solid var(--rowline); } .trvs td:first-child { color: var(--muted); }
+.trsize tr.cur td { background: var(--blue-bg); } .trsize tr.cur td:first-child { font-weight: 600; }
+.trsize td:first-child { white-space: normal; }
+@media (max-width: 640px) { .trsize th, .trsize td { padding-left: 4px; padding-right: 4px; font-size: 12px; } }
+.trnow { margin-left: 8px; font-size: 10.5px; padding: 1px 6px; border-radius: 5px; background: var(--blue); color: #fff; }
 .trsplit { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: var(--muted); }
 .pt { font-size: 10.5px; padding: 1px 6px; border-radius: 5px; font-weight: 700; white-space: nowrap; }
 .pt.p-vcp { background: var(--blue-bg); color: var(--blue); }

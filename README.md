@@ -993,8 +993,14 @@ One open trade per stock (a breakout during it is `in_trade`); after the exit, a
 Snapshots at 1W / 2W / 1M / 3M (5 / 10 / 21 / 63 sessions; frozen at the exit). Result in % and R.
 
 **Portfolio** (the curve vs Nifty 500): `capital` ₹10L, `risk_pct` 1% of equity per trade sized by the stop,
-`max_positions` 10, a signal is skipped when the cap is reached or cash runs out. With stops of up to 8% each
-position is at least 12.5% of the account, so cash usually allows about 8 positions before the cap.
+never more than `position_cap` (20%) of the account in one stock, `max_positions` 10; a signal is skipped when the
+cap is reached or cash runs out. With stops of up to 8% each position is at least 12.5% of the account, so cash
+usually allows about 8 positions. The 20% cap only bites on tight stops (under 5%), which would otherwise put 25%+
+of the account in one stock.
+
+**Sizing comparison.** The tab also runs the same trades through four sizing options, for the selected filters:
+1% risk cash-limited, 0.75% risk, 1% risk with a 10% cap and 1% risk with a 20% cap (the default, marked "used
+above"). Columns: return, worst drawdown, return ÷ drawdown (higher is smoother) and signals skipped.
 
 **Built once, then added to.** At start-up (if never built) the last `window_days` (365) are built in the
 background, in seconds. The evening job then adds new breakouts and re-runs only pending / running trades from their
@@ -1200,7 +1206,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
 | `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
 | `track_line` / `track_min_trades` | true / 10 | track record line on alerts |
-| `track.*`: `window_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `max_positions` | 365 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 10 | track record rules and portfolio |
+| `track.*`: `window_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` | 365 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 | track record rules and portfolio |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -1672,4 +1678,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `TrackPage.jsx`: filters, status line, summary, curve vs Nifty 500, by pattern / market, trades grouped by stock with
   sparklines and exit timelines; phone layout; `StockChart` `trade` prop (entry / stop lines, trade markers).
   `/api/track/trades` returns each trade's sparkline closes; `/api/track` returns the rules.
+
+### 2026-10-27: Sizing comparison
+- `track.position_cap` (0.20): no position over 20% of the account; the curve now uses 1% risk + 20% cap.
+- `portfolio()` replays the book via `_book()`; `/api/track` `portfolio.sizing` compares four options (`SIZING`):
+  return, worst drawdown, return ÷ drawdown, skipped. Shown as **Sizing comparison** on the Track record tab.
 

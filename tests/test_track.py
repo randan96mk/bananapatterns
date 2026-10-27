@@ -220,9 +220,18 @@ def test_portfolio_sizes_by_the_stop_and_caps_positions(monkeypatch):
     # 1% of 10L = 10,000 risk / 8 per share = 1,250 shares = 1.25L each: cash runs out after 8 positions
     assert p["taken"] == 8 and p["skipped"] == 4
     assert p["strategy"][0] == pytest.approx(0.0, abs=0.01) and p["compare"]["strategy"]["cash_idle"] < 1
-    # a tighter stop means a bigger position (4% stop: 2,500 shares = 2.5L): only 4 fit
-    p2 = track.portfolio([trade(f"S{i}", d0, 100.0, 96.0, 100.0, "running") for i in range(12)], app_config())
-    assert p2["taken"] == 4
+    # a tighter stop means a bigger position (4% stop: 2,500 shares = 2.5L), but the 20% cap holds it to 2L: 5 fit
+    tight = [trade(f"S{i}", d0, 100.0, 96.0, 100.0, "running") for i in range(12)]
+    p2 = track.portfolio(tight, app_config())
+    assert p2["taken"] == 5 and p2["settings"]["position_cap"] == 0.20
+    # without the cap only 4 fit; the comparison runs the same trades through each sizing option
+    cfg = app_config()
+    cfg.track.position_cap = 0.0
+    assert track.portfolio(tight, cfg)["taken"] == 4
+    sz = {x["label"]: x for x in p2["sizing"]}
+    assert sz["1% risk, cash-limited"]["skipped"] == 8 and sz["1% risk, max 10% per position"]["skipped"] == 2
+    assert sz["0.75% risk"]["skipped"] == 6     # 1,875 shares = 1.875L each: 5 fit, a 6th gets the cash left
+    assert sz["1% risk, max 20% per position"]["current"] and sum(x["current"] for x in p2["sizing"]) == 1
     # a 16% stop: 625 shares = 62,500 each, so the 10-position cap binds first
     p3 = track.portfolio([trade(f"S{i}", d0, 100.0, 84.0, 100.0, "running") for i in range(12)], app_config())
     assert p3["taken"] == 10 and p3["skipped"] == 2
@@ -269,3 +278,5 @@ def test_api(monkeypatch):
         t = tc.get("/api/track/trades").json()["stocks"]
         assert [s["symbol"] for s in t] == ["L1", "W1"] and t[0]["trades"][0]["events"][0]["kind"] == "entry"
         assert tc.get("/api/config/track").json()["max_positions"] == 10
+        assert tc.get("/api/config/track").json()["position_cap"] == 0.20
+        assert [x["label"] for x in d["portfolio"]["sizing"]][-1] == "1% risk, max 20% per position"
