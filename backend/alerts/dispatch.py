@@ -32,6 +32,7 @@ KIND_TOGGLE = {"breakout": "breakout", "breakout_low_volume": "low_volume_breako
 
 
 RESULTS_NOTE_KINDS = {"breakout", "breakout_low_volume", "forming", "near_pivot", "intraday", "close_check"}
+TRACK_KINDS = {"breakout", "intraday", "close_check", "plan"}
 ACTION_KINDS = {"breakout", "breakout_low_volume", "forming", "near_pivot", "intraday", "close_check", "plan",
                 "climbing"}
 
@@ -81,6 +82,8 @@ class Notifier:
             return False
         if symbol and kind in RESULTS_NOTE_KINDS:
             html += results_note(symbol, self.cfg) + news_note(symbol, kind, self.cfg) + flags_note(symbol, self.cfg)
+        if symbol and kind in TRACK_KINDS and self.cfg.track_line:
+            html += track_note(symbol, self.cfg)
         ok, err = True, None
         try:
             if buttons is None and symbol and kind in ACTION_KINDS and self.cfg.alert_buttons:
@@ -108,6 +111,27 @@ class Notifier:
 
     def system(self, key: str, text: str) -> bool:
         return self.cfg.system and self.send(key, "system", msg.system_alert(text))
+
+
+def track_note(symbol: str, cfg: AlertsConfig) -> str:
+    """'📈 Track record (1Y): VCP · tier A · uptrend → 61% won, +0.71R avg, 38 trades' for the stock's setup on
+    the latest scan (VCP > Cup > Flag > Bases), or '' before the track record is built."""
+    from backend.engine import market, track
+    try:
+        with get_db() as conn:
+            as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+            row = conn.execute("SELECT screen, payload FROM scan_results WHERE as_of = ? AND symbol = ? ORDER BY "
+                               + msg.SCREEN_ORDER_SQL.format(col="screen") + " LIMIT 1", (as_of, symbol)).fetchone()
+            h = market.latest(conn, as_of)
+        if not row:
+            return ""
+        status = h["status"] if h else None
+        text = track.line(row["screen"], market.tier(json.loads(row["payload"]), status, cfg), status,
+                          cfg.track_min_trades)
+        return f"\n<i>{msg.escape(text)}</i>" if text else ""
+    except Exception:
+        logger.exception("Track record line failed for %s", symbol)
+        return ""
 
 
 def results_note(symbol: str, cfg: AlertsConfig, as_of: Optional[str] = None) -> str:

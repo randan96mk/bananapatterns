@@ -277,6 +277,39 @@ CREATE TABLE IF NOT EXISTS deals (
 );
 CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
+-- Track record: one row per breakout the screens would have shown (per stock and day), with the trade
+-- the swing rules made from it. Closed rows (won / lost / no_entry / in_trade) never change.
+CREATE TABLE IF NOT EXISTS track_signals (
+    symbol TEXT NOT NULL,
+    breakout_date TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    pivot REAL NOT NULL,
+    pattern_stop REAL NOT NULL,
+    tier TEXT,
+    market TEXT,
+    rs INTEGER,
+    tt_passed INTEGER,
+    base_label TEXT,
+    volume_ratio REAL,
+    status TEXT NOT NULL,
+    reason TEXT,
+    trade_no INTEGER,
+    entry_date TEXT,
+    entry REAL,
+    stop REAL,
+    exit_date TEXT,
+    result_pct REAL,
+    r REAL,
+    days INTEGER,
+    mfe REAL,
+    mae REAL,
+    snaps TEXT NOT NULL DEFAULT '{}',
+    events TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, breakout_date)
+);
+CREATE INDEX IF NOT EXISTS idx_track_date ON track_signals (breakout_date);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

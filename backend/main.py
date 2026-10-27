@@ -60,11 +60,23 @@ def _scan_if_behind(state: AppState) -> None:
         logger.exception("Startup scan failed")
 
 
+def _track_if_missing(state: AppState) -> None:
+    """Build the track record once (about a minute, in the background); later the evening job adds to it."""
+    from backend.engine import track
+    try:
+        if not track.built():
+            track.build(state.config)
+    except Exception:
+        logger.exception("Track record build failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state = build_state()
     set_state(state)
     threading.Thread(target=_scan_if_behind, args=(state,), name="startup-scan", daemon=True).start()
+    if os.getenv("BP_NO_SCHEDULER") != "1":
+        threading.Thread(target=_track_if_missing, args=(state,), name="track-build", daemon=True).start()
     state.scheduler = Scheduler(state)
     bot = BotCommands(state)
     if os.getenv("BP_NO_SCHEDULER") != "1":

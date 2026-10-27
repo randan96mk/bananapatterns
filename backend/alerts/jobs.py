@@ -279,6 +279,11 @@ class Scheduler:
                              st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
         if st.config.alerts.position_guard:
             sent["guard"] = self.run_guard(as_of)
+        try:                                       # track record: add today's breakouts, move running trades on
+            from backend.engine import track
+            sent["track"] = track.build(st.config).get("added")
+        except Exception:
+            logger.exception("Track record update failed")
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}

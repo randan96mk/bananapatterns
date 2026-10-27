@@ -304,6 +304,9 @@ class AlertsConfig:
     entry_checklist: bool = True           # zone / VWAP / volume pace / vs Nifty 500 / opening range -> verdict
     opening_range_min: int = 30            # "over the first N minutes' high"
     today_near_pct: float = 3.0            # Today page: Forming names within this % under their pivot
+    # Track record line on breakout / heads-up / close-check / plan alerts
+    track_line: bool = True
+    track_min_trades: int = 10             # fewer similar closed trades than this: "too few to judge"
     # Results calendar (NSE board meetings, fetched in the evening job): gap risk around results
     results_calendar: bool = True          # fetch the calendar and show "Results ..." on cards, alerts and plan
     results_warn_sessions: int = 5         # stock alerts / plan / cards warn when results are this close
@@ -320,6 +323,20 @@ class AlertsConfig:
     deals: bool = True                     # 🏦 funds buying / selling in bulk / block deals or raising stakes
     deal_days: int = 10
     deal_min_cr: float = 5.0               # net bulk / block value (₹ crore) a fund must trade to count
+
+
+@dataclass
+class TrackConfig:
+    """Track record: the swing rules replayed on every breakout, and the portfolio they make."""
+    window_days: int = 365                 # how far back the first build looks for breakouts
+    max_stop: float = 0.08                 # stop = pattern stop, never more than this under the entry
+    breakeven_pct: float = 10.0            # a close this far up moves the stop to the entry
+    book_half_pct: float = 20.0            # sell half when the price reaches this gain
+    exit_ma: int = 50                      # after half is sold, the rest exits on a close under this SMA
+    max_hold: int = 63                     # sessions; still-open trades are valued here ("3M mark")
+    capital: float = 1_000_000.0           # portfolio curve: starting capital
+    risk_pct: float = 0.01                 # ... risk per trade, sized by the stop
+    max_positions: int = 10                # ... open at once; a new signal is skipped when full
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
@@ -349,7 +366,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
-                      "market": MarketConfig}
+                      "market": MarketConfig, "track": TrackConfig}
 
 
 @dataclass
@@ -364,6 +381,7 @@ class AppConfig:
     flag: FlagConfig = field(default_factory=FlagConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
+    track: TrackConfig = field(default_factory=TrackConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
