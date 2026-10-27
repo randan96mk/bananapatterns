@@ -4,6 +4,8 @@ from datetime import datetime
 from html import escape
 from typing import Optional
 
+from backend.timefmt import ampm, ampm_date
+
 ICONS = {"breakout": "🚀", "breakout_low_volume": "⚠️", "below_pivot": "🔻", "played_out": "🏁",
          "forming": "🔵", "left": "▫️", "climbing": "📈", "near_pivot": "🎯", "intraday": "⚡",
          "system": "⚙️", "digest": "📋"}
@@ -102,7 +104,7 @@ def intraday_alert(p: dict, ltp: float, vol_so_far: Optional[float], pace: Optio
         lines.append(f"⛔ <b>Extended</b>: beyond the buy zone ({rs(zone_top)}). Don't chase.")
     elif volume:
         lines.append(VOLUME_LINE[volume].format(pace=f"{pace:.1f}× average" if pace else "n/a",
-                                                check=escape(check_time)))
+                                                check=_when(check_time)))
     if vol_so_far is not None and avg_vol:
         lines.append(f"Volume so far {vol_so_far / avg_vol:.1f}× the 50-day average"
                      + (f", on pace for {pace:.1f}×" if pace else ""))
@@ -147,31 +149,37 @@ def digest(screen: str, as_of: str, counts: dict, moves: list[dict], fresh_sessi
     return chunks
 
 
+def _when(t: str) -> str:
+    """'15:15' -> '3:15 PM'; words such as 'evening' pass through."""
+    return ampm(t) if ":" in str(t) else escape(str(t))
+
+
 def system_alert(text: str) -> str:
     return f"{ICONS['system']} {escape(text)}"
 
 
 LOGIN_WHY = {
-    "new_day": "New Kite day: yesterday's session ended at 06:00.",
-    "still_needed": "Still not logged in. Intraday alerts start 09:20; the evening scan needs it too.",
+    "new_day": "New Kite day: yesterday's session ended at 6:00 AM IST.",
+    "still_needed": "Still not logged in. Intraday alerts start at {start}; the evening scan needs it too.",
     "evening": "Kite login needed for today's evening scan.",
     "revoked": "Kite rejected the current session (logged out or revoked).",
     "requested": "Login link as requested.",
 }
 
 
-def login_link_alert(reason: str, expires: datetime) -> str:
-    return (f"🔑 <b>Kite login needed</b>\n{escape(LOGIN_WHY.get(reason, reason))}\n"
-            f"Tap <b>Log in to Kite</b>: works once, until {expires:%H:%M}. "
-            "Gives a fresh session until 06:00 tomorrow.")
+def login_link_alert(reason: str, expires: datetime, intraday_start: str = "09:20") -> str:
+    why = LOGIN_WHY.get(reason, reason).replace("{start}", ampm(intraday_start))
+    return (f"🔑 <b>Kite login needed</b>\n{escape(why)}\n"
+            f"Tap <b>Log in to Kite</b>: works once, until {ampm(expires)}. "
+            "Gives a fresh session until 6:00 AM IST tomorrow.")
 
 
 def login_heads_up(first_slot: str) -> str:
-    return f"⏰ <b>Kite session ends at 06:00</b>\nYour login link comes at {escape(first_slot)}."
+    return f"⏰ <b>Kite session ends at 6:00 AM IST</b>\nYour login link comes at {ampm(first_slot)}."
 
 
 def login_ok_alert(expires: datetime) -> str:
-    return f"✅ <b>Kite connected</b> · valid until {expires:%H:%M %d %b}"
+    return f"✅ <b>Kite connected</b> · valid until {ampm_date(expires)} IST"
 
 
 VERDICT = {"valid": "🟢 <b>Valid entry</b>", "wait": "🟡 <b>Wait</b>", "skip": "🔴 <b>Skip</b>"}
@@ -218,7 +226,7 @@ def live_stop_alert(pos: dict, ltp: float, r: Optional[float], pace: Optional[fl
     head = (f"🔻 <b>{escape(pos['symbol'])}</b> trading {rs(ltp)}, <b>under your stop</b> {rs(pos['stop'])} "
             f"({(ltp / pos['stop'] - 1) * 100:+.1f}%).")
     body = ("Hard stop: your rule says exit now." if hard else
-            f"Unconfirmed until the close: the {escape(check_time)} check says whether it recovered. "
+            f"Unconfirmed until the close: the {_when(check_time)} check says whether it recovered. "
             "A hard stop says exit now.")
     return "\n".join([head, body, _pos_tail(pos, ltp, r, pace)])
 
@@ -257,9 +265,9 @@ def gap_positions(broken: list[tuple[dict, float]], ok_count: int) -> str:
     return "\n".join(lines)
 
 
-def close_positions(rows: list[tuple[dict, float, str]], fine: list[str]) -> str:
-    """15:15 positions check: rows (pos, ltp, state under_stop / recovered / heavy)."""
-    lines = ["🕒 <b>Positions at 15:15</b> · act before 15:30"]
+def close_positions(rows: list[tuple[dict, float, str]], fine: list[str], check_time: str = "15:15") -> str:
+    """Close-check positions message: rows (pos, ltp, state under_stop / recovered / heavy)."""
+    lines = [f"🕒 <b>Positions at {ampm(check_time)}</b> · act before 3:30 PM"]
     for pos, ltp, state in rows:
         sym, stop = escape(pos["symbol"]), rs(pos["stop"])
         if state == "under_stop":
@@ -289,7 +297,7 @@ CLOSE_HEAD = {"holding": "✅ <b>{sym}: breakout holding into the close</b>",
 
 
 def close_alert(p: dict, verdict: str, ltp: float, pace: Optional[float], rng: Optional[float],
-                zone_top: float, ctx: Optional[dict] = None, ck: Optional[dict] = None) -> str:
+                zone_top: float, ctx: Optional[dict] = None, ck: Optional[dict] = None, job_time: str = "18:30") -> str:
     lines = [CLOSE_HEAD[verdict].format(sym=escape(p["symbol"])),
              f"{rs(ltp)}, {(ltp / p['pivot'] - 1) * 100:+.1f}% over the {rs(p['pivot'])} pivot "
              f"({escape(p['base_label'])}) · volume on pace {_pace(pace)} · "
@@ -297,9 +305,10 @@ def close_alert(p: dict, verdict: str, ltp: float, pace: Optional[float], rng: O
     if ck and ck["verdict"]:
         lines += checklist_lines(ck)
     if verdict == "holding":
-        lines.append(f"Buy zone {rs(p['pivot'])} – {rs(zone_top)} · act before 15:30. The 18:30 scan confirms it.")
+        lines.append(f"Buy zone {rs(p['pivot'])} – {rs(zone_top)} · act before 3:30 PM. "
+                     f"The {ampm(job_time)} scan confirms it.")
     elif verdict == "weak":
-        lines.append("Volume or the close may not confirm: wait for the 18:30 scan.")
+        lines.append(f"Volume or the close may not confirm: wait for the {ampm(job_time)} scan.")
     else:
         lines.append("Don't chase: wait for a pullback toward the pivot.")
     tail = _tail(p)
@@ -316,10 +325,10 @@ def _pace(pace: Optional[float]) -> str:
     return f"{pace:.1f}×" if pace else "n/a"
 
 
-def close_summary(items: list[dict], shown: set) -> str:
-    """One message for the 15:15 names not sent individually. items: {symbol, verdict, ltp, pivot, pace}."""
+def close_summary(items: list[dict], shown: set, check_time: str = "15:15") -> str:
+    """One message for the close-check names not sent individually. items: {symbol, verdict, ltp, pivot, pace}."""
     groups = {"holding": "✅ Also holding", "weak": "🟡 Above pivot, weak", "extended": "⛔ Extended, don't chase"}
-    lines = [f"🕒 <b>15:15 check</b>: {len(items)} names above their pivot"]
+    lines = [f"🕒 <b>{ampm(check_time)} check</b>: {len(items)} names above their pivot"]
     for v, title in groups.items():
         names = [f"{'🅱️ ' if i.get('tier') == 'B' else ''}{escape(i['symbol'])} "
                  f"({(i['ltp'] / i['pivot'] - 1) * 100:+.1f}%, {_pace(i.get('pace'))})"
@@ -329,15 +338,16 @@ def close_summary(items: list[dict], shown: set) -> str:
     return "\n".join(lines)
 
 
-def confirm_note(flag: Optional[str]) -> Optional[str]:
-    """18:30 cross-reference to the 15:15 check."""
-    return {"close_holding": "✓ Flagged at 15:15 (holding into the close)",
-            "close_weak": "✓ Confirmed, though it looked weak at 15:15",
-            "close_extended": "✓ Confirmed; it was extended at 15:15"}.get(flag)
+def confirm_note(flag: Optional[str], check_time: str = "15:15") -> Optional[str]:
+    """Evening cross-reference to the close check."""
+    t = ampm(check_time)
+    return {"close_holding": f"✓ Flagged at {t} (holding into the close)",
+            "close_weak": f"✓ Confirmed, though it looked weak at {t}",
+            "close_extended": f"✓ Confirmed; it was extended at {t}"}.get(flag)
 
 
-def not_confirmed_alert(symbol: str, pivot: float, close: Optional[float]) -> str:
-    return (f"✗ <b>{escape(symbol)}</b> didn't confirm on the close: flagged as holding at 15:15, "
+def not_confirmed_alert(symbol: str, pivot: float, close: Optional[float], check_time: str = "15:15") -> str:
+    return (f"✗ <b>{escape(symbol)}</b> didn't confirm on the close: flagged as holding at {ampm(check_time)}, "
             f"but the close {rs(close)} isn't a volume-confirmed breakout over the {rs(pivot)} pivot.")
 
 
@@ -429,13 +439,14 @@ def top_setup_caption(n: int, i: dict, ctx: Optional[dict] = None) -> str:
     return "\n".join(lines)
 
 
-def morning_plan(items: list[dict], plan_as_of: str, today: str) -> str:
+def morning_plan(items: list[dict], plan_as_of: str, today: str, intraday_start: str = "09:20",
+                 check_time: str = "15:15") -> str:
     lines = [f"☀️ <b>Today's plan</b> ({escape(today)}, from the {escape(plan_as_of)} scan)"]
     if not items:
         lines.append("No setups near a pivot today. Patience is a position.")
     lines += [_plan_line(n, i) for n, i in enumerate(items, 1)]
-    lines.append("<i>Heads-up alerts from 09:20 when a name trades above its pivot; the 15:15 check says whether "
-                 "it's holding into the close.</i>")
+    lines.append(f"<i>Heads-up alerts from {ampm(intraday_start)} when a name trades above its pivot; the "
+                 f"{ampm(check_time)} check says whether it's holding into the close.</i>")
     return "\n".join(lines)
 
 
@@ -481,7 +492,7 @@ def filing_alert(f: dict, why: str) -> str:
     text = f["text"] if len(f["text"]) <= 400 else f["text"][:397] + "…"
     lines = [f"{FILING_ICONS.get(f['kind'], '📰')} <b>{escape(f['symbol'])}</b> · {LABELS[f['kind']]} "
              f"<i>({escape(why)})</i>", escape(text),
-             f"<i>{escape(f['category'])} · {d.day} {d.strftime('%b %H:%M')}</i>"]
+             f"<i>{escape(f['category'])} · {d.day} {d:%b}, {ampm(d)}</i>"]
     if f.get("url", "").startswith("https://"):
         lines[-1] += f' · <a href="{escape(f["url"], quote=True)}">filing</a>'
     return "\n".join(lines)

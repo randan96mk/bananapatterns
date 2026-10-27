@@ -192,7 +192,7 @@ def test_opening_and_close_position_checks(monkeypatch):
     assert "GAPPY</b> opened ₹90.00, <b>under your stop</b> ₹92.00" in opening[0] and "1 other opened above" in opening[0]
     client.px["GAPPY"]["ltp"] = 93.0                                      # recovered by 15:15
     sch.run_close_check(ist(*DAY, 15, 15))
-    close = [h for _, h in fake.sent if "Positions at 15:15" in h]
+    close = [h for _, h in fake.sent if "Positions at 3:15 PM" in h]
     assert len(close) == 1 and "✅ <b>GAPPY</b> ₹93.00, back above the stop" in close[0] and "FINE: fine" in close[0]
     assert gap["stop"] == 92.0
 
@@ -202,7 +202,7 @@ def test_close_positions_still_under_says_exit(monkeypatch):
     hold(client, "LOSER", avg=100.0)
     client.px = {"LOSER": {"ltp": 90.0, "prev": 93.0}}
     sch.run_close_check(ist(*DAY, 15, 15))
-    close = [h for _, h in fake.sent if "Positions at 15:15" in h]
+    close = [h for _, h in fake.sent if "Positions at 3:15 PM" in h]
     assert len(close) == 1 and "still under the stop ₹92.00: <b>your rule says exit</b>" in close[0]
 
 

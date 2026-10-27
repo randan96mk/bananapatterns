@@ -165,8 +165,8 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
             chunk = msg.digest(screen, as_of or "sample", counts, moves)[0]
             add(k, chunk, None)
         elif k == "system":
-            add(k, msg.system_alert("Kite login needed for today's 18:30 evening scan "
-                                    "(tokens expire 06:00 IST). Open the dashboard and log in."), None)
+            add(k, msg.system_alert("Kite login needed for today's 6:30 PM evening scan "
+                                    "(tokens expire 6:00 AM IST). Open the dashboard and log in."), None)
         else:
             raise ValueError(f"Unknown sample kind {k!r}; use one of {SAMPLE_KINDS} or 'all'")
     out = []
