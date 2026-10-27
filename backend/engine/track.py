@@ -449,13 +449,17 @@ def built() -> bool:
 PERIODS = {"1w": 7, "1m": 31, "3m": 92, "6m": 183, "1y": 366}
 
 
-def rows(period: str = "1y", pattern: str = "all", tier: str = "all") -> list[dict]:
+def rows(period: str = "1y", pattern: str = "all", tier: str = "all", rules: str = "swing") -> list[dict]:
+    """Rows of the swing record, or of an intraday rule set (track_intraday)."""
     with get_db() as conn:
-        as_of = get_setting(conn, "track.as_of")
+        as_of = get_setting(conn, "track.as_of" if rules == "swing" else "track_intraday.as_of")
         if not as_of:
             return []
         since = (date.fromisoformat(as_of) - timedelta(days=PERIODS.get(period, 366))).isoformat()
-        q, args = "SELECT * FROM track_signals WHERE breakout_date >= ?", [since]
+        if rules == "swing":
+            q, args = "SELECT * FROM track_signals WHERE breakout_date >= ?", [since]
+        else:
+            q, args = "SELECT * FROM track_intraday WHERE rules = ? AND breakout_date >= ?", [rules, since]
         if pattern in PATTERNS:
             q, args = q + " AND pattern = ?", args + [pattern]
         if tier in ("A", "B"):
@@ -511,21 +515,24 @@ SIZING = (("1% risk, cash-limited", 0.01, 0.0), ("0.75% risk", 0.0075, 0.0),
           ("1% risk, max 10% per position", 0.01, 0.10), ("1% risk, max 20% per position", 0.01, 0.20))
 
 
-def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap):
+def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, max_new_per_day=0):
     """Replay the trade events day by day on one account. Each entry risks `risk_pct` of equity to the stop, capped
-    at `position_cap` of equity per position (0 = no cap) and by the cash left. -> (curve %, cash share, taken, skipped)"""
+    at `position_cap` of equity per position (0 = no cap) and by the cash left; at most max_new_per_day entries a
+    day (0 = any). Events with a time (intraday) run in time order. -> (curve %, cash share, taken, skipped)"""
     order = {"exit": 0, "half": 1, "breakeven": 2, "entry": 3}           # sell before buying on the same day
     tier_rank = {"A": 0, "B": 1}
     cash, equity, pos = capital, capital, {}
     taken = skipped = 0
     strategy, idle, last_px = [], [], {}
     for d in days:
-        evs = sorted(by_day.get(d, []), key=lambda x: (order[x[0]["kind"]], tier_rank.get(x[1].get("tier"), 2),
-                                                        PATTERNS.index(x[1]["pattern"])))
+        evs = sorted(by_day.get(d, []), key=lambda x: (x[0].get("time", ""), order[x[0]["kind"]],
+                                                        tier_rank.get(x[1].get("tier"), 2), PATTERNS.index(x[1]["pattern"])))
+        new_today = 0
         for ev, r in evs:
             key = (r["symbol"], r["breakout_date"])
             if ev["kind"] == "entry":
-                if len(pos) >= max_positions or not r.get("stop") or ev["price"] <= r["stop"]:
+                if len(pos) >= max_positions or not r.get("stop") or ev["price"] <= r["stop"] or (
+                        max_new_per_day and new_today >= max_new_per_day):
                     skipped += 1
                     continue
                 qty = floor(equity * risk_pct / (ev["price"] - r["stop"]))
@@ -538,6 +545,7 @@ def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap):
                 cash -= qty * ev["price"]
                 pos[key] = qty
                 taken += 1
+                new_today += 1
             elif key in pos and ev["kind"] in ("half", "exit"):
                 q = pos[key] // 2 if ev["kind"] == "half" else pos[key]
                 cash += q * ev["price"]
@@ -556,7 +564,7 @@ def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap):
     return strategy, idle, taken, skipped
 
 
-def portfolio(rs: list[dict], config: AppConfig) -> dict:
+def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0) -> dict:
     """Daily account value if every signal in `rs` was taken under the portfolio rules, vs Nifty 500 buy and hold."""
     from backend.ingest import universe as uni
     cfg = config.track
@@ -579,7 +587,7 @@ def portfolio(rs: list[dict], config: AppConfig) -> dict:
         for ev in r["events"]:
             by_day.setdefault(ev["date"], []).append((ev, r))
     strategy, idle, taken, skipped = _book(days, by_day, closes, cfg.capital, cfg.max_positions, cfg.risk_pct,
-                                           cfg.position_cap)
+                                           cfg.position_cap, max_new_per_day)
     nifty = [round((c["close"] / index[0]["close"] - 1) * 100, 2) for c in index] if index else []
 
     def drawdown(curve):
@@ -604,7 +612,7 @@ def portfolio(rs: list[dict], config: AppConfig) -> dict:
     for label, risk, cap in SIZING:
         current = (risk, cap) == (cfg.risk_pct, cfg.position_cap)
         curve, _, _, sk = ((strategy, idle, taken, skipped) if current else
-                           _book(days, by_day, closes, cfg.capital, cfg.max_positions, risk, cap))
+                           _book(days, by_day, closes, cfg.capital, cfg.max_positions, risk, cap, max_new_per_day))
         ret, dd = (curve[-1] if curve else None), drawdown(curve)
         sizing.append({"label": label, "risk_pct": risk, "position_cap": cap, "return": ret, "drawdown": dd,
                        "ratio": round(ret / -dd, 2) if ret is not None and dd < 0 else None, "skipped": sk,
@@ -622,7 +630,7 @@ def portfolio(rs: list[dict], config: AppConfig) -> dict:
                                   "cash_idle": 0.0}},
             "sizing": sizing,
             "settings": {"capital": cfg.capital, "risk_pct": cfg.risk_pct, "max_positions": cfg.max_positions,
-                         "position_cap": cfg.position_cap}}
+                         "position_cap": cfg.position_cap, "max_new_per_day": max_new_per_day}}
 
 
 def line(pattern: str, tier: Optional[str], mkt: Optional[str], min_trades: int = 10) -> Optional[str]:

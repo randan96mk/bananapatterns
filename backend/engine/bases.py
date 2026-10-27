@@ -115,8 +115,10 @@ def breakout_metrics(t: int, pivot: float, dates: list, high, low, close, vol, c
                     turnover_cr=_r(close[t] * vol[t] / 1e7), squat=squat, tags=tags)
 
 
-def detect_bases(candles: list[dict], cfg: BaseConfig) -> list[Base]:
-    """candles: ascending [{date, open, high, low, close, volume}]. Returns bases oldest first."""
+def detect_bases(candles: list[dict], cfg: BaseConfig, states: Optional[dict] = None) -> list[Base]:
+    """candles: ascending [{date, open, high, low, close, volume}]. Returns bases oldest first.
+    states: if given, filled with {t: (start, pivot, qualifies)}, the candidate base as it stood before bar t
+    (what the evening watchlist saw the day before); qualifies = long enough and after an advance."""
     n = len(candles)
     if n < 2:
         return []
@@ -162,6 +164,8 @@ def detect_bases(candles: list[dict], cfg: BaseConfig) -> list[Base]:
         return breakout_metrics(t, H, dates, high, low, close, vol, cfg)
 
     for t in range(1, n):
+        if states is not None:
+            states[t] = (s, H, t - s >= cfg.min_base_bars and qualifies(s))
         if not np.isnan(ma[t]) and close[t] < ma[t]:
             reset_pending = True
 

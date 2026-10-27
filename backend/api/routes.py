@@ -684,9 +684,18 @@ def today_sparks():
 
 # --- Track record ---
 
-def _track_rows(period: str, pattern: str, tier: str, status: str) -> list[dict]:
+TRACK_RULES = ("swing", "i5m", "iday")
+
+
+def _rules(rules: str) -> str:
+    if rules.lower() not in TRACK_RULES:
+        raise HTTPException(422, f"rules must be one of {', '.join(TRACK_RULES)}")
+    return rules.lower()
+
+
+def _track_rows(period: str, pattern: str, tier: str, status: str, rules: str = "swing") -> list[dict]:
     from backend.engine import track
-    rs = track.rows(period.lower(), pattern.lower(), tier.upper())
+    rs = track.rows(period.lower(), pattern.lower(), tier.upper(), rules)
     if status == "running":
         rs = [r for r in rs if r["status"] in ("running", "pending")]
     elif status == "closed":
@@ -697,27 +706,56 @@ def _track_rows(period: str, pattern: str, tier: str, status: str) -> list[dict]
 
 
 @router.get("/track")
-def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all"):
+def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all", rules: str = "swing"):
     """Track record: status line, summary numbers, by pattern / market, and the portfolio curve vs Nifty 500.
-    The period (1w / 1m / 3m / 6m / 1y) filters by breakout date; the curve follows the same filters."""
-    from backend.engine import track
+    The period (1w / 1m / 3m / 6m / 1y) filters by breakout date; the curve follows the same filters.
+    rules: swing (the swing record) or an intraday rule set (i5m / iday); rule_sets compares all built sets
+    on the same filters."""
+    from backend.engine import track, track_intraday as ti
     from backend.database.models import get_setting
-    rs = _track_rows(period, pattern, tier, status)
+    from dataclasses import asdict
+    rules = _rules(rules)
+    cfg = S().config
     with get_db() as conn:
-        meta = {k: get_setting(conn, f"track.{k}") for k in ("built_at", "updated_at", "as_of")}
-    rules = {k: getattr(S().config.track, k) for k in ("breakeven_pct", "book_half_pct", "exit_ma", "max_hold", "max_stop")}
-    return {"built": bool(meta["built_at"]), **meta, "progress": track.status(), "period": period.lower(), "rules": rules,
+        metas = {k: {m: get_setting(conn, f"{'track' if k == 'swing' else 'track_intraday'}.{m}")
+                     for m in ("built_at", "updated_at", "as_of")} for k in TRACK_RULES}
+    sets = []
+    for key in TRACK_RULES:
+        if not metas[key]["built_at"]:
+            continue
+        rs = _track_rows(period, pattern, tier, status, key)
+        st = track.stats(rs)
+        pf = track.portfolio(rs, cfg, 0 if key == "swing" else cfg.intraday.max_new_per_day)
+        sv = (pf.get("compare") or {}).get("strategy") or {}
+        dd = sv.get("drawdown")
+        sets.append({"rules": key, "name": ti.NAMES[key], "rows": rs, "stats": st, "portfolio": pf,
+                     "summary": {"rules": key, "name": ti.NAMES[key], "entered": st["counts"]["entered"],
+                                 "closed": st["counts"]["closed"], "win_rate": st["win_rate"], "avg_win": st["avg_win"],
+                                 "avg_loss": st["avg_loss"], "expectancy_r": st["expectancy_r"],
+                                 "profit_factor": st["profit_factor"], "return": sv.get("return"), "drawdown": dd,
+                                 "ratio": round(sv["return"] / -dd, 2) if sv.get("return") is not None and dd else None}})
+    cur = next((x for x in sets if x["rules"] == rules), None)
+    rs = cur["rows"] if cur else []
+    meta = metas[rules]
+    if rules == "swing":
+        shown = {k: getattr(cfg.track, k) for k in ("breakeven_pct", "book_half_pct", "exit_ma", "max_hold", "max_stop")}
+    else:
+        shown = asdict(cfg.intraday)
+    return {"built": bool(meta["built_at"]), **meta, "rules_set": rules, "name": ti.NAMES[rules],
+            "progress": (track if rules == "swing" else ti).status(), "period": period.lower(), "rules": shown,
+            "kite": bool(S().client.has_token),
             **track.stats(rs), "by_pattern": track.split(rs, "pattern"), "by_market": track.split(rs, "market"),
-            "portfolio": track.portfolio(rs, S().config)}
+            "portfolio": cur["portfolio"] if cur else track.portfolio([], cfg),
+            "rule_sets": [x["summary"] for x in sets] if len(sets) > 1 else []}
 
 
 @router.get("/track/trades")
-def track_trades(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all"):
+def track_trades(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all", rules: str = "swing"):
     """Trades grouped by stock (newest first), each with its exit timeline and the closes for its sparkline
     (a few sessions before the entry to a few after the exit, or to today while it runs)."""
     from datetime import date as _date, timedelta as _td
     groups: dict[str, list] = {}
-    for r in _track_rows(period, pattern, tier, status):
+    for r in _track_rows(period, pattern, tier, status, _rules(rules)):
         groups.setdefault(r["symbol"], []).append(r)
     tokens = {s["symbol"]: s["instrument_token"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
     with get_db() as conn:
@@ -744,6 +782,23 @@ def track_rebuild():
     if track.status()["state"] != "idle":
         raise HTTPException(409, "The track record is already building")
     threading.Thread(target=track.build, args=(S().config, True), name="track-rebuild", daemon=True).start()
+    return {"status": "started"}
+
+
+@router.post("/track/intraday/build")
+def track_intraday_build(rebuild: bool = False):
+    """Run the intraday entry backtest in the background: the watchlist's pivot crosses over the last year, with
+    the 5-minute candles fetched from Kite (needs today's login; about 3,000 requests, ~15-20 minutes)."""
+    from backend.engine import track, track_intraday as ti
+    st = S()
+    if not track.built():
+        raise HTTPException(409, "Build the swing track record first")
+    if ti.status()["state"] != "idle":
+        raise HTTPException(409, "The intraday backtest is already running")
+    if not st.client.has_token:
+        raise HTTPException(400, "Log in to Kite first: the backtest fetches 5-minute candles")
+    threading.Thread(target=ti.build, args=(st.config, st.client, rebuild), name="track-intraday",
+                     daemon=True).start()
     return {"status": "started"}
 
 

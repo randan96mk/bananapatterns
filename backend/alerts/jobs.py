@@ -284,6 +284,12 @@ class Scheduler:
             sent["track"] = track.build(st.config).get("added")
         except Exception:
             logger.exception("Track record update failed")
+        try:                                       # intraday backtest: today's pivot crosses (once it was run)
+            from backend.engine import track_intraday
+            if track_intraday.built() and st.client.has_token:
+                sent["track_intraday"] = track_intraday.build(st.config, st.client).get("added")
+        except Exception:
+            logger.exception("Intraday backtest update failed")
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
