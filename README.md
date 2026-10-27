@@ -952,6 +952,44 @@ Today's 5-minute line next to each name, with the stop or pivot dashed. It refre
 names without prices when there is no Kite login. The Screens positions card shows the same live price, chip and a
 stop-distance bar while the market is open.
 
+### Track record
+
+`backend/engine/track.py`. Every breakout the screens would have shown, the trade the swing rules make from it,
+and the portfolio those trades add up to (the 📈 Track record tab comes in the next PR; the data and API are here).
+
+**Signals.** The stored candles are replayed with the same detectors (they are causal: a breakout is known on its
+own bar). A signal is a volume-confirmed close above a pivot that passed the screen's gates **as of that date**:
+liquidity and the trend line; VCP rules on the base before the breakout; cup / flag RS and Trend Template
+minimums. RS ratings, the Trend Template, the industry rank, tier A/B and the market state are recomputed for that
+date (the breakout-success part of the market state isn't replayed; today's red flags don't apply). One signal per
+stock and day: VCP > Cup > Flag > Bases.
+
+**The trade** (`track` settings):
+
+| Step | Rule |
+|---|---|
+| Entry | the next session's open; ⛔ no entry beyond pivot + `buy_zone_pct` (5%) or at / under the stop |
+| 🛑 Stop | the pattern stop, never more than `max_stop` (8%) under the entry; exit on a close under it, at the open on a gap |
+| 🔒 Breakeven | a close +`breakeven_pct` (10%) moves the stop to the entry |
+| 🎯 Half | sell half when the price reaches +`book_half_pct` (20%) |
+| 📉 Rest | after the half: exit on a close under the `exit_ma` (50)-day SMA |
+| ⏱ 3M mark | still open after `max_hold` (63) sessions: valued at that close |
+
+One open trade per stock (a breakout during it is `in_trade`); after the exit, a new breakout is a re-entry.
+Snapshots at 1W / 2W / 1M / 3M (5 / 10 / 21 / 63 sessions; frozen at the exit). Result in % and R.
+
+**Portfolio** (the curve vs Nifty 500): `capital` ₹10L, `risk_pct` 1% of equity per trade sized by the stop,
+`max_positions` 10, a signal is skipped when the cap is reached or cash runs out. With stops of up to 8% each
+position is at least 12.5% of the account, so cash usually allows about 8 positions before the cap.
+
+**Built once, then added to.** At start-up (if never built) the last `window_days` (365) are built in the
+background, in seconds. The evening job then adds new breakouts and re-runs only pending / running trades from their
+entry with the new candle; closed rows never change. `POST /api/track/rebuild` rebuilds on purpose.
+
+**Alert line.** Breakout, heads-up, 3:15 PM check and plan alerts end with the record of similar closed trades:
+*📈 Track record (1Y): VCP · tier A · uptrend → 61% won, +0.71R avg, 38 trades* (falling back to pattern + tier,
+then pattern; fewer than `track_min_trades` (10): "too few past trades to judge"). `track_line` turns it off.
+
 ### Buttons and bot commands
 
 Stock alerts carry four buttons (`alert_buttons`), answered by the bot poller (`backend/alerts/commands.py`, your
@@ -1015,6 +1053,7 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/screens/scan` | rescan now (409 while a candle sync runs; the sync scans when it finishes) |
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
 | GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
+| GET | `/api/track?period=1w\|1m\|3m\|6m\|1y&pattern=&tier=&status=` · `/api/track/trades` · POST `/api/track/rebuild` | track record: status line, summary, by pattern / market, portfolio curve vs Nifty 500; trades grouped by stock; rebuild |
 | GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
@@ -1146,6 +1185,8 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `position_guard` / `profit_zone_pct` / `extended_pct` / `failed_days` | true / 20 / 25 / 3 | position guard rules |
 | `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
 | `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
+| `track_line` / `track_min_trades` | true / 10 | track record line on alerts |
+| `track.*`: `window_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `max_positions` | 365 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 10 | track record rules and portfolio |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
 | `login_heads_up` / `login_heads_up_time` | false / 05:45 | "session ends at 06:00" note |
@@ -1607,4 +1648,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   (`backend/timefmt.py`), and the dashboard (`frontend/src/timefmt.js`: ticker, Today page, Kite bar, Data, Alerts
   log, jobs, Logs; timestamps are read as IST whatever the device's time zone). Time settings stay 24-hour `HH:MM`
   inputs, each with its 12-hour value shown next to it. Alerts follow the configured check / scan / intraday times.
+
+### 2026-10-27: Track record (engine, data, API)
+- `backend/engine/track.py`: causal replay of the last year's breakouts gated as of each date, the swing trade rules,
+  portfolio curve vs Nifty 500, stats; `track_signals` table built once and added to by the evening job;
+  `/api/track`, `/api/track/trades`, `/api/track/rebuild`; track record line on alerts. 320 offline tests passing.
 

@@ -682,6 +682,53 @@ def today_sparks():
     return {"sparks": st.live.sparks([*positions, *setups], now)}
 
 
+# --- Track record ---
+
+def _track_rows(period: str, pattern: str, tier: str, status: str) -> list[dict]:
+    from backend.engine import track
+    rs = track.rows(period.lower(), pattern.lower(), tier.upper())
+    if status == "running":
+        rs = [r for r in rs if r["status"] in ("running", "pending")]
+    elif status == "closed":
+        rs = [r for r in rs if r["status"] in ("won", "lost")]
+    elif status == "no_entry":
+        rs = [r for r in rs if r["status"] == "no_entry"]
+    return rs
+
+
+@router.get("/track")
+def track_summary(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all"):
+    """Track record: status line, summary numbers, by pattern / market, and the portfolio curve vs Nifty 500.
+    The period (1w / 1m / 3m / 6m / 1y) filters by breakout date; the curve follows the same filters."""
+    from backend.engine import track
+    from backend.database.models import get_setting
+    rs = _track_rows(period, pattern, tier, status)
+    with get_db() as conn:
+        meta = {k: get_setting(conn, f"track.{k}") for k in ("built_at", "updated_at", "as_of")}
+    return {"built": bool(meta["built_at"]), **meta, "progress": track.status(), "period": period.lower(),
+            **track.stats(rs), "by_pattern": track.split(rs, "pattern"), "by_market": track.split(rs, "market"),
+            "portfolio": track.portfolio(rs, S().config)}
+
+
+@router.get("/track/trades")
+def track_trades(period: str = "1y", pattern: str = "all", tier: str = "all", status: str = "all"):
+    """Trades grouped by stock (newest first), each with its exit timeline."""
+    groups: dict[str, list] = {}
+    for r in _track_rows(period, pattern, tier, status):
+        groups.setdefault(r["symbol"], []).append(r)
+    return {"stocks": [{"symbol": sym, "trades": ts} for sym, ts in groups.items()]}
+
+
+@router.post("/track/rebuild")
+def track_rebuild():
+    """Rebuild the whole track record in the background (e.g. after changing a pattern setting)."""
+    from backend.engine import track
+    if track.status()["state"] != "idle":
+        raise HTTPException(409, "The track record is already building")
+    threading.Thread(target=track.build, args=(S().config, True), name="track-rebuild", daemon=True).start()
+    return {"status": "started"}
+
+
 @router.put("/positions/{symbol}")
 def positions_set_stop(symbol: str, req: StopRequest):
     from backend.alerts import guard
