@@ -130,7 +130,7 @@ def test_heads_up_volume_verdicts(monkeypatch):
     r = sch.run_intraday(ist(*DAY, 11, 0))
     assert r["sent"] == 3
     text = {h.split("</b>")[0].split("<b>")[-1]: h for _, h in fake.sent}
-    assert "Strong volume" in text["S1"] and "Weak volume" in text["S2"] and "wait for the 15:15 check" in text["S2"]
+    assert "Strong volume" in text["S1"] and "Weak volume" in text["S2"] and "wait for the 3:15 PM check" in text["S2"]
     assert "Extended" in text["S3"] and "Strong volume" not in text["S3"]
 
 
@@ -166,7 +166,7 @@ def test_close_check_verdicts_and_charts(monkeypatch):
     assert any("X1: too far above the pivot" in h for h in heads)
     assert not any("<b>B1:" in h for h in heads) and len(fake.sent) == 3          # 3 names: one each
     holding = next(h for _, h in fake.sent if "H1: breakout holding" in h)
-    assert "act before 15:30" in holding and "Verdict: Holding into the close" in holding
+    assert "act before 3:30 PM" in holding and "Verdict: Holding into the close" in holding
     assert ("photo", holding) in fake.sent
     with get_db() as conn:
         assert itd.flags(conn, "2026-10-26") == {"H1": {"close_holding"}, "W1": {"close_weak"},
@@ -208,7 +208,7 @@ def test_evening_alerts_refer_to_the_close_check():
     fake = FakeTG()
     dispatch_scan(as_of, cfg, BaseConfig(reset_ma=0), Notifier(cfg, fake), tokens)
     bo = next(h for _, h in fake.sent if "FRESH" in h and "broke out" in h)
-    assert "Flagged at 15:15" in bo
+    assert "Flagged at 3:15 PM" in bo
     nc = [h for _, h in fake.sent if "didn't confirm on the close" in h]
     assert len(nc) == 1 and "NEAR" in nc[0]
 

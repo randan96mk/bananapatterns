@@ -20,6 +20,7 @@ from typing import Optional
 
 import numpy as np
 
+from backend.timefmt import ampm
 from backend.alerts import charts
 from backend.config import AlertsConfig, BaseConfig, VcpConfig
 from backend.engine.bases import Base, breakout_metrics, detect_bases
@@ -35,7 +36,7 @@ STAGE_TEXT = {"breakout": "FRESH BREAKOUT", "breakout_low_volume": "BREAKOUT ON 
               "forming": "FORMING — waiting for a close above the pivot",
               "near_pivot": "NEAR THE PIVOT — a close above it is a breakout",
               "intraday": "INTRADAY — above the pivot, UNCONFIRMED until the close",
-              "close_check": "15:15 CHECK — is the breakout holding into the close?"}
+              "close_check": "{check} CHECK — is the breakout holding into the close?"}
 LIVE_KINDS = {"intraday", "close_check"}
 
 
@@ -153,8 +154,9 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
         state = (live or {}).get("verdict")
         if state == "holding":
             verdict, vcolor = "Holding into the close ✓", UP
-            watch = [f"Buy zone {_rs(pivot)} – {_rs(zone_top)}, before 15:30.",
-                     f"Stop {_rs(stop)}: exit on a close below it.", "The 18:30 scan confirms it on the close."]
+            watch = [f"Buy zone {_rs(pivot)} – {_rs(zone_top)}, before 3:30 PM.",
+                     f"Stop {_rs(stop)}: exit on a close below it.",
+                     f"The {ampm(alerts_cfg.job_time)} scan confirms it on the close."]
         elif state == "extended":
             verdict, vcolor = "Extended — don't chase ✗", DOWN
             watch = [f"{ext:+.1f}% above the pivot, beyond the buy zone ({_rs(zone_top)}).",
@@ -162,7 +164,8 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
         else:
             verdict, vcolor = "Above the pivot, but weak ⚠", ACC
             watch = ["Volume or the close may not confirm the breakout.",
-                     "Wait for the 18:30 confirmation or a better day.", f"Counts only on a close above {_rs(pivot)}."]
+                     f"Wait for the {ampm(alerts_cfg.job_time)} confirmation or a better day.",
+                     f"Counts only on a close above {_rs(pivot)}."]
     else:                                                         # forming / near_pivot
         verdict = ("Cup & handle forming ✓" if cup else f"{pattern.capitalize()} forming ✓" if flag
                    else "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)")
@@ -187,6 +190,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
             "pivot": pivot, "stop": stop, "zone_top": zone_top, "close": close, "ext_pct": ext,
             "risk_pct": (close - stop) / close * 100, "ma50": ma50, "checks": checks, "verdict": verdict,
             "verdict_color": vcolor, "watch": watch, "size": size, "ended": ended, "live": live,
+            "check_time": ampm(alerts_cfg.close_check_time),
             "date": candles[-1]["date"]}
 
 
@@ -497,7 +501,7 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
 
     head_color = UP if kind in ("breakout", "climbing") else DOWN if kind in ("below_pivot", "played_out") else ACC
     fig.text(.05, .94, f"{ctx['symbol']} · {ctx['company']}", color=TEXT, fontsize=16, fontweight="bold")
-    fig.text(.05, .9, f"{STAGE_TEXT.get(kind, kind)}   ·   {base.label}   ·   {ctx['industry']}   ·   "
+    fig.text(.05, .9, f"{STAGE_TEXT.get(kind, kind).replace('{check}', ctx.get('check_time', '3:15 PM'))}   ·   {base.label}   ·   {ctx['industry']}   ·   "
                       f"data to {ctx['date']}", color=head_color, fontsize=10.5)
 
     y = [0.99]

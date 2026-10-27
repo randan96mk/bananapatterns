@@ -20,6 +20,7 @@ from backend.alerts.telegram import TelegramClient
 from backend.config import IST
 from backend.database.models import get_candles, get_db, now_ist
 from backend.kite_api import auth
+from backend.timefmt import ampm_date
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("bot")
@@ -154,7 +155,7 @@ class BotCommands:
             if session_ok(st):
                 with get_db() as conn:
                     _, issued = auth.load_token(conn)
-                until = f" until {auth.expiry_for(issued):%H:%M %d %b}" if issued and st.token_source == "db" else ""
+                until = f" until {ampm_date(auth.expiry_for(issued))} IST" if issued and st.token_source == "db" else ""
                 text = f"✅ Kite session OK{until}."
             else:
                 text = "🔑 No Kite session. Send /login for a link."

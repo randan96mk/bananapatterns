@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
+from backend.timefmt import ampm_date
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
 from backend.database.models import get_candles, get_db, get_logs, get_runs, latest_universe, now_ist
 from backend.engine.bases import detect_bases
@@ -119,7 +120,7 @@ def S() -> AppState:
 
 def _require_token() -> None:
     if not S().token_valid():
-        raise HTTPException(401, "Kite login required (token missing or expired at 06:00 IST).")
+        raise HTTPException(401, "Kite login required (token missing or expired at 6:00 AM IST).")
 
 
 # --- Kite auth ---
@@ -178,7 +179,7 @@ def kite_callback(request: Request, request_token: str = Query(None), status: st
     if not n:
         target = os.getenv("BP_FRONTEND_URL") or ("/" if FRONTEND_BUILD.exists() else "http://localhost:3000/")
         return RedirectResponse(f"{target}?kite=connected")
-    return _page("✅ Kite connected", f"<p>Valid until {auth.expiry_for(issued):%H:%M, %d %b} (IST).</p>"
+    return _page("✅ Kite connected", f"<p>Valid until {ampm_date(auth.expiry_for(issued))} IST.</p>"
                  "<p>You can close this page.</p>")
 
 

@@ -216,7 +216,7 @@ def test_heads_up_only_with_active_session():
     fake, st = FakeTG(), LoginState()
     st.config.alerts.login_heads_up = True
     scheduler(st, fake).tick(ist(2026, 10, 26, 5, 46))
-    assert len(fake.sent) == 1 and "ends at 06:00" in fake.sent[0][1] and "06:01" in fake.sent[0][1]
+    assert len(fake.sent) == 1 and "ends at 6:00 AM IST" in fake.sent[0][1] and "6:01 AM" in fake.sent[0][1]
 
 
 def test_evening_reminder_carries_link():
@@ -261,7 +261,7 @@ def test_status_command_with_session():
         auth.store_token(conn, "t", ist(2026, 10, 26, 6, 5))
     fake, st = BotTG([update(1, "/status")]), LoginState()
     BotCommands(st, clock=lambda: now).poll_once(Notifier(st.config.alerts, fake))
-    assert "session OK until 06:00 27 Oct" in fake.sent[0][1]
+    assert "session OK until 6:00 AM, 27 Oct IST" in fake.sent[0][1]
 
 
 @pytest.mark.parametrize("cmd", ["/help", "/start"])

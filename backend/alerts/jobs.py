@@ -39,6 +39,7 @@ from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
 from backend.alerts.login import send_login_link, session_ok
 from backend.alerts.priority import MarketContext, decorate, gate
 from backend.config import IST, AlertsConfig
+from backend.timefmt import ampm
 from backend.database.models import get_candles, get_db, latest_universe, now_ist
 from backend.ingest import events
 from backend.ingest import filings
@@ -184,8 +185,8 @@ class Scheduler:
             self.record("reminder", today, "ok", "Kite login present", started)
             return
         self._login_needed(f"{today}|login-reminder", now,
-                           f"Kite login needed for today's {self.state.config.alerts.job_time} evening scan "
-                           "(tokens expire 06:00 IST). Open the dashboard and log in.")
+                           f"Kite login needed for today's {ampm(self.state.config.alerts.job_time)} evening scan "
+                           "(tokens expire 6:00 AM IST). Open the dashboard and log in.")
         self.record("reminder", today, "ok", "reminder sent", started)
 
     def _login_needed(self, key: str, now: datetime, text: str, notifier: Optional[Notifier] = None) -> None:
@@ -243,7 +244,7 @@ class Scheduler:
                                                           "runs within 15 minutes (or press Run evening job now).",
                                notifier)
             if now >= cutoff_login and not force:
-                self.record("eod", today, "failed", "no Kite login by 23:00", started)
+                self.record("eod", today, "failed", "no Kite login by 11:00 PM", started)
             else:
                 self.not_before["eod"] = now + timedelta(minutes=15)
                 self.record("eod", today, "waiting", "Kite login missing", started)
@@ -266,7 +267,7 @@ class Scheduler:
         if as_of != today.isoformat() and not force:
             if now >= cutoff_data:
                 self.record("eod", today, "no_session", f"no {today} bar from Kite (holiday or no data)", started)
-                notifier.system(f"{today}|eod-nodata", f"No {today} bar from Kite by 22:30: no stage alerts today.")
+                notifier.system(f"{today}|eod-nodata", f"No {today} bar from Kite by 10:30 PM: no stage alerts today.")
             else:
                 self.not_before["eod"] = now + timedelta(minutes=30)
                 self.record("eod", today, "retry", f"latest bar {as_of}; retrying in 30 min", started)
@@ -626,7 +627,7 @@ class Scheduler:
             else:
                 fine.append(pos["symbol"])
         sent = bool(rows) and self.notifier().send(f"{today}|close-positions", "guard",
-                                                   msg.close_positions(rows, fine))
+                                                   msg.close_positions(rows, fine, cfg.close_check_time))
         return {"flagged": len(rows), "sent": sent}
 
     def run_close_check(self, now: datetime) -> dict:
@@ -671,13 +672,14 @@ class Scheduler:
             live = dict(i["live"], pace=i["pace"], range=i["rng"], verdict=i["verdict"])
             png, ctx = decision_for(i["hist"], i["p"], "close_check", cfg, st.config.bases, st.config.vcp,
                                     live=live, **sizing) if i["hist"] else (None, None)
-            html = msg.close_alert(i["p"], i["verdict"], i["ltp"], i["pace"], i["rng"], i["zone_top"], ctx, i["ck"])
+            html = msg.close_alert(i["p"], i["verdict"], i["ltp"], i["pace"], i["rng"], i["zone_top"], ctx, i["ck"],
+                                   cfg.job_time)
             if notifier.send(f"{today}|close|{i['symbol']}", "close_check", decorate(html, "close_check", i["tier"], mc),
                              i["symbol"], png):
                 sent += 1
         rest = {i["symbol"] for i in individual}
         if len(listable) > len(rest & {i["symbol"] for i in listable}) and notifier.send(
-                f"{today}|close-summary", "close_check", decorate(msg.close_summary(listable, rest), "summary", None, mc)):
+                f"{today}|close-summary", "close_check", decorate(msg.close_summary(listable, rest, cfg.close_check_time), "summary", None, mc)):
             sent += 1
         counts = {v: sum(i["verdict"] == v for i in items) for v in order}
         try:
@@ -728,7 +730,9 @@ class Scheduler:
         plan_as_of, items = pl.latest_plan(before=today.isoformat())
         mc, _ = self._market()
         sent = self.notifier().send(f"{today}|morning", "plan",
-                                    decorate(msg.morning_plan(items, plan_as_of or "no", today.isoformat()), "plan",
+                                    decorate(msg.morning_plan(items, plan_as_of or "no", today.isoformat(),
+                                                     self.state.config.alerts.intraday_start,
+                                                     self.state.config.alerts.close_check_time), "plan",
                                              None, mc)) if plan_as_of else False
         self.record("morning_plan", today, "ok", f"{len(items)} triggers; sent {sent}" if plan_as_of
                     else "no saved plan yet", started)

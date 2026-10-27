@@ -21,7 +21,8 @@ def send_login_link(state, notifier: Notifier, reason: str, key: str, now: Optio
         return False
     with get_db() as conn:
         url, expires = ll.create_link(conn, state.client.login_url(), "telegram", now)
-    return notifier.send(key, "login", msg.login_link_alert(reason, expires), buttons=[("🔑 Log in to Kite", url)])
+    return notifier.send(key, "login", msg.login_link_alert(reason, expires, state.config.alerts.intraday_start),
+                         buttons=[("🔑 Log in to Kite", url)])
 
 
 def session_ok(state) -> bool:

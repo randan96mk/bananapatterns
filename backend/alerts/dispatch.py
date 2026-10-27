@@ -280,7 +280,7 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                     cir = (last["close"] - last["low"]) / rng if rng > 0 else None
                     png, ctx = decision_for(cs, p, kind, cfg, bases_cfg, vcp_cfg, **sizing)
             html = msg.stage_alert(kind, screen, m["text"], p or {"symbol": m["symbol"]}, cir, ctx)
-            note = msg.confirm_note(close_flag.get(m["symbol"])) if kind == "breakout" else None
+            note = msg.confirm_note(close_flag.get(m["symbol"]), cfg.close_check_time) if kind == "breakout" else None
             if note:
                 html += "\n" + note
             html = decorate(html, kind, m["tier"], mc)
@@ -320,7 +320,7 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
         for sym, flag in close_flag.items():
             if flag == "close_holding" and sym not in confirmed and sym in last_close:
                 pivot, close = last_close[sym]
-                if notifier.send(f"{as_of}|noconfirm|{sym}", "intraday", msg.not_confirmed_alert(sym, pivot, close), sym):
+                if notifier.send(f"{as_of}|noconfirm|{sym}", "intraday", msg.not_confirmed_alert(sym, pivot, close, cfg.close_check_time), sym):
                     sent["stage"] += 1
     logger.info("Alerts for %s: %s", as_of, sent)
     return sent
