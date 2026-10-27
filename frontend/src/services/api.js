@@ -64,3 +64,6 @@ export const getNews = () => req('GET', '/api/news');
 export const getIndices = () => req('GET', '/api/indices');
 export const getToday = () => req('GET', '/api/today');
 export const getTodaySparks = () => req('GET', '/api/today/sparks');
+export const getOrb = (period) => req('GET', `/api/orb?period=${period}`);
+export const getOrbTrades = (period, status, limit, offset) => req('GET', `/api/orb/trades?period=${period}&status=${status}&limit=${limit}&offset=${offset}`);
+export const buildOrb = (rebuild = false) => req('POST', `/api/orb/build?rebuild=${rebuild}`);
