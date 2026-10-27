@@ -1002,14 +1002,22 @@ of the account in one stock.
 1% risk cash-limited, 0.75% risk, 1% risk with a 10% cap and 1% risk with a 20% cap (the default, marked "used
 above"). Columns: return, worst drawdown, return ÷ drawdown (higher is smoother) and signals skipped.
 
-**Built once, then added to.** At start-up (if never built) the last `window_days` (365) are built in the
+**Costs.** Every return on the tab is after costs: `cost_pct` (0.25%) a round trip for STT, stamp duty, exchange
+charges, GST and the DP charge, plus `slippage_pct` (0.05%) on every fill (the buy fills higher, each sale lower).
+The rule-set table also shows the average result per closed trade after costs; expectancy in R is before costs.
+
+**Built once, then added to.** At start-up (if never built, or built for another `history_days`) the last
+`history_days` (730, two years; the 2Y period chip shows all of it) are built in the
 background, in seconds. The evening job then adds new breakouts and re-runs only pending / running trades from their
 entry with the new candle; closed rows never change. `POST /api/track/rebuild` rebuilds on purpose.
 
 ### Intraday entry backtest
 
 The **Rules** chips on the Track record tab switch between the swing record and two intraday rule sets, which buy the
-same watchlist on the breakout day from 5-minute candles (`backend/engine/track_intraday.py`). Only the trail differs:
+same watchlist on the breakout day from 5-minute candles (`backend/engine/track_intraday.py`). The rule sets differ
+only in the trail and the stop: **5-min trail**, **daily trail**, and the daily trail with the stop at least
+**0.5%** / **0.75%** under the entry (a closer stop is moved down to that, to test whether a little room stops the
+noise exits):
 
 | Step | Rule (`intraday.*` settings) |
 |---|---|
@@ -1025,8 +1033,10 @@ both intraday sets side by side for the same filters (trades, win rate, avg win 
 return, worst drawdown, return ÷ drawdown).
 
 **Running it.** The first run is the **Run the intraday backtest** button on the tab (needs that day's Kite login):
-it fetches 5-minute candles from Kite for the crossing days only (about 3,000 requests at ~3 a second, 15–20 minutes,
-stored in `candles_5m`, roughly 50 MB). After that the evening job adds each new day. `POST /api/track/intraday/build`
+it fetches 5-minute candles from Kite for the crossing days only (about 3,000 requests a year of history at ~3 a
+second, 15–20 minutes a year, stored in `candles_5m`, roughly 50 MB a year). When the rule sets change (a new
+`VERSION`) or `history_days` changes, the tab says **Re-run needed** and the button re-runs it from scratch, re-using
+the stored candles; the evening job doesn't update a stale backtest. After that the evening job adds each new day. `POST /api/track/intraday/build`
 (`?rebuild=true` re-runs from scratch, re-using the stored candles).
 
 **Alert line.** Breakout, heads-up, 3:15 PM check and plan alerts end with the record of similar closed trades:
@@ -1229,7 +1239,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
 | `entry_checklist` / `opening_range_min` / `today_near_pct` | true / 30 / 3 | entry checklist on heads-ups; Today page near-pivot range |
 | `track_line` / `track_min_trades` | true / 10 | track record line on alerts |
-| `track.*`: `window_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` | 365 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 | track record rules and portfolio |
+| `track.*`: `history_days` / `max_stop` / `breakeven_pct` / `book_half_pct` / `exit_ma` / `max_hold` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `slippage_pct` | 730 / 0.08 / 10 / 20 / 50 / 63 / 1,000,000 / 0.01 / 0.20 / 10 / 0.25 / 0.05 | track record rules, portfolio and costs |
 | `intraday.*`: `or_minutes` / `entry_start` / `entry_end` / `max_ext_pct` / `gap_max_pct` / `volume_pace` / `max_stop_pct` / `target_pct` / `book_frac` / `atr_mult` / `atr_len` / `max_hold` / `max_new_per_day` / `fetch_sessions` | 15 / 9:30 AM / 1:30 PM / 3 / 3 / 1.5 / 1.5 / 2 / 0.5 / 2 / 14 / 63 / 4 / 15 | intraday entry backtest (times stored as "09:30" / "13:30") |
 | `alert_buttons` / `mute_days` | true / 30 | buttons under stock alerts; how long Mute lasts |
 | `login_links` / `login_times` | true / 06:01, 08:45 | Kite login link when no session (times must be ≥ 06:00) |
@@ -1716,3 +1726,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `/api/track?rules=`, `rule_sets`; `/api/track/trades?rules=`; `POST /api/track/intraday/build`; evening update.
 - `_book()` runs same-day events in time order and caps new entries a day. Track tab: Rules chips, **Rule sets
   compared**, the run button with progress, entry / booking / exit times, failed crosses folded per stock.
+
+### 2026-10-27: Intraday backtest phase 1b: costs, stop minimums, two years
+- Costs: `track.cost_pct` (0.25% round trip) and `slippage_pct` (0.05% a fill) in every portfolio replay
+  (`_book(fill=)`) and as `net_avg_pct` per closed trade (`track.net_pct`); half sales store their `frac`.
+- Rule sets `iday_s50` / `iday_s75`: the daily trail with the stop at least 0.5% / 0.75% under the entry.
+- `track.history_days` (730) replaces `window_days`, so the new default applies over saved settings; a build for
+  another history (or another intraday `VERSION`) is rebuilt (swing: at start-up / the evening job; intraday: the
+  re-run button). 2Y period chip.
+- Speed: one query for all closes (`_closes`, shared between rule sets), the per-rule-set results kept until the
+  next build, and the trade list shows 60 stocks at a time.

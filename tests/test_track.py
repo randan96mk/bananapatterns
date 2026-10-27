@@ -100,7 +100,14 @@ def app_config():
     c = AppConfig()
     c.bases = BaseConfig(reset_ma=0)
     c.screen = ScreenConfig(trend_ma=0, min_turnover_cr=0)
-    c.track = replace(c.track, window_days=3650)
+    c.track = replace(c.track, history_days=3650)
+    return c
+
+
+def free_config():
+    """app_config() without trading costs (sizing tests count shares, not charges)."""
+    c = app_config()
+    c.track = replace(c.track, cost_pct=0.0, slippage_pct=0.0)
     return c
 
 
@@ -216,16 +223,16 @@ def test_portfolio_sizes_by_the_stop_and_caps_positions(monkeypatch):
     setup_db(monkeypatch, series)
     d0 = days[0]["date"]
     rows = [trade(f"S{i}", d0, 100.0, 92.0, 100.0, "running") for i in range(12)]
-    p = track.portfolio(rows, app_config())
+    p = track.portfolio(rows, free_config())
     # 1% of 10L = 10,000 risk / 8 per share = 1,250 shares = 1.25L each: cash runs out after 8 positions
     assert p["taken"] == 8 and p["skipped"] == 4
     assert p["strategy"][0] == pytest.approx(0.0, abs=0.01) and p["compare"]["strategy"]["cash_idle"] < 1
     # a tighter stop means a bigger position (4% stop: 2,500 shares = 2.5L), but the 20% cap holds it to 2L: 5 fit
     tight = [trade(f"S{i}", d0, 100.0, 96.0, 100.0, "running") for i in range(12)]
-    p2 = track.portfolio(tight, app_config())
+    p2 = track.portfolio(tight, free_config())
     assert p2["taken"] == 5 and p2["settings"]["position_cap"] == 0.20
     # without the cap only 4 fit; the comparison runs the same trades through each sizing option
-    cfg = app_config()
+    cfg = free_config()
     cfg.track.position_cap = 0.0
     assert track.portfolio(tight, cfg)["taken"] == 4
     sz = {x["label"]: x for x in p2["sizing"]}
@@ -233,7 +240,7 @@ def test_portfolio_sizes_by_the_stop_and_caps_positions(monkeypatch):
     assert sz["0.75% risk"]["skipped"] == 6     # 1,875 shares = 1.875L each: 5 fit, a 6th gets the cash left
     assert sz["1% risk, max 20% per position"]["current"] and sum(x["current"] for x in p2["sizing"]) == 1
     # a 16% stop: 625 shares = 62,500 each, so the 10-position cap binds first
-    p3 = track.portfolio([trade(f"S{i}", d0, 100.0, 84.0, 100.0, "running") for i in range(12)], app_config())
+    p3 = track.portfolio([trade(f"S{i}", d0, 100.0, 84.0, 100.0, "running") for i in range(12)], free_config())
     assert p3["taken"] == 10 and p3["skipped"] == 2
 
 

@@ -328,7 +328,7 @@ class AlertsConfig:
 @dataclass
 class TrackConfig:
     """Track record: the swing rules replayed on every breakout, and the portfolio they make."""
-    window_days: int = 365                 # how far back the first build looks for breakouts
+    history_days: int = 730                # how far back the record goes (swing and intraday)
     max_stop: float = 0.08                 # stop = pattern stop, never more than this under the entry
     breakeven_pct: float = 10.0            # a close this far up moves the stop to the entry
     book_half_pct: float = 20.0            # sell half when the price reaches this gain
@@ -338,6 +338,8 @@ class TrackConfig:
     risk_pct: float = 0.01                 # ... risk per trade, sized by the stop
     position_cap: float = 0.20             # ... and never more than this share of the account in one stock (0 = off)
     max_positions: int = 10                # ... open at once; a new signal is skipped when full
+    cost_pct: float = 0.25                 # round trip, % of the traded value: STT, stamp duty, exchange, GST, DP
+    slippage_pct: float = 0.05             # each fill, % worse than the rule's price
 
 
 @dataclass

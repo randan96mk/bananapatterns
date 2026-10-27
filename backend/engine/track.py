@@ -19,7 +19,7 @@ Trade     entry = the next session's open; no entry when it opens beyond pivot +
           One open trade per stock: a breakout while one runs is "in_trade"; after the exit it is a re-entry.
 Portfolio capital, risk_pct of equity per trade sized by the stop, max_positions open at once.
 
-Built once (window_days back); each evening only new breakouts are added and pending / running trades are
+Built once (history_days back; a different history_days rebuilds it); each evening only new breakouts are added and pending / running trades are
 re-run from their entry with the new candle (the same result as stepping a day). Closed rows never change.
 """
 
@@ -386,12 +386,15 @@ def _replay_symbol(u: Universe, sym: str, stored: list[dict], new: list[dict]) -
 
 
 def build(config: AppConfig, rebuild: bool = False) -> dict:
-    """First build (or a deliberate rebuild): every breakout in the last window_days. Otherwise the daily update."""
+    """First build (or a deliberate rebuild): every breakout in the last history_days. Otherwise the daily update
+    (a rebuild when history_days changed)."""
     if not _lock.acquire(blocking=False):
         return {"status": "busy"}
     try:
         with get_db() as conn:
             built = get_setting(conn, "track.built_at")
+            if built and get_setting(conn, "track.history_days") != str(config.track.history_days):
+                rebuild = True
             if rebuild:
                 conn.execute("DELETE FROM track_signals")
                 built = None
@@ -401,7 +404,7 @@ def build(config: AppConfig, rebuild: bool = False) -> dict:
             _status.update(state="idle", message="no candles yet")
             return {"status": "no_data"}
         latest = max(d[-1] for d in u.dates.values())
-        since = (date.fromisoformat(latest) - timedelta(days=config.track.window_days)).isoformat()
+        since = (date.fromisoformat(latest) - timedelta(days=config.track.history_days)).isoformat()
         with get_db() as conn:
             stored = {}
             for r in conn.execute("SELECT * FROM track_signals"):
@@ -427,6 +430,7 @@ def build(config: AppConfig, rebuild: bool = False) -> dict:
             set_setting(conn, "track.built_at", built or now_ist())
             set_setting(conn, "track.updated_at", now_ist())
             set_setting(conn, "track.as_of", latest)
+            set_setting(conn, "track.history_days", str(config.track.history_days))
         msg = f"{'updated' if built else 'built'}: {added} new breakouts, {len(rows)} rows written (data to {latest})"
         logger.info("Track record %s", msg)
         _status.update(state="idle", message=msg, at=now_ist())
@@ -444,9 +448,16 @@ def built() -> bool:
         return bool(get_setting(conn, "track.built_at"))
 
 
+def stale(config: AppConfig) -> bool:
+    """Built for another history_days: the next build rebuilds it."""
+    with get_db() as conn:
+        return bool(get_setting(conn, "track.built_at")) and \
+            get_setting(conn, "track.history_days") != str(config.track.history_days)
+
+
 # --- reading: summary, portfolio curve, trades ---------------------------------------------
 
-PERIODS = {"1w": 7, "1m": 31, "3m": 92, "6m": 183, "1y": 366}
+PERIODS = {"1w": 7, "1m": 31, "3m": 92, "6m": 183, "1y": 366, "2y": 731}
 
 
 def rows(period: str = "1y", pattern: str = "all", tier: str = "all", rules: str = "swing") -> list[dict]:
@@ -477,8 +488,34 @@ def _avg(xs) -> Optional[float]:
     return round(sum(xs) / len(xs), 2) if xs else None
 
 
-def stats(rs: list[dict]) -> dict:
-    """Status line and the summary numbers for a set of rows."""
+def _fill(cfg) -> float:
+    """Cost of one fill as a fraction: slippage plus half the round-trip charges."""
+    return (cfg.slippage_pct + cfg.cost_pct / 2) / 100 if cfg is not None else 0.0
+
+
+def net_pct(r: dict, cfg) -> Optional[float]:
+    """A closed trade's result after costs (TrackConfig cost_pct / slippage_pct): the buy fills higher, every sale
+    lower. Partial sales use their `frac` (half = 0.5 when not stored)."""
+    evs = r.get("events") or []
+    if r.get("status") not in ("won", "lost") or not evs or evs[0].get("kind") != "entry":
+        return None
+    k = _fill(cfg)
+    buy, left, total = evs[0]["price"] * (1 + k), 1.0, 0.0
+    for e in evs[1:]:
+        if e["kind"] == "half":
+            f = e.get("frac", 0.5)
+        elif e["kind"] == "exit":
+            f = left
+        else:
+            continue
+        total += f * (e["price"] * (1 - k) / buy - 1)
+        left -= f
+    return round(total * 100, 2)
+
+
+def stats(rs: list[dict], costs=None) -> dict:
+    """Status line and the summary numbers for a set of rows (with `costs`, a TrackConfig: the per-trade result
+    after costs too)."""
     by = {k: [r for r in rs if r["status"] == k] for k in ("pending", "running", "won", "lost", "no_entry", "in_trade")}
     closed, entered = by["won"] + by["lost"], by["won"] + by["lost"] + by["running"]
     win_r = sum(r["r"] for r in by["won"] if r["r"] is not None)
@@ -493,6 +530,7 @@ def stats(rs: list[dict]) -> dict:
             "hold_days": {"all": _avg([r["days"] for r in closed]), "won": _avg([r["days"] for r in by["won"]]),
                           "lost": _avg([r["days"] for r in by["lost"]])},
             "profit_factor": round(win_r / loss_r, 2) if loss_r > 0 else None,
+            "net_avg_pct": _avg([net_pct(r, costs) for r in closed]) if costs is not None else None,
             "stopped_pct": round(100 * sum(1 for r in closed if (r["reason"] or "").startswith(("stop", "gap under the")))
                                  / len(closed), 1) if closed else None}
 
@@ -515,10 +553,11 @@ SIZING = (("1% risk, cash-limited", 0.01, 0.0), ("0.75% risk", 0.0075, 0.0),
           ("1% risk, max 10% per position", 0.01, 0.10), ("1% risk, max 20% per position", 0.01, 0.20))
 
 
-def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, max_new_per_day=0):
+def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, max_new_per_day=0, fill=0.0):
     """Replay the trade events day by day on one account. Each entry risks `risk_pct` of equity to the stop, capped
     at `position_cap` of equity per position (0 = no cap) and by the cash left; at most max_new_per_day entries a
-    day (0 = any). Events with a time (intraday) run in time order. -> (curve %, cash share, taken, skipped)"""
+    day (0 = any). Each fill costs `fill` (a fraction: slippage + charges). Events with a time (intraday) run in
+    time order. -> (curve %, cash share, taken, skipped)"""
     order = {"exit": 0, "half": 1, "breakeven": 2, "entry": 3}           # sell before buying on the same day
     tier_rank = {"A": 0, "B": 1}
     cash, equity, pos = capital, capital, {}
@@ -538,17 +577,17 @@ def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, 
                 qty = floor(equity * risk_pct / (ev["price"] - r["stop"]))
                 if position_cap > 0:
                     qty = min(qty, floor(equity * position_cap / ev["price"]))
-                qty = min(qty, floor(cash / ev["price"]))
+                qty = min(qty, floor(cash / (ev["price"] * (1 + fill))))
                 if qty <= 0:
                     skipped += 1
                     continue
-                cash -= qty * ev["price"]
+                cash -= qty * ev["price"] * (1 + fill)
                 pos[key] = qty
                 taken += 1
                 new_today += 1
             elif key in pos and ev["kind"] in ("half", "exit"):
-                q = pos[key] // 2 if ev["kind"] == "half" else pos[key]
-                cash += q * ev["price"]
+                q = int(pos[key] * ev.get("frac", 0.5)) if ev["kind"] == "half" else pos[key]
+                cash += q * ev["price"] * (1 - fill)
                 pos[key] -= q
                 if pos[key] <= 0 or ev["kind"] == "exit":
                     pos.pop(key, None)
@@ -564,8 +603,25 @@ def _book(days, by_day, closes, capital, max_positions, risk_pct, position_cap, 
     return strategy, idle, taken, skipped
 
 
-def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0) -> dict:
-    """Daily account value if every signal in `rs` was taken under the portfolio rules, vs Nifty 500 buy and hold."""
+def _closes(conn, tokens: dict, syms, start: str, cache: dict) -> dict:
+    """{symbol: {date: close}} from `start`, read in one query; `cache` keeps them for later calls (a request
+    comparing rule sets reads each stock once)."""
+    need = [s for s in syms if s in tokens and (s not in cache or cache[s][0] > start)]
+    if need:
+        by_token = {tokens[s]: s for s in need}
+        got: dict = {s: {} for s in need}
+        q = (f"SELECT instrument_token, date, close FROM candles_daily WHERE date >= ? "
+             f"AND instrument_token IN ({','.join('?' * len(by_token))})")
+        for tok, d, c in conn.execute(q, [start, *by_token]):
+            got[by_token[tok]][d] = c
+        for s in need:
+            cache[s] = (start, got[s])
+    return {s: cache[s][1] for s in syms if s in cache}
+
+
+def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0, cache: Optional[dict] = None) -> dict:
+    """Daily account value if every signal in `rs` was taken under the portfolio rules, after costs, vs Nifty 500
+    buy and hold. `cache`: share the candles between calls (see _closes)."""
     from backend.ingest import universe as uni
     cfg = config.track
     trades = [r for r in rs if r["status"] in ("running", "won", "lost")]
@@ -575,19 +631,19 @@ def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0) -> di
     u = uni.resolve_universe(config.ingest)
     tokens = {s["symbol"]: s["instrument_token"] for s in u["stocks"]}
     index_token = next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None)
+    cache = {} if cache is None else cache
     with get_db() as conn:
-        index = get_candles(conn, index_token, start=start) if index_token is not None else []
-        closes = {}
-        for sym in {r["symbol"] for r in trades}:
-            if sym in tokens:
-                closes[sym] = {c["date"]: c["close"] for c in get_candles(conn, tokens[sym], start=start)}
-    days = [c["date"] for c in index] or sorted({d for m in closes.values() for d in m})
+        if index_token is not None and ("\0index" not in cache or cache["\0index"][0] > start):
+            cache["\0index"] = (start, get_candles(conn, index_token, start=start))
+        index = [c for c in cache["\0index"][1] if c["date"] >= start] if index_token is not None else []
+        closes = _closes(conn, tokens, {r["symbol"] for r in trades}, start, cache)
+    days = [c["date"] for c in index] or sorted({d for m in closes.values() for d in m if d >= start})
     by_day: dict[str, list] = {}
     for r in trades:
         for ev in r["events"]:
             by_day.setdefault(ev["date"], []).append((ev, r))
     strategy, idle, taken, skipped = _book(days, by_day, closes, cfg.capital, cfg.max_positions, cfg.risk_pct,
-                                           cfg.position_cap, max_new_per_day)
+                                           cfg.position_cap, max_new_per_day, _fill(cfg))
     nifty = [round((c["close"] / index[0]["close"] - 1) * 100, 2) for c in index] if index else []
 
     def drawdown(curve):
@@ -612,7 +668,8 @@ def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0) -> di
     for label, risk, cap in SIZING:
         current = (risk, cap) == (cfg.risk_pct, cfg.position_cap)
         curve, _, _, sk = ((strategy, idle, taken, skipped) if current else
-                           _book(days, by_day, closes, cfg.capital, cfg.max_positions, risk, cap, max_new_per_day))
+                           _book(days, by_day, closes, cfg.capital, cfg.max_positions, risk, cap, max_new_per_day,
+                                 _fill(cfg)))
         ret, dd = (curve[-1] if curve else None), drawdown(curve)
         sizing.append({"label": label, "risk_pct": risk, "position_cap": cap, "return": ret, "drawdown": dd,
                        "ratio": round(ret / -dd, 2) if ret is not None and dd < 0 else None, "skipped": sk,
@@ -630,7 +687,8 @@ def portfolio(rs: list[dict], config: AppConfig, max_new_per_day: int = 0) -> di
                                   "cash_idle": 0.0}},
             "sizing": sizing,
             "settings": {"capital": cfg.capital, "risk_pct": cfg.risk_pct, "max_positions": cfg.max_positions,
-                         "position_cap": cfg.position_cap, "max_new_per_day": max_new_per_day}}
+                         "position_cap": cfg.position_cap, "max_new_per_day": max_new_per_day,
+                         "cost_pct": cfg.cost_pct, "slippage_pct": cfg.slippage_pct}}
 
 
 def line(pattern: str, tier: Optional[str], mkt: Optional[str], min_trades: int = 10) -> Optional[str]:

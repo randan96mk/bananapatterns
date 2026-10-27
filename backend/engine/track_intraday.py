@@ -1,6 +1,7 @@
 """Intraday entry backtest: the swing watchlist bought on the breakout day from 5-minute candles, with a tight
 stop, part booked at a small target and the rest on an ATR trail. Two rule sets differ only in the trail:
-i5m (5-minute ATR) and iday (daily ATR). The results sit next to the swing rules on the Track record tab.
+i5m (5-minute ATR) and iday (daily ATR); iday_s50 / iday_s75 are iday with the stop at least 0.5% / 0.75% under the
+entry (a closer one is moved down to that). The results sit next to the swing rules on the Track record tab.
 
 Watchlist  each evening (day k-1): setups still intact and within today_near_pct under their pivot. Box bases
            as detect_bases knew them that evening; cups / flags ending that evening (find_cup / find_flag at
@@ -45,8 +46,11 @@ from backend.timefmt import ampm
 
 logger = setup_logger("track_intraday")
 
-RULES = ("i5m", "iday")
-NAMES = {"swing": "Swing · 8% stop", "i5m": "Intraday · 5-min ATR trail", "iday": "Intraday · daily ATR trail"}
+VARIANTS = {"i5m": ("i5m", 0.0), "iday": ("iday", 0.0), "iday_s50": ("iday", 0.5), "iday_s75": ("iday", 0.75)}
+RULES = tuple(VARIANTS)                                  # rule set -> (trail, minimum stop distance %)
+NAMES = {"swing": "Swing · 8% stop", "i5m": "Intraday · 5-min ATR trail", "iday": "Intraday · daily ATR trail",
+         "iday_s50": "Intraday · daily trail · stop ≥ 0.5%", "iday_s75": "Intraday · daily trail · stop ≥ 0.75%"}
+VERSION = "2"                                            # the rule sets above; another version re-runs the backtest
 PATTERNS = track.PATTERNS
 FINAL = track.FINAL
 
@@ -301,7 +305,7 @@ def simulate(b: track.Bars, k: int, e: dict, five: FiveMin, cfg, variant: str) -
                     px = o if o > target else target
                     realized += cfg.book_frac * (px / entry - 1)
                     remaining, booked, stop = 1 - cfg.book_frac, True, max(stop, entry)
-                    events.append({"kind": "half", "date": d, "time": t, "price": _r(px)})
+                    events.append({"kind": "half", "date": d, "time": t, "price": _r(px), "frac": cfg.book_frac})
                 hh = max(hh, h)
                 if prev_c is not None:
                     trs.append(max(h - lo, abs(h - prev_c), abs(lo - prev_c)))
@@ -390,7 +394,10 @@ def _replay(u: track.Universe, sym: str, rules: str, stored: list[dict], new: li
             ib = idx.day(d, ahead=60) if idx is not None else None
             avg = float(b.vol[max(0, k - 50):k].mean()) if k else None
             e, why = find_entry(bars, ib, r["pivot"], float(b.close[k - 1]), float(b.open[k]), avg, d, icfg)
-            trade = simulate(b, k, e, five, icfg, rules) if e else {"status": "no_entry", "reason": why}
+            trail, min_stop = VARIANTS[rules]
+            if e and min_stop and e["stop"] > e["price"] * (1 - min_stop / 100):
+                e = dict(e, stop=e["price"] * (1 - min_stop / 100))     # give the trade room: move a close stop down
+            trade = simulate(b, k, e, five, icfg, trail) if e else {"status": "no_entry", "reason": why}
         no = None
         if trade["status"] in ("running", "won", "lost"):
             trade_no += 1
@@ -402,15 +409,18 @@ def _replay(u: track.Universe, sym: str, rules: str, stored: list[dict], new: li
 
 
 def build(config: AppConfig, client, rebuild: bool = False) -> dict:
-    """First build (or a deliberate rebuild): every pivot cross in the last window_days, both rule sets, fetching
-    the 5-minute candles it needs (a few per cross; Kite allows about 3 requests a second). Otherwise the
-    daily update: new crosses, and pending / running trades re-run."""
+    """First build (or a deliberate rebuild): every pivot cross in the last history_days, every rule set, fetching
+    the 5-minute candles it needs (a few per cross; Kite allows about 3 requests a second; stored candles are
+    re-used). Otherwise the daily update: new crosses, and pending / running trades re-run. A build for other
+    rule sets (VERSION) or another history_days is re-run from scratch."""
     if not _lock.acquire(blocking=False):
         return {"status": "busy"}
     try:
         from backend.ingest import universe as uni
         with get_db() as conn:
             built = get_setting(conn, "track_intraday.built_at")
+            if built and stale_reason(config):
+                rebuild = True
             if rebuild:
                 conn.execute("DELETE FROM track_intraday")
                 built = None
@@ -423,7 +433,7 @@ def build(config: AppConfig, client, rebuild: bool = False) -> dict:
             _status.update(state="idle", message="no candles yet")
             return {"status": "no_data"}
         latest = max(d[-1] for d in u.dates.values())
-        since = (date.fromisoformat(latest) - timedelta(days=config.track.window_days)).isoformat()
+        since = (date.fromisoformat(latest) - timedelta(days=config.track.history_days)).isoformat()
         with get_db() as conn:
             stored: dict = {}
             for r in conn.execute("SELECT * FROM track_intraday"):
@@ -461,6 +471,7 @@ def build(config: AppConfig, client, rebuild: bool = False) -> dict:
             set_setting(conn, "track_intraday.built_at", built or now_ist())
             set_setting(conn, "track_intraday.updated_at", now_ist())
             set_setting(conn, "track_intraday.as_of", latest)
+            set_setting(conn, "track_intraday.version", f"{VERSION}/{config.track.history_days}")
         msg = (f"{'updated' if built else 'built'}: {added} new pivot crosses (data to {latest})"
                + (f"; {pending} waiting for 5-minute candles" if pending else ""))
         logger.info("Intraday backtest %s", msg)
@@ -483,3 +494,17 @@ def _write(rows: list[tuple]) -> None:
 def built() -> bool:
     with get_db() as conn:
         return bool(get_setting(conn, "track_intraday.built_at"))
+
+
+def stale_reason(config: AppConfig) -> Optional[str]:
+    """Why a finished build no longer matches the rule sets or the history window (None when it does)."""
+    with get_db() as conn:
+        if not get_setting(conn, "track_intraday.built_at"):
+            return None
+        v = get_setting(conn, "track_intraday.version") or "1/365"
+    ver, days = (v.split("/") + ["365"])[:2]
+    if ver != VERSION:
+        return "new rule sets were added (the stop-minimum variants and costs)"
+    if days != str(config.track.history_days):
+        return f"the history changed to {config.track.history_days} days"
+    return None

@@ -142,6 +142,23 @@ def test_same_day_entry_and_exit_close_the_position():
     assert track._book(days, by_day, {}, 1_000_000, 10, 0.01, 0.20, max_new_per_day=1)[2:] == (1, 1)
 
 
+def test_costs_per_trade_and_in_the_portfolio():
+    from backend.config import TrackConfig
+    tc = TrackConfig()                                          # 0.25% round trip + 0.05% a fill: 0.175% a fill
+    k = 0.00175
+    r = {"status": "won", "events": [{"kind": "entry", "price": 100.0}, {"kind": "half", "price": 102.0, "frac": 0.5},
+                                     {"kind": "exit", "price": 101.0}]}
+    want = 0.5 * (102 * (1 - k) / (100 * (1 + k)) - 1) + 0.5 * (101 * (1 - k) / (100 * (1 + k)) - 1)
+    assert track.net_pct(r, tc) == pytest.approx(want * 100, abs=0.01) and track.net_pct(r, tc) < 1.5
+    assert track.net_pct(dict(r, status="running"), tc) is None
+    day = "2026-03-02"
+    row = {"symbol": "A", "breakout_date": day, "pattern": "bases", "tier": "A", "stop": 99.0}
+    by_day = {day: [({"kind": "entry", "date": day, "time": "10:00", "price": 100.0}, row),
+                    ({"kind": "exit", "date": day, "time": "11:00", "price": 100.0}, row)]}
+    curve = track._book([day], by_day, {}, 1_000_000, 10, 0.01, 0.20, fill=k)[0]
+    assert curve[-1] == pytest.approx(-0.2 * 2 * k * 100, abs=0.01)   # a 2L position, flat, pays two fills
+
+
 # --- the watchlist: failed crosses count -------------------------------------------------------------
 
 def series_with_a_failed_cross():
@@ -211,13 +228,27 @@ def test_build_and_api(monkeypatch):
         assert conn.execute("SELECT COUNT(*) FROM candles_5m").fetchone()[0] > 0
     calls = fake.calls
     assert ti.build(cfg, fake)["added"] == 0 and fake.calls == calls      # the daily update re-uses stored candles
+    for x in track.rows("2y", rules="iday_s75"):                       # the stop is at least 0.75% under the entry
+        if x["status"] in ("won", "lost", "running"):
+            assert x["stop"] <= round(x["entry"] * (1 - 0.0075), 2) + 0.01
+    with get_db() as conn:                                             # an older build: re-run from scratch
+        conn.execute("UPDATE app_settings SET value = '1/3650' WHERE key = 'track_intraday.version'")
+    assert "new rule sets" in ti.stale_reason(cfg)
+    assert ti.build(cfg, fake)["added"] >= 2 and ti.stale_reason(cfg) is None and fake.calls == calls
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
     from backend import main
+    from backend.api.routes import S
     with TestClient(main.app) as tc:
+        S().config.track.history_days = cfg.track.history_days      # the window the test built
         d = tc.get("/api/track?rules=i5m&period=1y").json()
         assert d["built"] and d["rules_set"] == "i5m" and d["rules"]["target_pct"] == 2.0
-        assert [x["rules"] for x in d["rule_sets"]] == ["swing", "i5m", "iday"]
+        assert [x["rules"] for x in d["rule_sets"]] == ["swing", "i5m", "iday", "iday_s50", "iday_s75"]
+        assert all("net_avg_pct" in x for x in d["rule_sets"]) and d["stale"] is None
+        S().config.track.history_days = 365                          # another window: stale until re-run
+        d = tc.get("/api/track?rules=iday").json()
+        assert not d["built"] and "365 days" in d["stale"] and len(d["rule_sets"]) == 0
+        S().config.track.history_days = cfg.track.history_days
         assert tc.get("/api/track?rules=nope").status_code == 422
         assert tc.post("/api/track/intraday/build").status_code == 400            # no Kite login in tests
         t = tc.get("/api/track/trades?rules=iday&period=1y").json()["stocks"]
