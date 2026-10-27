@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { ampm } from '../timefmt';
 import * as api from '../services/api';
 
 const HELP = {
@@ -109,7 +110,7 @@ export default function SettingsPanel() {
                 ? <textarea rows={v.length || 1} value={v.join('\n')}
                     onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />
                 : <input value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</td>
-              <td className="muted">{HELP[k] || ''}</td>
+              <td className="muted">{HELP[k] || ''}{/^\d{1,2}:\d{2}$/.test(String(v)) && ` (= ${ampm(String(v))} IST)`}</td>
             </tr>
           ))}
         </tbody>

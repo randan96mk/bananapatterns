@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { ampm, stamp } from '../timefmt';
 import * as api from '../services/api';
 
 const GROUPS = [
@@ -7,14 +8,14 @@ const GROUPS = [
     ['left', '▫️ Left a card (noisy)']]],
   ['Delivery', [['enabled', 'Alerts on'], ['digest', '📋 Daily digest'], ['chart_images', '🖼 Chart images'],
     ['system', '⚙️ System alerts (login, job failures, index changes)'], ['intraday', '⚡ Intraday pivot heads-up + failed breakout'],
-    ['close_check', '🕒 Act-before-close check (15:15)'],
+    ['close_check', '🕒 Act-before-close check (3:15 PM)'],
     ['job_enabled', '🕡 Automatic evening job']]],
   ['Priority', [['tiering', '🅰️ A/B priority (A at once, B per setting)'], ['market_line', '📊 Market line on alerts'],
     ['market_sizing', '⚖️ Market-aware size (½ under pressure, ¼ in correction)']]],
   ['Daily plan', [['top_setups', '🎯 Top setups after the evening scan'], ['morning_plan', '☀️ Morning plan'],
     ['gap_check', '🔔 Opening (gap) check'], ['position_guard', '📒 Position guard (Kite holdings, read-only)'],
     ['alert_buttons', '🔘 Buttons under alerts (Watch · Mute · Chart · I bought)']]],
-  ['Market hours', [['live_guard', '🔻 Live position guard (under stop, heavy selling, 09:10 and 15:15 checks)'],
+  ['Market hours', [['live_guard', '🔻 Live position guard (under stop, heavy selling, 9:10 AM and 3:15 PM checks)'],
     ['hard_stop', '🛑 Hard stop: under-stop alert says "exit now" (off: unconfirmed until the close)'],
     ['entry_checklist', '✅ Entry checklist on heads-ups (zone · VWAP · volume · vs Nifty · opening range)']]],
 ];
@@ -30,7 +31,7 @@ const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time'
   ['opening_range_min', 'Checklist: opening range (first N min)'], ['today_near_pct', 'Today page: near pivot within (%)']];
 const CHART_KINDS = [['breakout', '🚀 Breakout'], ['breakout_low_volume', '⚠️ Low-volume breakout'],
   ['near_pivot', '🎯 Near pivot'], ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Below pivot'],
-  ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday + 15:15']];
+  ['played_out', '🏁 Played out'], ['climbing', '📈 Climbing'], ['intraday', '⚡ Intraday + 3:15 PM']];
 const PRIORITY_FIELDS = [['a_min_rs', 'A needs RS ≥'], ['a_min_trend', 'A needs trend checks ≥ (of 8)'],
   ['a_top_industry_frac', 'A needs industry in top (0.33 = third)']];
 const SIZE_FIELDS = [['buy_zone_pct', 'Buy zone above pivot (0.05 = 5%)'],
@@ -41,7 +42,7 @@ const inputKind = (k) => (/(_time|intraday_start|intraday_end)$/.test(k) ? { typ
 const strip = (h) => h.replace(/<[^>]+>/g, '');
 const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout'], ['near_pivot', '🎯 Near pivot'],
   ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Back below pivot'], ['played_out', '🏁 Played out'],
-  ['intraday', '⚡ Intraday heads-up'], ['failed', '⚠️ Failed breakout'], ['close_check', '🕒 15:15 close check'],
+  ['intraday', '⚡ Intraday heads-up'], ['failed', '⚠️ Failed breakout'], ['close_check', '🕒 3:15 PM close check'],
   ['digest', '📋 Digest'], ['system', '⚙️ System']];
 
 // Settings + activity for Telegram alerts and the automatic jobs.
@@ -151,9 +152,9 @@ export default function AlertsPanel() {
             <button className="btn" disabled={!st.ready || !kite.api_key_configured}
                     onClick={() => act(api.sendLoginLink, () => 'Login link sent: check Telegram')}>Send login link now</button>
             <span className={`pill ${kite.has_token ? 'ok' : 'bad'}`}>{kite.has_token
-              ? `Session until ${kite.expires_at ? kite.expires_at.slice(11, 16) + ' ' + kite.expires_at.slice(5, 10) : '06:00'}` : 'No session'}</span>
+              ? `Session until ${kite.expires_at ? stamp(kite.expires_at) : '6:00 AM'} IST` : 'No session'}</span>
           </div>
-          <p className="muted small">Kite sessions end at 06:00 IST. The bot sends a one-time <b>Log in to Kite</b> button
+          <p className="muted small">Kite sessions end at 6:00 AM IST. The bot sends a one-time <b>Log in to Kite</b> button
             (works once, 15 min) at each time below when Kite doesn't accept a session, checks every 30 min for a
             logged-out session, and answers <code>/login</code> and <code>/status</code>.</p>
           <div className="toggles">
@@ -163,15 +164,17 @@ export default function AlertsPanel() {
               <label className="toggle"><input type="checkbox" checked={cfg.login_every_day}
                 onChange={(e) => save({ login_every_day: e.target.checked })} /> Also weekends / holidays</label>
               <label className="toggle"><input type="checkbox" checked={cfg.login_heads_up}
-                onChange={(e) => save({ login_heads_up: e.target.checked })} /> ⏰ "Ends at 06:00" heads-up</label>
+                onChange={(e) => save({ login_heads_up: e.target.checked })} /> ⏰ "Ends at 6:00 AM" heads-up</label>
             </div>
             <div>
-              <label className="toggle field">Link times (IST, from 06:00)
+              <label className="toggle field">Link times (IST, from 6:00 AM; type 24-hour HH:MM, comma-separated)
                 <input style={{ width: '9em' }} value={timesDraft ?? cfg.login_times.join(', ')} onChange={(e) => setTimesDraft(e.target.value)}
-                       onBlur={(e) => { setTimesDraft(null); save({ login_times: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }); }} /></label>
+                       onBlur={(e) => { setTimesDraft(null); save({ login_times: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) }); }} />
+                <span className="muted small ampm">= {cfg.login_times.map((t) => ampm(t)).join(', ')}</span></label>
               <label className="toggle field">Heads-up at
                 <input value={cfg.login_heads_up_time} onChange={(e) => setCfg({ ...cfg, login_heads_up_time: e.target.value })}
-                       onBlur={(e) => save({ login_heads_up_time: e.target.value })} /></label>
+                       onBlur={(e) => save({ login_heads_up_time: e.target.value })} />
+                <span className="muted small ampm">= {ampm(cfg.login_heads_up_time)}</span></label>
             </div>
             <div className="small">
               <div>Kite console redirect URL: <code>{kite.redirect_url}</code></div>
@@ -223,7 +226,8 @@ export default function AlertsPanel() {
             {FIELDS.map(([k, label]) => (
               <label key={k} className="toggle field">{label}
                 <input {...inputKind(k)} value={String(cfg[k])} onChange={(e) => setCfg({ ...cfg, [k]: e.target.value })}
-                       onBlur={(e) => save({ [k]: e.target.value })} /></label>))}
+                       onBlur={(e) => save({ [k]: e.target.value })} />
+                {inputKind(k).type === 'time' && <span className="muted small ampm">= {ampm(String(cfg[k]))}</span>}</label>))}
           </div>
         </div>
       </div>
@@ -232,7 +236,7 @@ export default function AlertsPanel() {
         <div className="row"><h3>Automatic jobs</h3>
           <button className="btn" onClick={() => act(() => api.runJob('eod'), () => 'Evening job started (sync → scan → alerts)')}>Run evening job now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('intraday'), () => 'Intraday check started')}>Intraday check now</button>
-          <button className="btn ghost" onClick={() => act(() => api.runJob('close_check'), () => '15:15 close check started')}>Close check now</button>
+          <button className="btn ghost" onClick={() => act(() => api.runJob('close_check'), () => 'Close check started')}>Close check now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('top_setups'), () => 'Top setups: ranking and sending')}>Top setups now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('guard'), () => 'Position guard: syncing holdings and checking')}>Run guard now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('weekly'), () => 'Weekly refresh started')}>Weekly refresh now</button>
@@ -242,7 +246,7 @@ export default function AlertsPanel() {
         <div className="hscroll"><table className="grid small">
           <thead><tr><th>Job</th><th>Date</th><th>Started</th><th>Status</th><th>Message</th></tr></thead>
           <tbody>{(jobs?.runs || []).map((r) => (
-            <tr key={r.id}><td>{r.job}</td><td>{r.run_date}</td><td>{r.started_at.replace('T', ' ').slice(0, 16)}</td>
+            <tr key={r.id}><td>{r.job}</td><td>{r.run_date}</td><td>{stamp(r.started_at)}</td>
               <td className={`s-${r.status}`}>{r.status}</td><td className="wrap">{r.message}</td></tr>))}
           </tbody>
         </table></div>
@@ -253,7 +257,7 @@ export default function AlertsPanel() {
         <div className="hscroll"><table className="grid small">
           <thead><tr><th>Time</th><th>Kind</th><th>Symbol</th><th>OK</th><th>Text</th></tr></thead>
           <tbody>{log.map((r) => (
-            <tr key={r.key}><td>{r.sent_at.replace('T', ' ').slice(0, 16)}</td><td>{r.kind}</td><td>{r.symbol}</td>
+            <tr key={r.key}><td>{stamp(r.sent_at)}</td><td>{r.kind}</td><td>{r.symbol}</td>
               <td className={r.ok ? 'up' : 'down'}>{r.ok ? '✓' : `✗ ${r.error || ''}`}</td>
               <td className="wrap">{strip(r.text).slice(0, 220)}</td></tr>))}
           </tbody>

@@ -244,9 +244,9 @@ Details in [Part 4](#part-4-backups-and-restore).
 
 What runs on its own (all IST, server clock): the evening scan and EOD alerts, the morning plan and opening
 check, intraday heads-ups, NSE calendars / filings / deals refreshes, the position guard after the scan, and the
-backup at 23:30. See the README's [Telegram alerts and automatic jobs](../README.md#telegram-alerts-and-automatic-jobs).
+backup at 11:30 PM. See the README's [Telegram alerts and automatic jobs](../README.md#telegram-alerts-and-automatic-jobs).
 
-**Kite login once a day**: the token expires at 06:00 IST. Log in from the dashboard (Kite login button) or tap
+**Kite login once a day**: the token expires at 6:00 AM IST. Log in from the dashboard (Kite login button) or tap
 the Telegram login link (or send `/login` to the bot) on any device with Tailscale on.
 
 Quick health check from anywhere:
@@ -321,7 +321,7 @@ In the Tailscale admin, remove the old `banana` machine first, so the new one ge
 
 ## Part 4: Backups and restore
 
-`scripts/backup.sh` (cron, 23:30 IST) writes `~/banana-backups/YYYY-MM-DD/`, outside the repository:
+`scripts/backup.sh` (cron, 11:30 PM IST) writes `~/banana-backups/YYYY-MM-DD/`, outside the repository:
 
 | File | What |
 |---|---|
@@ -366,7 +366,7 @@ catches up the market data, and Kite candles are re-synced as needed.
 | What | How often | How |
 |---|---|---|
 | Ubuntu security updates | automatic | `unattended-upgrades` is on by default in Ubuntu 24.04 |
-| Reboot after kernel updates | when asked | `cat /var/run/reboot-required` prints a line when one is due → `sudo reboot` (weekend or after 23:30). The app and Tailscale come back on their own |
+| Reboot after kernel updates | when asked | `cat /var/run/reboot-required` prints a line when one is due → `sudo reboot` (weekend or after 11:30 PM). The app and Tailscale come back on their own |
 | Full update | monthly | `sudo apt-get update && sudo apt-get -y full-upgrade`, then reboot if required |
 | Docker disk clean-up | monthly / after updates | `docker system df`, then `docker image prune -f` (old images from earlier builds) |
 | Disk space | monthly | `df -h /` (50 GB disk; app + images + backups use a few GB) |
@@ -391,7 +391,7 @@ First look: `./docker.sh status`, `./docker.sh logs`, the dashboard **Logs** tab
 | Certificate warning / HTTPS fails | Admin → DNS → **HTTPS Certificates** enabled? The first visit can take ~30 s. |
 | Kite login: "invalid redirect" / lands on localhost | The Kite console's Redirect URL must be exactly `https://banana.<tailnet>/api/kite/callback`, the same as `KITE_REDIRECT_URL` in the server's `.env` (then `./docker.sh restart`). |
 | Kite logged out during the day | Something else logged in with the same API key (the Mac copy, another app). Log in again; keep one copy. |
-| "Kite login required" in the morning | Normal: tokens expire at 06:00 IST. Use the Telegram login link. |
+| "Kite login required" in the morning | Normal: tokens expire at 6:00 AM IST. Use the Telegram login link. |
 | NSE panels empty (results, filings, deals) | From the server: `curl -s -o /dev/null -w '%{http_code}' -A 'Mozilla/5.0' https://nsearchives.nseindia.com/content/equities/bulk.csv`. 403 on NSE's *home page* is normal; 403 on the APIs means NSE is blocking this IP (rare; the rest of the app is unaffected). |
 | No Telegram alerts | Alerts tab: token, chat, "Ready", Send test. `curl -s -o /dev/null -w '%{http_code}' https://api.telegram.org/` should be 200/302. |
 | Two of every alert / Kite keeps logging out | Two copies are running. Stop the Mac one (`./docker.sh down`, launchd agent). |
@@ -415,7 +415,8 @@ ping -c 3 banana                      # is it reachable?
 scripts/pull-backups.sh               # copy the server's backups to ~/banana-backups-cloud
 ```
 
-**Server** (`cd ~/bananapatterns`)
+**Server**: log in first with `ssh ubuntu@banana` from the Mac (skip it if your prompt already shows
+`ubuntu@banana`), then `cd ~/bananapatterns`
 ```bash
 ./docker.sh status                    # running / healthy
 ./docker.sh logs                      # follow the app log (Ctrl+C stops following)

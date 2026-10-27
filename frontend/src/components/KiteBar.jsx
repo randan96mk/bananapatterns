@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
+import { stamp } from '../timefmt';
 import * as api from '../services/api';
 
-const fmt = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '');
+const fmt = (iso) => stamp(iso);
 
 // Header strip: Kite login state, login button, manual token paste.
 export default function KiteBar({ status, onChange }) {
