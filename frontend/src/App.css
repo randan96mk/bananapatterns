@@ -411,3 +411,6 @@ body.modal-open { overflow: hidden; }
   .tdrow.alert { margin: 0 -12px; padding: 10px 12px; width: calc(100% + 24px); }
   .tdrow { gap: 8px; }
 }
+
+/* "= 6:30 PM" next to 24-hour time settings */
+.ampm { white-space: nowrap; margin-left: 6px; }

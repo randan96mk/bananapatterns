@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { clock } from '../timefmt';
 import * as api from '../services/api';
 import StockChart from './StockChart';
 import ResultsTag from './ResultsTag';
@@ -55,7 +56,7 @@ export default function TodayPage() {
   if (!d) return <div className="panel">{err ? <span className="warn">{err}</span> : 'Loading…'}</div>;
   const m = d.market || {};
   const [hl, hc] = HEALTH[m.health] || ['Market', ''];
-  const time = d.as_of ? d.as_of.slice(11, 16) : '';
+  const time = clock(d.as_of);
   const anyValid = d.setups.some((s) => s.live?.verdict === 'valid');
 
   return (

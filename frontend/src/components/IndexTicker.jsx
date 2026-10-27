@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { clock } from '../timefmt';
 import * as api from '../services/api';
 
 const fmt = (v, d = 2) => (v == null ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }));
@@ -31,7 +32,7 @@ export default function IndexTicker({ onSelect }) {
     return () => { alive = false; clearTimeout(timer); };
   }, []);
   if (!d || !d.items?.length) return null;
-  const time = d.as_of ? d.as_of.slice(11, 19) : '';
+  const time = clock(d.as_of);
   const status = d.live ? STATUS[d.status] : 'Last close · log in for live';
   const when = d.live ? `updated ${time}` : (d.items.find((i) => i.date)?.date || '');
   return (

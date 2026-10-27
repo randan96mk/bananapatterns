@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { stamp } from '../timefmt';
 import * as api from '../services/api';
 
 // Warnings and errors persisted by the backend logger.
@@ -21,7 +22,7 @@ export default function LogsPanel() {
       <div className="hscroll"><table className="grid small">
         <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Message</th></tr></thead>
         <tbody>{logs.map((l) => (
-          <tr key={l.id}><td>{l.timestamp.replace('T', ' ').slice(0, 19)}</td>
+          <tr key={l.id}><td>{stamp(l.timestamp, true)}</td>
             <td className={`lvl-${l.level}`}>{l.level}</td><td>{l.source}</td><td>{l.message}</td></tr>))}
         </tbody>
       </table></div>

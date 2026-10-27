@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { stamp } from '../timefmt';
 import * as api from '../services/api';
 
 // Universe refresh + candle sync with live progress and run history.
@@ -87,19 +88,19 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       </div>
       <div className="row small">
         <span className="muted">Results calendar (NSE board meetings): {evs?.last_fetch
-          ? `${evs.upcoming_results} upcoming results · fetched ${evs.last_fetch.slice(0, 16).replace('T', ' ')}`
+          ? `${evs.upcoming_results} upcoming results · fetched ${stamp(evs.last_fetch)}`
           : 'not fetched yet'} · refreshed by the evening job</span>
         <button className="btn ghost" disabled={busy} onClick={refreshEvents}>Refresh results calendar</button>
       </div>
       <div className="row small">
         <span className="muted">Exchange filings (NSE announcements): {fils?.last_fetch
-          ? `${fils.important_today} important today · fetched ${fils.last_fetch.slice(0, 16).replace('T', ' ')}`
-          : 'not fetched yet'} · every 15 min, 07:00–23:00</span>
+          ? `${fils.important_today} important today · fetched ${stamp(fils.last_fetch)}`
+          : 'not fetched yet'} · every 15 min, 7:00 AM – 11:00 PM</span>
         <button className="btn ghost" disabled={busy} onClick={refreshFilings}>Refresh filings</button>
       </div>
       <div className="row small">
         <span className="muted">Bulk / block deals &amp; holder disclosures: {deals?.last_fetch
-          ? `fetched ${deals.last_fetch.slice(0, 16).replace('T', ' ')}` : 'not fetched yet'} · with the filings</span>
+          ? `fetched ${stamp(deals.last_fetch)}` : 'not fetched yet'} · with the filings</span>
         <button className="btn ghost" disabled={busy} onClick={refreshDeals}>Refresh deals</button>
       </div>
       {!hasToken && <p className="muted">Log in with Kite first.</p>}
@@ -127,7 +128,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
         <tbody>
           {(st?.runs || []).map((r) => (
             <tr key={r.id}><td>{r.id}</td><td>{r.kind}</td><td className={`s-${r.status}`}>{r.status}</td>
-              <td>{r.started_at?.replace('T', ' ').slice(0, 16)}</td><td>{r.done}/{r.total}</td>
+              <td>{stamp(r.started_at)}</td><td>{r.done}/{r.total}</td>
               <td>{r.failed}</td><td>{r.message}</td></tr>
           ))}
         </tbody>
