@@ -277,6 +277,25 @@ CREATE TABLE IF NOT EXISTS deals (
 );
 CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
+-- Momentum ORB: one row per evening-screen stock (signal_date = the screen day) and the intraday trade the next
+-- session (trade_date) made from it. Closed rows never change.
+CREATE TABLE IF NOT EXISTS orb_trades (
+    symbol TEXT NOT NULL,
+    signal_date TEXT NOT NULL,
+    trade_date TEXT,
+    status TEXT NOT NULL,                  -- pending / no_entry / won / lost
+    reason TEXT,
+    close REAL, rsi REAL, volume INTEGER, ema REAL,
+    or_high REAL, or_low REAL,
+    entry REAL, entry_time TEXT, stop REAL, target REAL,
+    result_pct REAL, net_pct REAL, r REAL,
+    booked INTEGER NOT NULL DEFAULT 0,
+    events TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, signal_date)
+);
+CREATE INDEX IF NOT EXISTS idx_orb_date ON orb_trades (signal_date);
+
 -- 5-minute candles, fetched only for the days a backtest needs (backend/engine/backtest.py); candles_5m_days marks the days
 -- fetched (a day with no candles is still marked, so it isn't asked for again).
 CREATE TABLE IF NOT EXISTS candles_5m (

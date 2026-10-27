@@ -952,6 +952,35 @@ Today's 5-minute line next to each name, with the stop or pivot dashed. It refre
 names without prices when there is no Kite login. The Screens positions card shows the same live price, chip and a
 stop-distance bar while the market is open.
 
+### Momentum ORB (backtest)
+
+`backend/engine/momentum_orb.py` and the **🚀 Momentum ORB** tab (on a phone: More → Momentum ORB). An evening
+momentum screen, then an **intraday** breakout of the next session's first 15 minutes, backtested over two years
+before any live alerts.
+
+| Step | Rule (`orb.*` settings) |
+|---|---|
+| Evening screen (Nifty 500) | close > ₹`min_price` (200), RSI(14) > `rsi_min` (60: "outside 40–60", buy side), the day's volume > `min_volume` (5 lakh shares), close > the `ema_len` (50)-day EMA, and a **new 52-week high** (the day's high is the highest of `high_bars` = 252 sessions) |
+| Opening range | the next session's 5-minute candles from 9:15 to 9:30 AM (`or_minutes`): high H, low L |
+| Buy | the first 5-minute candle that **closes over H**, ending by `entry_end` (1:30 PM); entry = that close |
+| Stop | L |
+| Book | `book_frac` (50%) at entry + `target_mult` (1.5) × (H − L); the stop moves to the entry |
+| The rest | out on a 5-minute close under the highest high − `atr_mult` (2) × ATR(`atr_len` 14) of 5-minute candles, or at the entry |
+| Intraday only | whatever is left is sold at the candle ending at `exit_time` (3:15 PM) |
+| Stop and target in one candle | counted as the stop (the worse case) |
+| Costs | `cost_pct` (0.06%) round trip at intraday rates + `slippage_pct` (0.05%) a fill; a trade is won / lost **after costs** |
+| Account | `capital` ₹10L, `risk_pct` 1% sized by the stop, `position_cap` 20%, `max_positions` 10, cash only |
+
+The tab shows the per-trade numbers (after and before costs, win rate, how often the 1.5× target is reached,
+profit factor), the account curve against the Nifty 500, **Year 1 vs Year 2** (the older and the latest of the last
+two years: a rule should hold in both), results by opening-range size (under 1% / 1–2% / over 2% of its high), how
+trades ended, the **next session's list** (the latest evening's screen) and every trade with its times.
+
+**Running it.** The first run is the **Run the backtest** button (needs that day's Kite login). It fetches 5-minute
+candles from Kite for the screened days only (a few thousand requests, 25–30 minutes, stored in `candles_5m`;
+candles already stored are re-used). After that the evening job adds each day's trades and the next session's list.
+`POST /api/orb/build` (`?rebuild=true` re-runs from scratch). Results in `orb_trades`; closed rows never change.
+
 ### Buttons and bot commands
 
 Stock alerts carry four buttons (`alert_buttons`), answered by the bot poller (`backend/alerts/commands.py`, your
@@ -1016,6 +1045,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
 | GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
 | GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
+| GET | `/api/orb?period=1m\|3m\|6m\|1y\|2y\|y1\|y2` · `/api/orb/trades?period=&status=&limit=&offset=` · POST `/api/orb/build` | Momentum ORB: summary, Year 1 / Year 2, by range size, exits, curve vs Nifty 500, next session's list; trades; run |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
@@ -1140,6 +1170,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `tiering` / `b_alerts` / `correction_mode` | true / digest / caution | A/B priority; B: digest, push or off; correction: caution or mute_buys |
 | `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
 | `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
+| `orb.*`: `min_price` / `rsi_len` / `rsi_min` / `min_volume` / `ema_len` / `high_bars` / `or_minutes` / `entry_end` / `target_mult` / `book_frac` / `atr_mult` / `atr_len` / `exit_time` / `history_days` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `slippage_pct` | 200 / 14 / 60 / 500,000 / 50 / 252 / 15 / 1:30 PM / 1.5 / 0.5 / 2 / 14 / 3:15 PM / 730 / 1,000,000 / 0.01 / 0.20 / 10 / 0.06 / 0.05 | Momentum ORB screen, trade rules and account (times stored as "13:30" / "15:15") |
 | `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
@@ -1659,3 +1690,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Kept for the next backtest: `backend/engine/backtest.py` (5-minute candles fetched once and stored in
   `candles_5m`, the portfolio replay with sizing / per-position cap / same-day vs overnight costs, drawdown,
   months up) and `KiteClient.historical_bars`.
+
+### 2026-10-27: Momentum ORB (screen + 2-year backtest)
+- `backend/engine/momentum_orb.py`: the evening screen (RSI, EMA, 52-week high, price, volume), the next-session
+  15-minute range breakout with stop / 1.5x half / 5-minute ATR trail / 3:15 PM square-off, costs, build and
+  daily update (`orb_trades`, 5-minute candles via `backtest.FiveMin`), stats, Year 1 / Year 2, range buckets,
+  the account curve via `backtest.book`.
+- `/api/orb`, `/api/orb/trades`, `POST /api/orb/build`; the evening job updates it once it has run; `orb` settings.
+- 🚀 Momentum ORB tab.

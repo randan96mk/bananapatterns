@@ -682,6 +682,66 @@ def today_sparks():
     return {"sparks": st.live.sparks([*positions, *setups], now)}
 
 
+# --- Momentum ORB ---
+
+ORB_PERIODS = ("1m", "3m", "6m", "1y", "2y", "y1", "y2")
+
+
+def _orb_period(period: str) -> str:
+    if period.lower() not in ORB_PERIODS:
+        raise HTTPException(422, f"period must be one of {', '.join(ORB_PERIODS)}")
+    return period.lower()
+
+
+@router.get("/orb")
+def orb_summary(period: str = "1y"):
+    """Momentum ORB: status, the per-trade numbers, splits by year / opening-range size / exit, the account curve vs
+    Nifty 500, and the latest screen (the next session's list)."""
+    from dataclasses import asdict
+    from backend.database.models import get_setting
+    from backend.engine import momentum_orb as orb
+    period = _orb_period(period)
+    cfg = S().config
+    with get_db() as conn:
+        meta = {k: get_setting(conn, f"orb.{k}") for k in ("built_at", "updated_at", "as_of")}
+    rs = orb.rows(period)
+    years = {y: orb.stats(orb.rows(y)) for y in orb.YEARS}
+    with get_db() as conn:                       # the latest data day's screen = the next session's list
+        watch = [dict(r) for r in conn.execute(
+            "SELECT symbol, signal_date, close, rsi, volume, status, reason FROM orb_trades WHERE signal_date = ? "
+            "ORDER BY rsi DESC", (meta["as_of"],))] if meta["as_of"] else []
+    return {"built": bool(meta["built_at"]), **meta, "period": period, "progress": orb.status(),
+            "kite": bool(S().client.has_token), "rules": asdict(cfg.orb), **orb.stats(rs),
+            "by_year": [{"year": y, **{k: v for k, v in s.items() if k != "exits"}} for y, s in years.items()],
+            "by_range": orb.split_or(rs), "portfolio": orb.portfolio(rs, cfg), "watchlist": watch}
+
+
+@router.get("/orb/trades")
+def orb_trades(period: str = "1y", status: str = "all", limit: int = 200, offset: int = 0):
+    """Momentum ORB rows, newest first: status all / closed / won / lost / no_entry / pending."""
+    from backend.engine import momentum_orb as orb
+    rs = orb.rows(_orb_period(period))
+    if status == "closed":
+        rs = [r for r in rs if r["status"] in ("won", "lost")]
+    elif status != "all":
+        rs = [r for r in rs if r["status"] == status]
+    return {"total": len(rs), "rows": rs[offset:offset + max(1, min(limit, 1000))]}
+
+
+@router.post("/orb/build")
+def orb_build(rebuild: bool = False):
+    """Run the Momentum ORB backtest in the background (needs today's Kite login: it fetches 5-minute candles,
+    a few thousand requests the first time; stored candles are re-used)."""
+    from backend.engine import momentum_orb as orb
+    st = S()
+    if orb.status()["state"] != "idle":
+        raise HTTPException(409, "The Momentum ORB backtest is already running")
+    if not st.client.has_token:
+        raise HTTPException(400, "Log in to Kite first: the backtest fetches 5-minute candles")
+    threading.Thread(target=orb.build, args=(st.config, st.client, rebuild), name="orb-build", daemon=True).start()
+    return {"status": "started"}
+
+
 @router.put("/positions/{symbol}")
 def positions_set_stop(symbol: str, req: StopRequest):
     from backend.alerts import guard

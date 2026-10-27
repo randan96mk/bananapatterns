@@ -414,3 +414,36 @@ body.modal-open { overflow: hidden; }
 
 /* "= 6:30 PM" next to 24-hour time settings */
 .ampm { white-space: nowrap; margin-left: 6px; }
+
+/* Momentum ORB tab */
+.orb { display: flex; flex-direction: column; gap: 12px; }
+.orb.busy > :not(.orbfilters) { opacity: .5; transition: opacity .15s; }
+.orbfilters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.orbstatus { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.orbstatus .s { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; }
+.orbstatus .s b { font-size: 15px; } .orbstatus .ar { color: var(--muted); }
+.orbmeta { margin-left: auto; }
+.orbkpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.orbkpis .k { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+.orbkpis .v { font-size: 22px; font-weight: 800; } .orbkpis .l { font-size: 11.5px; color: var(--muted); }
+.orbcmp { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; } .orbcmp .panel { margin: 0; }
+.orbcurve { width: 100%; height: auto; display: block; margin: 6px 0; }
+.orbcurve text { font-size: 10px; fill: var(--muted); }
+.orbcurve .grid { stroke: var(--rowline); } .orbcurve .zero { stroke: var(--border-strong); }
+.orbcurve .strat { fill: none; stroke: var(--ok); stroke-width: 2.4; }
+.orbcurve .nifty { fill: none; stroke: var(--muted); stroke-width: 1.8; stroke-dasharray: 5 3; }
+.orbcurve .area { fill: var(--ok); opacity: .08; } .orbcurve .dot { fill: var(--ok); } .orbcurve .ndot { fill: var(--muted); }
+.orbvs { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+.orbvs th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11.5px; padding: 3px 6px; }
+.orbvs td { padding: 5px 6px; border-top: 1px solid var(--rowline); } .orbvs td:first-child { color: var(--muted); }
+.orbnote { margin: 2px 0 10px; }
+.orbwatch { display: flex; flex-wrap: wrap; gap: 6px; }
+.orbtrades .tl td { border-top: 0; padding: 0 8px 8px; font-size: 11.5px; color: var(--muted); }
+.orbmore { text-align: center; margin: 10px 0 4px; }
+@media (max-width: 1100px) { .orbkpis { grid-template-columns: repeat(3, 1fr); } .orbcmp { grid-template-columns: 1fr; } }
+@media (max-width: 599px) {
+  .orbkpis { grid-template-columns: 1fr 1fr; gap: 8px; } .orbkpis .v { font-size: 19px; }
+  .orbfilters { flex-wrap: nowrap; overflow-x: auto; margin: 0 -12px 6px; padding: 0 12px 4px; scrollbar-width: none; }
+  .orbfilters::-webkit-scrollbar { display: none; } .orbfilters .spill { flex: none; }
+  .orbmeta { margin-left: 0; flex-basis: 100%; }
+}

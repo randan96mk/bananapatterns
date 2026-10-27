@@ -279,6 +279,12 @@ class Scheduler:
                              st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
         if st.config.alerts.position_guard:
             sent["guard"] = self.run_guard(as_of)
+        try:                                       # Momentum ORB: today's trades, tomorrow's list (once it was run)
+            from backend.engine import momentum_orb
+            if momentum_orb.built() and st.client.has_token:
+                sent["orb"] = momentum_orb.build(st.config, st.client).get("added")
+        except Exception:
+            logger.exception("Momentum ORB update failed")
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}

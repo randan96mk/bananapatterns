@@ -322,6 +322,34 @@ class AlertsConfig:
     deal_min_cr: float = 5.0               # net bulk / block value (₹ crore) a fund must trade to count
 
 
+@dataclass
+class OrbConfig:
+    """Momentum ORB: an evening momentum screen, then an intraday breakout of the next session's first 15 minutes."""
+    # evening screen (Nifty 500), on the day's candle
+    min_price: float = 200.0               # close above this (Rs)
+    rsi_len: int = 14
+    rsi_min: float = 60.0                  # RSI outside 40-60, buy side: above 60
+    min_volume: int = 500_000              # the day's volume (shares)
+    ema_len: int = 50                      # close above this EMA
+    high_bars: int = 252                   # a new 52-week high: the day's high is the highest of this many sessions
+    # next session, 5-minute candles (IST, 24-hour internally)
+    or_minutes: int = 15                   # opening range: 9:15 to 9:30 AM; buy over its high, stop at its low
+    entry_end: str = "13:30"               # the entry candle (closing over the high) ends by this time
+    target_mult: float = 1.5               # book book_frac at entry + target_mult x the opening range's length
+    book_frac: float = 0.5
+    atr_mult: float = 2.0                  # the rest: out on a close under the highest high - atr_mult x ATR
+    atr_len: int = 14                      # ... of 5-minute candles
+    exit_time: str = "15:15"               # intraday only: whatever is left is sold at the candle ending here
+    # portfolio and costs
+    history_days: int = 730
+    capital: float = 1_000_000.0
+    risk_pct: float = 0.01                 # risk per trade, sized by the stop
+    position_cap: float = 0.20             # at most this share of the account in one stock
+    max_positions: int = 10
+    cost_pct: float = 0.06                 # round trip, intraday (MIS / same-day) charges, % of the traded value
+    slippage_pct: float = 0.05             # each fill
+
+
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
                "top_setups_time", "morning_plan_time", "gap_check_time")
 
@@ -349,7 +377,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
-                      "market": MarketConfig}
+                      "market": MarketConfig, "orb": OrbConfig}
 
 
 @dataclass
@@ -364,6 +392,7 @@ class AppConfig:
     flag: FlagConfig = field(default_factory=FlagConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
+    orb: OrbConfig = field(default_factory=OrbConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
