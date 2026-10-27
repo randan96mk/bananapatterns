@@ -40,7 +40,7 @@ function palette() {
 const PREVIEW_KINDS = [['auto', 'Auto (current stage)'], ['breakout', 'Breakout'], ['near_pivot', 'Near pivot'],
   ['forming', 'Forming'], ['below_pivot', 'Below pivot'], ['played_out', 'Played out'], ['climbing', 'Climbing']];
 
-export default function StockChart({ symbol, onClose }) {
+export default function StockChart({ symbol, onClose, trade }) {
   const box = useRef(null);
   const theme = useTheme();              // the chart is rebuilt in the new colours when it changes
   const phone = useIsPhone();            // phone: full-screen sheet, panels folded
@@ -127,12 +127,32 @@ export default function StockChart({ symbol, onClose }) {
       start: x.start_date < first ? first : x.start_date, end: x.end_date,
       top: x.pivot, bottom: x.low, label: x.label, active: i === list.length - 1,
     })) : []);
-    h.markers.setMarkers(showBases ? list.filter((x) => x.breakout && x.breakout.date >= first).map((x) => ({
+    const bo = showBases ? list.filter((x) => x.breakout && x.breakout.date >= first).map((x) => ({
       time: x.breakout.date, position: 'aboveBar', shape: 'arrowUp',
       color: x.breakout.volume_ok ? h.pal.up : h.pal.warn,
-    })) : []);
+    })) : [];
+    // a trade from the Track record tab: entry, 🎯 half and exit markers
+    const tm = (trade?.events || []).filter((e) => e.date && e.date >= first && e.kind !== 'breakeven').map((e) => (
+      e.kind === 'entry' ? { time: e.date, position: 'belowBar', shape: 'arrowUp', color: h.pal.text, text: 'Entry' }
+        : e.kind === 'half' ? { time: e.date, position: 'aboveBar', shape: 'circle', color: h.pal.up, text: '½' }
+          : { time: e.date, position: 'aboveBar', shape: 'arrowDown', color: (e.price >= trade.entry ? h.pal.up : h.pal.down),
+            text: 'Exit' }));
+    h.markers.setMarkers([...bo, ...tm].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)));
     if (h.pivotLine) h.pivotLine.applyOptions({ lineVisible: showBases, axisLabelVisible: showBases, title: showBases ? `pivot ₹${bases.latest.pivot.toFixed(2)}` : '' });
-  }, [showBases, bases, info]);
+  }, [showBases, bases, info, trade]);
+
+  // a trade from the Track record tab: entry and stop lines
+  useEffect(() => {
+    const h = box.current && box.current.__bp;
+    if (!h || !trade?.entry || !info) return undefined;
+    const lines = [h.candles.createPriceLine({ price: trade.entry, color: h.pal.text, lineWidth: 1, lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true, title: `entry ₹${trade.entry.toFixed(2)}` })];
+    if (trade.stop) {
+      lines.push(h.candles.createPriceLine({ price: trade.stop, color: h.pal.down, lineWidth: 1, lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true, title: `stop ₹${trade.stop.toFixed(2)}` }));
+    }
+    return () => lines.forEach((l) => { try { h.candles.removePriceLine(l); } catch { /* chart rebuilt */ } });
+  }, [trade, info]);
 
   if (!symbol) return null;
   const last = info?.candles?.at(-1);
