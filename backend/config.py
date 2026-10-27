@@ -275,6 +275,8 @@ class AlertsConfig:
     a_min_trend: int = 7                   # Trend Template checks passed (of 8)
     a_top_industry_frac: float = 0.33      # industry rank within the top third
     b_alerts: str = "digest"               # digest (listed in the digest only) / push (send, tagged B) / off
+    alert_style: str = "summary"           # summary: the evening's alerts in one 7 PM report (charts on tap) /
+                                           # every: each alert its own message, as before
     correction_mode: str = "caution"       # caution (A alerts still sent, with a warning) / mute_buys
     market_sizing: bool = True             # position size x1 uptrend, x0.5 under pressure, x0.25 correction
     # Daily plan: tonight's top setups, the morning plan, the pre-open gap check
@@ -354,7 +356,8 @@ TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "l
                "top_setups_time", "morning_plan_time", "gap_check_time")
 
 
-CHOICES = {"b_alerts": ("digest", "push", "off"), "correction_mode": ("caution", "mute_buys")}
+CHOICES = {"b_alerts": ("digest", "push", "off"), "correction_mode": ("caution", "mute_buys"),
+           "alert_style": ("summary", "every")}
 
 
 def check_alert_times(sec: "AlertsConfig") -> None:

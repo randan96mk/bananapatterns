@@ -131,15 +131,18 @@ class FakeTG:
     def __init__(self, fail=False):
         self.sent, self.fail = [], fail
 
-    def send_message(self, chat, html, buttons=None):
+    def send_message(self, chat, html, buttons=None, silent=False):
         if self.fail:
             raise TelegramError("boom")
         self.sent.append(("msg", html))
-        self.buttons = buttons
+        self.buttons, self.silent = buttons, silent
 
-    def send_photo(self, chat, png, html, buttons=None):
+    def send_photo(self, chat, png, html, buttons=None, silent=False):
         self.sent.append(("photo", html))
-        self.buttons = buttons
+        self.buttons, self.silent = buttons, silent
+
+    def send_album(self, chat, photos, silent=True):
+        self.sent.append(("album", [cap for _, cap in photos]))
 
 
 UP = ("trend", 60, 0.60)

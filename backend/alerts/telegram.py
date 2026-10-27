@@ -31,9 +31,11 @@ def bot_token() -> str:
 
 
 def keyboard(buttons: list) -> str:
-    """One row of inline buttons: (label, url) link buttons or (label, None, data) callback buttons."""
-    row = [{"text": b[0], "url": b[1]} if b[1] else {"text": b[0], "callback_data": b[2][:64]} for b in buttons]
-    return json.dumps({"inline_keyboard": [row]})
+    """Inline buttons: (label, url) link buttons or (label, None, data) callback buttons. A flat list is one row;
+    a list of lists is several rows."""
+    rows = buttons if buttons and isinstance(buttons[0], list) else [buttons]
+    return json.dumps({"inline_keyboard": [[{"text": b[0], "url": b[1]} if b[1] else
+                                            {"text": b[0], "callback_data": b[2][:64]} for b in row] for row in rows]})
 
 
 class TelegramClient:
@@ -83,11 +85,13 @@ class TelegramClient:
     def get_me(self) -> dict:
         return self._call("getMe")
 
-    def send_message(self, chat_id: str, html: str, buttons: Optional[list] = None) -> dict:
-        """buttons: one row under the message; (label, https URL) or (label, None, callback data)."""
+    def send_message(self, chat_id: str, html: str, buttons: Optional[list] = None, silent: bool = False) -> dict:
+        """buttons: see keyboard(). silent: delivered without a sound (Telegram's disable_notification)."""
         data = {"chat_id": chat_id, "text": html[:MAX_TEXT], "parse_mode": "HTML", "disable_web_page_preview": "true"}
         if buttons:
             data["reply_markup"] = keyboard(buttons)
+        if silent:
+            data["disable_notification"] = "true"
         return self._call("sendMessage", data)
 
     def answer_callback(self, callback_id: str, text: str = "") -> dict:
@@ -100,11 +104,25 @@ class TelegramClient:
             data["offset"] = str(offset)
         return self._call("getUpdates", data) or []
 
-    def send_photo(self, chat_id: str, png: bytes, caption_html: str, buttons: Optional[list] = None) -> dict:
+    def send_photo(self, chat_id: str, png: bytes, caption_html: str, buttons: Optional[list] = None,
+                   silent: bool = False) -> dict:
         data = {"chat_id": chat_id, "caption": caption_html[:MAX_CAPTION], "parse_mode": "HTML"}
         if buttons:
             data["reply_markup"] = keyboard(buttons)
+        if silent:
+            data["disable_notification"] = "true"
         return self._call("sendPhoto", data, files={"photo": ("chart.png", png, "image/png")})
+
+    def send_album(self, chat_id: str, photos: list[tuple[bytes, str]], silent: bool = True) -> list:
+        """2-10 charts as one grouped album, each with its own caption (sendMediaGroup takes no buttons)."""
+        photos = photos[:10]
+        media = [{"type": "photo", "media": f"attach://p{i}", "caption": cap[:MAX_CAPTION], "parse_mode": "HTML"}
+                 for i, (_, cap) in enumerate(photos)]
+        data = {"chat_id": chat_id, "media": json.dumps(media)}
+        if silent:
+            data["disable_notification"] = "true"
+        return self._call("sendMediaGroup", data,
+                          files={f"p{i}": (f"chart{i}.png", png, "image/png") for i, (png, _) in enumerate(photos)})
 
     def detect_chats(self) -> list[dict]:
         """Chats that have messaged the bot recently (send it any message first)."""

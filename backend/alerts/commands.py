@@ -84,7 +84,8 @@ class BotCommands:
         if chat != notifier.chat_id:
             return False
         action, _, sym = (cq.get("data") or "").partition(":")
-        toast = {"w": self.watch, "m": self.mute, "c": self.chart, "b": self.bought, "q": self.quiet}.get(
+        toast = {"w": self.watch, "m": self.mute, "c": self.chart, "b": self.bought, "q": self.quiet,
+                 "r": self.report}.get(
             action, lambda s, n: "")(
             sym, notifier)
         try:
@@ -127,6 +128,16 @@ class BotCommands:
         notifier.send(f"bot|{uuid.uuid4().hex}", "plan", f"📈 <b>{msg.escape(sym)}</b> · {kind.replace('_', ' ')}",
                       sym, png)
         return f"📈 Chart for {sym} sent."
+
+    def report(self, arg: str, notifier: Notifier) -> str:
+        """The evening report's buttons: r:b:<date> breakout charts, r:t:<date> top setup charts, r:d:<date> details."""
+        from backend.alerts import report
+        what, _, as_of = arg.partition(":")
+        try:
+            return report.tap(what, as_of, notifier, self.state.config) or "Unknown button"
+        except Exception as exc:
+            logger.exception("Report button %s failed", arg)
+            return f"Couldn't send that: {exc}"
 
     def bought(self, sym: str, notifier: Notifier) -> str:
         from backend.alerts import guard

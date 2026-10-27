@@ -447,3 +447,4 @@ body.modal-open { overflow: hidden; }
   .orbfilters::-webkit-scrollbar { display: none; } .orbfilters .spill { flex: none; }
   .orbmeta { margin-left: 0; flex-basis: 100%; }
 }
+.alertstyle select { margin-left: 8px; }

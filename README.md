@@ -981,6 +981,21 @@ candles from Kite for the screened days only (a few thousand requests, 25–30 m
 candles already stored are re-used). After that the evening job adds each day's trades and the next session's list.
 `POST /api/orb/build` (`?rebuild=true` re-runs from scratch). Results in `orb_trades`; closed rows never change.
 
+### Evening report (alert style)
+
+**Alerts → What to send → Alert style** (`alert_style`):
+
+| Style | What arrives in the evening |
+|---|---|
+| **Summary** (default) | **one silent message** after the evening scan, when the top setups are ranked (7:00 PM): market line, 🚀 breakouts (one line each: change, price, pattern, tier, stop distance), 👀 near the pivot, 🔻 back under the pivot / 🏁 played out / ↩️ back over / 🟡 new bases / 🚪 left, 💼 your positions (the evening guard), ⚠️ not confirmed at the close, 🎯 the top setups and the 🚀 Momentum ORB list. Buttons: **📈 Breakouts (n)** and **📈 Top N** send those charts as one album, then one message of 📌 Watch / ✅ I bought buttons; **🧾 Details** sends the full alerts as text |
+| **Every alert** | each stage move, near-pivot name, guard result, digest and top setup as its own message with its chart (as before) |
+
+How it works: during the evening job the alerts are held in `alert_outbox` (batch = the scan date) instead of being
+sent (`Notifier.hold`); `backend/alerts/report.py` builds the report from them in the top-setups job and answers the
+buttons (`r:b:<date>`, `r:t:<date>`, `r:d:<date>`); charts are re-drawn on tap. System messages are never held.
+Held alerts are kept 30 days. Market-hours alerts are unchanged (they come in the next steps). Alerts → Send sample
+→ 🌙 Evening report shows the format in your chat.
+
 ### Buttons and bot commands
 
 Stock alerts carry four buttons (`alert_buttons`), answered by the bot poller (`backend/alerts/commands.py`, your
@@ -1168,6 +1183,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `close_check` / `close_check_time` / `close_min_range` | true / 15:15 / 0.5 | act-before-close check; price must sit in the upper half of the day's range |
 | `universe_refresh_weekday` | 6 (Sunday) | weekly refresh day |
 | `tiering` / `b_alerts` / `correction_mode` | true / digest / caution | A/B priority; B: digest, push or off; correction: caution or mute_buys |
+| `alert_style` | summary | summary: the evening's alerts in one 7 PM report (charts on tap); every: each alert its own message |
 | `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
 | `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
 | `orb.*`: `min_price` / `rsi_len` / `rsi_min` / `min_volume` / `ema_len` / `high_bars` / `or_minutes` / `entry_end` / `target_mult` / `book_frac` / `atr_mult` / `atr_len` / `exit_time` / `history_days` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `slippage_pct` | 200 / 14 / 60 / 500,000 / 50 / 252 / 15 / 1:30 PM / 1.5 / 0.5 / 2 / 14 / 3:15 PM / 730 / 1,000,000 / 0.01 / 0.20 / 10 / 0.06 / 0.05 | Momentum ORB screen, trade rules and account (times stored as "13:30" / "15:15") |
@@ -1698,3 +1714,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   the account curve via `backtest.book`.
 - `/api/orb`, `/api/orb/trades`, `POST /api/orb/build`; the evening job updates it once it has run; `orb` settings.
 - 🚀 Momentum ORB tab.
+
+### 2026-10-27: Evening report (summary alert style)
+- `alert_style` summary (default) / every. The evening job holds its alerts in `alert_outbox`; the 7 PM top-setups
+  job sends one silent report (`backend/alerts/report.py`) with 📈 album and 🧾 details buttons.
+- Telegram client: `silent` sends, `send_album` (sendMediaGroup), multi-row keyboards. Alerts panel: Alert style
+  switch; 🌙 Evening report sample.

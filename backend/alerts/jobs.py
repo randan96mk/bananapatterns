@@ -92,7 +92,8 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
     if (trading and cfg.intraday and cfg.close_check and ready("close_check")
             and hm(cfg.close_check_time) <= t < MARKET_CLOSE):
         jobs.append("close_check")
-    if trading and cfg.top_setups and ready("top_setups") and hm(cfg.top_setups_time) <= t < time(23, 0):
+    if (trading and (cfg.top_setups or cfg.alert_style == "summary") and ready("top_setups")
+            and hm(cfg.top_setups_time) <= t < time(23, 0)):             # summary style: the evening report
         jobs.append("top_setups")
     if trading and cfg.morning_plan and ready("morning_plan") and hm(cfg.morning_plan_time) <= t < time(12, 0):
         jobs.append("morning_plan")
@@ -128,6 +129,7 @@ class Scheduler:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
+        self.hold: Optional[str] = None                   # summary style: the batch the evening job is holding
 
     # --- loop ---
 
@@ -172,7 +174,12 @@ class Scheduler:
         logger.info("Job %s %s: %s — %s", job, today, status, message)
 
     def notifier(self) -> Notifier:
-        return self.notifier_factory(self.state.config.alerts)
+        n = self.notifier_factory(self.state.config.alerts)
+        n.hold = self.hold                                  # summary style: the evening job holds its alerts
+        return n
+
+    def summary(self) -> bool:
+        return self.state.config.alerts.alert_style == "summary"
 
     def _tokens(self) -> dict:
         return {s["symbol"]: s["instrument_token"] for s in uni.resolve_universe(self.state.config.ingest)["stocks"]}
@@ -275,10 +282,16 @@ class Scheduler:
 
         if st.config.alerts.results_calendar:
             self.refresh_events()
-        sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
-                             st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
-        if st.config.alerts.position_guard:
-            sent["guard"] = self.run_guard(as_of)
+        self.hold = as_of if self.summary() else None      # summary style: held for the evening report
+        try:
+            notifier.hold = self.hold
+            sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
+                                 st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
+            if st.config.alerts.position_guard:
+                sent["guard"] = self.run_guard(as_of)
+        finally:
+            self.hold = None
+            notifier.hold = None
         try:                                       # Momentum ORB: today's trades, tomorrow's list (once it was run)
             from backend.engine import momentum_orb
             if momentum_orb.built() and st.client.has_token:
@@ -722,6 +735,13 @@ class Scheduler:
                 i["stop"], i["size"] = round(ctx["stop"], 2), ctx["size"]
             charts.append((n, i, png, ctx))
         pl.save_plan(as_of, [{k: v for k, v in i.items() if k != "payload"} for i in items])
+        if self.summary():                                  # one evening report instead of the separate messages
+            from backend.alerts import report
+            ok = report.send(notifier, as_of, items if cfg.top_setups else [],
+                             msg.market_line(mc.health) if mc.health else None, self._orb_list(as_of))
+            self.record("top_setups", today, "ok", f"{len(items)} setups ranked; evening report "
+                        f"{'sent' if ok else 'not sent'}", started)
+            return {"status": "ok", "items": len(items), "sent": int(ok)}
         if items and notifier.send(f"{as_of}|top", "plan", decorate(msg.top_setups(items, as_of), "plan", None, mc)):
             sent += 1
             for n, i, png, ctx in charts:
@@ -730,6 +750,16 @@ class Scheduler:
                     sent += 1
         self.record("top_setups", today, "ok", f"{len(items)} setups ranked; sent {sent}", started)
         return {"status": "ok", "items": len(items), "sent": sent}
+
+    @staticmethod
+    def _orb_list(as_of: str) -> Optional[list[str]]:
+        """The Momentum ORB screen of the scan day (the next session's list), once that backtest has been run."""
+        try:
+            with get_db() as conn:
+                return [r[0] for r in conn.execute("SELECT symbol FROM orb_trades WHERE signal_date = ? "
+                                                   "ORDER BY rsi DESC", (as_of,))] or None
+        except Exception:
+            return None
 
     def run_morning_plan(self, now: datetime) -> dict:
         today, started = now.date(), now_ist()
