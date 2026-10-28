@@ -753,11 +753,13 @@ class Scheduler:
 
     @staticmethod
     def _orb_list(as_of: str) -> Optional[list[str]]:
-        """The Momentum ORB screen of the scan day (the next session's list), once that backtest has been run."""
+        """The Momentum ORB screens of the scan day (the next session's lists), once that backtest has been run:
+        momentum names (long or short), then 52-week-low names marked ↓ (short only)."""
         try:
             with get_db() as conn:
-                return [r[0] for r in conn.execute("SELECT symbol FROM orb_trades WHERE signal_date = ? "
-                                                   "ORDER BY rsi DESC", (as_of,))] or None
+                return [r[0] + (" ↓" if r[1] == "weak" else "") for r in conn.execute(
+                    "SELECT symbol, list FROM orb_trades WHERE signal_date = ? ORDER BY list, rsi DESC",
+                    (as_of,))] or None
         except Exception:
             return None
 

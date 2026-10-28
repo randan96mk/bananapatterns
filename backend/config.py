@@ -326,22 +326,25 @@ class AlertsConfig:
 
 @dataclass
 class OrbConfig:
-    """Momentum ORB: an evening momentum screen, then an intraday breakout of the next session's first 15 minutes."""
-    # evening screen (Nifty 500), on the day's candle
+    """Momentum ORB: two evening screens, then an intraday breakout of the next session's first 30 minutes.
+    (Field names changed from the 15-minute version, so these defaults apply over older saved settings.)"""
+    # evening screens (Nifty 500), on the day's candle
     min_price: float = 200.0               # close above this (Rs)
-    rsi_len: int = 14
-    rsi_min: float = 60.0                  # RSI outside 40-60, buy side: above 60
     min_volume: int = 500_000              # the day's volume (shares)
-    ema_len: int = 50                      # close above this EMA
-    high_bars: int = 252                   # a new 52-week high: the day's high is the highest of this many sessions
+    rsi_len: int = 14
+    ema_len: int = 50
+    high_bars: int = 252                   # 52 weeks of sessions
+    rsi_min: float = 60.0                  # momentum list: RSI over this, close over the EMA, a new 52-week high
+    weak_rsi_max: float = 40.0             # 52-week-low list: RSI under this, close under the EMA, a new 52-week low
     # next session, 5-minute candles (IST, 24-hour internally)
-    or_minutes: int = 15                   # opening range: 9:15 to 9:30 AM; buy over its high, stop at its low
-    entry_end: str = "13:30"               # the entry candle (closing over the high) ends by this time
-    target_mult: float = 1.5               # book book_frac at entry + target_mult x the opening range's length
+    range_minutes: int = 30                # opening range: 9:15 to 9:45 AM
+    entry_end: str = "13:30"               # the first 5-minute close beyond the range, ending by this time, decides
+    stop_pct: float = 2.0                  # stop this far from the entry (under a long, over a short)
+    target_pct: float = 2.0                # book book_frac this far in the trade's favour; the stop moves to the entry
     book_frac: float = 0.5
-    atr_mult: float = 2.0                  # the rest: out on a close under the highest high - atr_mult x ATR
+    atr_mult: float = 2.0                  # the rest: out on a close past the best price -/+ atr_mult x ATR
     atr_len: int = 14                      # ... of 5-minute candles
-    exit_time: str = "15:15"               # intraday only: whatever is left is sold at the candle ending here
+    exit_time: str = "15:15"               # intraday only: whatever is left is closed at the candle ending here
     # portfolio and costs
     history_days: int = 730
     capital: float = 1_000_000.0

@@ -954,22 +954,26 @@ stop-distance bar while the market is open.
 
 ### Momentum ORB (backtest)
 
-`backend/engine/momentum_orb.py` and the **🚀 Momentum ORB** tab (on a phone: More → Momentum ORB). An evening
-momentum screen, then an **intraday** breakout of the next session's first 15 minutes, backtested over two years
+`backend/engine/momentum_orb.py` and the **🚀 Momentum ORB** tab (on a phone: More → Momentum ORB). Two evening
+screens, then an **intraday** breakout of the next session's first 30 minutes, long or short, backtested over two years
 before any live alerts.
 
 | Step | Rule (`orb.*` settings) |
 |---|---|
-| Evening screen (Nifty 500) | close > ₹`min_price` (200), RSI(14) > `rsi_min` (60: "outside 40–60", buy side), the day's volume > `min_volume` (5 lakh shares), close > the `ema_len` (50)-day EMA, and a **new 52-week high** (the day's high is the highest of `high_bars` = 252 sessions) |
-| Opening range | the next session's 5-minute candles from 9:15 to 9:30 AM (`or_minutes`): high H, low L |
-| Buy | the first 5-minute candle that **closes over H**, ending by `entry_end` (1:30 PM); entry = that close |
-| Stop | L |
-| Book | `book_frac` (50%) at entry + `target_mult` (1.5) × (H − L); the stop moves to the entry |
-| The rest | out on a 5-minute close under the highest high − `atr_mult` (2) × ATR(`atr_len` 14) of 5-minute candles, or at the entry |
-| Intraday only | whatever is left is sold at the candle ending at `exit_time` (3:15 PM) |
+| Evening screens (Nifty 500) | both: close > ₹`min_price` (200), the day's volume > `min_volume` (5 lakh). **Momentum**: RSI(14) > `rsi_min` (60), close > the 50-day EMA, a new 52-week high. **52-week low**: RSI < `weak_rsi_max` (40), close < the 50-day EMA, a new 52-week low |
+| Opening range | the next session's 5-minute candles from 9:15 to 9:45 AM (`range_minutes` 30): high H, low L |
+| Entry | the **first** 5-minute candle after it, ending by `entry_end` (1:30 PM), that closes beyond the range decides: over H = **buy** (momentum list), under L = **sell short** (both lists; the 52-week-low list takes no long) |
+| Stop | `stop_pct` (2%) from the entry |
+| Book | `book_frac` (50%) at `target_pct` (2%) profit; the stop moves to the entry |
+| The rest | out on a 5-minute close past the best price ∓ `atr_mult` (2) × ATR(`atr_len` 14), or at the entry |
+| Intraday only | whatever is left is closed at the candle ending at `exit_time` (3:15 PM) |
 | Stop and target in one candle | counted as the stop (the worse case) |
-| Costs | `cost_pct` (0.06%) round trip at intraday rates + `slippage_pct` (0.05%) a fill; a trade is won / lost **after costs** |
-| Account | `capital` ₹10L, `risk_pct` 1% sized by the stop, `position_cap` 20%, `max_positions` 10, cash only |
+| Costs | `cost_pct` (0.06%) round trip at intraday rates + `slippage_pct` (0.05%) a fill; won / lost **after costs** |
+| Account | `capital` ₹10L, `risk_pct` 1% sized by the stop, `position_cap` 20%, `max_positions` 10, cash only (a short is replayed as its mirror image) |
+
+Results are shown for **All**, **Momentum longs**, **Momentum shorts** and **52-week-low shorts** (a **Longs vs shorts**
+table compares them, with Year 1 / Year 2). The 15-minute version's results are dropped on the update (the stored
+5-minute candles stay), so the tab asks for one re-run.
 
 The tab shows the per-trade numbers (after and before costs, win rate, how often the 1.5× target is reached,
 profit factor), the account curve against the Nifty 500, **Year 1 vs Year 2** (the older and the latest of the last
@@ -1186,7 +1190,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `alert_style` | summary | summary: the evening's alerts in one 7 PM report (charts on tap); every: each alert its own message |
 | `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
 | `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
-| `orb.*`: `min_price` / `rsi_len` / `rsi_min` / `min_volume` / `ema_len` / `high_bars` / `or_minutes` / `entry_end` / `target_mult` / `book_frac` / `atr_mult` / `atr_len` / `exit_time` / `history_days` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `slippage_pct` | 200 / 14 / 60 / 500,000 / 50 / 252 / 15 / 1:30 PM / 1.5 / 0.5 / 2 / 14 / 3:15 PM / 730 / 1,000,000 / 0.01 / 0.20 / 10 / 0.06 / 0.05 | Momentum ORB screen, trade rules and account (times stored as "13:30" / "15:15") |
+| `orb.*`: `min_price` / `min_volume` / `rsi_len` / `ema_len` / `high_bars` / `rsi_min` / `weak_rsi_max` / `range_minutes` / `entry_end` / `stop_pct` / `target_pct` / `book_frac` / `atr_mult` / `atr_len` / `exit_time` / `history_days` / `capital` / `risk_pct` / `position_cap` / `max_positions` / `cost_pct` / `slippage_pct` | 200 / 500,000 / 14 / 50 / 252 / 60 / 40 / 30 / 1:30 PM / 2 / 2 / 0.5 / 2 / 14 / 3:15 PM / 730 / 1,000,000 / 0.01 / 0.20 / 10 / 0.06 / 0.05 | Momentum ORB screen, trade rules and account (times stored as "13:30" / "15:15") |
 | `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
@@ -1720,3 +1724,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   job sends one silent report (`backend/alerts/report.py`) with 📈 album and 🧾 details buttons.
 - Telegram client: `silent` sends, `send_album` (sendMediaGroup), multi-row keyboards. Alerts panel: Alert style
   switch; 🌙 Evening report sample.
+
+### 2026-10-28: Momentum ORB: 30-minute range, long and short, 2% stop / 2% target
+- A 52-week-low screen (RSI < 40, under the 50-day EMA) next to the momentum one; the first 5-minute close beyond the
+  9:15-9:45 AM range decides long / short; fixed 2% stop, half at 2%, ATR trail both ways. `orb_trades` gains
+  `list` / `side` (old results dropped); `/api/orb?set=` and `by_set`; the tab's set chips and Longs vs shorts table.
