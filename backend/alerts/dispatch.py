@@ -58,13 +58,18 @@ def split_caption(html: str, limit: int = MAX_CAPTION) -> tuple[str, str]:
     return "\n".join(cap), "\n".join(lines).strip("\n")
 
 
-class Notifier:
-    """Sends through Telegram and records every attempt in sent_alerts."""
+NEVER_HELD = ("system", "bot", "report")                 # always sent at once, even while holding
 
-    def __init__(self, cfg: AlertsConfig, client: Optional[TelegramClient] = None):
+
+class Notifier:
+    """Sends through Telegram and records every attempt in sent_alerts. With `hold` set to a batch (the scan date,
+    summary alert style), alerts are stored in alert_outbox for the evening report instead of being sent."""
+
+    def __init__(self, cfg: AlertsConfig, client: Optional[TelegramClient] = None, hold: Optional[str] = None):
         self.cfg = cfg
         self.client = client or TelegramClient()
         self.chat_id = (cfg.chat_id or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+        self.hold = hold
 
     @property
     def ready(self) -> bool:
@@ -76,27 +81,30 @@ class Notifier:
         return bool(row and row["ok"])
 
     def send(self, key: str, kind: str, html: str, symbol: Optional[str] = None, png: Optional[bytes] = None,
-             buttons: Optional[list[tuple[str, str]]] = None) -> bool:
+             buttons: Optional[list] = None, silent: bool = False, meta: Optional[dict] = None) -> bool:
         if not self.ready or self.already_sent(key):
             return False
         if symbol and kind in RESULTS_NOTE_KINDS:
             html += results_note(symbol, self.cfg) + news_note(symbol, kind, self.cfg) + flags_note(symbol, self.cfg)
+        if self.hold and kind not in NEVER_HELD:
+            return self._hold(key, kind, html, symbol, meta)
         ok, err = True, None
+        quiet = {"silent": True} if silent else {}
         try:
             if buttons is None and symbol and kind in ACTION_KINDS and self.cfg.alert_buttons:
                 buttons = action_buttons(symbol)
             if png:
                 caption, rest = split_caption(html)
                 if buttons:
-                    self.client.send_photo(self.chat_id, png, caption, buttons)
+                    self.client.send_photo(self.chat_id, png, caption, buttons, **quiet)
                 else:
-                    self.client.send_photo(self.chat_id, png, caption)
+                    self.client.send_photo(self.chat_id, png, caption, **quiet)
                 if rest:
-                    self.client.send_message(self.chat_id, rest)
+                    self.client.send_message(self.chat_id, rest, **quiet)
             elif buttons:
-                self.client.send_message(self.chat_id, html, buttons)
+                self.client.send_message(self.chat_id, html, buttons, **quiet)
             else:
-                self.client.send_message(self.chat_id, html)
+                self.client.send_message(self.chat_id, html, **quiet)
         except TelegramError as exc:
             ok, err = False, str(exc)
             logger.error("Telegram send failed (%s): %s", kind, exc)
@@ -105,6 +113,17 @@ class Notifier:
                          "ON CONFLICT(key) DO UPDATE SET sent_at=excluded.sent_at, ok=excluded.ok, error=excluded.error",
                          (key, now_ist(), kind, symbol, html, int(ok), err))
         return ok
+
+    def _hold(self, key: str, kind: str, html: str, symbol: Optional[str], meta: Optional[dict]) -> bool:
+        """Keep the alert for the evening report; recorded in sent_alerts as handled (so it isn't sent twice)."""
+        with get_db() as conn:
+            conn.execute("INSERT OR IGNORE INTO alert_outbox (batch, key, kind, symbol, html, meta, created_at) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?)", (self.hold, key, kind, symbol, html, json.dumps(meta or {}),
+                                                          now_ist()))
+            conn.execute("INSERT INTO sent_alerts (key, sent_at, kind, symbol, text, ok, error) VALUES (?,?,?,?,?,?,?) "
+                         "ON CONFLICT(key) DO UPDATE SET sent_at=excluded.sent_at, ok=1, error=excluded.error",
+                         (key, now_ist(), kind, symbol, html, 1, "in the evening report"))
+        return True
 
     def system(self, key: str, text: str) -> bool:
         return self.cfg.system and self.send(key, "system", msg.system_alert(text))
@@ -222,6 +241,10 @@ def decision_for(candles: list[dict], p: dict, kind: str, cfg: AlertsConfig, bas
         return None, None
 
 
+def setup_stop_of(p: Optional[dict]) -> Optional[float]:
+    return msg.setup_stop(p) if p else None
+
+
 def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier: Notifier,
                   tokens: dict[str, int], fresh_sessions: int = 5, vcp_cfg: Optional[VcpConfig] = None) -> dict:
     """Send alerts for one as-of date. tokens: symbol -> instrument_token (for charts)."""
@@ -284,7 +307,9 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
             if note:
                 html += "\n" + note
             html = decorate(html, kind, m["tier"], mc)
-            if notifier.send(f"{as_of}|{screen}|{m['symbol']}|{kind}", kind, html, m["symbol"], png):
+            meta = {"tier": m["tier"], "screen": screen, "change_pct": m.get("change_pct"), "close": m.get("close"),
+                    "stop": setup_stop_of(p), "label": (p or {}).get("base_label")}
+            if notifier.send(f"{as_of}|{screen}|{m['symbol']}|{kind}", kind, html, m["symbol"], png, meta=meta):
                 sent["stage"] += 1
 
         for sym, p in payloads.items():
@@ -307,7 +332,8 @@ def dispatch_scan(as_of: str, cfg: AlertsConfig, bases_cfg: BaseConfig, notifier
                 cs = candles_of(sym)
                 png, ctx = decision_for(cs, p, "near_pivot", cfg, bases_cfg, vcp_cfg, **sizing) if cs else (None, None)
                 if notifier.send(key, "near_pivot", decorate(msg.near_pivot_alert(screen, p, ctx), "near_pivot", t, mc),
-                                 sym, png):
+                                 sym, png, meta={"tier": t, "screen": screen, "dist": p.get("dist_to_pivot_pct"),
+                                                 "pivot": p.get("pivot")}):
                     sent["near_pivot"] += 1
 
         if cfg.digest:

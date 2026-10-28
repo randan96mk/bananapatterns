@@ -165,6 +165,19 @@ CREATE TABLE IF NOT EXISTS sent_alerts (
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_sent_at ON sent_alerts(sent_at);
 
+-- Summary alert style: the evening's alerts held for the evening report (batch = the scan date); the full text is
+-- kept for the report's Details button and the chart captions. meta: tier, change, stop, distance ... for its lines.
+CREATE TABLE IF NOT EXISTS alert_outbox (
+    batch TEXT NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    symbol TEXT,
+    html TEXT NOT NULL,
+    meta TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (batch, key)
+);
+
 -- Automatic jobs (evening job, reminders, intraday checks, weekly refresh).
 CREATE TABLE IF NOT EXISTS job_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

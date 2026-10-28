@@ -43,7 +43,7 @@ const strip = (h) => h.replace(/<[^>]+>/g, '');
 const SAMPLES = [['all', 'All types'], ['breakout', '🚀 Breakout'], ['near_pivot', '🎯 Near pivot'],
   ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Back below pivot'], ['played_out', '🏁 Played out'],
   ['intraday', '⚡ Intraday heads-up'], ['failed', '⚠️ Failed breakout'], ['close_check', '🕒 3:15 PM close check'],
-  ['digest', '📋 Digest'], ['system', '⚙️ System']];
+  ['digest', '📋 Digest'], ['report', '🌙 Evening report'], ['system', '⚙️ System']];
 
 // Settings + activity for Telegram alerts and the automatic jobs.
 export default function AlertsPanel() {
@@ -188,6 +188,13 @@ export default function AlertsPanel() {
 
       <div className="panel">
         <h3>What to send</h3>
+        <label className="toggle field alertstyle">Alert style
+          <select value={cfg.alert_style} onChange={(e) => save({ alert_style: e.target.value })}>
+            <option value="summary">Summary: one 7 PM evening report, charts on tap</option>
+            <option value="every">Every alert as its own message</option></select></label>
+        <p className="muted small">{cfg.alert_style === 'summary'
+          ? 'The evening scan, guard and top setups arrive as one silent report with 📈 chart and 🧾 details buttons. Market-hours alerts are unchanged.'
+          : 'Each stage move, near-pivot name, guard result and top setup is sent as its own message with its chart.'}</p>
         <div className="toggles">
           {GROUPS.map(([title, items]) => (
             <div key={title}><h4>{title}</h4>

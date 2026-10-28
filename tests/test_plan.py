@@ -96,6 +96,7 @@ def test_top_setups_waits_for_the_evening_scan(monkeypatch):
 
 def test_top_setups_plan_morning_and_gap(monkeypatch):
     sch, fake, st, q, piv = setup(monkeypatch)
+    st.config.alerts.alert_style = "every"                  # the separate messages (summary: tests/test_report.py)
     day = datetime.fromisoformat(scan_day()).replace(tzinfo=IST)
     r = sch.run_top_setups(day.replace(hour=19), force=True)
     assert r["items"] == 5 and r["sent"] == 6                          # header + 5 charts

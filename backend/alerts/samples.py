@@ -18,7 +18,7 @@ from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, now_ist
 
 SAMPLE_KINDS = ["breakout", "near_pivot", "forming", "below_pivot", "played_out", "intraday", "failed",
-                "close_check", "digest", "system"]
+                "close_check", "digest", "report", "system"]
 PREFIX = "🧪 <b>TEST</b> — "
 
 
@@ -66,6 +66,34 @@ def _pick(rows: list[dict], stages: tuple, key=None) -> Optional[dict]:
         if cands:
             return sorted(cands, key=key)[0] if key else cands[0]
     return None
+
+
+def _report_sample(as_of: Optional[str], rows: list[dict], config: AppConfig) -> str:
+    """The evening report: from the latest real batch if the evening job has held one, else from the latest scan."""
+    from backend.alerts import plan as pl
+    from backend.alerts import report
+    with get_db() as conn:
+        batch = conn.execute("SELECT MAX(batch) FROM alert_outbox WHERE batch != 'sample'").fetchone()[0]
+    if not batch:                                     # nothing held yet: example lines from the latest scan
+        batch = "sample"
+        uniq = list({r["symbol"]: r for r in rows}.values())
+        fresh = [r for r in uniq if r["stage"] in ("fresh", "fresh_low_volume")][:3]
+        near = [r for r in uniq if r["stage"] == "forming" and (r.get("dist_to_pivot_pct") or 99) <= 3][:5]
+        with get_db() as conn:
+            conn.execute("DELETE FROM alert_outbox WHERE batch = 'sample'")
+            for p in fresh or [{"symbol": "EXAMPLE", "close": 103.0, "stop": 96.0, "base_label": "B2"}]:
+                conn.execute("INSERT OR IGNORE INTO alert_outbox VALUES ('sample', ?, ?, ?, ?, ?, ?)",
+                             (f"s|{p['symbol']}", "breakout", p["symbol"], f"🚀 <b>{p['symbol']}</b>",
+                              json.dumps({"tier": "A", "change_pct": p.get("change_pct", 3.0), "close": p.get("close"),
+                                          "stop": msg.setup_stop(p), "label": p.get("base_label")}), now_ist()))
+            for p in near:
+                conn.execute("INSERT OR IGNORE INTO alert_outbox VALUES ('sample', ?, ?, ?, ?, ?, ?)",
+                             (f"n|{p['symbol']}", "near_pivot", p["symbol"], f"🎯 <b>{p['symbol']}</b>",
+                              json.dumps({"dist": p.get("dist_to_pivot_pct")}), now_ist()))
+    plan_as_of, items = pl.latest_plan()
+    shown = batch if batch != "sample" else (as_of or plan_as_of)
+    html, _ = report.build(shown or "2026-01-01", items, None, None, batch=batch)
+    return html + "\n<i>(📈 / 🧾 buttons appear on the real report)</i>"
 
 
 def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[tuple[str, str, Optional[bytes]]]:
@@ -164,6 +192,8 @@ def build_samples(kind: str, config: AppConfig, tokens: dict[str, int]) -> list[
                           "₹100.00 pivot on 2.6x volume.", "close": 103.0, "change_pct": 3.4}]
             chunk = msg.digest(screen, as_of or "sample", counts, moves)[0]
             add(k, chunk, None)
+        elif k == "report":
+            add(k, _report_sample(as_of, rows, config), None)
         elif k == "system":
             add(k, msg.system_alert("Kite login needed for today's 6:30 PM evening scan "
                                     "(tokens expire 6:00 AM IST). Open the dashboard and log in."), None)

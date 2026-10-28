@@ -33,6 +33,8 @@ def test_samples_use_real_scan_stocks():
     samples = dict((k, html) for k, html, _ in build_samples("all", config(), tokens))
     assert "FRESH" in samples["breakout"] and "NEAR" in samples["near_pivot"]
     assert "EXAMPLE" not in samples["breakout"]
+    rep = samples["report"]
+    assert "Evening report" in rep and "Breakouts (1)" in rep and "FRESH" in rep and "buttons appear" in rep
 
 
 def test_samples_are_logged_as_test_and_do_not_block_real_alerts():
