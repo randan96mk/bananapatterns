@@ -290,9 +290,12 @@ CREATE TABLE IF NOT EXISTS deals (
 );
 CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
--- Momentum ORB: one row per evening-screen stock (signal_date = the screen day) and the intraday trade the next
--- session (trade_date) made from it. Closed rows never change.
+-- Momentum ORB: one row per evening-screen stock (list: momentum = 52-week highs, weak = 52-week lows; signal_date =
+-- the screen day) and the intraday trade the next session (trade_date) made from it (side: long / short).
+-- Closed rows never change.
 CREATE TABLE IF NOT EXISTS orb_trades (
+    list TEXT NOT NULL,
+    side TEXT,
     symbol TEXT NOT NULL,
     signal_date TEXT NOT NULL,
     trade_date TEXT,
@@ -305,9 +308,8 @@ CREATE TABLE IF NOT EXISTS orb_trades (
     booked INTEGER NOT NULL DEFAULT 0,
     events TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (symbol, signal_date)
+    PRIMARY KEY (list, symbol, signal_date)
 );
-CREATE INDEX IF NOT EXISTS idx_orb_date ON orb_trades (signal_date);
 
 -- 5-minute candles, fetched only for the days a backtest needs (backend/engine/backtest.py); candles_5m_days marks the days
 -- fetched (a day with no candles is still marked, so it isn't asked for again).
@@ -348,9 +350,20 @@ def init_db(path: Optional[str] = None) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with get_db(str(p)) as conn:
         _migrate_scan_tables(conn)
+        _migrate_orb(conn)
         conn.executescript(SCHEMA)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_orb_date ON orb_trades (signal_date)")
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'kite'")   # kite / manual
         _drop_track_record(conn)
+
+
+def _migrate_orb(conn) -> None:
+    """The 15-minute Momentum ORB (Oct 2026) became the 30-minute two-sided one: its results are dropped so the
+    tab asks for a re-run (the stored 5-minute candles stay)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(orb_trades)")]
+    if cols and "list" not in cols:
+        conn.execute("DROP TABLE orb_trades")
+        conn.execute("DELETE FROM app_settings WHERE key LIKE 'orb.%'")
 
 
 def _drop_track_record(conn) -> None:

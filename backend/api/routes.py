@@ -693,34 +693,43 @@ def _orb_period(period: str) -> str:
     return period.lower()
 
 
+def _orb_set(which: str) -> str:
+    from backend.engine import momentum_orb as orb
+    if which.lower() not in orb.SETS:
+        raise HTTPException(422, f"set must be one of {', '.join(orb.SETS)}")
+    return which.lower()
+
+
 @router.get("/orb")
-def orb_summary(period: str = "1y"):
+def orb_summary(period: str = "1y", set: str = "all"):
     """Momentum ORB: status, the per-trade numbers, splits by year / opening-range size / exit, the account curve vs
-    Nifty 500, and the latest screen (the next session's list)."""
+    Nifty 500, the three sets side by side (momentum longs / momentum shorts / 52-week-low shorts), and the latest
+    screens (the next session's lists). set: all / long / short / weak narrows everything but by_set."""
     from dataclasses import asdict
     from backend.database.models import get_setting
     from backend.engine import momentum_orb as orb
-    period = _orb_period(period)
+    period, which = _orb_period(period), _orb_set(set)
     cfg = S().config
     with get_db() as conn:
         meta = {k: get_setting(conn, f"orb.{k}") for k in ("built_at", "updated_at", "as_of")}
-    rs = orb.rows(period)
-    years = {y: orb.stats(orb.rows(y)) for y in orb.YEARS}
-    with get_db() as conn:                       # the latest data day's screen = the next session's list
+    rs = orb.rows(period, which)
+    years = {y: orb.stats(orb.rows(y, which)) for y in orb.YEARS}
+    with get_db() as conn:                       # the latest data day's screens = the next session's lists
         watch = [dict(r) for r in conn.execute(
-            "SELECT symbol, signal_date, close, rsi, volume, status, reason FROM orb_trades WHERE signal_date = ? "
-            "ORDER BY rsi DESC", (meta["as_of"],))] if meta["as_of"] else []
-    return {"built": bool(meta["built_at"]), **meta, "period": period, "progress": orb.status(),
+            "SELECT list, symbol, signal_date, close, rsi, volume, status, reason FROM orb_trades "
+            "WHERE signal_date = ? ORDER BY list, rsi DESC", (meta["as_of"],))] if meta["as_of"] else []
+    return {"built": bool(meta["built_at"]), **meta, "period": period, "set": which, "progress": orb.status(),
             "kite": bool(S().client.has_token), "rules": asdict(cfg.orb), **orb.stats(rs),
             "by_year": [{"year": y, **{k: v for k, v in s.items() if k != "exits"}} for y, s in years.items()],
-            "by_range": orb.split_or(rs), "portfolio": orb.portfolio(rs, cfg), "watchlist": watch}
+            "by_range": orb.split_or(rs), "by_set": orb.by_set(period) if meta["built_at"] else [],
+            "portfolio": orb.portfolio(rs, cfg), "watchlist": watch}
 
 
 @router.get("/orb/trades")
-def orb_trades(period: str = "1y", status: str = "all", limit: int = 200, offset: int = 0):
-    """Momentum ORB rows, newest first: status all / closed / won / lost / no_entry / pending."""
+def orb_trades(period: str = "1y", status: str = "all", set: str = "all", limit: int = 200, offset: int = 0):
+    """Momentum ORB rows, newest first: status all / closed / won / lost / no_entry / pending; set as /api/orb."""
     from backend.engine import momentum_orb as orb
-    rs = orb.rows(_orb_period(period))
+    rs = orb.rows(_orb_period(period), _orb_set(set))
     if status == "closed":
         rs = [r for r in rs if r["status"] in ("won", "lost")]
     elif status != "all":
