@@ -19,7 +19,7 @@ const PHONE_TABS = ['screens', 'today', 'alerts'];
 const TABS = [
   ['screens', 'Screens'],
   ['today', '⚡ Today'],
-  ['orb', '🚀 Momentum ORB'],
+  ['orb', '🚀 ORB + VWAP'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['alerts', 'Alerts'],

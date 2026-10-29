@@ -33,9 +33,9 @@ def test_evening_report_from_the_held_alerts():
     sent = dispatch_scan(as_of, cfg(), BaseConfig(reset_ma=0), Notifier(cfg(), fake, hold=as_of), tokens)
     assert sent["stage"] >= 1 and fake.sent == []                                         # all held
     items = [{"symbol": "NEAR", "tier": "A", "pivot": 100.0, "dist_to_pivot_pct": 1.2, "stop": 95.0}]
-    html, buttons = report.build(as_of, items, "<i>Market uptrend</i>", ["ORB1", "ORB2"])
+    html, buttons = report.build(as_of, items, "<i>Market uptrend</i>")
     assert "Evening report" in html and "Breakouts (1)" in html and "<b>FRESH</b>" in html
-    assert "Top 1 for the next session" in html and "<b>NEAR</b>" in html and "Momentum ORB list (2)" in html
+    assert "Top 1 for the next session" in html and "<b>NEAR</b>" in html
     assert [b[2] for b in buttons] == [f"r:b:{as_of}", f"r:t:{as_of}", f"r:d:{as_of}"]
     assert len(html) < 4096
     assert report.send(Notifier(cfg(), fake), as_of, items) and fake.silent and len(fake.sent) == 1

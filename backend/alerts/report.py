@@ -85,7 +85,7 @@ def plan_line(n: int, i: dict) -> str:
 
 
 def build(as_of: str, items: list[dict], market: Optional[str] = None,
-          orb: Optional[list[str]] = None, batch: Optional[str] = None) -> tuple[str, list]:
+          batch: Optional[str] = None) -> tuple[str, list]:
     """(html, buttons) of the evening report for the scan `as_of`; items = the top setups (plan); batch = the held
     alerts to use (default: as_of; the dashboard's sample uses its own)."""
     rows = held(batch or as_of)
@@ -117,9 +117,6 @@ def build(as_of: str, items: list[dict], market: Optional[str] = None,
     if items:
         lines += ["", f"🎯 <b>Top {len(items)} for the next session</b>"] + [plan_line(n, i)
                                                                         for n, i in enumerate(items, 1)]
-    if orb:
-        lines += ["", f"🚀 <b>Momentum ORB list ({len(orb)})</b>: " + " · ".join(msg.escape(s) for s in orb[:MAX_NAMES])
-                  + (f" · +{len(orb) - MAX_NAMES} more" if len(orb) > MAX_NAMES else "")]
     if len(lines) <= 2:
         lines += ["", "A quiet day: no stage changes and no setups near a pivot."]
     lines += ["", "<i>Charts and the full alerts are on the buttons.</i>"]
@@ -137,9 +134,8 @@ def build(as_of: str, items: list[dict], market: Optional[str] = None,
     return html, buttons
 
 
-def send(notifier: Notifier, as_of: str, items: list[dict], market: Optional[str] = None,
-         orb: Optional[list[str]] = None) -> bool:
-    html, buttons = build(as_of, items, market, orb)
+def send(notifier: Notifier, as_of: str, items: list[dict], market: Optional[str] = None) -> bool:
+    html, buttons = build(as_of, items, market)
     with get_db() as conn:                                  # the buttons work for 30 days
         conn.execute("DELETE FROM alert_outbox WHERE batch < date(?, '-30 days')", (as_of,))
     return notifier.send(f"{as_of}|report", "report", html, buttons=buttons or None, silent=True)

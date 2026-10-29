@@ -326,33 +326,47 @@ class AlertsConfig:
 
 @dataclass
 class OrbConfig:
-    """Momentum ORB: two evening screens, then an intraday breakout of the next session's first 30 minutes.
-    (Field names changed from the 15-minute version, so these defaults apply over older saved settings.)"""
-    # evening screens (Nifty 500), on the day's candle
-    min_price: float = 200.0               # close above this (Rs)
-    min_volume: int = 500_000              # the day's volume (shares)
-    rsi_len: int = 14
-    ema_len: int = 50
-    high_bars: int = 252                   # 52 weeks of sessions
-    rsi_min: float = 60.0                  # momentum list: RSI over this, close over the EMA, a new 52-week high
-    weak_rsi_max: float = 40.0             # 52-week-low list: RSI under this, close under the EMA, a new 52-week low
-    # next session, 5-minute candles (IST, 24-hour internally)
-    range_minutes: int = 30                # opening range: 9:15 to 9:45 AM
-    entry_end: str = "13:30"               # the first 5-minute close beyond the range, ending by this time, decides
-    stop_pct: float = 2.0                  # stop this far from the entry (under a long, over a short)
-    target_pct: float = 2.0                # book book_frac this far in the trade's favour; the stop moves to the entry
-    book_frac: float = 0.5
-    atr_mult: float = 2.0                  # the rest: out on a close past the best price -/+ atr_mult x ATR
-    atr_len: int = 14                      # ... of 5-minute candles
-    exit_time: str = "15:15"               # intraday only: whatever is left is closed at the candle ending here
-    # portfolio and costs
+    """ORB + VWAP + relative volume (intraday, long and short) on the most liquid Nifty 500 stocks: a 5-minute close
+    beyond the 9:15-9:30 AM range, on the right side of a rising / falling VWAP, on 1.5x volume. Fixed rupee risk,
+    2R target, daily limits, Zerodha charges and slippage. Backtest only; scanner and alerts, never orders.
+    (Replaced the Momentum ORB in Oct 2026: its saved settings are dropped, so these defaults apply.)"""
+    # universe: each day, the top_n Nifty 500 stocks by the median daily turnover of the previous turnover_days
+    top_n: int = 150
+    turnover_days: int = 20
+    min_price: float = 100.0               # skip a stock whose previous close is under this (Rs)
+    # session (IST, 24-hour internally), 5-minute candles
+    range_start: str = "09:15"             # opening range: 9:15 to 9:30 AM
+    range_end: str = "09:30"
+    entry_end: str = "11:30"               # the signal candle must close by this time
+    exit_time: str = "15:15"               # square off at the close of the candle ending here
+    # signal
+    vwap_slope_bars: int = 3               # VWAP higher (lower) than this many candles earlier
+    rvol_bars: int = 20                    # relative volume against the average of the previous candles
+    rvol_min: float = 1.5
+    stop_buffer_pct: float = 0.05          # stop = the breakout candle's low - this % (rounded up to the tick)
+    tick: float = 0.05
+    max_stop_pct: float = 3.0              # a wider stop (from the entry) is no trade
+    reward_r: float = 2.0                  # target = entry + reward_r x risk
+    # account and risk (Rs)
+    capital: float = 200_000.0
+    allocated: float = 180_000.0           # at most this much in open positions
+    risk_per_trade: float = 500.0          # loss at the stop, charges included
+    daily_loss_limit: float = 1_000.0      # no new entry once the day's loss (plus open risk) would pass this
+    max_entries_per_day: int = 2
+    max_concurrent: int = 2
     history_days: int = 730
-    capital: float = 1_000_000.0
-    risk_pct: float = 0.01                 # risk per trade, sized by the stop
-    position_cap: float = 0.20             # at most this share of the account in one stock
-    max_positions: int = 10
-    cost_pct: float = 0.06                 # round trip, intraday (MIS / same-day) charges, % of the traded value
-    slippage_pct: float = 0.05             # each fill
+    # slippage, each fill (%): normal and stressed
+    slippage_pct: float = 0.05
+    stress_slippage_pct: float = 0.10
+    # Zerodha equity intraday charges (fee schedule as of fees_as_of; check zerodha.com/charges)
+    fees_as_of: str = "2026-10"
+    brokerage_per_order: float = 20.0      # the lower of this and brokerage_pct of the order value
+    brokerage_pct: float = 0.03
+    stt_sell_pct: float = 0.025
+    exchange_pct: float = 0.00297          # NSE transaction charges, both sides
+    sebi_per_crore: float = 10.0
+    gst_pct: float = 18.0                  # on brokerage + exchange + SEBI
+    stamp_buy_pct: float = 0.003
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
