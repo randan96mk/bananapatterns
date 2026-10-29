@@ -952,44 +952,50 @@ Today's 5-minute line next to each name, with the stop or pivot dashed. It refre
 names without prices when there is no Kite login. The Screens positions card shows the same live price, chip and a
 stop-distance bar while the market is open.
 
-### ORB + VWAP (backtest)
+### Trend Breakout (swing backtest + evening scan)
 
-`backend/engine/orb_vwap.py` (indicators in `intraday_ind.py`, charges in `costs.py`) and the **🚀 ORB + VWAP** tab
-(on a phone: More → ORB + VWAP). An **intraday** opening-range breakout, long and short, confirmed by VWAP and
-relative volume, on the most liquid Nifty 500 stocks, backtested over two years through a ₹2L account's limits.
-**Backtest only: no live alerts yet and never any orders.** It replaced the Momentum ORB (its results and saved
-`orb` settings are dropped on the update; the stored 5-minute candles stay).
+`backend/engine/trend_breakout.py` and the **📈 Trend Breakout** tab (on a phone: More → Trend Breakout). A long-only
+swing strategy on Zerodha delivery, from the stored daily candles only (no 5-minute data, no extra Kite requests).
+It is a port of the "breakout" strategy in `randan96mk/Backtest` `swing.py` (baseline settings); on the same candles
+the two give identical trades and equity, including all 14 robustness variants. **Signals only: never orders.** It
+replaced the ORB + VWAP intraday backtest (2 years: 986 trades, net −₹82.9k after ₹1.05L costs, profit factor 0.71).
 
-| Step | Rule (`orb.*` settings) |
+| Step | Rule (`breakout.*` settings) |
 |---|---|
-| Universe | each session, the `top_n` (150) Nifty 500 stocks by the **median daily turnover** (close × volume) of the previous `turnover_days` (20) sessions, previous close ≥ ₹`min_price` (100). Known before the open (no look-ahead); today's constituents, so delisted names are missing (a small survivorship bias) |
-| Candles | 5-minute, completed candles only. Every candle from 9:15 AM to the square-off must be there and sane (high/low around open/close, prices > 0), or **no signal** that day |
-| VWAP | Σ(typical price (H+L+C)/3 × volume) / Σ volume, from 9:15 AM, reset every session |
-| Opening range | `range_start`–`range_end` (9:15–9:30 AM): high H, low L |
-| **Long** | a 5-minute close (closing by `entry_end`, 11:30 AM) **> H** and **> VWAP**, VWAP **higher** than `vwap_slope_bars` (3) candles earlier, volume ≥ `rvol_min` (1.5) × the average of the previous `rvol_bars` (20) candles (back into the previous session) |
-| **Short** | the mirror: close < L and < VWAP, VWAP lower than 3 candles earlier, the same volume rule |
-| One per stock and side | the first signal of the day per stock and direction; later breakouts are ignored |
-| Entry | the **next candle's open** + slippage (a short: −) |
-| Stop | the breakout candle's low − buffer (a short: its high +); buffer = `stop_buffer_pct` (0.05%) of the price rounded **up** to the ₹`tick` (0.05), at least one tick. Past the entry, or more than `max_stop_pct` (3%) away: no trade |
-| Target | `reward_r` (2) × the risk. A candle touching both counts as the **stop**; a gap past either fills at the open |
-| Square-off | the close of the candle ending at `exit_time` (3:15 PM) |
-| Size | qty = min(⌊`risk_per_trade` (₹500) / loss a share at the stop⌋, ⌊what is left of `allocated` (₹1.8L) / entry⌋), cut until the loss at the stop **plus the charges** fits ₹500; the reward at the target must beat its charges |
-| Limits | `max_entries_per_day` (2), `max_concurrent` (2), one position per stock, no entry once the day's realised loss + the open risk + this trade's ₹500 would pass `daily_loss_limit` (₹1,000). Signals on the same candle: the higher relative volume first |
-| Charges | Zerodha equity intraday (`fees_as_of` 2026-10; check zerodha.com/charges): brokerage min(₹20, 0.03%) an order, STT 0.025% on the sale, NSE 0.00297%, SEBI ₹10 a crore, GST 18% on those three, stamp 0.003% on the buy |
-| Slippage | `slippage_pct` (0.05%) every fill; **stressed** `stress_slippage_pct` (0.10%) shown alongside |
+| Data | NIFTY 50 sessions over `test_years` (6) + `warmup_years` (1.2) to the latest candle; the first `warmup_sessions` (260) only warm up the indicators. Today's Nifty 500 list (survivorship bias) |
+| Decided | on a day's close, filled at the **next day's open** (no look-ahead) |
+| Market filter | no new buys unless NIFTY 50 closes over its 200-day SMA (`regime`); positions keep their exits |
+| Universe | each day the `top` (200) by 20-day average turnover, close ≥ ₹`min_price` (100) |
+| Entry | close > SMA50 > SMA150 > SMA200; SMA200 over its value 20 sessions earlier; close ≥ 0.75 × 52-week high and ≥ 1.30 × 52-week low; close > the previous `hi_window` (20)-day high; volume ≥ `vol_mult` (1.5) × the 50-day average; not held |
+| Ranking | more signals than free slots: the highest 6-month return first |
+| Size | up to `max_pos` (10), equal weight: qty = ⌊min(equity / 10, cash) / (fill × 1.0012)⌋, skipped under 1 share |
+| Stop | max(close − `atr_mult` (2) × ATR14, close × (1 − `stop_pct` 8%)), fixed at the signal; a low at or under it exits at min(open, stop), from the entry day |
+| Exit | a close under SMA`exit_sma` (50): out at the next open. No target. The end of the test closes at the last close |
+| Costs | delivery: STT 0.1% both sides, NSE 0.00297%, SEBI ₹10/crore, GST 18% on those two, stamp 0.015% on buys, DP ₹15.93 a sale; `slippage_pct` 0.10% a fill, stressed `stress_slippage_pct` 0.25% |
 
-The tab shows, for normal or stressed slippage: net (gross − charges − slippage, kept apart), win rate, profit
-factor, expectancy (₹ and R), the worst drawdown, the average cost a trade, the account curve (both slippages),
-**development / validation / out-of-sample** (the first 50% / next 25% / last 25% of the sessions: the rules were
-fixed before the run, and an edge must hold in all three and at stressed slippage), longs vs shorts, how trades ended,
-why signals were not taken (limits, size, charges), stock-days with bad candles, and every trade.
+The tab: the funnel (sessions → stock-days → signals → trades), the verdict (✅ only if net is positive after costs in
+development, validation and out-of-sample, stressed too, and the CAGR beats NIFTY 50) with the survivorship and
+"past results" caveats, KPIs (net = gross − costs, CAGR vs NIFTY 50, won %, profit factor, worst drawdown, average
+hold, costs a trade), the curve (normal, stressed, NIFTY 50 on the same ₹2L), the three periods (before costs, costs,
+after costs, stressed, NIFTY 50), year by year vs NIFTY 50, how trades ended (stop / trend exit / end) and signals
+not taken (no free slot / market filter off / too small), **robustness** (each of 14 settings moved one step: volume
+×1.3 / ×2, stop 6% / 10%, ATR ×1.5 / ×3, breakout 10 / 55 days, exit SMA 20, 5 / 15 positions, top 100 / 300, no
+market filter: "N of 14 pass"), tonight's scan, and every trade (gross, costs, net apart).
 
-**Running it.** The first run is the **Run the backtest** button (needs that day's Kite login). It fetches the
-5-minute candles of every stock that was in the top 150 on some day (60 sessions a request, about a thousand
-requests, 10–15 minutes, ~400 MB in `candles_5m`; left out of the nightly backup, re-fetchable). After that the
-evening job adds each session. `POST /api/orb/build` (`?rebuild=true` re-runs from scratch). Signals and their trades
-a share are stored in `orb_signals` (both slippages); sizing and the limits are replayed on reading, so a settings
-change shows at once.
+**Running it.** **Run the backtest** / **Re-run** (`POST /api/breakout/run`) runs it in the background from the
+stored candles (a few minutes: 30 simulations with the robustness block) and refreshes the scan. Missing history comes
+from the normal daily backfill (`ingest.history_years` 8). The run is stored in `breakout_runs`.
+
+**Evening scan** (the evening job, after the sync; read-only `kite.holdings()`): the market filter state, the day's
+breakout buys ranked (close, stop, stop %, quantity at capital / 10, value, ₹ at risk) and each Kite holding: **HOLD**,
+or **SELL at open** on a close under SMA50 or `sell_pct` (8%) under its average price. In the summary alert style it
+is a "📈 Trend Breakout" section of the 7 PM evening report; otherwise its own silent message. Every line says
+"signals only, no orders".
+
+**Planned next (not built): 📝 Paper trading.** Each evening's buys "filled" at the next open from the daily candle,
+with the same size, stop, trend exit and costs; positions, closed trades, curve vs NIFTY 50, paper vs backtest.
+Every paper alert and screen will be labelled **PAPER TRADING**, so it can never be mistaken for real trades if real
+trading is added later.
 
 ### Evening report (alert style)
 
@@ -997,7 +1003,7 @@ change shows at once.
 
 | Style | What arrives in the evening |
 |---|---|
-| **Summary** (default) | **one silent message** after the evening scan, when the top setups are ranked (7:00 PM): market line, 🚀 breakouts (one line each: change, price, pattern, tier, stop distance), 👀 near the pivot, 🔻 back under the pivot / 🏁 played out / ↩️ back over / 🟡 new bases / 🚪 left, 💼 your positions (the evening guard), ⚠️ not confirmed at the close and 🎯 the top setups. Buttons: **📈 Breakouts (n)** and **📈 Top N** send those charts as one album, then one message of 📌 Watch / ✅ I bought buttons; **🧾 Details** sends the full alerts as text |
+| **Summary** (default) | **one silent message** after the evening scan, when the top setups are ranked (7:00 PM): market line, 🚀 breakouts (one line each: change, price, pattern, tier, stop distance), 👀 near the pivot, 🔻 back under the pivot / 🏁 played out / ↩️ back over / 🟡 new bases / 🚪 left, 💼 your positions (the evening guard), ⚠️ not confirmed at the close, 🎯 the top setups and the 📈 Trend Breakout scan. Buttons: **📈 Breakouts (n)** and **📈 Top N** send those charts as one album, then one message of 📌 Watch / ✅ I bought buttons; **🧾 Details** sends the full alerts as text |
 | **Every alert** | each stage move, near-pivot name, guard result, digest and top setup as its own message with its chart (as before) |
 
 How it works: during the evening job the alerts are held in `alert_outbox` (batch = the scan date) instead of being
@@ -1070,7 +1076,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/market/health?days=60` | latest market status + signals, the previous day, daily history, thresholds |
 | GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
 | GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
-| GET | `/api/orb` · `/api/orb/trades?scenario=normal\|stress&split=all\|dev\|val\|oos&side=all\|long\|short&limit=&offset=` · POST `/api/orb/build` | ORB + VWAP backtest: rules, splits × slippage, longs vs shorts, curves, skipped signals; taken trades; run |
+| GET | `/api/breakout` · `/api/breakout/trades?scenario=normal\|stress&limit=&offset=` · `/api/breakout/scan` · POST `/api/breakout/run` | Trend Breakout: the latest run (splits, years, robustness, curves), its trades, the evening scan; re-run |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
@@ -1196,7 +1202,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `alert_style` | summary | summary: the evening's alerts in one 7 PM report (charts on tap); every: each alert its own message |
 | `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
 | `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
-| `orb.*`: `top_n` / `turnover_days` / `min_price` / `range_start` / `range_end` / `entry_end` / `exit_time` / `vwap_slope_bars` / `rvol_bars` / `rvol_min` / `stop_buffer_pct` / `tick` / `max_stop_pct` / `reward_r` / `capital` / `allocated` / `risk_per_trade` / `daily_loss_limit` / `max_entries_per_day` / `max_concurrent` / `history_days` / `slippage_pct` / `stress_slippage_pct` / charges (`fees_as_of`, `brokerage_per_order`, `brokerage_pct`, `stt_sell_pct`, `exchange_pct`, `sebi_per_crore`, `gst_pct`, `stamp_buy_pct`) | 150 / 20 / 100 / 9:15 / 9:30 / 11:30 AM / 3:15 PM / 3 / 20 / 1.5 / 0.05 / 0.05 / 3 / 2 / 2,00,000 / 1,80,000 / 500 / 1,000 / 2 / 2 / 730 / 0.05 / 0.10 / Zerodha Oct 2026 | ORB + VWAP universe, signal, trade, account and charges (times stored as "09:30") |
+| `breakout.*`: `test_years` / `warmup_years` / `warmup_sessions` / `capital` / `max_pos` / `top` / `min_price` / `vol_mult` / `stop_pct` / `atr_mult` / `hi_window` / `exit_sma` / `regime` / `slippage_pct` / `stress_slippage_pct` / `sell_pct` | 6 / 1.2 / 260 / 2,00,000 / 10 / 200 / 100 / 1.5 / 8 / 2 / 20 / 50 / on / 0.10 / 0.25 / 8 | Trend Breakout backtest and evening scan |
 | `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
@@ -1743,3 +1749,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `orb_signals` replaces `orb_trades` (old results and `config.orb` dropped); new `orb` settings; `/api/orb` and
   `/api/orb/trades` reshaped; the 🚀 tab rebuilt; the evening report no longer lists Momentum ORB names.
 - `scripts/backup.sh` leaves the 5-minute candles out of the backup.
+
+### 2026-10-29: Trend Breakout (swing) replaces the ORB + VWAP
+- `backend/engine/trend_breakout.py`: a port of `randan96mk/Backtest` `swing.py` "breakout" (identical trades on the
+  same candles), the three periods, years, 14-setting robustness, the evening scan with Kite holdings (read-only).
+- Removed: `orb_vwap.py`, `intraday_ind.py`, `costs.py`, `backtest.py` (5-minute fetching), their tests; the
+  `orb_signals`, `candles_5m` and `candles_5m_days` tables and the `orb` settings are dropped (then VACUUM).
+- `BreakoutConfig` (`breakout` settings), `breakout_runs`, `/api/breakout*`, the 📈 Trend Breakout tab, the scan in
+  the evening report (or its own message).

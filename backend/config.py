@@ -325,48 +325,27 @@ class AlertsConfig:
 
 
 @dataclass
-class OrbConfig:
-    """ORB + VWAP + relative volume (intraday, long and short) on the most liquid Nifty 500 stocks: a 5-minute close
-    beyond the 9:15-9:30 AM range, on the right side of a rising / falling VWAP, on 1.5x volume. Fixed rupee risk,
-    2R target, daily limits, Zerodha charges and slippage. Backtest only; scanner and alerts, never orders.
-    (Replaced the Momentum ORB in Oct 2026: its saved settings are dropped, so these defaults apply.)"""
-    # universe: each day, the top_n Nifty 500 stocks by the median daily turnover of the previous turnover_days
-    top_n: int = 150
-    turnover_days: int = 20
-    min_price: float = 100.0               # skip a stock whose previous close is under this (Rs)
-    # session (IST, 24-hour internally), 5-minute candles
-    range_start: str = "09:15"             # opening range: 9:15 to 9:30 AM
-    range_end: str = "09:30"
-    entry_end: str = "11:30"               # the signal candle must close by this time
-    exit_time: str = "15:15"               # square off at the close of the candle ending here
-    # signal
-    vwap_slope_bars: int = 3               # VWAP higher (lower) than this many candles earlier
-    rvol_bars: int = 20                    # relative volume against the average of the previous candles
-    rvol_min: float = 1.5
-    stop_buffer_pct: float = 0.05          # stop = the breakout candle's low - this % (rounded up to the tick)
-    tick: float = 0.05
-    max_stop_pct: float = 3.0              # a wider stop (from the entry) is no trade
-    reward_r: float = 2.0                  # target = entry + reward_r x risk
-    # account and risk (Rs)
+class BreakoutConfig:
+    """Trend Breakout (swing, long only, delivery) on the Nifty 500 from daily candles: the trend template and a
+    breakout over the 20-day high on 1.5x volume, a fixed stop, out on a close under the 50-day average. Ported
+    from randan96mk/Backtest swing.py (the "breakout" strategy, baseline settings). Backtest and evening scan only:
+    never orders. (Replaced the ORB + VWAP in Oct 2026: its saved settings are dropped.)"""
+    test_years: float = 6.0                # sessions tested (after warm-up), ending at the latest NIFTY 50 candle
+    warmup_years: float = 1.2              # history loaded before them (the first warmup_sessions are warm-up)
+    warmup_sessions: int = 260
     capital: float = 200_000.0
-    allocated: float = 180_000.0           # at most this much in open positions
-    risk_per_trade: float = 500.0          # loss at the stop, charges included
-    daily_loss_limit: float = 1_000.0      # no new entry once the day's loss (plus open risk) would pass this
-    max_entries_per_day: int = 2
-    max_concurrent: int = 2
-    history_days: int = 730
-    # slippage, each fill (%): normal and stressed
-    slippage_pct: float = 0.05
-    stress_slippage_pct: float = 0.10
-    # Zerodha equity intraday charges (fee schedule as of fees_as_of; check zerodha.com/charges)
-    fees_as_of: str = "2026-10"
-    brokerage_per_order: float = 20.0      # the lower of this and brokerage_pct of the order value
-    brokerage_pct: float = 0.03
-    stt_sell_pct: float = 0.025
-    exchange_pct: float = 0.00297          # NSE transaction charges, both sides
-    sebi_per_crore: float = 10.0
-    gst_pct: float = 18.0                  # on brokerage + exchange + SEBI
-    stamp_buy_pct: float = 0.003
+    max_pos: int = 10                      # equal weight: equity / max_pos
+    top: int = 200                         # universe: the most traded N (20-day average turnover)
+    min_price: float = 100.0
+    vol_mult: float = 1.5                  # volume vs the 50-day average
+    stop_pct: float = 8.0                  # stop = max(close - atr_mult x ATR(14), close x (1 - stop_pct %))
+    atr_mult: float = 2.0
+    hi_window: int = 20                    # breakout over the previous N-day high (10, 20 or 55)
+    exit_sma: int = 50                     # out at the next open after a close under this average (20 or 50)
+    regime: bool = True                    # new buys only while NIFTY 50 closes over its 200-day average
+    slippage_pct: float = 0.10             # each fill
+    stress_slippage_pct: float = 0.25
+    sell_pct: float = 8.0                  # evening scan: a holding this far under its average price is a sell
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
@@ -397,7 +376,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
-                      "market": MarketConfig, "orb": OrbConfig}
+                      "market": MarketConfig, "breakout": BreakoutConfig}
 
 
 @dataclass
@@ -412,7 +391,7 @@ class AppConfig:
     flag: FlagConfig = field(default_factory=FlagConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
-    orb: OrbConfig = field(default_factory=OrbConfig)
+    breakout: BreakoutConfig = field(default_factory=BreakoutConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

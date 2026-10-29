@@ -682,51 +682,52 @@ def today_sparks():
     return {"sparks": st.live.sparks([*positions, *setups], now)}
 
 
-# --- ORB + VWAP ---
+# --- Trend Breakout ---
 
-def _orb_choice(value: str, allowed, what: str) -> str:
-    if value.lower() not in allowed:
-        raise HTTPException(422, f"{what} must be one of {', '.join(allowed)}")
-    return value.lower()
-
-
-@router.get("/orb")
-def orb_summary():
-    """ORB + VWAP backtest: status, the rules, development / validation / out-of-sample at normal and stressed
-    slippage, longs vs shorts, the account curves, why signals were skipped."""
+@router.get("/breakout")
+def breakout_summary():
+    """Trend Breakout backtest: status, the settings, the latest run (without its trade lists) and the evening scan."""
     from dataclasses import asdict
-    from backend.database.models import get_setting
-    from backend.engine import orb_vwap as orb
-    cfg = S().config
-    with get_db() as conn:
-        meta = {k: get_setting(conn, f"orb.{k}") for k in ("built_at", "updated_at", "as_of")}
-    body = orb.summary(cfg) if meta["built_at"] else {}
-    return {"built": bool(meta["built_at"]), **meta, "progress": orb.status(), "kite": bool(S().client.has_token),
-            "rules": asdict(cfg.orb), **body}
+    from backend.engine import trend_breakout as tb
+    run = tb.saved()
+    if run:
+        run = {k: v for k, v in run.items() if k not in ("trades", "stress_trades")}
+    return {"built": bool(run), "progress": tb.status(), "kite": bool(S().client.has_token),
+            "rules": asdict(S().config.breakout), "run": run, "scan": tb.saved_scan()}
 
 
-@router.get("/orb/trades")
-def orb_trades(scenario: str = "normal", split: str = "all", side: str = "all", limit: int = 200, offset: int = 0):
-    """Taken trades, newest first: scenario normal / stress; split all / dev / val / oos; side all / long / short."""
-    from backend.engine import orb_vwap as orb
-    rs = orb.trades(S().config, _orb_choice(scenario, orb.SCENARIOS, "scenario"),
-                    _orb_choice(split, ("all",) + tuple(k for k, *_ in orb.SPLITS), "split"),
-                    _orb_choice(side, ("all", "long", "short"), "side"))
+@router.get("/breakout/trades")
+def breakout_trades(scenario: str = "normal", limit: int = 200, offset: int = 0):
+    """The run's trades, newest first: scenario normal / stress."""
+    from backend.engine import trend_breakout as tb
+    if scenario not in ("normal", "stress"):
+        raise HTTPException(422, "scenario must be normal or stress")
+    run = tb.saved() or {}
+    rs = run.get("trades" if scenario == "normal" else "stress_trades", [])
     return {"total": len(rs), "rows": rs[offset:offset + max(1, min(limit, 1000))]}
 
 
-@router.post("/orb/build")
-def orb_build(rebuild: bool = False):
-    """Run the ORB + VWAP backtest in the background (needs today's Kite login: it fetches 5-minute candles,
-    about a thousand requests the first time; stored candles are re-used)."""
-    from backend.engine import orb_vwap as orb
+@router.post("/breakout/run")
+def breakout_run():
+    """Re-run the Trend Breakout backtest and the evening scan in the background (stored daily candles only)."""
+    from backend.engine import trend_breakout as tb
     st = S()
-    if orb.status()["state"] != "idle":
-        raise HTTPException(409, "The ORB + VWAP backtest is already running")
-    if not st.client.has_token:
-        raise HTTPException(400, "Log in to Kite first: the backtest fetches 5-minute candles")
-    threading.Thread(target=orb.build, args=(st.config, st.client, rebuild), name="orb-build", daemon=True).start()
+    if tb.status()["state"] != "idle":
+        raise HTTPException(409, "The Trend Breakout backtest is already running")
+
+    def go():
+        tb.run(st.config)
+        tb.run_scan(st.config, st.client)
+
+    threading.Thread(target=go, name="breakout-run", daemon=True).start()
     return {"status": "started"}
+
+
+@router.get("/breakout/scan")
+def breakout_scan():
+    """The latest evening scan: market filter, breakout buys, Kite holdings HOLD / SELL at open."""
+    from backend.engine import trend_breakout as tb
+    return tb.saved_scan() or {}
 
 
 @router.put("/positions/{symbol}")

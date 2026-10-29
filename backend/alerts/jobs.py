@@ -292,12 +292,10 @@ class Scheduler:
         finally:
             self.hold = None
             notifier.hold = None
-        try:                                       # ORB + VWAP backtest: add today's session (once it was run)
-            from backend.engine import orb_vwap
-            if orb_vwap.built() and st.client.has_token:
-                sent["orb"] = orb_vwap.build(st.config, st.client).get("scanned")
+        try:                                       # Trend Breakout: the evening scan (signals only, never orders)
+            sent["breakout"] = self.run_breakout_scan(as_of)
         except Exception:
-            logger.exception("ORB + VWAP update failed")
+            logger.exception("Trend Breakout scan failed")
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
@@ -750,6 +748,18 @@ class Scheduler:
                     sent += 1
         self.record("top_setups", today, "ok", f"{len(items)} setups ranked; sent {sent}", started)
         return {"status": "ok", "items": len(items), "sent": sent}
+
+    def run_breakout_scan(self, as_of: str) -> int:
+        """The Trend Breakout scan on the day's candles; in summary style it goes into the evening report, otherwise
+        it is sent now as its own (silent) message."""
+        from backend.engine import trend_breakout as tb
+        res = tb.run_scan(self.state.config, self.state.client)
+        if "error" in res:
+            logger.info("Trend Breakout scan: %s", res["error"])
+            return 0
+        if self.summary():
+            return 0
+        return int(self.notifier().send(f"{res['as_of']}|breakout", "plan", msg.breakout_scan(res), silent=True))
 
     def run_morning_plan(self, now: datetime) -> dict:
         today, started = now.date(), now_ist()
