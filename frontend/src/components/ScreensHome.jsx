@@ -144,7 +144,8 @@ export default function ScreensHome({ hasData }) {
   const listProps = { screen, stage, asOf: summary?.as_of, selected, onSelect: setSelected };
 
   // Phone: ticker (App) -> screen pills -> market line -> stage cards -> names in that stage -> moves / news /
-  // results -> plan -> positions. Desktop / tablet keep the original order.
+  // results -> plan -> positions. Desktop / tablet: market line -> stage cards + moves / news / results -> names in
+  // that stage -> chart -> plan -> positions.
   if (phone) {
     return (
       <>
@@ -172,8 +173,6 @@ export default function ScreensHome({ hasData }) {
       {toolbar}
 
       <MarketCard data={mkt} />
-      <PlanCard plan={plan} onSelect={setSelected} />
-      <PositionsCard onSelect={setSelected} />
 
       <div className="panel board">
         {!summary?.as_of ? noScan : (
@@ -194,8 +193,10 @@ export default function ScreensHome({ hasData }) {
         )}
       </div>
 
-      {chart}
       {summary?.as_of && <StageList {...listProps} />}
+      {chart}
+      <PlanCard plan={plan} onSelect={setSelected} />
+      <PositionsCard onSelect={setSelected} />
     </>
   );
 }
