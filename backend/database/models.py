@@ -290,39 +290,12 @@ CREATE TABLE IF NOT EXISTS deals (
 );
 CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
--- ORB + VWAP backtest (backend/engine/orb_vwap.py): one row per signal (the first long / short of a stock's session)
--- and its trade per share at each slippage scenario (normal / stress); status signal / invalid. Sizing and the daily
--- limits are replayed from these on reading.
-CREATE TABLE IF NOT EXISTS orb_signals (
-    day TEXT NOT NULL,
-    symbol TEXT NOT NULL,
-    side TEXT NOT NULL,
-    scenario TEXT NOT NULL,
-    status TEXT NOT NULL,
-    reason TEXT,
-    rank INTEGER,
-    signal_time TEXT, close REAL, or_high REAL, or_low REAL, vwap REAL, rvol REAL,
-    entry_time TEXT, entry_px REAL, entry_fill REAL, stop REAL, stop_fill REAL, target REAL,
-    exit_time TEXT, exit_px REAL, exit_fill REAL,
-    PRIMARY KEY (day, symbol, side, scenario)
-);
-
--- 5-minute candles, fetched only for the days a backtest needs (backend/engine/backtest.py); candles_5m_days marks the days
--- fetched (a day with no candles is still marked, so it isn't asked for again).
-CREATE TABLE IF NOT EXISTS candles_5m (
-    instrument_token INTEGER NOT NULL,
-    ts TEXT NOT NULL,
-    open REAL NOT NULL,
-    high REAL NOT NULL,
-    low REAL NOT NULL,
-    close REAL NOT NULL,
-    volume INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (instrument_token, ts)
-);
-CREATE TABLE IF NOT EXISTS candles_5m_days (
-    instrument_token INTEGER NOT NULL,
-    day TEXT NOT NULL,
-    PRIMARY KEY (instrument_token, day)
+-- Trend Breakout backtest (backend/engine/trend_breakout.py): the latest run (summary, splits, years, robustness,
+-- curves, trades) as one JSON document.
+CREATE TABLE IF NOT EXISTS breakout_runs (
+    id INTEGER PRIMARY KEY,
+    updated_at TEXT NOT NULL,
+    payload TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
@@ -346,18 +319,30 @@ def init_db(path: Optional[str] = None) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with get_db(str(p)) as conn:
         _migrate_scan_tables(conn)
-        _migrate_orb(conn)
+        dropped = _migrate_orb(conn)
         conn.executescript(SCHEMA)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'kite'")   # kite / manual
         _drop_track_record(conn)
+    if dropped:                                         # give the ~400 MB of 5-minute candles back to the disk
+        conn = sqlite3.connect(str(p), timeout=30, isolation_level=None)
+        try:
+            conn.execute("VACUUM")
+        except sqlite3.Error as exc:
+            print(f"VACUUM after dropping the ORB tables failed: {exc}")
+        finally:
+            conn.close()
 
 
-def _migrate_orb(conn) -> None:
-    """The Momentum ORB (Oct 2026) became ORB + VWAP: its results and saved settings are dropped (the stored
-    5-minute candles stay)."""
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'orb_trades'").fetchone():
-        conn.execute("DROP TABLE orb_trades")
+def _migrate_orb(conn) -> bool:
+    """The ORB backtests (Oct 2026) were replaced by the daily Trend Breakout: their results, saved settings and the
+    5-minute candles (only they used them) are dropped. True when something was dropped (worth a VACUUM)."""
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    old = [t for t in ("orb_trades", "orb_signals", "candles_5m", "candles_5m_days") if t in have]
+    for t in old:
+        conn.execute(f"DROP TABLE {t}")
+    if old and "app_settings" in have:
         conn.execute("DELETE FROM app_settings WHERE key LIKE 'orb.%' OR key = 'config.orb'")
+    return bool(old)
 
 
 def _drop_track_record(conn) -> None:

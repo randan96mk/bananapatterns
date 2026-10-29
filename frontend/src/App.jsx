@@ -8,7 +8,7 @@ import DataPanel from './components/DataPanel';
 import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
-import OrbPage from './components/OrbPage';
+import BreakoutPage from './components/BreakoutPage';
 import TodayPage from './components/TodayPage';
 import * as api from './services/api';
 import { applyMode, getMode } from './theme';
@@ -19,7 +19,7 @@ const PHONE_TABS = ['screens', 'today', 'alerts'];
 const TABS = [
   ['screens', 'Screens'],
   ['today', '⚡ Today'],
-  ['orb', '🚀 ORB + VWAP'],
+  ['breakout', '📈 Trend Breakout'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['alerts', 'Alerts'],
@@ -75,7 +75,7 @@ export default function App() {
         : <KiteBar status={kite} onChange={setKite} />}
       <main>
         {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
-        {tab === 'orb' && <OrbPage />}
+        {tab === 'breakout' && <BreakoutPage />}
         {tab === 'today' && <TodayPage />}
         {tab === 'universe' && (
           <>

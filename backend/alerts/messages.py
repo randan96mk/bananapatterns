@@ -520,3 +520,46 @@ def guard_summary(rows: list, as_of: str) -> str:
                      + f" · day {ev['days']} · stop {rs(pos['stop'])}{warn}"
                      + (f" · 📅 {escape(results_short(ev['results']))}" if ev.get("results") else ""))
     return "\n".join(lines)
+
+
+# --- Trend Breakout evening scan (signals only: never orders) -------------------------------------------
+
+def _rup(v: float) -> str:
+    return f"₹{v:,.0f}" if v >= 100 else rs(v)
+
+
+def breakout_lines(res: dict, limit: int = 10) -> list[str]:
+    """The scan as report lines: the market filter, the buys at the next open, the holdings HOLD / SELL at open."""
+    lines = ["📈 <b>Trend Breakout</b> · signals only, no orders"]
+    if res.get("nifty_sma200"):
+        state = "✅ on" if res["market_on"] else "⛔ off: no new buys"
+        lines.append(f"Market filter {state} (NIFTY 50 {res['nifty']:,.0f} vs 200-day {res['nifty_sma200']:,.0f})")
+    buys = res.get("buys") or []
+    if buys:
+        lines.append(f"Buy at the next open ({len(buys)}):")
+        for n, b in enumerate(buys[:limit], 1):
+            lines.append(f"{n} <b>{escape(b['symbol'])}</b> {_rup(b['close'])} · stop {_rup(b['stop'])} "
+                         f"({b['stop_pct']:.1f}%) · {b['qty']} sh {_rup(b['value'])} · risk {_rup(b['risk'])}")
+        if len(buys) > limit:
+            lines.append(f"+{len(buys) - limit} more on the Trend Breakout tab")
+    elif res.get("market_on"):
+        lines.append("No breakout buys today.")
+    elif res.get("signals_filtered"):
+        lines.append(f"{len(res['signals_filtered'])} breakouts not bought (market filter off).")
+    held = res.get("holdings") or []
+    sells = [h for h in held if h["action"] != "HOLD"]
+    if sells:
+        lines += [f"🔴 <b>{escape(h['symbol'])}</b> SELL at open · {escape(h['why'])}" for h in sells]
+    if held:
+        keep = [h for h in held if h["action"] == "HOLD"]
+        if keep:
+            lines.append("🟢 HOLD: " + " · ".join(escape(h["symbol"]) for h in keep))
+    elif not res.get("holdings_read"):
+        lines.append("<i>Holdings not checked (log in to Kite).</i>")
+    return lines
+
+
+def breakout_scan(res: dict) -> str:
+    """The scan as its own message (every-alert style)."""
+    day = datetime.fromisoformat(res["as_of"])
+    return "\n".join([f"{breakout_lines(res)[0]} · {day.day} {day:%b}"] + breakout_lines(res, 15)[1:])
