@@ -292,12 +292,12 @@ class Scheduler:
         finally:
             self.hold = None
             notifier.hold = None
-        try:                                       # Momentum ORB: today's trades, tomorrow's list (once it was run)
-            from backend.engine import momentum_orb
-            if momentum_orb.built() and st.client.has_token:
-                sent["orb"] = momentum_orb.build(st.config, st.client).get("added")
+        try:                                       # ORB + VWAP backtest: add today's session (once it was run)
+            from backend.engine import orb_vwap
+            if orb_vwap.built() and st.client.has_token:
+                sent["orb"] = orb_vwap.build(st.config, st.client).get("scanned")
         except Exception:
-            logger.exception("Momentum ORB update failed")
+            logger.exception("ORB + VWAP update failed")
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
@@ -738,7 +738,7 @@ class Scheduler:
         if self.summary():                                  # one evening report instead of the separate messages
             from backend.alerts import report
             ok = report.send(notifier, as_of, items if cfg.top_setups else [],
-                             msg.market_line(mc.health) if mc.health else None, self._orb_list(as_of))
+                             msg.market_line(mc.health) if mc.health else None)
             self.record("top_setups", today, "ok", f"{len(items)} setups ranked; evening report "
                         f"{'sent' if ok else 'not sent'}", started)
             return {"status": "ok", "items": len(items), "sent": int(ok)}
@@ -750,18 +750,6 @@ class Scheduler:
                     sent += 1
         self.record("top_setups", today, "ok", f"{len(items)} setups ranked; sent {sent}", started)
         return {"status": "ok", "items": len(items), "sent": sent}
-
-    @staticmethod
-    def _orb_list(as_of: str) -> Optional[list[str]]:
-        """The Momentum ORB screens of the scan day (the next session's lists), once that backtest has been run:
-        momentum names (long or short), then 52-week-low names marked ↓ (short only)."""
-        try:
-            with get_db() as conn:
-                return [r[0] + (" ↓" if r[1] == "weak" else "") for r in conn.execute(
-                    "SELECT symbol, list FROM orb_trades WHERE signal_date = ? ORDER BY list, rsi DESC",
-                    (as_of,))] or None
-        except Exception:
-            return None
 
     def run_morning_plan(self, now: datetime) -> dict:
         today, started = now.date(), now_ist()

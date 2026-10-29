@@ -92,7 +92,7 @@ def _report_sample(as_of: Optional[str], rows: list[dict], config: AppConfig) ->
                               json.dumps({"dist": p.get("dist_to_pivot_pct")}), now_ist()))
     plan_as_of, items = pl.latest_plan()
     shown = batch if batch != "sample" else (as_of or plan_as_of)
-    html, _ = report.build(shown or "2026-01-01", items, None, None, batch=batch)
+    html, _ = report.build(shown or "2026-01-01", items, None, batch=batch)
     return html + "\n<i>(📈 / 🧾 buttons appear on the real report)</i>"
 
 
