@@ -67,3 +67,6 @@ export const getTodaySparks = () => req('GET', '/api/today/sparks');
 export const getBreakout = () => req('GET', '/api/breakout');
 export const getBreakoutTrades = (scenario, limit, offset) => req('GET', `/api/breakout/trades?scenario=${scenario}&limit=${limit}&offset=${offset}`);
 export const runBreakout = () => req('POST', '/api/breakout/run');
+export const getPaper = () => req('GET', '/api/paper');
+export const startPaper = (capital) => req('POST', '/api/paper/start', { capital });
+export const resetPaper = () => req('POST', '/api/paper/reset');

@@ -9,6 +9,7 @@ import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
 import BreakoutPage from './components/BreakoutPage';
+import PaperPage from './components/PaperPage';
 import TodayPage from './components/TodayPage';
 import * as api from './services/api';
 import { applyMode, getMode } from './theme';
@@ -20,6 +21,7 @@ const TABS = [
   ['screens', 'Screens'],
   ['today', '⚡ Today'],
   ['breakout', '📈 Trend Breakout'],
+  ['paper', '📝 Paper trading'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['alerts', 'Alerts'],
@@ -76,6 +78,7 @@ export default function App() {
       <main>
         {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
         {tab === 'breakout' && <BreakoutPage />}
+        {tab === 'paper' && <PaperPage />}
         {tab === 'today' && <TodayPage />}
         {tab === 'universe' && (
           <>

@@ -290,6 +290,13 @@ CREATE TABLE IF NOT EXISTS deals (
 );
 CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
+-- 📝 Paper trading (backend/engine/paper.py): the account state (cash, positions, the next open's orders) and the
+-- append-only record (fills, closed trades, the account each session); never rewritten.
+CREATE TABLE IF NOT EXISTS paper_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS paper_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS paper_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
+
 -- Trend Breakout backtest (backend/engine/trend_breakout.py): the latest run (summary, splits, years, robustness,
 -- curves, trades) as one JSON document.
 CREATE TABLE IF NOT EXISTS breakout_runs (

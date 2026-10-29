@@ -563,3 +563,51 @@ def breakout_scan(res: dict) -> str:
     """The scan as its own message (every-alert style)."""
     day = datetime.fromisoformat(res["as_of"])
     return "\n".join([f"{breakout_lines(res)[0]} · {day.day} {day:%b}"] + breakout_lines(res, 15)[1:])
+
+
+# --- 📝 paper trading (simulated: never orders) ---------------------------------------------------------
+
+PAPER = "📝 <b>PAPER TRADING</b>"
+
+
+def _signed(v: float) -> str:
+    return f"{'+' if v >= 0 else '−'}₹{abs(v):,.0f}"
+
+
+def paper_lines(rep: dict) -> list[str]:
+    """The paper account's session: fills, closed trades (gross · costs · net), the next open's orders, the account
+    before and after costs. Every block is labelled PAPER TRADING."""
+    d = datetime.fromisoformat(rep["as_of"])
+    lines = [f"{PAPER} · {d.day} {d:%b} · <i>simulated, no real orders</i>"]
+    buys = [f for f in rep["fills"] if f["action"] == "BUY"]
+    sells = [f for f in rep["fills"] if f["action"] == "SELL"]
+    if buys:
+        lines.append("<b>Filled at today's open</b>")
+        lines += [f"🟢 BUY <b>{escape(f['symbol'])}</b> {f['qty']} @ {_rup(f['price'])} · stop {_rup(f['stop'])}" for f in buys]
+    if sells:
+        lines.append("<b>Closed today</b>")
+        for f in sells:
+            icon, how = ("🛑", "STOP") if f["why"] == "stop" else ("📉", "SOLD")
+            lines.append(f"{icon} {how} <b>{escape(f['symbol'])}</b> {f['qty']} @ {_rup(f['price'])} · {f['days']} days · "
+                         f"gross {_signed(f['gross'])} · costs ₹{f['costs']:,.0f} · net <b>{_signed(f['net'])}</b>")
+    if not buys and not sells:
+        lines.append("Nothing filled or closed today.")
+    orders = rep.get("orders") or []
+    if orders:
+        lines.append("<b>Orders for the next open</b>")
+        for o in orders[:10]:
+            lines.append(f"BUY <b>{escape(o['symbol'])}</b> · stop {_rup(o['stop'])}" if o["action"] == "BUY"
+                         else f"SELL <b>{escape(o['symbol'])}</b> · {escape(o['why'])}")
+        if len(orders) > 10:
+            lines.append(f"+{len(orders) - 10} more on the Paper trading tab")
+    elif rep.get("market_on") is False:
+        lines.append("Market filter ⛔ off: no new paper buys.")
+    a = rep["account"]
+    lines.append(f"<b>Account</b> {_rup(a['value'])} · before costs {a['return_gross']:+.1f}% · costs ₹{a['costs']:,.0f} · "
+                 f"after costs <b>{a['return']:+.1f}%</b> · NIFTY 50 {a['nifty']:+.1f}% · {a['positions']} positions · "
+                 f"cash {_rup(a['cash'])}")
+    return lines
+
+
+def paper_report(rep: dict) -> str:
+    return "\n".join(paper_lines(rep))
