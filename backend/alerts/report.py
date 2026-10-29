@@ -85,7 +85,8 @@ def plan_line(n: int, i: dict) -> str:
 
 
 def build(as_of: str, items: list[dict], market: Optional[str] = None,
-          batch: Optional[str] = None, breakout: Optional[dict] = None) -> tuple[str, list]:
+          batch: Optional[str] = None, breakout: Optional[dict] = None,
+          paper: Optional[dict] = None) -> tuple[str, list]:
     """(html, buttons) of the evening report for the scan `as_of`; items = the top setups (plan); batch = the held
     alerts to use (default: as_of; the dashboard's sample uses its own)."""
     rows = held(batch or as_of)
@@ -119,6 +120,8 @@ def build(as_of: str, items: list[dict], market: Optional[str] = None,
                                                                         for n, i in enumerate(items, 1)]
     if breakout and breakout.get("as_of") == as_of:      # the Trend Breakout scan of the same day
         lines += [""] + msg.breakout_lines(breakout)
+    if paper and paper.get("as_of") == as_of:            # the paper account (simulated), clearly labelled
+        lines += [""] + msg.paper_lines(paper)
     if len(lines) <= 2:
         lines += ["", "A quiet day: no stage changes and no setups near a pivot."]
     lines += ["", "<i>Charts and the full alerts are on the buttons.</i>"]
@@ -137,12 +140,17 @@ def build(as_of: str, items: list[dict], market: Optional[str] = None,
 
 
 def send(notifier: Notifier, as_of: str, items: list[dict], market: Optional[str] = None) -> bool:
+    from backend.engine import paper as pt
     from backend.engine import trend_breakout as tb
     try:
         scan = tb.saved_scan()
     except Exception:
         scan = None
-    html, buttons = build(as_of, items, market, breakout=scan)
+    try:
+        rep = pt.latest_report()
+    except Exception:
+        rep = None
+    html, buttons = build(as_of, items, market, breakout=scan, paper=rep)
     with get_db() as conn:                                  # the buttons work for 30 days
         conn.execute("DELETE FROM alert_outbox WHERE batch < date(?, '-30 days')", (as_of,))
     return notifier.send(f"{as_of}|report", "report", html, buttons=buttons or None, silent=True)

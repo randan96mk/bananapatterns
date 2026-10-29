@@ -296,6 +296,11 @@ class Scheduler:
             sent["breakout"] = self.run_breakout_scan(as_of)
         except Exception:
             logger.exception("Trend Breakout scan failed")
+        try:                                       # 📝 paper trading: today's fills, tomorrow's orders (simulated)
+            sent["paper"] = self.run_paper()
+        except Exception:
+            logger.exception("Paper trading update failed")
+        self._rerun_breakout()                     # the backtest to the latest day, in the background
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
@@ -760,6 +765,22 @@ class Scheduler:
         if self.summary():
             return 0
         return int(self.notifier().send(f"{res['as_of']}|breakout", "plan", msg.breakout_scan(res), silent=True))
+
+    def run_paper(self) -> int:
+        """Paper trading's new sessions; in summary style they go into the evening report, otherwise a silent message."""
+        from backend.engine import paper
+        res = paper.process(self.state.config)
+        if res["status"] != "ok" or not res["sessions"] or self.summary():
+            return 0
+        rep = res["report"]
+        return int(self.notifier().send(f"{rep['as_of']}|paper", "plan", msg.paper_report(rep), silent=True))
+
+    def _rerun_breakout(self) -> None:
+        """Re-run the Trend Breakout backtest each evening so its results run to the latest day."""
+        from backend.engine import trend_breakout as tb
+        if tb.saved() is None or tb.status()["state"] != "idle":
+            return
+        threading.Thread(target=tb.run, args=(self.state.config,), name="breakout-daily", daemon=True).start()
 
     def run_morning_plan(self, now: datetime) -> dict:
         today, started = now.date(), now_ist()

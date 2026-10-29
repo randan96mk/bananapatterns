@@ -140,9 +140,10 @@ def decide(i, S, held, regime_on, p):
 
 # --- the account -----------------------------------------------------------------------------------------
 
-def simulate(cal, S, index_ok, p, slip, first):
-    """Daily portfolio from calendar index `first`: (equity by day, equity before costs by day, trades, funnel)."""
-    cash, held, trades = p.capital, {}, []
+def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True):
+    """Daily portfolio from calendar index `first`: (equity by day, equity before costs by day, trades, funnel).
+    capital: instead of p.capital (paper trading); close_end=False leaves the last day's positions open."""
+    cash, held, trades = (capital or p.capital), {}, []
     pend_sell, pend_buy = set(), []
     eq, eq_gross, costs_cum = [], [], 0.0
     funnel = {"stock_days": 0, "signals": 0, "no_slot": 0, "market_off": 0, "too_small": 0}
@@ -208,6 +209,8 @@ def simulate(cal, S, index_ok, p, slip, first):
             funnel["signals"] += n_sig
             if not regime_on:
                 funnel["market_off"] += n_sig
+    if not close_end:
+        return eq, eq_gross, trades, funnel
     for sym in list(held):
         close_pos(sym, held[sym]["last"], cal[-1], "end")
     eq[-1] = cash

@@ -730,6 +730,42 @@ def breakout_scan():
     return tb.saved_scan() or {}
 
 
+# --- Paper trading (simulated: never orders) ---
+
+class PaperStart(BaseModel):
+    capital: Optional[float] = None
+
+
+@router.get("/paper")
+def paper_summary():
+    """📝 Paper trading: the account (before / after costs), curve, orders for the next open, positions, trades,
+    paper vs backtest."""
+    from backend.engine import paper
+    return paper.summary(S().config)
+
+
+@router.post("/paper/start")
+def paper_start(req: PaperStart):
+    """Start paper trading with `capital` (default: the paper capital setting)."""
+    from backend.engine import paper
+    if req.capital is not None and req.capital <= 0:
+        raise HTTPException(422, "capital must be positive")
+    r = paper.start(S().config, req.capital)
+    if r["status"] == "started_already":
+        raise HTTPException(409, "Paper trading is already running: reset it first")
+    if r["status"] != "ok":
+        raise HTTPException(400, r.get("error") or r["status"])
+    return r
+
+
+@router.post("/paper/reset")
+def paper_reset():
+    """Clear the paper account and its record."""
+    from backend.engine import paper
+    paper.reset()
+    return {"status": "ok"}
+
+
 @router.put("/positions/{symbol}")
 def positions_set_stop(symbol: str, req: StopRequest):
     from backend.alerts import guard

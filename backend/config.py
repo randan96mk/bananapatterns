@@ -348,6 +348,13 @@ class BreakoutConfig:
     sell_pct: float = 8.0                  # evening scan: a holding this far under its average price is a sell
 
 
+@dataclass
+class PaperConfig:
+    """Paper trading of the Trend Breakout rules (simulated, never orders). The capital is used when paper trading
+    starts (or restarts after a reset); sizes, quantities and cash follow from it and from the account's value."""
+    capital: float = 200_000.0
+
+
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
                "top_setups_time", "morning_plan_time", "gap_check_time")
 
@@ -376,7 +383,8 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
-                      "market": MarketConfig, "breakout": BreakoutConfig}
+                      "market": MarketConfig, "breakout": BreakoutConfig,
+                      "paper": PaperConfig}
 
 
 @dataclass
@@ -392,6 +400,7 @@ class AppConfig:
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     breakout: BreakoutConfig = field(default_factory=BreakoutConfig)
+    paper: PaperConfig = field(default_factory=PaperConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

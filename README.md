@@ -992,10 +992,31 @@ or **SELL at open** on a close under SMA50 or `sell_pct` (8%) under its average 
 is a "📈 Trend Breakout" section of the 7 PM evening report; otherwise its own silent message. Every line says
 "signals only, no orders".
 
-**Planned next (not built): 📝 Paper trading.** Each evening's buys "filled" at the next open from the daily candle,
-with the same size, stop, trend exit and costs; positions, closed trades, curve vs NIFTY 50, paper vs backtest.
-Every paper alert and screen will be labelled **PAPER TRADING**, so it can never be mistaken for real trades if real
-trading is added later.
+**Every evening** the job also re-runs this backtest in the background (once it has been run), so its results reach
+the latest session without a click.
+
+### 📝 Paper trading (simulated: never orders)
+
+`backend/engine/paper.py` and the **📝 Paper trading** tab. The Trend Breakout rules run forward from the day you press
+**Start**, one session at a time, exactly as the backtest (a test checks the same fills, trades and account over the
+same days). Nothing is ever sent to Kite.
+
+- **Capital**: the `paper.capital` setting (default ₹2,00,000), or the amount typed next to Start. Everything follows
+  from it: position size = account value (cash + positions at the last close) ÷ `max_pos`, quantity =
+  ⌊min(size, cash) / (open × (1 + slippage) × 1.0012)⌋, skipped under one share. Changing the capital applies from
+  the next Reset.
+- **Each evening** (after the sync, every new session): yesterday's SELL orders, then BUY orders (best 6-month return
+  first, while slots are free) fill at the day's open from the daily candle with slippage and delivery charges; a low
+  at or under a stop sells at min(open, stop); a close under SMA50 queues a SELL and the day's breakouts (market filter
+  on) queue BUYs for the next open. Stops are checked on the daily low after the close, as in the backtest.
+- **Costs apart everywhere**: before costs, costs (charges and slippage split) and after costs on the KPIs, the curve
+  (two lines + NIFTY 50), every open position (net if sold now) and closed trade, and paper vs backtest.
+- **Never rewritten**: fills, trades and the daily account are appended (`paper_fills`, `paper_trades`,
+  `paper_equity`; the live state in `paper_state`). A big overnight jump on a holding is flagged (split or bonus?).
+- **Telegram**: a block that always starts **📝 PAPER TRADING · simulated, no real orders** (fills, closed trades with
+  gross · costs · net, the next open's orders, the account before / after costs vs NIFTY 50), in the 7 PM report
+  (summary style) or as its own silent message. The real-account scan stays a separate block and never says PAPER.
+- API: `GET /api/paper`, `POST /api/paper/start` `{capital}`, `POST /api/paper/reset`.
 
 ### Evening report (alert style)
 
@@ -1757,3 +1778,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   `orb_signals`, `candles_5m` and `candles_5m_days` tables and the `orb` settings are dropped (then VACUUM).
 - `BreakoutConfig` (`breakout` settings), `breakout_runs`, `/api/breakout*`, the 📈 Trend Breakout tab, the scan in
   the evening report (or its own message).
+
+### 2026-10-30: 📝 Paper trading; Trend Breakout re-runs every evening
+- `backend/engine/paper.py`: the Trend Breakout rules forward from a start day (same fills as the backtest),
+  capital-driven sizes, costs kept apart, append-only record; `paper` settings; `/api/paper*`; the 📝 tab; the PAPER
+  TRADING block in the evening report (or its own message).
+- The evening job re-runs the Trend Breakout backtest in the background.
