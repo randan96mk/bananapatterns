@@ -52,7 +52,6 @@ export const getConfig = (section) => req('GET', `/api/config/${section}`);
 export const putConfig = (section, values) => req('PUT', `/api/config/${section}`, values);
 export const getLogs = (level) => req('GET', `/api/logs?limit=200${level ? `&level=${level}` : ''}`);
 export const eventsStatus = () => req('GET', '/api/events');
-export const stockEvents = (symbol) => req('GET', `/api/events?symbol=${encodeURIComponent(symbol)}`);
 export const refreshEvents = () => req('POST', '/api/events/refresh');
 export const filingsStatus = () => req('GET', '/api/filings');
 export const stockFilings = (symbol) => req('GET', `/api/filings?symbol=${encodeURIComponent(symbol)}`);

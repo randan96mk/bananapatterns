@@ -6,7 +6,6 @@ import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
 
 const SCEN = [['normal', 'Normal slippage'], ['stress', 'Stressed slippage']];
-const VARS = [['A', 'A · 200-day filter'], ['E', 'E · half filter']];   // the full names (with the universe) come from the run
 const EXIT = { stop: '🛑 stop', exit: '📉 trend exit', end: '⏹ end of test' };
 const SKIP = { no_slot: 'no free slot', market_off: 'market filter off', too_small: 'too small (under 1 share)' };
 const STATE = { ON: ['✅', 'up'], FULL: ['✅', 'up'], HALF: ['🟡', 'warn'], OFF: ['⛔', 'down'] };
@@ -231,7 +230,7 @@ export default function BreakoutPage() {
       </div>
 
       <div className="panel"><h3>Trades <span className="muted small">· newest first · {scen === 'stress' ? 'stressed' : 'normal'} slippage</span></h3>
-        <div className="orbfilters"><Chips items={VARS} value={tv} onChange={setTv} /></div>
+        <div className="orbfilters"><Chips items={[['A', `A · 200-day filter, top ${R.top}`], ['E', `E · half filter, top ${R.top_e}`]]} value={tv} onChange={setTv} /></div>
         <div className="tablewrap"><table className="grid orbtrades"><thead><tr><th>Stock</th><th>Entry</th><th>Exit</th>
           <th className="num">Days</th>{!phone && <th className="num">Before costs</th>}{!phone && <th className="num">Costs</th>}<th className="num">After costs</th><th>Exit reason</th></tr></thead>
           <tbody>{trades.rows.map((t) => (

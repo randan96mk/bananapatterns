@@ -126,7 +126,7 @@ def test_a_failure_is_not_retried(monkeypatch):
 def test_stop_watch_sends_exit_once(monkeypatch):
     c = setup(monkeypatch)
     data, cut, end = first_day_with_buys(c)
-    res = real.evening(c, cut)
+    real.evening(c, cut)
     day = data["cal"][end + 1]
     real.send_orders(c, None, day, Sender())
     pos = real.summary(c)["positions"][0]

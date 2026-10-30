@@ -9,7 +9,7 @@ import pytest
 from backend.alerts import guard
 from backend.alerts import plan as pl
 from backend.alerts.dispatch import Notifier, flags_note
-from backend.config import IST, AlertsConfig, VcpConfig
+from backend.config import AlertsConfig, VcpConfig
 from backend.database.models import now_ist
 from backend.engine import market
 from backend.ingest import filings as fl

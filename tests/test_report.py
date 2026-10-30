@@ -2,7 +2,7 @@
 (an album of charts + action buttons, the full texts), multi-row keyboards and albums in the Telegram client."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from backend.alerts import report
 from backend.alerts.dispatch import Notifier, dispatch_scan

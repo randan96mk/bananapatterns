@@ -205,7 +205,6 @@ def signals(symbols: list[str], cfg, today: Optional[str] = None) -> dict[str, d
     """{symbol: {red: [...], buy: [...], sell: [...]}} (each item {date, label, text}), only symbols with any."""
     if not symbols or not (cfg.red_flags or cfg.deals):
         return {}
-    from backend.ingest import filings as fl
     today = today or now_ist()[:10]
     t = date.fromisoformat(today)
     red_since = (t - timedelta(days=cfg.red_flag_days)).isoformat()
