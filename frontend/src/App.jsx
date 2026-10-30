@@ -10,6 +10,7 @@ import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
 import BreakoutPage from './components/BreakoutPage';
 import PaperPage from './components/PaperPage';
+import { AttentionDot } from './components/AttentionStrip';
 import TodayPage from './components/TodayPage';
 import * as api from './services/api';
 import { applyMode, getMode } from './theme';
@@ -67,7 +68,8 @@ export default function App() {
       <header>
         <h1>🍌 Banana Patterns <span className="muted">personal VCP screener · NSE</span></h1>
         {!phone && <nav>{TABS.map(([id, label]) => (
-          <button key={id} className={tab === id ? 'active' : ''} onClick={() => go(id)}>{label}</button>))}
+          <button key={id} className={tab === id ? 'active' : ''} onClick={() => go(id)}>{label}
+            {(id === 'breakout' || id === 'paper') && <AttentionDot tab={id} active={tab === id} />}</button>))}
         </nav>}
         {!phone && themeSwitch}
       </header>
@@ -97,7 +99,8 @@ export default function App() {
           {more && (
             <div className="sheet" role="dialog" aria-label="More">
               {TABS.filter(([id]) => !PHONE_TABS.includes(id)).map(([id, label]) => (
-                <button key={id} className={`sheetitem ${tab === id ? 'active' : ''}`} onClick={() => go(id)}>{label}</button>))}
+                <button key={id} className={`sheetitem ${tab === id ? 'active' : ''}`} onClick={() => go(id)}>{label}
+                  {(id === 'breakout' || id === 'paper') && <AttentionDot tab={id} active={tab === id} />}</button>))}
               <div className="sheetrow"><span className="muted">Theme</span>{themeSwitch}</div>
             </div>)}
           <nav className="bottomnav">

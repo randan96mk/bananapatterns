@@ -292,10 +292,14 @@ CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
 -- 📝 Paper trading (backend/engine/paper.py): the account state (cash, positions, the next open's orders) and the
 -- append-only record (fills, closed trades, the account each session); never rewritten.
-CREATE TABLE IF NOT EXISTS paper_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS paper_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS paper_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
+-- One account per variant (A: 200-day filter, E: half filter).
+CREATE TABLE IF NOT EXISTS paper_state (account TEXT PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL DEFAULT 'A',
+                                         payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS paper_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL DEFAULT 'A',
+                                        day TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS paper_equity (account TEXT NOT NULL DEFAULT 'A', day TEXT NOT NULL, equity REAL NOT NULL,
+                                         gross REAL NOT NULL, nifty REAL, PRIMARY KEY (account, day));
 
 -- Trend Breakout backtest (backend/engine/trend_breakout.py): the latest run (summary, splits, years, robustness,
 -- curves, trades) as one JSON document.
@@ -327,6 +331,7 @@ def init_db(path: Optional[str] = None) -> None:
     with get_db(str(p)) as conn:
         _migrate_scan_tables(conn)
         dropped = _migrate_orb(conn)
+        _migrate_paper(conn)
         conn.executescript(SCHEMA)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'kite'")   # kite / manual
         _drop_track_record(conn)
@@ -338,6 +343,26 @@ def init_db(path: Optional[str] = None) -> None:
             print(f"VACUUM after dropping the ORB tables failed: {exc}")
         finally:
             conn.close()
+
+
+def _migrate_paper(conn) -> None:
+    """Paper trading became one account per variant (Oct 2026): the single account becomes account A."""
+    cols = lambda t: [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
+    if "id" in cols("paper_state"):
+        conn.execute("ALTER TABLE paper_state RENAME TO paper_state_old")
+        conn.execute("CREATE TABLE paper_state (account TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        conn.execute("INSERT INTO paper_state (account, payload) SELECT 'A', payload FROM paper_state_old")
+        conn.execute("DROP TABLE paper_state_old")
+    for t in ("paper_trades", "paper_fills"):
+        if cols(t) and "account" not in cols(t):
+            conn.execute(f"ALTER TABLE {t} ADD COLUMN account TEXT NOT NULL DEFAULT 'A'")
+    if cols("paper_equity") and "account" not in cols("paper_equity"):
+        conn.execute("ALTER TABLE paper_equity RENAME TO paper_equity_old")
+        conn.execute("CREATE TABLE paper_equity (account TEXT NOT NULL DEFAULT 'A', day TEXT NOT NULL, "
+                     "equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL, PRIMARY KEY (account, day))")
+        conn.execute("INSERT INTO paper_equity (account, day, equity, gross, nifty) "
+                     "SELECT 'A', day, equity, gross, nifty FROM paper_equity_old")
+        conn.execute("DROP TABLE paper_equity_old")
 
 
 def _migrate_orb(conn) -> bool:

@@ -992,14 +992,33 @@ or **SELL at open** on a close under SMA50 or `sell_pct` (8%) under its average 
 is a "📈 Trend Breakout" section of the 7 PM evening report; otherwise its own silent message. Every line says
 "signals only, no orders".
 
+**Two variants side by side.** **A · 200-day filter** is the rule set above. **E · half filter** differs only in the
+market filter (`regime_mode` = `half`, from swing.py `filter_day`): all `max_pos` (10) slots while NIFTY 50 closes over
+its 200-day SMA, `max_pos // 2` (5) while it is over its 50-day but not its 200-day SMA, no new buys below the 50-day;
+size stays equity / 10 and the filter never sells. On the same candles both give identical trades to swing.py (all
+30 runs each: defaults + 14 neighbours at both slippages). The tab shows A │ E │ NIFTY 50 for the results, the curve
+(normal / stressed), the three periods, years, robustness ("N of 14 pass" each), exits and skipped signals, and the
+trades (A / E chips); the evening scan shows both filters (A ON / OFF, E FULL / HALF / OFF). A "How it works" box
+explains the rules in plain words from the live settings.
+
+**Blinking signals** (`GET /api/attention`): a dot on the 📈 and 📝 tab names and a strip at the top of each tab —
+⚠️ something to fix (no Kite login, no scan, paper drifting from the backtest), 🔴 a holding to SELL at open or a paper
+stop / exit today, 🟡 a market filter changed at the last close, 🟢 buys waiting for the next open, 🔵 a run in
+progress. The dot stops blinking once the tab is opened, until the reasons change (and never blinks with "reduce
+motion" on).
+
 **Every evening** the job also re-runs this backtest in the background (once it has been run), so its results reach
 the latest session without a click.
 
 ### 📝 Paper trading (simulated: never orders)
 
-`backend/engine/paper.py` and the **📝 Paper trading** tab. The Trend Breakout rules run forward from the day you press
-**Start**, one session at a time, exactly as the backtest (a test checks the same fills, trades and account over the
-same days). Nothing is ever sent to Kite.
+`backend/engine/paper.py` and the **📝 Paper trading** tab. Two virtual accounts, **A** and **E** (`paper.variants`),
+start the same day with `paper.capital` each and follow their rules forward, one session at a time, exactly as the
+backtest (tests check the same fills, trades and account over the same days for both). An account enabled later is
+started on the same day and replayed from the stored candles. Each keeps its own positions, cash, trade log and curve;
+the tab shows them side by side (filter state, before / after costs, realised / unrealised, won, profit factor, max
+drawdown, positions with stop and SMA50, tomorrow's orders with quantity, stop and ₹ at risk). Re-running the evening
+job on a day already processed changes nothing. Nothing is ever sent to Kite.
 
 - **Capital**: the `paper.capital` setting (default ₹2,00,000), or the amount typed next to Start. Everything follows
   from it: position size = account value (cash + positions at the last close) ÷ `max_pos`, quantity =
@@ -1784,3 +1803,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   capital-driven sizes, costs kept apart, append-only record; `paper` settings; `/api/paper*`; the 📝 tab; the PAPER
   TRADING block in the evening report (or its own message).
 - The evening job re-runs the Trend Breakout backtest in the background.
+
+### 2026-10-30: Trend Breakout A vs E (half filter), side by side; blinking signals
+- `regime_mode` (`sma200` A / `half` E) with swing.py's `filter_day` and slot cap; the run, the tab, the scan, paper
+  trading (one account per variant, `paper_*` tables gain `account`) and the Telegram block show both.
+- "How it works" boxes, the attention dots and strips (`/api/attention`), right-aligned number headings.

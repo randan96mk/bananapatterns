@@ -346,13 +346,16 @@ class BreakoutConfig:
     slippage_pct: float = 0.10             # each fill
     stress_slippage_pct: float = 0.25
     sell_pct: float = 8.0                  # evening scan: a holding this far under its average price is a sell
+    regime_mode: str = "sma200"            # market filter: sma200 (A) or half (E: 10 slots over the 200-day SMA,
+                                           # 5 over the 50-day, none under it); the tab and paper run both
 
 
 @dataclass
 class PaperConfig:
     """Paper trading of the Trend Breakout rules (simulated, never orders). The capital is used when paper trading
     starts (or restarts after a reset); sizes, quantities and cash follow from it and from the account's value."""
-    capital: float = 200_000.0
+    capital: float = 200_000.0             # per account
+    variants: list = field(default_factory=lambda: ["A", "E"])   # A: 200-day filter, E: half filter
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

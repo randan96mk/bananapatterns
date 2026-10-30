@@ -169,13 +169,17 @@ def test_run_scan_and_api(monkeypatch):
     store(monkeypatch)
     cfg = AppConfig()
     r = tb.run(cfg)
-    assert r["status"] == "ok" and r["trades"] >= 1
+    assert r["status"] == "ok" and r["A"]["trades"] >= 1 and "E" in r
     s = tb.saved()
-    assert [x["name"] for x in s["splits"]] == ["Development", "Validation", "Out-of-sample"]
-    assert len(s["robust"]) == 14 and s["sessions"] == len(s["curve"]["normal"]) and s["years"]
-    assert s["normal"]["net"] == pytest.approx(s["normal"]["gross"] - s["normal"]["costs"], abs=0.02)
+    for v in ("A", "E"):
+        x = s["variants"][v]
+        assert [y["name"] for y in x["splits"]] == ["Development", "Validation", "Out-of-sample"]
+        assert len(x["robust"]) == 14 and s["sessions"] == len(x["curve"]["normal"]) == len(s["curve"]["dates"])
+        assert x["normal"]["net"] == pytest.approx(x["normal"]["gross"] - x["normal"]["costs"], abs=0.02)
+        assert 0 <= x["allowed_pct"] <= 100
     sc = tb.run_scan(cfg, FakeKite())
-    assert sc["market_on"] and sc["holdings_read"]
+    assert sc["market_on"] and sc["holdings_read"] and sc["filters"]["A"]["state"] == "ON"
+    assert sc["filters"]["E"]["state"] == "FULL"
     acts = {h["symbol"]: h["action"] for h in sc["holdings"]}
     assert acts == {"STEADY": "SELL at open", "OTHER": "SELL at open"}                # 8% under the average price
     from backend.alerts import messages as msg
@@ -185,10 +189,14 @@ def test_run_scan_and_api(monkeypatch):
     from backend import main
     with TestClient(main.app) as tc:
         d = tc.get("/api/breakout").json()
-        assert d["built"] and "trades" not in d["run"] and d["rules"]["max_pos"] == 10 and d["scan"]["as_of"]
-        t = tc.get("/api/breakout/trades?scenario=stress&limit=1").json()
+        assert d["built"] and "trades" not in d["run"]["variants"]["A"] and d["rules"]["max_pos"] == 10
+        assert d["scan"]["as_of"] and set(d["run"]["variants"]) == {"A", "E"}
+        t = tc.get("/api/breakout/trades?variant=E&scenario=stress&limit=1").json()
         assert t["total"] >= 1 and len(t["rows"]) == 1
         assert tc.get("/api/breakout/trades?scenario=x").status_code == 422
+        assert tc.get("/api/breakout/trades?variant=Z").status_code == 422
+        a = tc.get("/api/attention").json()
+        assert set(a) == {"breakout", "paper"} and a["breakout"]["level"] in ("warn", "sell", "filter", "buy", "running")
 
 
 def test_no_data_message(monkeypatch):
@@ -212,3 +220,51 @@ def test_old_orb_and_track_tables_are_dropped(tmp_path):
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert not tables & {"orb_signals", "candles_5m", "track_signals"} and "breakout_runs" in tables
     assert [r[0] for r in conn.execute("SELECT key FROM app_settings")] == ["keep"]
+
+
+# --- E: the half filter ---------------------------------------------------------------------------
+
+def index_path(n=400):
+    """NIFTY closes: a rise (over both averages), a slide under the 200-day but over the 50-day, then a fall."""
+    out, p = [], 100.0
+    for i in range(n):
+        p *= 1.003 if i < 300 else (0.997 if i < 330 else (1.002 if i < 360 else 0.99))
+        out.append(p)
+    return out
+
+
+def test_filter_uses_only_data_up_to_the_day():
+    closes = index_path()
+    for mode in ("sma200", "half"):
+        full = [tb.filter_day(mode, i, closes) for i in range(len(closes))]
+        assert all(tb.filter_day(mode, i, closes[:i + 1]) == full[i] for i in range(0, len(closes), 7))
+    half = tb.market_filters(closes)["half"]
+    assert set(half) == {0.0, 0.5, 1.0}
+
+
+def test_half_filter_caps_new_buys_at_five_and_sizes_at_a_tenth():
+    series = {f"S{k}": trend(300, breakout_at=280, start=100 + k) for k in range(8)}
+    cal, S = universe(series)
+    E = BreakoutConfig(regime_mode="half")
+    half = {"half": [0.5] * len(cal)}                          # NIFTY between its 50-day and 200-day SMAs
+    _, _, all_trades, _ = tb.simulate(cal, S, [True] * len(cal), E, 0.0, 260, filters={"half": [1.0] * len(cal)})
+    assert len({t["sym"] for t in all_trades}) == 8                                  # FULL: all eight fit
+    _, _, t2, f2 = tb.simulate(cal, S, [False] * len(cal), E, 0.0, 260, filters=half)
+    assert len(t2) == 5 and f2["no_slot"] >= 3                                        # HALF: five, the rest wait
+    assert all(t["qty"] * t["buy"] <= P.capital / 10 for t in t2)                     # still equity / 10 each
+
+
+def test_the_filter_never_sells():
+    cal, S = universe({"UP": trend(300, breakout_at=280)})
+    E = BreakoutConfig(regime_mode="half")
+    f = [1.0] * 282 + [0.0] * (len(cal) - 282)                                        # OFF the day after the buy
+    _, _, trades, _ = tb.simulate(cal, S, [True] * 282 + [False] * (len(cal) - 282), E, 0.0, 260, filters={"half": f})
+    assert len(trades) == 1 and trades[0]["why"] == "end"                             # held to the end
+
+
+def test_variant_a_is_unchanged_by_the_filters_argument():
+    cal, S = universe({"UP": trend(300, breakout_at=280), "B": trend(300, breakout_at=270, start=300)})
+    ok = [True] * len(cal)
+    a = tb.simulate(cal, S, ok, P, 0.1, 260)
+    b = tb.simulate(cal, S, ok, P, 0.1, 260, filters={"half": [0.5] * len(cal)})
+    assert a[0] == b[0] and a[2] == b[2]

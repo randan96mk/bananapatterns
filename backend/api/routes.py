@@ -691,20 +691,31 @@ def breakout_summary():
     from backend.engine import trend_breakout as tb
     run = tb.saved()
     if run:
-        run = {k: v for k, v in run.items() if k not in ("trades", "stress_trades")}
+        run = {**run, "variants": {k: {f: x for f, x in v.items() if f not in ("trades", "stress_trades")}
+                                   for k, v in run["variants"].items()}}
     return {"built": bool(run), "progress": tb.status(), "kite": bool(S().client.has_token),
             "rules": asdict(S().config.breakout), "run": run, "scan": tb.saved_scan()}
 
 
 @router.get("/breakout/trades")
-def breakout_trades(scenario: str = "normal", limit: int = 200, offset: int = 0):
-    """The run's trades, newest first: scenario normal / stress."""
+def breakout_trades(variant: str = "A", scenario: str = "normal", limit: int = 200, offset: int = 0):
+    """A variant's trades, newest first: variant A / E, scenario normal / stress."""
     from backend.engine import trend_breakout as tb
     if scenario not in ("normal", "stress"):
         raise HTTPException(422, "scenario must be normal or stress")
-    run = tb.saved() or {}
-    rs = run.get("trades" if scenario == "normal" else "stress_trades", [])
+    if variant not in tb.MODES:
+        raise HTTPException(422, f"variant must be one of {', '.join(tb.MODES)}")
+    run = tb.saved() or {"variants": {}}
+    rs = (run["variants"].get(variant) or {}).get("trades" if scenario == "normal" else "stress_trades", [])
     return {"total": len(rs), "rows": rs[offset:offset + max(1, min(limit, 1000))]}
+
+
+@router.get("/attention")
+def attention():
+    """What needs a look on the Trend Breakout and Paper trading tabs (the blinking dots): level running / buy /
+    sell / filter / warn per tab, with the reasons."""
+    from backend.engine import attention as att
+    return att.signals(S().config, bool(S().client.has_token))
 
 
 @router.post("/breakout/run")
