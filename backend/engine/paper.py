@@ -39,8 +39,13 @@ def _rules(config: AppConfig, key: str):
 
 
 def _states() -> dict:
+    """Every account's state; one saved before the A / E accounts (Oct 2026) gets its variant and name."""
     with get_db() as conn:
-        return {r["account"]: json.loads(r["payload"]) for r in conn.execute("SELECT account, payload FROM paper_state")}
+        states = {r["account"]: json.loads(r["payload"]) for r in conn.execute("SELECT account, payload FROM paper_state")}
+    for k, st in states.items():
+        st.setdefault("variant", k)
+        st.setdefault("name", tb.VARIANT_NAMES.get(k, k))
+    return states
 
 
 def _save(key: str, st: dict, trades: list, fills: list, equity: list) -> None:
