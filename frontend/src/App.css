@@ -454,3 +454,32 @@ body.modal-open { overflow: hidden; }
 .alertstyle select { margin-left: 8px; }
 .orbsets tbody tr { cursor: pointer; } .orbsets tr.cur td { background: var(--blue-bg); }
 .orbwatchgrp { margin-bottom: 8px; } .orbwatchgrp > .muted { margin-bottom: 4px; }
+
+/* A / E variants, the market filter badge, "How it works", the blinking attention signals */
+.vA { color: #0a6ad0; } .vE { color: #7a3fd0; }
+.orbcurve .varA { fill: none; stroke: #0a6ad0; stroke-width: 2.2; } .orbcurve .varE { fill: none; stroke: #7a3fd0; stroke-width: 2.2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .vA { color: #6aa8f0; } :root:not([data-theme="light"]) .vE { color: #b18cf0; }
+  :root:not([data-theme="light"]) .orbcurve .varA { stroke: #6aa8f0; } :root:not([data-theme="light"]) .orbcurve .varE { stroke: #b18cf0; } }
+:root[data-theme="dark"] .vA { color: #6aa8f0; } :root[data-theme="dark"] .vE { color: #b18cf0; }
+:root[data-theme="dark"] .orbcurve .varA { stroke: #6aa8f0; } :root[data-theme="dark"] .orbcurve .varE { stroke: #b18cf0; }
+.filterbadge { display: inline-block; margin-right: 12px; }
+.caveat { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: rgba(208, 138, 0, .1); color: var(--text); }
+.howitworks summary { cursor: pointer; } .howitworks ol { margin: 8px 0 4px 18px; padding: 0; line-height: 1.5; }
+.howitworks li { margin-bottom: 4px; }
+.pulse { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+.pulse.warn { background: #e0a100; } .pulse.sell { background: #d93025; } .pulse.filter { background: #f2c200; }
+.pulse.buy { background: #12a150; } .pulse.running { background: #2f7fe0; }
+.pulse.blink { animation: bp-blink 1.2s ease-in-out infinite; }
+@keyframes bp-blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .25; transform: scale(.75); } }
+@media (prefers-reduced-motion: reduce) { .pulse.blink { animation: none; } }
+.attnstrip { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--panel); margin-bottom: 12px; font-size: 13px; }
+.attnstrip.sell { border-color: #d93025; } .attnstrip.warn { border-color: #e0a100; } .attnstrip.filter { border-color: #f2c200; }
+.attnstrip.buy { border-color: #12a150; } .attnstrip.running { border-color: #2f7fe0; }
+.attnstrip .pulse { margin: 0; }
+.paperacc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .paperacc { grid-template-columns: 1fr; } }
+/* numbers line up under right-aligned headings */
+.grid th.num, .orbvs th.num { text-align: right; }
+.orbvs td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.orderlist { margin: 4px 0 8px 18px; padding: 0; line-height: 1.6; }

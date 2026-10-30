@@ -138,13 +138,54 @@ def decide(i, S, held, regime_on, p):
     return sells, (ranked if regime_on else []), len(ranked), len(pool)
 
 
+# --- market filters: A = NIFTY over its 200-day SMA; E ("half") = 10 slots over the 200-day, 5 over the 50-day ----
+
+MODES = {"A": "sma200", "E": "half"}
+VARIANT_NAMES = {"A": "A · 200-day filter", "E": "E · half filter"}
+
+
+def filter_day(mode, i, closes):
+    """Day i's filter from NIFTY 50 closes up to day i's close only: 1 = all slots, 0.5 = half, 0 = no new buys.
+    (swing.py filter_day, the modes used here.)"""
+    c = closes[:i + 1]
+    avg = lambda n, back=0: sum(c[len(c) - n - back:len(c) - back]) / n if len(c) >= n + back else None
+    m50, m200 = avg(50), avg(200)
+    above200 = m200 is not None and c[-1] > m200
+    above50 = m50 is not None and c[-1] > m50
+    if mode == "sma200":
+        return 1.0 if above200 else 0.0
+    if mode == "half":
+        return 1.0 if above200 else 0.5 if above50 else 0.0
+    raise ValueError(mode)
+
+
+def market_filters(closes) -> dict:
+    return {m: [filter_day(m, i, closes) for i in range(len(closes))] for m in ("half",)}
+
+
+def slots(i, index_ok, filters, p):
+    """(new buys allowed, open-position cap) decided at day i's close."""
+    regime_on, cap = index_ok[i] or not p.regime, p.max_pos
+    if p.regime and p.regime_mode != "sma200":
+        frac = filters[p.regime_mode][i]
+        regime_on, cap = frac > 0, (p.max_pos if frac >= 1 else p.max_pos // 2)
+    return regime_on, cap
+
+
+def filter_label(frac: float, mode: str) -> str:
+    if mode == "sma200":
+        return "ON" if frac >= 1 else "OFF"
+    return "FULL" if frac >= 1 else "HALF" if frac > 0 else "OFF"
+
+
 # --- the account -----------------------------------------------------------------------------------------
 
-def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True):
+def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True, filters=None):
     """Daily portfolio from calendar index `first`: (equity by day, equity before costs by day, trades, funnel).
-    capital: instead of p.capital (paper trading); close_end=False leaves the last day's positions open."""
+    capital: instead of p.capital (paper trading); close_end=False leaves the last day's positions open;
+    filters: market_filters() for a regime_mode other than sma200 (E: half the slots between the averages)."""
     cash, held, trades = (capital or p.capital), {}, []
-    pend_sell, pend_buy = set(), []
+    pend_sell, pend_buy, pend_cap = set(), [], p.max_pos
     eq, eq_gross, costs_cum = [], [], 0.0
     funnel = {"stock_days": 0, "signals": 0, "no_slot": 0, "market_off": 0, "too_small": 0}
     fill = lambda px, buying: px * (1 + slip / 100) if buying else px * (1 - slip / 100)
@@ -172,7 +213,7 @@ def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True):
                 pend_sell.discard(sym)
         equity = cash + sum(pos["qty"] * pos["last"] for pos in held.values())
         for k, (sym, stop) in enumerate(pend_buy):       # 2) buys at the open, equal weight
-            if len(held) >= p.max_pos:
+            if len(held) >= pend_cap:
                 funnel["no_slot"] += len(pend_buy) - k
                 break
             b = bar(sym)
@@ -203,7 +244,7 @@ def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True):
         eq.append(e)
         eq_gross.append(e + costs_cum)
         if i + 1 < len(cal):                             # 4) decide at the close
-            regime_on = index_ok[i] or not p.regime
+            regime_on, pend_cap = slots(i, index_ok, filters, p)
             pend_sell, pend_buy, n_sig, n_pool = decide(i, S, held, regime_on, p)
             funnel["stock_days"] += n_pool
             funnel["signals"] += n_sig
@@ -242,11 +283,11 @@ def period_returns(eq, capital, n):
     return [eq[b - 1] / (eq[a - 1] if a else capital) - 1 for _, a, b in periods(n)]
 
 
-def evaluate(q, cal, S, index_ok, first, nifty_cagr):
+def evaluate(q, cal, S, index_ok, first, nifty_cagr, filters=None):
     """The settings q at normal and stressed slippage: the numbers the robustness block shows."""
     n = len(cal) - first
-    eq, _, trades, _ = simulate(cal, S, index_ok, q, q.slippage_pct, first)
-    st = simulate(cal, S, index_ok, q, q.stress_slippage_pct, first)[0]
+    eq, _, trades, _ = simulate(cal, S, index_ok, q, q.slippage_pct, first, filters=filters)
+    st = simulate(cal, S, index_ok, q, q.stress_slippage_pct, first, filters=filters)[0]
     _, cagr, dd = perf(eq, q.capital, n)
     pn, ps = period_returns(eq, q.capital, n), period_returns(st, q.capital, n)
     won = [t["net"] for t in trades if t["net"] > 0]
@@ -292,7 +333,7 @@ def load(config: AppConfig) -> dict:
     close = [r["close"] for r in idx]
     m200 = sma(close, 200)
     return {"cal": cal, "S": S, "index_close": close, "index_m200": m200,
-            "index_ok": [m is not None and c > m for c, m in zip(close, m200)],
+            "index_ok": [m is not None and c > m for c, m in zip(close, m200)], "filters": market_filters(close),
             "tradingsymbol": {s["symbol"]: s.get("tradingsymbol", s["symbol"]) for s in u["stocks"]}}
 
 
@@ -312,75 +353,89 @@ def _stats(eq, eqg, trades, capital, n):
             "exits": {k: sum(t["why"] == k for t in trades) for k in ("stop", "exit", "end")}}
 
 
+def _variant(data: dict, p, key: str, first: int, nifty: list, nifty_cagr: float) -> dict:
+    """One variant (A or E): both slippages, periods, years, curve, robustness, trades."""
+    cal, S, index_ok, close, filters = data["cal"], data["S"], data["index_ok"], data["index_close"], data["filters"]
+    n = len(cal) - first
+    eq, eqg, trades, funnel = simulate(cal, S, index_ok, p, p.slippage_pct, first, filters=filters)
+    seq, seqg, strades, sfunnel = simulate(cal, S, index_ok, p, p.stress_slippage_pct, first, filters=filters)
+    out = {"name": VARIANT_NAMES[key], "mode": p.regime_mode, "funnel": funnel,
+           "normal": _stats(eq, eqg, trades, p.capital, n), "stress": _stats(seq, seqg, strades, p.capital, n)}
+    out["normal"]["skipped"] = {k: funnel[k] for k in ("no_slot", "market_off", "too_small")}
+    out["stress"]["skipped"] = {k: sfunnel[k] for k in ("no_slot", "market_off", "too_small")}
+    allowed = [slots(i, index_ok, filters, p)[0] for i in range(first, len(cal))]
+    out["allowed_pct"] = round(100 * sum(allowed) / max(n, 1), 1)
+    splits = []
+    for name, a, b in periods(n):
+        base = lambda xs: xs[a - 1] if a else p.capital
+        splits.append({"name": name, "from": cal[first + a], "to": cal[first + b - 1],
+                       "gross": round((eqg[b - 1] / base(eqg) - 1) * 100, 2),
+                       "net": round((eq[b - 1] / base(eq) - 1) * 100, 2),
+                       "stress": round((seq[b - 1] / base(seq) - 1) * 100, 2),
+                       "nifty": round((close[first + b - 1] / close[first + a - 1] - 1) * 100, 2)})
+        splits[-1]["costs"] = round(splits[-1]["gross"] - splits[-1]["net"], 2)
+    out["splits"] = splits
+    years = {}
+    for i in range(first, len(cal)):
+        years.setdefault(cal[i][:4], []).append(i)
+    out["years"] = [{"year": y, "net": round((eq[ix[-1] - first] / (eq[ix[0] - first - 1] if ix[0] > first
+                                                                   else p.capital) - 1) * 100, 2),
+                     "nifty": round((close[ix[-1]] / close[ix[0] - 1] - 1) * 100, 2)} for y, ix in years.items()]
+    out["ok_periods"] = all(x["net"] > 0 and x["stress"] > 0 for x in splits)
+    out["beats_nifty"] = out["normal"]["cagr"] > nifty_cagr
+    out["verdict"] = out["ok_periods"] and out["beats_nifty"]
+    step = max(1, n // 400)                              # the curves, thinned to ~400 points
+    ix = list(range(0, n, step)) + ([n - 1] if (n - 1) % step else [])
+    out["curve"] = {"normal": [round(eq[k]) for k in ix], "stress": [round(seq[k]) for k in ix]}
+    rob = []
+    nb = neighbours(p)
+    for k, (label, q) in enumerate(nb, 1):
+        _status["message"] = f"{key}: robustness {k} of {len(nb)}: {label}"
+        rob.append({"label": label, **evaluate(q, cal, S, index_ok, first, nifty_cagr, filters)})
+    out["robust"] = rob
+    out["robust_pass"] = sum(r["ok"] for r in rob)
+    tidy = lambda ts: [{**t, "gross": round(t["gross"], 2), "costs": round(t["costs"], 2), "net": round(t["net"], 2)}
+                       for t in sorted(ts, key=lambda t: (t["in"], t["sym"]), reverse=True)]
+    out["trades"], out["stress_trades"] = tidy(trades), tidy(strades)
+    return out
+
+
 def run(config: AppConfig) -> dict:
-    """The backtest at normal and stressed slippage, the splits, years, robustness; saved for the tab."""
+    """Both variants (A: 200-day filter, E: half filter) at normal and stressed slippage, the splits, years,
+    robustness; saved for the tab. A is exactly the original rules."""
     if not _lock.acquire(blocking=False):
         return {"status": "busy"}
     try:
-        p = config.breakout
+        base = config.breakout
         _status.update(state="running", message="loading the daily candles", at=now_ist())
         data = load(config)
         if "error" in data:
             _status.update(state="idle", message=data["error"])
             return {"status": "no_data", "error": data["error"]}
-        cal, S, index_ok, close = data["cal"], data["S"], data["index_ok"], data["index_close"]
-        first = p.warmup_sessions
+        cal, close = data["cal"], data["index_close"]
+        first = base.warmup_sessions
         n = len(cal) - first
-        _status["message"] = f"simulating {n} sessions, {len(S)} stocks"
-        eq, eqg, trades, funnel = simulate(cal, S, index_ok, p, p.slippage_pct, first)
-        seq, seqg, strades, sfunnel = simulate(cal, S, index_ok, p, p.stress_slippage_pct, first)
-        nifty = [close[i] / close[first - 1] * p.capital for i in range(first, len(cal))]
-        nifty_cagr = perf(nifty, p.capital, n)[1]
-        out = {"from": cal[first], "to": cal[-1], "sessions": n, "stocks": len(S), "funnel": funnel,
-               "normal": _stats(eq, eqg, trades, p.capital, n), "stress": _stats(seq, seqg, strades, p.capital, n),
-               "nifty": {"cagr": round(nifty_cagr, 2), "drawdown": round(perf(nifty, p.capital, n)[2], 2),
-                         "return": round((nifty[-1] / p.capital - 1) * 100, 2)}}
-        out["normal"]["skipped"] = {k: funnel[k] for k in ("no_slot", "market_off", "too_small")}
-        out["stress"]["skipped"] = {k: sfunnel[k] for k in ("no_slot", "market_off", "too_small")}
-        splits = []
-        for name, a, b in periods(n):
-            base = lambda xs: xs[a - 1] if a else p.capital
-            splits.append({"name": name, "from": cal[first + a], "to": cal[first + b - 1],
-                           "gross": round((eqg[b - 1] / base(eqg) - 1) * 100, 2),
-                           "net": round((eq[b - 1] / base(eq) - 1) * 100, 2),
-                           "stress": round((seq[b - 1] / base(seq) - 1) * 100, 2),
-                           "nifty": round((close[first + b - 1] / close[first + a - 1] - 1) * 100, 2)})
-            splits[-1]["costs"] = round(splits[-1]["gross"] - splits[-1]["net"], 2)
-        out["splits"] = splits
-        years = {}
-        for i in range(first, len(cal)):
-            years.setdefault(cal[i][:4], []).append(i)
-        out["years"] = [{"year": y, "net": round((eq[ix[-1] - first] / (eq[ix[0] - first - 1] if ix[0] > first
-                                                                       else p.capital) - 1) * 100, 2),
-                         "nifty": round((close[ix[-1]] / close[ix[0] - 1] - 1) * 100, 2)} for y, ix in years.items()]
-        out["ok_periods"] = all(s["net"] > 0 and s["stress"] > 0 for s in splits)
-        out["beats_nifty"] = out["normal"]["cagr"] > nifty_cagr
-        out["verdict"] = out["ok_periods"] and out["beats_nifty"]
-        step = max(1, n // 400)                          # the curves, thinned to ~400 points
+        nifty = [close[i] / close[first - 1] * base.capital for i in range(first, len(cal))]
+        nifty_cagr = perf(nifty, base.capital, n)[1]
+        step = max(1, n // 400)
         ix = list(range(0, n, step)) + ([n - 1] if (n - 1) % step else [])
-        out["curve"] = {"dates": [cal[first + k] for k in ix], "normal": [round(eq[k]) for k in ix],
-                        "stress": [round(seq[k]) for k in ix], "nifty": [round(nifty[k]) for k in ix]}
-        rob = []
-        nb = neighbours(p)
-        for k, (label, q) in enumerate(nb, 1):
-            _status["message"] = f"robustness {k} of {len(nb)}: {label}"
-            rob.append({"label": label, **evaluate(q, cal, S, index_ok, first, nifty_cagr)})
-        out["robust"] = rob
-        out["robust_pass"] = sum(r["ok"] for r in rob)
-        out["trades"] = [{**t, "gross": round(t["gross"], 2), "costs": round(t["costs"], 2), "net": round(t["net"], 2)}
-                         for t in sorted(trades, key=lambda t: (t["in"], t["sym"]), reverse=True)]
-        out["stress_trades"] = [{**t, "gross": round(t["gross"], 2), "costs": round(t["costs"], 2),
-                                 "net": round(t["net"], 2)}
-                                for t in sorted(strades, key=lambda t: (t["in"], t["sym"]), reverse=True)]
-        out["settings"] = asdict(p)
+        out = {"from": cal[first], "to": cal[-1], "sessions": n, "stocks": len(data["S"]),
+               "nifty": {"cagr": round(nifty_cagr, 2), "drawdown": round(perf(nifty, base.capital, n)[2], 2),
+                         "return": round((nifty[-1] / base.capital - 1) * 100, 2)},
+               "curve": {"dates": [cal[first + k] for k in ix], "nifty": [round(nifty[k]) for k in ix]},
+               "variants": {}, "settings": asdict(base)}
+        for key, mode in MODES.items():
+            _status["message"] = f"{VARIANT_NAMES[key]}: simulating {n} sessions, {len(data['S'])} stocks"
+            out["variants"][key] = _variant(data, replace(base, regime_mode=mode), key, first, nifty, nifty_cagr)
         with get_db() as conn:
             conn.execute("INSERT OR REPLACE INTO breakout_runs (id, updated_at, payload) VALUES (1, ?, ?)",
                          (now_ist(), json.dumps(out)))
-        msg = (f"{len(trades)} trades, CAGR {out['normal']['cagr']:.1f}% after costs (NIFTY 50 {nifty_cagr:.1f}%), "
-               f"{out['robust_pass']} of {len(rob)} nearby settings pass")
-        logger.info("Trend Breakout: %s", msg)
+        v = out["variants"]
+        msg = " · ".join(f"{k}: {x['normal']['trades']} trades, CAGR {x['normal']['cagr']:.1f}%, "
+                         f"{x['robust_pass']}/{len(x['robust'])} robust" for k, x in v.items())
+        logger.info("Trend Breakout: %s (NIFTY 50 %.1f%%)", msg, nifty_cagr)
         _status.update(state="idle", message=msg, at=now_ist())
-        return {"status": "ok", "trades": len(trades), "cagr": out["normal"]["cagr"]}
+        return {"status": "ok", **{k: {"trades": x["normal"]["trades"], "cagr": x["normal"]["cagr"]} for k, x in v.items()}}
     except Exception as exc:
         logger.exception("Trend Breakout run failed")
         _status.update(state="idle", message=f"failed: {exc}")
@@ -390,9 +445,13 @@ def run(config: AppConfig) -> dict:
 
 
 def saved() -> Optional[dict]:
+    """The latest run (None before the first run, or for a run from before the A / E variants)."""
     with get_db() as conn:
         r = conn.execute("SELECT updated_at, payload FROM breakout_runs WHERE id = 1").fetchone()
-    return {**json.loads(r["payload"]), "updated_at": r["updated_at"]} if r else None
+    if not r:
+        return None
+    payload = json.loads(r["payload"])
+    return {**payload, "updated_at": r["updated_at"]} if "variants" in payload else None
 
 
 # --- the evening scan -----------------------------------------------------------------------------------
@@ -408,6 +467,14 @@ def scan(config: AppConfig, holdings: Optional[list] = None) -> dict:
     i = len(cal) - 1
     c, m = data["index_close"][i], data["index_m200"][i]
     market_on = bool(data["index_ok"][i])
+    closes = data["index_close"]
+    fstate = {}
+    for key, mode in MODES.items():
+        now = filter_day(mode, i, closes)
+        before = filter_day(mode, i - 1, closes) if i else now
+        fstate[key] = {"name": VARIANT_NAMES[key], "state": filter_label(now, mode),
+                       "prev": filter_label(before, mode), "changed": now != before,
+                       "slots": p.max_pos if now >= 1 else p.max_pos // 2 if now > 0 else 0}
     _, ranked, _, _ = decide(i, S, {}, True, p)
     buys = []
     for sym, stop in ranked:
@@ -439,9 +506,10 @@ def scan(config: AppConfig, holdings: Optional[list] = None) -> dict:
         held.append({"symbol": ts, "qty": qty, "avg": round(avg, 2), "close": round(close, 2),
                      "sma": round(ma, 2) if ma else None, "action": "SELL at open" if why else "HOLD",
                      "why": ", ".join(why) or ("trend intact" if ma else f"not in the Nifty 500 data: SMA{p.exit_sma} unknown")})
+    m50 = sma(closes, 50)[i]
     return {"as_of": cal[i], "market_on": market_on, "nifty": round(c, 2), "nifty_sma200": round(m, 2) if m else None,
-            "buys": buys if market_on else [], "signals_filtered": [] if market_on else buys, "holdings": held,
-            "computed_at": now_ist()}
+            "nifty_sma50": round(m50, 2) if m50 else None, "filters": fstate,
+            "buys": buys, "holdings": held, "computed_at": now_ist()}
 
 
 def run_scan(config: AppConfig, client=None) -> dict:
