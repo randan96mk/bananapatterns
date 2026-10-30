@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 from backend.alerts import messages as msg
-from backend.alerts.charts import render_chart
 from backend.alerts.dispatch import Notifier, dispatch_scan
 from backend.alerts.jobs import Scheduler, due_jobs, volume_pace
 from backend.alerts.telegram import TelegramClient, TelegramError
@@ -79,15 +78,6 @@ def test_messages_escape_and_digest_chunks():
     assert len(chunks) > 1 and all(len(c) < 4096 for c in chunks)
     assert sum(c.count("newly forming") for c in chunks) == 120
 
-
-def test_chart_png():
-    c = build([("trend", 120, 0.5), ("range", 30, (0.9, 0.99))])
-    png = render_chart(c, "T", "s", base={"start_date": c[-30]["date"], "end_date": c[-1]["date"], "pivot": 150.0,
-                                          "low": 130.0, "label": "B1 · 6w"}, stop=135.0)
-    assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 10_000
-
-
-# --- schedule -----------------------------------------------------------------
 
 def test_due_jobs():
     cfg = AlertsConfig(login_links=False, top_setups=False, morning_plan=False, gap_check=False,

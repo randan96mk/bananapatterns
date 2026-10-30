@@ -118,7 +118,7 @@ export default function PaperPage() {
       <>
         {banner(null)}
         <div className="panel"><h3>Start paper trading</h3>
-          <p>Two virtual accounts start the same day, <b className="vA">A · 200-day filter</b> and <b className="vE">E · half filter</b>, each with
+          <p>Two virtual accounts start the same day, <b className="vA">A · 200-day filter, top {rules?.top ?? 200}</b> and <b className="vE">E · half filter, top {rules?.top_e ?? 300}</b>, each with
             {' '}this capital. Every evening the breakouts are "filled" at the next open from the daily candle, with the same size, stop, exit
             {' '}and Zerodha delivery costs as the backtest. Nothing is sent to Kite.</p>
           <p>Capital per account <input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 130 }} />

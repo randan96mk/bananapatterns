@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from backend.timefmt import ampm_date
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
-from backend.database.models import get_candles, get_db, get_logs, get_runs, latest_universe, now_ist
+from backend.database.models import get_candles, get_db, get_logs, get_runs, now_ist
 from backend.engine.bases import detect_bases
 from backend.engine.scan import run_scan
 from backend.ingest import candles as cd

@@ -151,7 +151,6 @@ def test_start_reset_and_api(monkeypatch):
 
 def test_an_account_from_before_the_variants_still_works(tmp_path, monkeypatch):
     """A paper account started before A / E (no name, single-account tables) becomes A, and E joins on its day."""
-    import sqlite3
     from backend.database.models import init_db
     store(monkeypatch)
     c = cfg()

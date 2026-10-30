@@ -21,7 +21,6 @@ from backend.alerts import intraday as itd
 from backend.alerts.telegram import MAX_CAPTION, TelegramClient, TelegramError
 from backend.config import AlertsConfig, BaseConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
-from backend.engine.bases import detect_bases
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("alerts")

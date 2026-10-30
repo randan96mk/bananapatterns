@@ -1,9 +1,8 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.config import IST
 from backend.database.models import get_db
 from backend.kite_api import auth
 from tests.conftest import make_series

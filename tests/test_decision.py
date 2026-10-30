@@ -1,6 +1,5 @@
 """Decision charts: context per alert kind, rendering, message lines, dispatch + intraday wiring, preview."""
 
-from datetime import datetime
 
 import pytest
 
@@ -9,7 +8,7 @@ from backend.alerts import messages as msg
 from backend.alerts.decision import decision_context, decision_lines, render_decision_chart
 from backend.alerts.dispatch import Notifier, decision_for, dispatch_scan
 from backend.alerts.samples import _example_candles
-from backend.config import IST, AlertsConfig, BaseConfig, VcpConfig
+from backend.config import AlertsConfig, BaseConfig, VcpConfig
 from tests.test_alerts import FakeTG, scanned_db
 
 PNG = b"\x89PNG\r\n\x1a\n"
