@@ -61,4 +61,36 @@ def signals(config, kite: bool) -> dict:
                                        "(data or rules drifted)"))
         except Exception:
             pass
-    return {"breakout": _pack(bt), "paper": _pack(pp)}
+    return {"breakout": _pack(bt), "paper": _pack(pp), "real": _pack(_real(config, kite))}
+
+
+def _real(config, kite: bool) -> list:
+    from datetime import date
+
+    from backend.database.models import get_db
+    from backend.engine import real
+    out = []
+    s = real.summary(config)
+    if s["killed"]:
+        out.append(("warn", "Kill switch ON: nothing is sent"))
+    if s["enabled"] and not s["token_set"]:
+        out.append(("warn", "TRADETRON_TOKEN missing in .env: orders can't be sent"))
+    if not s["enabled"]:
+        return out
+    if s.get("positions") and not kite:
+        out.append(("warn", "Kite not logged in: stops are NOT watched"))
+    today = date.today().isoformat()
+    with get_db() as conn:
+        bad = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status != 'sent'", (today,))]
+        stops = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status = 'sent' AND "
+                                            "reason LIKE 'stop%'", (today,))]
+    if bad:
+        out.append(("warn", f"Not sent today: {', '.join(bad)}"))
+    if stops:
+        out.append(("sell", f"Stop hit, EXIT sent: {', '.join(stops)}"))
+    if s.get("filter", {}) and s["filter"].get("changed"):
+        out.append(("filter", f"Filter {s['filter']['prev']} → {s['filter']['state']}"))
+    orders = [o for o in s.get("orders", []) if not o.get("sent")]
+    if orders:
+        out.append(("buy", f"{len(orders)} order(s) for the next open"))
+    return out

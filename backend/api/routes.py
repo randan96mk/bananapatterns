@@ -741,6 +741,51 @@ def breakout_scan():
     return tb.saved_scan() or {}
 
 
+# --- 💰 Real trading (orders to Tradetron by webhook) ---
+
+class RealSettings(BaseModel):
+    enabled: Optional[bool] = None
+    variant: Optional[str] = None
+
+
+@router.get("/real")
+def real_summary():
+    """💰 Real trading: switches, the account, tomorrow's orders, positions, trades, the order log."""
+    from backend.engine import real
+    return real.summary(S().config)
+
+
+@router.post("/real/settings")
+def real_settings(req: RealSettings):
+    """Turn real trading on / off, or pick the strategy for new buys (A / E); saved with the settings."""
+    from backend.engine import trend_breakout as tb
+    st = S()
+    if req.variant is not None and req.variant not in tb.MODES:
+        raise HTTPException(422, f"variant must be one of {', '.join(tb.MODES)}")
+    if req.enabled is not None:
+        st.config.real.enabled = req.enabled
+    if req.variant is not None:
+        st.config.real.variant = req.variant
+    save_config(st.config)
+    return {"enabled": st.config.real.enabled, "variant": st.config.real.variant}
+
+
+@router.post("/real/kill")
+def real_kill(on: bool = True):
+    """The kill switch: nothing is sent while it is on."""
+    from backend.engine import real
+    real.set_killed(on)
+    return {"killed": real.killed()}
+
+
+@router.post("/real/reset")
+def real_reset():
+    """Clear the real account's tracking (positions, trades, curve); the order log is kept. Nothing is sent."""
+    from backend.engine import real
+    real.reset()
+    return {"status": "ok"}
+
+
 # --- Paper trading (simulated: never orders) ---
 
 class PaperStart(BaseModel):

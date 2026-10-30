@@ -483,3 +483,15 @@ body.modal-open { overflow: hidden; }
 .grid th.num, .orbvs th.num { text-align: right; }
 .orbvs td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .orderlist { margin: 4px 0 8px 18px; padding: 0; line-height: 1.6; }
+
+/* 💰 Real trading */
+.realbanner { background: rgba(217, 48, 37, .08); border: 2px solid #d93025; border-radius: 10px; padding: 10px 14px; font-weight: 700;
+  color: #d93025; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.realbanner .muted { font-weight: 400; }
+.realctrl { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 12px; } .realctrl .panel { margin: 0; }
+@media (max-width: 900px) { .realctrl { grid-template-columns: 1fr; } }
+.realsw { display: flex; align-items: center; gap: 8px; font-size: 14px; } .realsw input { width: 18px; height: 18px; }
+.killbtn { background: #d93025; color: #fff; border-color: #d93025; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-weight: 700; font-size: 11.5px; }
+.pill.ok { background: rgba(18, 161, 80, .15); color: #12a150; } .pill.err { background: rgba(217, 48, 37, .15); color: #d93025; }
+.pill.wait { background: rgba(208, 138, 0, .15); color: #b07400; } .pill.pend { background: rgba(47, 127, 224, .15); color: #2f7fe0; }
