@@ -1032,8 +1032,12 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   variant's filter at account value ÷ 10, within `max_order_pct` (15%) of the account value and `max_buys_per_day` (5).
 - **`send_time`–`send_until`** (9:16–9:30 AM): EXITs, then BUYs, **each sent once** (one key per day, stock and
   action); a failure is logged and alerted, never retried.
-- **Stops**: no stop-loss orders. Every `stop_check_min` (5) minutes in market hours the app reads live prices
-  and sends EXIT once a position trades at or under its stop (needs the daily Kite login; without it a loud warning).
+- **Stops**: no stop-loss orders. Every `stop_check_min` (5) minutes in market hours the app reads live prices and
+  each position's **day low**, and sends EXIT once either is at or under its stop, so a stop touched between checks,
+  or while there was no Kite login, still exits at the first check after the login (a morning buy only counts lows
+  after its fill). Positions open and no Kite login: a loud 🚨 "STOPS NOT WATCHED" Telegram alarm every
+  `nologin_alarm_min` (30) minutes until the login. Optional `real.send_stop` (off): each BUY also carries its stop as
+  `sig_stop` so Tradetron can exit on its own (turn on once the Tradetron strategy reads it).
 - **Switches**: `real.enabled` (ON by default) and the ⛔ kill switch on the tab; both must allow sending.
 - **Capital** (`POST /api/real/capital`, the box on the tab): before the start it is simply the starting amount;
   afterwards a change counts as money added or withdrawn (cash moves, the profit so far and the curve stay, a
@@ -1859,3 +1863,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `breakout.top_e` (300); `tb.rules()` / `liquid(day, top)` shared by the backtest, scan, paper and real; relative
   universe neighbours; stale-run flag; "A+E / E only" scan tags; paper note; real order tags; missing-data logging;
   `./docker.sh verify-e300`. A unchanged (identical results; parity with swing.py for A/200 and E/300).
+
+### 2026-11-01: Real trading stop protection
+- The stop watch also checks the day's low (catch-up after a missed login); a repeating loud alarm while stops are
+  not watched; optional `sig_stop` on each BUY to Tradetron (`real.send_stop`, off by default).

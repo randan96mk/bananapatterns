@@ -370,6 +370,9 @@ class RealConfig:
     send_until: str = "09:30"              # ...until here (missed: not sent that day, with an alert)
     stop_check_min: int = 5                # stops watched with live prices every N minutes in market hours
     max_buys_per_day: int = 5
+    send_stop: bool = False                # also send each BUY's stop to Tradetron (sig_stop) so Tradetron can exit on its
+                                           # own; turn on once the Tradetron strategy reads sig_stop
+    nologin_alarm_min: int = 30            # positions open, no Kite login in market hours: a loud alarm every N minutes
     max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 2L = 30,000)
 
 

@@ -33,21 +33,22 @@ class Sender:
     def __init__(self, fail=()):
         self.calls, self.fail = [], set(fail)
 
-    def __call__(self, symbol, action, qty=None):
+    def __call__(self, symbol, action, qty=None, stop=None):
         if symbol in self.fail:
             raise OSError("timeout")
-        self.calls.append((symbol, action, qty))
+        self.calls.append((symbol, action, qty) if stop is None else (symbol, action, qty, stop))
         return '{"success": true}'
 
 
 class Kite:
     has_token = True
 
-    def __init__(self, prices):
-        self.prices = prices
+    def __init__(self, prices, lows=None):
+        self.prices, self.lows = prices, lows or {}
 
     def quote(self, keys):
-        return {k: {"last_price": self.prices[k.split(":")[1]]} for k in keys if k.split(":")[1] in self.prices}
+        return {k: {"last_price": self.prices[s], "ohlc": {"low": self.lows.get(s, self.prices[s])}}
+                for k in keys if (s := k.split(":")[1]) in self.prices}
 
 
 def setup(monkeypatch, **real_cfg):
@@ -208,3 +209,68 @@ def test_capital_api(monkeypatch):
         assert tc.post("/api/real/capital", json={"capital": 300000}).json()["capital"] == 300000
         d = tc.get("/api/real").json()
         assert d["settings"]["capital"] == 300000 and d["limits"]["size"] == 30000 and d["limits"]["max_order"] == 45000
+
+
+def test_stop_sent_to_tradetron_when_switched_on():
+    assert tradetron.body("X", "BUY", 5, "t", 101.256) == {
+        "auth-token": "t", "key": "sig_symbol", "value": "X", "key1": "sig_qty", "value1": "5",
+        "key2": "sig_stop", "value2": "101.26", "key3": "sig_action", "value3": "BUY"}
+
+
+def test_send_stop_flag(monkeypatch):
+    c = setup(monkeypatch, send_stop=True)
+    data, cut, end = first_day_with_buys(c)
+    res = real.evening(c, cut)
+    s = Sender()
+    real.send_orders(c, None, data["cal"][end + 1], s)
+    stops = {o["ts"]: o["stop"] for o in res["orders"] if o["action"] == "BUY"}
+    assert s.calls and all(len(x) == 4 and x[3] == stops[x[0]] for x in s.calls)
+
+
+def test_a_stop_touched_while_unwatched_exits_at_the_next_check(monkeypatch):
+    c = setup(monkeypatch)
+    data, cut, end = first_day_with_buys(c)
+    real.evening(c, cut)
+    real.send_orders(c, None, data["cal"][end + 1], Sender())
+    nxt = {**data, "cal": data["cal"][:end + 2], "index_close": data["index_close"][:end + 2],
+           "index_ok": data["index_ok"][:end + 2], "filters": {k: v[:end + 2] for k, v in data["filters"].items()}}
+    real.evening(c, nxt)                                                    # the next day: positions are not "today's"
+    day = "2099-01-02"
+    pos = real.summary(c)["positions"][0]
+    above = {p["symbol"]: p["stop"] * 1.05 for p in real.summary(c)["positions"]}
+    s = Sender()
+    out = real.watch_stops(c, Kite(above, lows={pos["symbol"]: pos["stop"] - 0.5}), day, s)   # recovered, but the low touched
+    assert [h["symbol"] for h in out["hits"]] == [pos["symbol"]] and "day low" in out["hits"][0]["why"]
+
+
+def test_a_morning_buy_ignores_the_low_before_its_fill(monkeypatch):
+    c = setup(monkeypatch)
+    data, cut, end = first_day_with_buys(c)
+    real.evening(c, cut)
+    day = data["cal"][end + 1]
+    real.send_orders(c, None, day, Sender())
+    pos = real.summary(c)["positions"][0]
+    above = {p["symbol"]: p["stop"] * 1.05 for p in real.summary(c)["positions"]}
+    s = Sender()
+    assert real.watch_stops(c, Kite(above, lows={pos["symbol"]: pos["stop"] - 5}), day, s)["hits"] == [] and s.calls == []
+
+
+def test_nologin_alarm_repeats(monkeypatch):
+    from backend.alerts.jobs import Scheduler
+    from tests.test_alerts import FakeTG
+    from backend.alerts.dispatch import Notifier
+    c = setup(monkeypatch)
+    data, cut, end = first_day_with_buys(c)
+    real.evening(c, cut)
+    real.send_orders(c, None, data["cal"][end + 1], Sender())
+
+    class St:
+        config = c
+        client = type("K", (), {"has_token": False})()
+    c.alerts.chat_id = "42"
+    fake = FakeTG()
+    sch = Scheduler(St(), notifier_factory=lambda cfg: Notifier(cfg, fake))
+    for hh, mm in ((9, 20), (9, 25), (9, 50), (10, 20)):
+        sch.run_real_stops(datetime(2026, 11, 3, hh, mm, tzinfo=IST))
+    alarms = [m for m in fake.sent if "STOPS NOT WATCHED" in m[1]]
+    assert len(alarms) == 3                                                 # 9:00-9:29, 9:30-9:59, 10:00-10:29 slots

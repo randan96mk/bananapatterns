@@ -78,7 +78,10 @@ export default function RealPage() {
           <h4>Safety limits</h4>
           <p className="small">orders sent {s.send_time}–{s.send_until} · stops checked every {s.stop_check_min} min in market hours ·
             {' '}max {s.max_buys_per_day} new buys a day · max {s.max_order_pct}% of the account an order ({inr(d.limits?.max_order)} now) · max {d.max_pos} positions ·
-            {' '}each order sent once (a failure is not retried)</p></div>
+            {' '}each order sent once (a failure is not retried)</p>
+          <p className="small">🛡 Stops: checked every {s.stop_check_min} min on the live price <b>and the day's low</b> (a stop touched while unwatched exits
+            {' '}at the first check after the Kite login) · no login with positions open: a loud alarm every {s.nologin_alarm_min} min ·
+            {' '}stop sent to Tradetron with each BUY: <b>{s.send_stop ? 'ON' : 'OFF'}</b></p></div>
         <div className="panel"><h3>Account</h3>
           <div className="capbox"><span>Capital</span> ₹<input className="input" type="number" min="10000" step="10000" value={cap}
             onChange={(e) => setCap(e.target.value)} /> <button className="btn" onClick={saveCap}

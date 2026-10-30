@@ -218,8 +218,9 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig) -> None:
 
 # --- sending ---------------------------------------------------------------------------------------
 
-def _quotes(client, symbols: list[str]) -> dict:
-    """{tradingsymbol: last price} from one Kite quote call (read-only); {} without a login."""
+def _quotes(client, symbols: list[str], with_low: bool = False) -> dict:
+    """{tradingsymbol: last price} (with_low: (last price, the day's low)) from one Kite quote call (read-only);
+    {} without a login."""
     if not symbols or client is None or not getattr(client, "has_token", False):
         return {}
     try:
@@ -227,6 +228,9 @@ def _quotes(client, symbols: list[str]) -> dict:
     except Exception as exc:
         logger.warning("Real trading quote failed: %s", exc)
         return {}
+    if with_low:
+        return {k.split(":", 1)[1]: (v["last_price"], (v.get("ohlc") or {}).get("low") or v["last_price"])
+                for k, v in q.items() if v.get("last_price")}
     return {k.split(":", 1)[1]: v.get("last_price") for k, v in q.items() if v.get("last_price")}
 
 
@@ -268,7 +272,10 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 failed.append({**o, "error": "not enough cash"})
                 continue
             try:
-                reply = sender(o["ts"], o["action"], o["qty"] if o["action"] == "BUY" else None)
+                if o["action"] == "BUY" and config.real.send_stop:
+                    reply = sender(o["ts"], "BUY", o["qty"], stop=o["stop"])
+                else:
+                    reply = sender(o["ts"], o["action"], o["qty"] if o["action"] == "BUY" else None)
             except Exception as exc:
                 _log(key, today, o, "failed", str(exc))
                 failed.append({**o, "error": str(exc)[:120]})
@@ -291,7 +298,9 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
 
 
 def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable] = None) -> dict:
-    """Live prices of the open positions: an EXIT the moment one trades at or under its stop (once per stock)."""
+    """Live prices of the open positions: an EXIT once one has traded at or under its stop today (once per stock).
+    The day's low is checked too, so a stop touched between checks, or while the app had no Kite login (caught up
+    at the first check after the login), still exits, as in the backtest (a day's low at or under the stop)."""
     sender = sender or tradetron.send
     with _lock:
         st = _state()
@@ -301,19 +310,22 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
             return {"status": "off", "hits": []}
         if client is None or not getattr(client, "has_token", False):
             return {"status": "no_login", "hits": []}
-        px = _quotes(client, [p.get("ts", s) for s, p in st["positions"].items()])
+        px = _quotes(client, [p.get("ts", s) for s, p in st["positions"].items()], with_low=True)
         hits = []
         for sym, pos in list(st["positions"].items()):
-            ltp = px.get(pos.get("ts", sym))
-            if ltp is None:
+            if pos.get("ts", sym) not in px:
                 continue
+            ltp, low = px[pos.get("ts", sym)]
             pos["live"] = ltp
-            if ltp > pos["stop"]:
+            if pos["d"] == today and pos.get("est"):      # bought this morning: only lows after the fill count
+                low = ltp
+            if min(ltp, low) > pos["stop"]:
                 continue
             key = f"{today}|{sym}|EXIT"
             if _sent(key):
                 continue
-            o = {"action": "EXIT", "symbol": sym, "ts": pos.get("ts", sym), "qty": pos["qty"], "why": f"stop {pos['stop']:.2f} hit"}
+            o = {"action": "EXIT", "symbol": sym, "ts": pos.get("ts", sym), "qty": pos["qty"],
+                 "why": f"stop {pos['stop']:.2f} hit" + ("" if ltp <= pos["stop"] else f" (day low {low:.2f})")}
             try:
                 reply = sender(o["ts"], "EXIT")
             except Exception as exc:
@@ -339,7 +351,8 @@ def summary(config: AppConfig) -> dict:
     st = _state()
     base = {"enabled": bool(config.real.enabled), "killed": killed(), "variant": config.real.variant,
             "settings": {k: getattr(config.real, k) for k in ("capital", "send_time", "send_until", "stop_check_min",
-                                                               "max_buys_per_day", "max_order_pct")},
+                                                               "max_buys_per_day", "max_order_pct", "send_stop",
+                                                               "nologin_alarm_min")},
             "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token()),
             "tops": {k: tb.rules(config, k).top for k in tb.MODES}}
     with get_db() as conn:
