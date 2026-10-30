@@ -2,6 +2,7 @@
 as the backtest over the same days; the capital drives the sizes; costs are kept apart; every message says PAPER
 TRADING; start / reset and the API."""
 
+import json
 import random
 from datetime import date, timedelta
 
@@ -146,3 +147,32 @@ def test_start_reset_and_api(monkeypatch):
         assert all(a["account"]["capital"] == 300000 and a["account"]["value"] == 300000 for a in d["accounts"].values())
         assert tc.post("/api/paper/start", json={}).status_code == 409
         assert tc.post("/api/paper/reset").json()["status"] == "ok" and tc.get("/api/paper").json()["started"] is False
+
+
+def test_an_account_from_before_the_variants_still_works(tmp_path, monkeypatch):
+    """A paper account started before A / E (no name, single-account tables) becomes A, and E joins on its day."""
+    import sqlite3
+    from backend.database.models import init_db
+    store(monkeypatch)
+    c = cfg()
+    data = tb.load(c)
+    s = len(data["cal"]) - 100
+    paper.start(c, at=data["cal"][s])
+    with get_db() as conn:                                # roll the tables back to the single-account layout
+        st = json.loads(conn.execute("SELECT payload FROM paper_state WHERE account = 'A'").fetchone()[0])
+        for key in ("name", "variant", "filter"):
+            st.pop(key, None)
+        conn.execute("DELETE FROM paper_state")
+        conn.execute("DROP TABLE paper_state")
+        conn.execute("CREATE TABLE paper_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)")
+        conn.execute("INSERT INTO paper_state (id, payload) VALUES (1, ?)", (json.dumps(st),))
+        conn.execute("DROP TABLE paper_equity")
+        conn.execute("CREATE TABLE paper_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL)")
+        conn.execute("INSERT INTO paper_equity VALUES (?, 200000, 200000, 1)", (data["cal"][s],))
+    init_db()
+    assert paper.summary(c)["accounts"]["A"]["name"] == "A · 200-day filter"
+    assert paper.process(c, data)["status"] == "ok"
+    sm = paper.summary(c)["accounts"]
+    assert set(sm) == {"A", "E"} and sm["E"]["start_date"] == sm["A"]["start_date"]
+    from backend.engine import attention
+    assert attention.signals(c, False)["paper"] is not None
