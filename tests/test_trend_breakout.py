@@ -268,3 +268,71 @@ def test_variant_a_is_unchanged_by_the_filters_argument():
     a = tb.simulate(cal, S, ok, P, 0.1, 260)
     b = tb.simulate(cal, S, ok, P, 0.1, 260, filters={"half": [0.5] * len(cal)})
     assert a[0] == b[0] and a[2] == b[2]
+
+
+# --- E's universe: top 300 (A stays top 200) ---------------------------------------------------------
+
+def many(n_stocks=320, n=300):
+    """n_stocks stocks with different turnovers (volume grows with k), all on the same calendar."""
+    return universe({f"S{k:03d}": trend(n, breakout_at=280 if k % 7 == 0 else None, vol=10_000 + 1_000 * k, start=150 + k)
+                     for k in range(n_stocks)})
+
+
+def test_universe_sizes_and_subset():
+    cal, S = many()
+    i = len(cal) - 1
+    u200, u300 = tb.liquid(S, i, 200), tb.liquid(S, i, 300)
+    assert len(u200) == 200 and len(u300) == 300 and u200 <= u300
+    assert len(tb.liquid(S, i, 1000)) == 320                                        # fewer eligible: all of them
+    ranked = tb.ranked_by_turnover(S, i, 100)
+    assert set(ranked[:200]) == u200 and set(ranked[200:300]) == u300 - u200
+
+
+def test_universe_uses_only_data_up_to_the_day():
+    cal, S = many(250)
+    i = 270
+    cut = {s: {"rows": v["rows"][:i + 1], "ind": tb.indicators(v["rows"][:i + 1]),
+               "at": {k: j for k, j in v["at"].items() if k <= i}} for s, v in S.items()}
+    assert tb.ranked_by_turnover(S, i, 100) == tb.ranked_by_turnover(cut, i, 100)
+
+
+def test_a_and_e_pick_from_their_own_universe():
+    from backend.config import AppConfig
+    c = AppConfig()
+    pa, pe = tb.rules(c, "A"), tb.rules(c, "E")
+    assert (pa.top, pa.regime_mode, pe.top, pe.regime_mode) == (200, "sma200", 300, "half")
+    cal, S = many()
+    i = 280
+    a = {s for s, _ in tb.decide(i, S, {}, True, pa)[1]}
+    e = {s for s, _ in tb.decide(i, S, {}, True, pe)[1]}
+    assert a <= tb.liquid(S, i, 200) and e <= tb.liquid(S, i, 300) and a <= e and e - a
+    assert [lbl for lbl, _ in tb.neighbours(pa) if "universe" in lbl] == ["universe top 100", "universe top 300"]
+    assert [lbl for lbl, _ in tb.neighbours(pe) if "universe" in lbl] == ["universe top 150", "universe top 450"]
+
+
+def test_a_is_unchanged_by_the_per_strategy_universe():
+    from backend.config import AppConfig
+    cal, S = many(60)
+    ok = [True] * len(cal)
+    old = BreakoutConfig()                                                          # the pre-change A: top 200, sma200
+    assert tb.simulate(cal, S, ok, old, 0.1, 260)[2] == tb.simulate(cal, S, ok, tb.rules(AppConfig(), "A"), 0.1, 260)[2]
+
+
+def test_a_stock_that_leaves_the_universe_is_not_sold():
+    cal, S = universe({"UP": trend(300, breakout_at=280, vol=1_000_000)})
+    p = BreakoutConfig()
+    from dataclasses import replace
+    tiny = replace(p, top=0)                                                        # nothing is in the universe now
+    sells, buys, _, _ = tb.decide(290, S, {"UP": None}, True, tiny)
+    assert sells == set() and buys == []
+
+
+def test_stale_run_and_scan_tags(monkeypatch):
+    store(monkeypatch)
+    cfg = AppConfig()
+    tb.run(cfg)
+    assert tb.saved(cfg)["stale"] == []
+    cfg.breakout.top_e = 250
+    assert tb.saved(cfg)["stale"] == ["E"]
+    sc = tb.scan(AppConfig())
+    assert all(b["for"] for b in sc["buys"]) and sc["filters"]["E"]["top"] == 300

@@ -17,7 +17,6 @@ estimates; the broker's own fills are not visible here.
 
 import json
 import threading
-from dataclasses import replace
 from datetime import datetime
 from math import floor
 from typing import Callable, Optional
@@ -34,7 +33,7 @@ _lock = threading.Lock()
 
 
 def _rules(config: AppConfig, key: Optional[str] = None):
-    return replace(config.breakout, regime_mode=tb.MODES[key or config.real.variant])
+    return tb.rules(config, key or config.real.variant)
 
 
 def killed() -> bool:
@@ -132,7 +131,7 @@ def evening(config: AppConfig, data: Optional[dict] = None) -> dict:
             conn.execute("INSERT OR REPLACE INTO real_equity (day, equity, gross, nifty) VALUES (?, ?, ?, ?)",
                          (day, round(eq, 2), round(eq + st["charges"], 2), data["index_close"][i]))
         _save(st)
-        return {"status": "ok", "orders": st["orders"], "missed": missed, "as_of": day}
+        return {"status": "ok", "orders": st["orders"], "missed": missed, "as_of": day, "top": st.get("top")}
 
 
 def _rebook(st: dict, pos: dict, px: float) -> None:
@@ -195,6 +194,7 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig) -> None:
     regime_on, cap = tb.slots(i, data["index_ok"], data["filters"], p)
     sells, buys, _, _ = tb.decide(i, S, {s: None for s in st["positions"] if s in S}, regime_on, p)
     ts = data.get("tradingsymbol", {})
+    turn_rank = {sym: k + 1 for k, sym in enumerate(tb.ranked_by_turnover(S, i, p.min_price))}
     orders = [{"action": "EXIT", "symbol": s, "ts": ts.get(s, s), "qty": st["positions"][s]["qty"],
                "why": f"close under SMA{p.exit_sma}"} for s in sorted(sells)]
     free = max(0, cap - (len(st["positions"]) - len(sells))) if regime_on else 0
@@ -203,13 +203,14 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig) -> None:
             break
         close = S[s]["rows"][S[s]["at"][i]]["close"]
         orders.append({"action": "BUY", "symbol": s, "ts": ts.get(s, s), "qty": 0, "stop": stop, "close": close,
-                       "rank": k + 1, "why": f"breakout #{k + 1}"})
+                       "rank": k + 1, "variant": config.real.variant, "top": p.top, "turnover_rank": turn_rank.get(s),
+                       "why": f"breakout #{k + 1} · {config.real.variant} · top {p.top} · turnover rank {turn_rank.get(s)}"})
     orders = _size(st, orders, config)
     closes = data["index_close"]
     now = tb.filter_day(p.regime_mode, i, closes)
     before = tb.filter_day(p.regime_mode, i - 1, closes) if i else now
     st.update(orders=orders, decided=data["cal"][i], variant=config.real.variant, cap=cap, allowed=bool(regime_on),
-              filter={"name": tb.VARIANT_NAMES[config.real.variant], "state": tb.filter_label(now, p.regime_mode),
+              top=p.top, filter={"name": tb.variant_name(config.real.variant, p.top), "top": p.top, "state": tb.filter_label(now, p.regime_mode),
                       "prev": tb.filter_label(before, p.regime_mode), "changed": now != before,
                       "slots": cap if regime_on else 0},
               waiting=len(buys) - sum(o["action"] == "BUY" for o in orders))
@@ -339,7 +340,8 @@ def summary(config: AppConfig) -> dict:
     base = {"enabled": bool(config.real.enabled), "killed": killed(), "variant": config.real.variant,
             "settings": {k: getattr(config.real, k) for k in ("capital", "send_time", "send_until", "stop_check_min",
                                                                "max_buys_per_day", "max_order_pct")},
-            "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token())}
+            "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token()),
+            "tops": {k: tb.rules(config, k).top for k in tb.MODES}}
     with get_db() as conn:
         log = [dict(r) for r in conn.execute("SELECT created_at, day, symbol, action, qty, reason, status, reply, price "
                                              "FROM real_orders ORDER BY id DESC LIMIT 200")]

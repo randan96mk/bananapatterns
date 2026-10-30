@@ -67,7 +67,7 @@ export default function RealPage() {
           <p><b>Strategy for new buys</b>{' '}
             <span className="seg">{['A', 'E'].map((k) => (
               <button key={k} className={d.variant === k ? 'active' : ''} onClick={() => set({ variant: k })}>
-                {k === 'A' ? 'A · 200-day' : 'E · half'}</button>))}</span></p>
+                {k === 'A' ? 'A · 200-day' : 'E · half'} · top {d.tops?.[k]}</button>))}</span></p>
           <p className="muted small">Switching changes only NEW buys; open positions keep their own stop and exit.</p>
           {d.killed ? <button className="btn primary" onClick={() => kill(false)}>Turn the kill switch off</button>
             : <button className="btn killbtn" onClick={() => kill(true)}>⛔ Stop all · kill switch</button>}

@@ -170,9 +170,39 @@ def test_an_account_from_before_the_variants_still_works(tmp_path, monkeypatch):
         conn.execute("CREATE TABLE paper_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL)")
         conn.execute("INSERT INTO paper_equity VALUES (?, 200000, 200000, 1)", (data["cal"][s],))
     init_db()
-    assert paper.summary(c)["accounts"]["A"]["name"] == "A · 200-day filter"
+    assert paper.summary(c)["accounts"]["A"]["name"] == "A · 200-day filter, top 200"
     assert paper.process(c, data)["status"] == "ok"
     sm = paper.summary(c)["accounts"]
     assert set(sm) == {"A", "E"} and sm["E"]["start_date"] == sm["A"]["start_date"]
     from backend.engine import attention
     assert attention.signals(c, False)["paper"] is not None
+
+
+def test_a_universe_change_is_noted_and_keeps_the_positions(monkeypatch):
+    store(monkeypatch)
+    c = cfg()
+    data = tb.load(c)
+    paper.start(c, at=data["cal"][-120])
+    short = {**data, "cal": data["cal"][:-30], "index_close": data["index_close"][:-30],
+             "index_ok": data["index_ok"][:-30], "filters": {k: v[:-30] for k, v in data["filters"].items()}}
+    paper.process(c, short)
+    c.breakout.top_e = 250
+    paper.process(c, data)
+    e = paper.summary(c)["accounts"]["E"]
+    assert e["top"] == 250 and "top 300 → top 250" in e["notes"][0]["text"] and e["name"].endswith("top 250")
+    assert paper.summary(c)["accounts"]["A"]["top"] == 200 and not paper.summary(c)["accounts"]["A"]["notes"]
+
+
+def test_verify_tool_runs_read_only(monkeypatch, capsys):
+    from backend.tools import verify_e300
+    store(monkeypatch)
+    c = cfg()
+    monkeypatch.setattr("backend.tools.verify_e300.load_config", lambda: c)
+    data = tb.load(c)
+    paper.start(c, at=data["cal"][-30])
+    paper.process(c, data)
+    before = paper.summary(c)
+    verify_e300.main()
+    out = capsys.readouterr().out
+    assert "Sample day" in out and "E · half filter, top 300" in out and "paper E:" in out and "real: not started" in out
+    assert paper.summary(c) == before                                                  # nothing saved

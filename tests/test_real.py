@@ -78,6 +78,7 @@ def test_plan_send_once_and_track(monkeypatch):
     res = real.evening(c, cut)
     buys = [o for o in res["orders"] if o["action"] == "BUY"]
     assert res["status"] == "ok" and 0 < len(buys) <= c.real.max_buys_per_day
+    assert all(o["variant"] == "E" and o["top"] == 300 and o["turnover_rank"] <= 300 for o in buys) and res["top"] == 300
     assert all(o["qty"] * o["close"] <= 200_000 * c.real.max_order_pct / 100 for o in buys)
     tomorrow = data["cal"][end + 1]
     s = Sender()

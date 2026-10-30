@@ -76,6 +76,7 @@ function Account({ k, a, maxPos, phone }) {
         {buys.length > free && <li className="muted small">{buys.length - free} more breakout(s): {free ? 'no further' : 'no'} free slot{a.allowed ? '' : ' (filter off)'}</li>}
       </ul>}
 
+      {a.notes?.length > 0 && <p className="muted small">{a.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</p>}
       <h4>Trade log</h4>
       {!a.trades.length ? <p className="muted small">None yet.</p> : (
         <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought · sold</th><th className="num">Days</th>

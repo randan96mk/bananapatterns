@@ -689,7 +689,7 @@ def breakout_summary():
     """Trend Breakout backtest: status, the settings, the latest run (without its trade lists) and the evening scan."""
     from dataclasses import asdict
     from backend.engine import trend_breakout as tb
-    run = tb.saved()
+    run = tb.saved(S().config)
     if run:
         run = {**run, "variants": {k: {f: x for f, x in v.items() if f not in ("trades", "stress_trades")}
                                    for k, v in run["variants"].items()}}

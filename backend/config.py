@@ -335,7 +335,8 @@ class BreakoutConfig:
     warmup_sessions: int = 260
     capital: float = 200_000.0
     max_pos: int = 10                      # equal weight: equity / max_pos
-    top: int = 200                         # universe: the most traded N (20-day average turnover)
+    top: int = 200                         # universe of A: the most traded N (20-day average turnover)
+    top_e: int = 300                       # universe of E (half filter): the most traded N
     min_price: float = 100.0
     vol_mult: float = 1.5                  # volume vs the 50-day average
     stop_pct: float = 8.0                  # stop = max(close - atr_mult x ATR(14), close x (1 - stop_pct %))
