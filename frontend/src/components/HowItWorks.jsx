@@ -2,10 +2,10 @@ import React from 'react';
 import { ampm } from '../timefmt';
 
 // "How it works": the Trend Breakout rules in plain words, built from the live settings so it always matches what runs.
-export default function HowItWorks({ r, paper = false }) {
+export default function HowItWorks({ r, paper = false, open = false }) {
   if (!r) return null;
   return (
-    <details className="panel howitworks">
+    <details className="panel howitworks" open={open}>
       <summary><b>ℹ️ How it works</b> <span className="muted small">· the rules in plain words</span></summary>
       <ol>
         <li><b>Every evening after the close</b> the daily candles are updated (only missing days), then the rules run on the day's close.

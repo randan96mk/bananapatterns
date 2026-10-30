@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import NextUp from './NextUp';
 import { clock } from '../timefmt';
 import * as api from '../services/api';
 import StockChart from './StockChart';
@@ -61,6 +62,7 @@ export default function TodayPage() {
 
   return (
     <div className="today">
+      <NextUp />
       <div className={`panel tdmarket m-${m.health || ''}`}>
         <b className={hc}>{hl}</b>
         {m.nifty500_pct != null && <span>Nifty 500 <b className={m.nifty500_pct >= 0 ? 'up' : 'down'}>{pct(m.nifty500_pct, 2)}</b></span>}

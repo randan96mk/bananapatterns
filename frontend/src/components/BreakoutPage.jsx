@@ -4,6 +4,9 @@ import { stamp } from '../timefmt';
 import { useIsPhone } from '../useMedia';
 import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
+import NextUp from './NextUp';
+import { SubTabs, Tip } from './ui';
+import { signed as signedInr } from '../fmt';
 
 const SCEN = [['normal', 'Normal slippage'], ['stress', 'Stressed slippage']];
 const EXIT = { stop: '🛑 stop', exit: '📉 trend exit', end: '⏹ end of test' };
@@ -70,6 +73,7 @@ export default function BreakoutPage() {
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [tick, setTick] = useState(0);
+  const [sub, setSub] = useState('results');
 
   useEffect(() => {
     let alive = true, timer;
@@ -135,8 +139,19 @@ export default function BreakoutPage() {
         <span className="muted"> · ✅ = profitable after costs in all three periods (stressed too) and beats NIFTY 50</span>
         <div className="caveat small">⚠️ Universe is today's Nifty 500 list (survivorship bias): real results will be somewhat lower.
           {' '}E's out-of-sample gain comes mostly from 2026. Past results don't guarantee future returns.</div>
+        {V.E && <div className="summary">
+          <div className="k"><div className="v"><span className="vA">{pct(V.A?.[scen].cagr)}</span> · <span className="vE">{pct(V.E[scen].cagr)}</span></div>
+            <div className="l">CAGR after costs A · E · NIFTY {pct(r.nifty.cagr)}<Tip text="Yearly growth of the account after all charges and slippage, over the whole test." /></div></div>
+          <div className="k"><div className={`v ${cls(V.E[scen].net)}`}>{signedInr(V.E[scen].net)}</div>
+            <div className="l">E net · {inr(V.E[scen].gross)} before − {inr(V.E[scen].costs)} costs<Tip text="Profit on the starting capital: the price moves (before costs) minus Zerodha charges and slippage." /></div></div>
+          <div className="k"><div className="v down">{pct(-V.E[scen].drawdown, 0)}</div><div className="l">E worst drawdown<Tip text="The largest fall from a peak of the account value, after costs." /></div></div>
+          <div className="k"><div className="v">{V.E.robust_pass} / {V.E.robust.length}</div><div className="l">E robust neighbours<Tip text="Each of 14 settings moved one step; how many still pass every period (stressed too) and beat NIFTY 50." /></div></div>
+        </div>}
       </div>
+      <SubTabs tabs={[['results', 'Results'], ['robust', 'Robustness'], ['scan', "Tonight's scan"], ['trades', 'Trades'], ['how', 'How it works']]}
+               value={sub} onChange={setSub} />
 
+      {sub === 'results' && <>
       <div className="orbcmp">
         <div className="panel"><h3>Results <span className="muted small">· {scen === 'stress' ? 'stressed' : 'normal'} slippage</span></h3>
           <div className="tablewrap"><table className="orbvs"><thead><tr><th />{keys.map((k) => <th key={k} className={`num v${k}`}>{V[k].name}</th>)}
@@ -182,7 +197,8 @@ export default function BreakoutPage() {
               <td className={`num ${cls(y.nifty)}`}>{pct(y.nifty)}</td></tr>)}</tbody></table></div>
       </div>
 
-      <div className="panel"><h3>Robustness <span className="muted small">· one setting changed at a time ·
+      </>}
+      {sub === 'robust' && <div className="panel"><h3>Robustness <span className="muted small">· one setting changed at a time ·
         {keys.map((k) => <span key={k} className={`v${k}`}> {k}: {V[k].robust_pass} of {V[k].robust.length} pass</span>)}</span></h3>
         <p className="muted small">✅ = profitable after costs in all three periods, stressed too, and beats NIFTY 50. Under 75% passing means a modest,
           lumpy edge: expect real results to vary.</p>
@@ -195,15 +211,15 @@ export default function BreakoutPage() {
                 <React.Fragment key={k}><td className="num">{y.trades}</td><td className={`num ${cls(y.cagr)}`}>{pct(y.cagr)}</td>
                   {!phone && <td className="num">{y.periods.map((v) => pct(v, 0)).join(' / ')}</td>}<td>{y.ok ? '✅' : '❌'}</td></React.Fragment>); })}
             </tr>))}</tbody></table></div>
-      </div>
+      </div>}
 
-      <div className="panel"><h3>How trades ended · signals not taken</h3>
+      {sub === 'results' && <div className="panel"><h3>How trades ended · signals not taken</h3>
         <table className="orbvs"><thead><tr><th />{keys.map((k) => <th key={k} className={`num v${k}`}>{k}</th>)}</tr></thead><tbody>
           {Object.keys(EXIT).map((e) => <tr key={e}><td>{EXIT[e]}</td>{keys.map((k) => <td key={k} className="num">{S(k).exits?.[e] ?? 0}</td>)}</tr>)}
           {Object.keys(SKIP).map((e) => <tr key={e}><td className="muted">⛔ {SKIP[e]}</td>{keys.map((k) => <td key={k} className="num">{S(k).skipped?.[e] ?? 0}</td>)}</tr>)}
-        </tbody></table></div>
+        </tbody></table></div>}
 
-      <div className="panel"><h3>Tonight's scan <span className="muted small">· signals only, no orders{sc ? ` · ${day(sc.as_of)} · ${stamp(sc.computed_at)}` : ''}</span></h3>
+      {sub === 'scan' && <div className="panel"><h3>Tonight's scan <span className="muted small">· signals only, no orders{sc ? ` · ${day(sc.as_of)} · ${stamp(sc.computed_at)}` : ''}</span></h3>
         {!sc ? <p className="muted">Runs after the evening sync (and with Re-run).</p> : <>
           <p>Market filter: {Object.entries(sc.filters || {}).map(([k, f]) => <FilterBadge key={k} k={k} f={f} />)}
             <span className="muted small"> · NIFTY 50 {sc.nifty?.toLocaleString('en-IN')} · 50-day {sc.nifty_sma50?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
@@ -227,9 +243,9 @@ export default function BreakoutPage() {
               <td><b className={h.action === 'HOLD' ? 'up' : 'down'}>{h.action}</b> <span className="muted small">{h.why}</span></td></tr>)}</tbody></table></div>
             : <p className="muted">{sc.holdings_read ? 'No holdings.' : 'Not checked: log in to Kite (read-only holdings).'}</p>}
         </>}
-      </div>
+      </div>}
 
-      <div className="panel"><h3>Trades <span className="muted small">· newest first · {scen === 'stress' ? 'stressed' : 'normal'} slippage</span></h3>
+      {sub === 'trades' && <div className="panel"><h3>Trades <span className="muted small">· newest first · {scen === 'stress' ? 'stressed' : 'normal'} slippage</span></h3>
         <div className="orbfilters"><Chips items={[['A', `A · 200-day filter, top ${R.top}`], ['E', `E · half filter, top ${R.top_e}`]]} value={tv} onChange={setTv} /></div>
         <div className="tablewrap"><table className="grid orbtrades"><thead><tr><th>Stock</th><th>Entry</th><th>Exit</th>
           <th className="num">Days</th>{!phone && <th className="num">Before costs</th>}{!phone && <th className="num">Costs</th>}<th className="num">After costs</th><th>Exit reason</th></tr></thead>
@@ -244,8 +260,9 @@ export default function BreakoutPage() {
         {trades.total > trades.rows.length && (
           <p className="orbmore"><button className="btn" onClick={more}>Show {Math.min(PAGE, trades.total - trades.rows.length)} more</button>
             <span className="muted small"> &nbsp;{trades.rows.length} of {trades.total}</span></p>)}
-      </div>
-      <HowItWorks r={R} />
+      </div>}
+      {sub === 'how' && <HowItWorks r={R} open />}
+      {sub === 'results' && <NextUp />}
     </div>
   );
 }

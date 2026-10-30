@@ -741,6 +741,23 @@ def breakout_scan():
     return tb.saved_scan() or {}
 
 
+# --- ⏱ schedule and the status bar ---
+
+@router.get("/schedule")
+def schedule_view():
+    """The status bar and ⏱ Next up: now (IST), the market, every scheduled job's next run and last run, Kite and
+    real trading state."""
+    from backend.engine import real
+    from backend.engine import schedule as sc
+    st = S()
+    kite = bool(st.client.has_token)
+    out = sc.schedule(st.config, st.scheduler, kite)
+    out["kite"] = kite
+    out["real"] = {"enabled": bool(st.config.real.enabled), "killed": real.killed(), "variant": st.config.real.variant,
+                   "started": real.has_account()}
+    return out
+
+
 # --- 💰 Real trading (orders to Tradetron by webhook) ---
 
 class RealSettings(BaseModel):
