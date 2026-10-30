@@ -10,6 +10,7 @@ import LogsPanel from './components/LogsPanel';
 import AlertsPanel from './components/AlertsPanel';
 import BreakoutPage from './components/BreakoutPage';
 import PaperPage from './components/PaperPage';
+import RealPage from './components/RealPage';
 import { AttentionDot } from './components/AttentionStrip';
 import TodayPage from './components/TodayPage';
 import * as api from './services/api';
@@ -23,6 +24,7 @@ const TABS = [
   ['today', '⚡ Today'],
   ['breakout', '📈 Trend Breakout'],
   ['paper', '📝 Paper trading'],
+  ['real', '💰 Real trading'],
   ['universe', 'Universe'],
   ['data', 'Data'],
   ['alerts', 'Alerts'],
@@ -40,6 +42,8 @@ export default function App() {
   const [mode, setMode] = useState(getMode);
   const pickMode = (m) => { setMode(m); applyMode(m); };
   const phone = useIsPhone();
+  const [realOn, setRealOn] = useState(false);
+  useEffect(() => { api.getReal().then((r) => setRealOn(r.enabled && !r.killed)).catch(() => {}); }, [tab]);
   const [more, setMore] = useState(false);
   const go = (id) => { setTab(id); setMore(false); window.scrollTo(0, 0); };
   const themeSwitch = (
@@ -69,7 +73,7 @@ export default function App() {
         <h1>🍌 Banana Patterns <span className="muted">personal VCP screener · NSE</span></h1>
         {!phone && <nav>{TABS.map(([id, label]) => (
           <button key={id} className={tab === id ? 'active' : ''} onClick={() => go(id)}>{label}
-            {(id === 'breakout' || id === 'paper') && <AttentionDot tab={id} active={tab === id} />}</button>))}
+            {['breakout', 'paper', 'real'].includes(id) && <AttentionDot tab={id} active={tab === id} />}</button>))}
         </nav>}
         {!phone && themeSwitch}
       </header>
@@ -81,6 +85,7 @@ export default function App() {
         {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
         {tab === 'breakout' && <BreakoutPage />}
         {tab === 'paper' && <PaperPage />}
+        {tab === 'real' && <RealPage />}
         {tab === 'today' && <TodayPage />}
         {tab === 'universe' && (
           <>
@@ -93,14 +98,14 @@ export default function App() {
         {tab === 'alerts' && <AlertsPanel />}
         {tab === 'logs' && <LogsPanel />}
       </main>
-      <footer className="muted">Personal use only · screen-only mode (no orders) · data © NSE via Zerodha Kite</footer>
+      <footer className="muted">Personal use only · {realOn ? '💰 real trading ON: orders go to Tradetron by webhook' : 'screen-only mode (no orders)'} · data © NSE via Zerodha Kite</footer>
       {phone && (
         <>
           {more && (
             <div className="sheet" role="dialog" aria-label="More">
               {TABS.filter(([id]) => !PHONE_TABS.includes(id)).map(([id, label]) => (
                 <button key={id} className={`sheetitem ${tab === id ? 'active' : ''}`} onClick={() => go(id)}>{label}
-                  {(id === 'breakout' || id === 'paper') && <AttentionDot tab={id} active={tab === id} />}</button>))}
+                  {['breakout', 'paper', 'real'].includes(id) && <AttentionDot tab={id} active={tab === id} />}</button>))}
               <div className="sheetrow"><span className="muted">Theme</span>{themeSwitch}</div>
             </div>)}
           <nav className="bottomnav">

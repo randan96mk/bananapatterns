@@ -1010,6 +1010,30 @@ motion" on).
 **Every evening** the job also re-runs this backtest in the background (once it has been run), so its results reach
 the latest session without a click.
 
+### 💰 Real trading (orders to Tradetron by webhook)
+
+`backend/engine/real.py`, `backend/broker/tradetron.py` and the **💰 Real trading** tab. The Trend Breakout orders
+are sent to **Tradetron** by webhook (`BUY` with a quantity, `EXIT` without one so Tradetron closes the whole
+position; the payload is the key/value format with `sig_action` last). **No order ever goes to Kite**: Kite is only
+read for prices. Whether Tradetron routes them to the broker or keeps them in its offline mode is set in Tradetron.
+
+- **Token**: `TRADETRON_TOKEN` in `.env` only (never in git, the logs, the order log or the screen).
+- **Evening** (after the scan): the account is marked at the close (morning fills corrected to the day's open from
+  the daily candle) and tomorrow's orders are planned with `real.variant` (**E** by default; the A / E switch on the
+  tab changes only NEW buys): EXIT on a close under SMA50; BUY the ranked breakouts into the free slots under that
+  variant's filter at account value ÷ 10, within `max_order_value` (₹30,000) and `max_buys_per_day` (5).
+- **`send_time`–`send_until`** (9:16–9:30 AM): EXITs, then BUYs, **each sent once** (one key per day, stock and
+  action); a failure is logged and alerted, never retried.
+- **Stops**: no stop-loss orders. Every `stop_check_min` (5) minutes in market hours the app reads live prices
+  and sends EXIT once a position trades at or under its stop (needs the daily Kite login; without it a loud warning).
+- **Switches**: `real.enabled` (ON by default) and the ⛔ kill switch on the tab; both must allow sending.
+- **Tracking**: capital `real.capital` (₹2,00,000), before costs · charges · after costs, realised / unrealised,
+  positions, the trade log and the **order log** (every webhook with Tradetron's reply, never deleted). The broker's
+  own fills are not visible; prices are the ones seen when sending, corrected to the day's open in the evening.
+- **Telegram**: always loud and labelled **💰 REAL**: tomorrow's orders (evening), orders sent (morning), stop hit ·
+  exit sent, failures and "stops not watched". The 🔴 dot on the tab and a strip at its top flag what needs a look.
+- API: `GET /api/real`, `POST /api/real/settings` `{enabled, variant}`, `POST /api/real/kill?on=`, `POST /api/real/reset`.
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. Two virtual accounts, **A** and **E** (`paper.variants`),
@@ -1808,3 +1832,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `regime_mode` (`sma200` A / `half` E) with swing.py's `filter_day` and slot cap; the run, the tab, the scan, paper
   trading (one account per variant, `paper_*` tables gain `account`) and the Telegram block show both.
 - "How it works" boxes, the attention dots and strips (`/api/attention`), right-aligned number headings.
+
+### 2026-10-31: 💰 Real trading via Tradetron webhooks
+- `backend/broker/tradetron.py` (BUY / EXIT webhook, token from `.env`), `backend/engine/real.py` (evening plan,
+  9:16 send once, 5-minute stop watch, tracking), `real_*` tables, `real` settings, `/api/real*`, the 💰 tab,
+  loud 💰 REAL Telegram messages, attention signals; `TRADETRON_TOKEN` in `.env.example`.

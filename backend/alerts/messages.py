@@ -641,3 +641,49 @@ def paper_lines(rep: dict) -> list[str]:
 
 def paper_report(rep: dict) -> str:
     return "\n".join(paper_lines(rep))
+
+
+# --- 💰 real trading (orders to Tradetron) ---------------------------------------------------------------
+
+REAL = "💰 <b>REAL</b>"
+
+
+def real_plan(res: dict, variant: str) -> str:
+    """The evening: tomorrow's orders (sent at the morning send time)."""
+    lines = [f"{REAL} · orders for the next open · {escape(tb_name(variant))}"]
+    orders = res.get("orders") or []
+    for o in orders:
+        if o["action"] == "EXIT":
+            lines.append(f"🔴 EXIT <b>{escape(o['symbol'])}</b> {o['qty']} · {escape(o['why'])}")
+        else:
+            lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {o['qty']} · ~{_rup(o['qty'] * o['close'])} · "
+                         f"stop {_rup(o['stop'])} · risk {_rup(o['risk'])}")
+    if not orders:
+        lines.append("No orders for tomorrow.")
+    for o in res.get("missed") or []:
+        lines.append(f"⚠️ Not sent today: {o['action']} <b>{escape(o['symbol'])}</b>")
+    return "\n".join(lines)
+
+
+def real_sent(res: dict, at: str) -> str:
+    lines = [f"{REAL} · ORDERS SENT · {at}"]
+    for o in res["sent"]:
+        lines.append(f"{'🔴 EXIT' if o['action'] == 'EXIT' else '🟢 BUY'} <b>{escape(o['symbol'])}</b>"
+                     + (f" {o['qty']} · stop {_rup(o['stop'])}" if o["action"] == "BUY" else f" {o['qty']}")
+                     + f" · ~{_rup(o['price'])}")
+    for o in res["failed"]:
+        lines.append(f"⚠️ FAILED {o['action']} <b>{escape(o['symbol'])}</b>: {escape(o['error'])} (not retried)")
+    lines.append(f"Tradetron: {len(res['sent'])} of {len(res['sent']) + len(res['failed'])} accepted")
+    return "\n".join(lines)
+
+
+def real_stop(h: dict, at: str) -> str:
+    if h.get("error"):
+        return (f"{REAL} · ⚠️ STOP HIT, EXIT FAILED · {at}\n<b>{escape(h['symbol'])}</b> {h['qty']} at {_rup(h['price'])}: "
+                f"{escape(h['error'])}. Exit it yourself.")
+    return (f"{REAL} · STOP HIT · EXIT SENT · {at}\n🛑 <b>{escape(h['symbol'])}</b> {h['qty']} · traded {_rup(h['price'])} "
+            f"≤ {escape(h['why'])} · net {_signed(h['net'])}")
+
+
+def tb_name(variant: str) -> str:
+    return {"A": "A · 200-day filter", "E": "E · half filter"}.get(variant, variant)

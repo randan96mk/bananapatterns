@@ -358,6 +358,20 @@ class PaperConfig:
     variants: list = field(default_factory=lambda: ["A", "E"])   # A: 200-day filter, E: half filter
 
 
+@dataclass
+class RealConfig:
+    """💰 Real trading: the Trend Breakout orders sent to Tradetron by webhook (BUY / EXIT), tracked like paper
+    trading. Prices come from Kite (read-only); no order ever goes to Kite."""
+    enabled: bool = True                   # send orders (the kill switch on the tab overrides it)
+    variant: str = "E"                     # strategy for NEW buys: A (200-day filter) or E (half filter)
+    capital: float = 200_000.0
+    send_time: str = "09:16"               # the day's orders (EXITs, then BUYs) go out from here...
+    send_until: str = "09:30"              # ...until here (missed: not sent that day, with an alert)
+    stop_check_min: int = 5                # stops watched with live prices every N minutes in market hours
+    max_buys_per_day: int = 5
+    max_order_value: float = 30_000.0      # a BUY above this is cut to fit
+
+
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
                "top_setups_time", "morning_plan_time", "gap_check_time")
 
@@ -387,7 +401,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
-                      "paper": PaperConfig}
+                      "paper": PaperConfig, "real": RealConfig}
 
 
 @dataclass
@@ -404,6 +418,7 @@ class AppConfig:
     market: MarketConfig = field(default_factory=MarketConfig)
     breakout: BreakoutConfig = field(default_factory=BreakoutConfig)
     paper: PaperConfig = field(default_factory=PaperConfig)
+    real: RealConfig = field(default_factory=RealConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

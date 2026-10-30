@@ -301,6 +301,19 @@ CREATE TABLE IF NOT EXISTS paper_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, ac
 CREATE TABLE IF NOT EXISTS paper_equity (account TEXT NOT NULL DEFAULT 'A', day TEXT NOT NULL, equity REAL NOT NULL,
                                          gross REAL NOT NULL, nifty REAL, PRIMARY KEY (account, day));
 
+-- 💰 Real trading (backend/engine/real.py): the account, every webhook sent to Tradetron (never deleted; the token
+-- is never stored), closed trades and the account each session.
+CREATE TABLE IF NOT EXISTS real_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS real_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,              -- day|symbol|action: each order is sent once
+    day TEXT NOT NULL, created_at TEXT NOT NULL, symbol TEXT NOT NULL, action TEXT NOT NULL, qty INTEGER,
+    reason TEXT, status TEXT NOT NULL,     -- sent / failed / skipped
+    reply TEXT, payload TEXT, price REAL
+);
+CREATE TABLE IF NOT EXISTS real_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS real_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
+
 -- Trend Breakout backtest (backend/engine/trend_breakout.py): the latest run (summary, splits, years, robustness,
 -- curves, trades) as one JSON document.
 CREATE TABLE IF NOT EXISTS breakout_runs (

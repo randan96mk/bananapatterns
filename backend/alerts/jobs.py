@@ -130,6 +130,7 @@ class Scheduler:
         self._thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
         self.hold: Optional[str] = None                   # summary style: the batch the evening job is holding
+        self.last_real_stops: Optional[datetime] = None   # 💰 real trading: the last stop watch
 
     # --- loop ---
 
@@ -153,6 +154,9 @@ class Scheduler:
         today = now.date()
         jobs = due_jobs(now, self.state.config.alerts, self.done_today(today), hol.is_trading_day(today),
                         self.last_intraday, self.not_before, self.last_login_check, self.last_filings)
+        from backend.engine import real
+        if real.has_account():                             # 💰 only once real trading has started
+            jobs += real.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_real_stops)
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -300,6 +304,10 @@ class Scheduler:
             sent["paper"] = self.run_paper()
         except Exception:
             logger.exception("Paper trading update failed")
+        try:                                       # 💰 real trading: mark the account, plan tomorrow's orders
+            sent["real"] = self.run_real_evening()
+        except Exception:
+            logger.exception("Real trading evening update failed")
         self._rerun_breakout()                     # the backtest to the latest day, in the background
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
@@ -774,6 +782,37 @@ class Scheduler:
             return 0
         rep = res["report"]
         return int(self.notifier().send(f"{rep['as_of']}|paper", "plan", msg.paper_report(rep), silent=True))
+
+    def run_real_evening(self) -> int:
+        """Mark the real account and plan tomorrow's orders (a loud message when there are any)."""
+        from backend.engine import real
+        res = real.evening(self.state.config)
+        if res["status"] != "ok" or not (res["orders"] or res["missed"]):
+            return 0
+        return int(self.notifier().send(f"{res['as_of']}|real-plan", "real", msg.real_plan(res, self.state.config.real.variant)))
+
+    def run_real_send(self, now: datetime) -> dict:
+        """The morning send: EXITs, then BUYs, to Tradetron (once each)."""
+        from backend.engine import real
+        today, started = now.date(), now_ist()
+        res = real.send_orders(self.state.config, self.state.client, today.isoformat())
+        self.record("real_send", today, "ok", f"{res['status']}: sent {len(res['sent'])}, failed {len(res['failed'])}", started)
+        if res["sent"] or res["failed"]:
+            self.notifier().send(f"{today}|real-sent", "real", msg.real_sent(res, ampm(now.strftime('%H:%M'))))
+        return res
+
+    def run_real_stops(self, now: datetime) -> dict:
+        """Every stop_check_min in market hours: an EXIT for a position at or under its stop."""
+        from backend.engine import real
+        self.last_real_stops = now
+        res = real.watch_stops(self.state.config, self.state.client, now.date().isoformat())
+        n = self.notifier()
+        for h in res["hits"]:
+            n.send(f"{now.date()}|real-stop|{h['symbol']}", "real", msg.real_stop(h, ampm(now.strftime('%H:%M'))))
+        if res["status"] == "no_login":
+            n.send(f"{now.date()}|real-nologin", "real", f"{msg.REAL} · ⚠️ Kite not logged in: stops are NOT being "
+                                                         "watched today. Log in to Kite.")
+        return res
 
     def _rerun_breakout(self) -> None:
         """Re-run the Trend Breakout backtest each evening so its results run to the latest day."""

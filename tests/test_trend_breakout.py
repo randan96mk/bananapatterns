@@ -196,7 +196,7 @@ def test_run_scan_and_api(monkeypatch):
         assert tc.get("/api/breakout/trades?scenario=x").status_code == 422
         assert tc.get("/api/breakout/trades?variant=Z").status_code == 422
         a = tc.get("/api/attention").json()
-        assert set(a) == {"breakout", "paper"} and a["breakout"]["level"] in ("warn", "sell", "filter", "buy", "running")
+        assert set(a) == {"breakout", "paper", "real"} and a["breakout"]["level"] in ("warn", "sell", "filter", "buy", "running")
 
 
 def test_no_data_message(monkeypatch):
