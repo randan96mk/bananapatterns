@@ -688,6 +688,11 @@ def real_stop(h: dict, at: str) -> str:
             f"≤ {escape(h['why'])} · net {_signed(h['net'])}")
 
 
+def real_nologin(at: str) -> str:
+    return (f"{REAL} · 🚨 STOPS NOT WATCHED · {ampm(at)}\nKite is not logged in and real positions are open. "
+            "Log in to Kite now: the first check after the login exits any position whose stop was touched meanwhile.")
+
+
 def tb_name(variant: str, top: Optional[int] = None) -> str:
     base = {"A": "A · 200-day filter", "E": "E · half filter"}.get(variant, variant)
     return f"{base}, top {top}" if top else base

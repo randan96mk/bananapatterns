@@ -809,9 +809,9 @@ class Scheduler:
         n = self.notifier()
         for h in res["hits"]:
             n.send(f"{now.date()}|real-stop|{h['symbol']}", "real", msg.real_stop(h, ampm(now.strftime('%H:%M'))))
-        if res["status"] == "no_login":
-            n.send(f"{now.date()}|real-nologin", "real", f"{msg.REAL} · ⚠️ Kite not logged in: stops are NOT being "
-                                                         "watched today. Log in to Kite.")
+        if res["status"] == "no_login":                   # loud, again every nologin_alarm_min until the login
+            slot = (now.hour * 60 + now.minute) // max(1, self.state.config.real.nologin_alarm_min)
+            n.send(f"{now.date()}|real-nologin|{slot}", "real", msg.real_nologin(now.strftime('%H:%M')))
         return res
 
     def _rerun_breakout(self) -> None:
