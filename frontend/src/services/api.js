@@ -71,6 +71,7 @@ export const getReal = () => req('GET', '/api/real');
 export const realSettings = (body) => req('POST', '/api/real/settings', body);
 export const realKill = (on) => req('POST', `/api/real/kill?on=${on}`);
 export const realReset = () => req('POST', '/api/real/reset');
+export const realCapital = (capital) => req('POST', '/api/real/capital', { capital });
 export const runBreakout = () => req('POST', '/api/breakout/run');
 export const getPaper = () => req('GET', '/api/paper');
 export const startPaper = (capital) => req('POST', '/api/paper/start', { capital });

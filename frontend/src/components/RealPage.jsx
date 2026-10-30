@@ -20,9 +20,21 @@ export default function RealPage() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
+  const [cap, setCap] = useState('');
   const reload = () => setTick((t) => t + 1);
 
-  useEffect(() => { api.getReal().then((x) => { setD(x); setErr(''); }).catch((e) => setErr(e.message)); }, [tick]);
+  useEffect(() => {
+    api.getReal().then((x) => { setD(x); setErr(''); setCap(String(x.started ? x.account.capital : x.settings.capital)); })
+      .catch((e) => setErr(e.message));
+  }, [tick]);
+  const saveCap = () => {
+    const v = Number(cap);
+    const now = d.started ? d.account.capital : d.settings.capital;
+    if (!(v >= 10000) || v === now) return;
+    const msg = d.started ? `Change the capital from ${inr(now)} to ${inr(v)}? This counts as ${v > now ? 'adding' : 'withdrawing'} ${inr(Math.abs(v - now))}: `
+      + 'cash changes, the profit so far stays, and tomorrow\'s BUY quantities are re-sized.' : `Start with ${inr(v)}?`;
+    if (window.confirm(msg)) api.realCapital(v).then(reload).catch((e) => setErr(e.message));
+  };
 
   const set = (body) => api.realSettings(body).then(reload).catch((e) => setErr(e.message));
   const kill = (on) => {
@@ -65,10 +77,15 @@ export default function RealPage() {
           {d.filter ? <FilterBadge k={d.variant} f={d.filter} /> : <p className="muted">After the first evening run.</p>}
           <h4>Safety limits</h4>
           <p className="small">orders sent {s.send_time}–{s.send_until} · stops checked every {s.stop_check_min} min in market hours ·
-            {' '}max {s.max_buys_per_day} new buys a day · max {inr(s.max_order_value)} an order · max {d.max_pos} positions ·
+            {' '}max {s.max_buys_per_day} new buys a day · max {s.max_order_pct}% of the account an order ({inr(d.limits?.max_order)} now) · max {d.max_pos} positions ·
             {' '}each order sent once (a failure is not retried)</p></div>
         <div className="panel"><h3>Account</h3>
-          {!d.started ? <p className="muted">Starts with {inr(s.capital)} at the next evening run{d.enabled ? '' : ' once real trading is ON'}.</p> : (
+          <div className="capbox"><span>Capital</span> ₹<input className="input" type="number" min="10000" step="10000" value={cap}
+            onChange={(e) => setCap(e.target.value)} /> <button className="btn" onClick={saveCap}
+            disabled={!(Number(cap) >= 10000) || Number(cap) === (d.started ? d.account.capital : d.settings.capital)}>Save</button></div>
+          <p className="muted small">Sizes follow automatically: <b>{inr(d.limits?.size)}</b> a stock now (account value ÷ {d.max_pos}) ·
+            {' '}largest order <b>{inr(d.limits?.max_order)}</b> ({s.max_order_pct}%). Quantity = size ÷ price, whole shares, within the cash left.</p>
+          {!d.started ? <p className="muted">Starts with this capital at the next evening run{d.enabled ? '' : ' once real trading is ON'}.</p> : (
             <table className="orbvs"><tbody>
               <tr><td>Value</td><td className="num"><b>{inr(A.value)}</b> <span className="muted small">cash {inr(A.cash)}</span></td></tr>
               <tr><td>Before costs · costs · after</td><td className="num">{sgn(A.gross)} · −{inr(A.costs)} · <b className={cls(A.net)}>{sgn(A.net)} ({pct(A.return)})</b></td></tr>

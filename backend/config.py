@@ -364,12 +364,12 @@ class RealConfig:
     trading. Prices come from Kite (read-only); no order ever goes to Kite."""
     enabled: bool = True                   # send orders (the kill switch on the tab overrides it)
     variant: str = "E"                     # strategy for NEW buys: A (200-day filter) or E (half filter)
-    capital: float = 200_000.0
+    capital: float = 200_000.0             # set on the tab; a later change counts as money added / withdrawn
     send_time: str = "09:16"               # the day's orders (EXITs, then BUYs) go out from here...
     send_until: str = "09:30"              # ...until here (missed: not sent that day, with an alert)
     stop_check_min: int = 5                # stops watched with live prices every N minutes in market hours
     max_buys_per_day: int = 5
-    max_order_value: float = 30_000.0      # a BUY above this is cut to fit
+    max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 2L = 30,000)
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

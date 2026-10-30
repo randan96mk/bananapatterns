@@ -770,6 +770,26 @@ def real_settings(req: RealSettings):
     return {"enabled": st.config.real.enabled, "variant": st.config.real.variant}
 
 
+class RealCapital(BaseModel):
+    capital: float
+
+
+@router.post("/real/capital")
+def real_capital(req: RealCapital):
+    """Set the real-trading capital. After the start, the change is money added / withdrawn: cash moves, the profit
+    so far stays, and tomorrow's BUYs are re-sized (size per stock = account value / 10)."""
+    from backend.engine import real
+    if req.capital < 10_000:
+        raise HTTPException(422, "capital must be at least Rs 10,000")
+    st = S()
+    try:
+        res = real.set_capital(st.config, req.capital)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    save_config(st.config)
+    return res
+
+
 @router.post("/real/kill")
 def real_kill(on: bool = True):
     """The kill switch: nothing is sent while it is on."""

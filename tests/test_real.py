@@ -78,7 +78,7 @@ def test_plan_send_once_and_track(monkeypatch):
     res = real.evening(c, cut)
     buys = [o for o in res["orders"] if o["action"] == "BUY"]
     assert res["status"] == "ok" and 0 < len(buys) <= c.real.max_buys_per_day
-    assert all(o["qty"] * o["close"] <= c.real.max_order_value for o in buys)
+    assert all(o["qty"] * o["close"] <= 200_000 * c.real.max_order_pct / 100 for o in buys)
     tomorrow = data["cal"][end + 1]
     s = Sender()
     out = real.send_orders(c, Kite({o["ts"]: o["close"] for o in buys}), tomorrow, s)
@@ -176,3 +176,34 @@ def test_api(monkeypatch):
         assert tc.post("/api/real/kill?on=true").json()["killed"] is True
         assert "real" in tc.get("/api/attention").json()
         assert TOKEN not in tc.get("/api/real").text
+
+
+def test_capital_drives_the_sizes_and_a_change_is_money_added(monkeypatch):
+    c = setup(monkeypatch)
+    data, cut, end = first_day_with_buys(c)
+    small = {o["symbol"]: o["qty"] for o in real.evening(c, cut)["orders"] if o["action"] == "BUY"}
+    assert real.summary(c)["limits"]["size"] == pytest.approx(20_000)
+    out = real.set_capital(c, 400_000)                                     # before sending: +2L, BUYs re-sized
+    assert out["delta"] == 200_000 and out["size"] == pytest.approx(40_000) and out["max_order"] == pytest.approx(60_000)
+    big = {o["symbol"]: o["qty"] for o in real.summary(c)["orders"] if o["action"] == "BUY"}
+    assert all(big[k] >= 2 * small[k] - 1 for k in small)
+    sm = real.summary(c)
+    assert sm["account"]["capital"] == 400_000 and sm["account"]["value"] == pytest.approx(400_000)
+    assert sm["account"]["net"] == pytest.approx(0, abs=0.01)                    # adding money is not profit
+    real.send_orders(c, None, data["cal"][end + 1], Sender())               # the BUYs use most of the cash
+    with pytest.raises(ValueError):
+        real.set_capital(c, 10_000)                                        # can't withdraw more than the cash
+    assert c.real.capital == 400_000 and real.summary(c)["account"]["capital"] == 400_000
+
+
+def test_capital_api(monkeypatch):
+    from fastapi.testclient import TestClient
+    setup(monkeypatch)
+    monkeypatch.setenv("BP_NO_STATIC", "1")
+    monkeypatch.setenv("BP_NO_SCHEDULER", "1")
+    from backend import main
+    with TestClient(main.app) as tc:
+        assert tc.post("/api/real/capital", json={"capital": 5000}).status_code == 422
+        assert tc.post("/api/real/capital", json={"capital": 300000}).json()["capital"] == 300000
+        d = tc.get("/api/real").json()
+        assert d["settings"]["capital"] == 300000 and d["limits"]["size"] == 30000 and d["limits"]["max_order"] == 45000
