@@ -16,7 +16,6 @@ the daily low after the close (no live intraday price), as in the backtest.
 
 import json
 import threading
-from dataclasses import replace
 from math import floor
 from typing import Optional
 
@@ -35,7 +34,7 @@ def variants(config: AppConfig) -> list[str]:
 
 
 def _rules(config: AppConfig, key: str):
-    return replace(config.breakout, regime_mode=tb.MODES[key])
+    return tb.rules(config, key)
 
 
 def _states() -> dict:
@@ -44,7 +43,7 @@ def _states() -> dict:
         states = {r["account"]: json.loads(r["payload"]) for r in conn.execute("SELECT account, payload FROM paper_state")}
     for k, st in states.items():
         st.setdefault("variant", k)
-        st.setdefault("name", tb.VARIANT_NAMES.get(k, k))
+        st.setdefault("name", tb.variant_name(k, 200))
     return states
 
 
@@ -59,7 +58,7 @@ def _save(key: str, st: dict, trades: list, fills: list, equity: list) -> None:
 
 
 def _new(key: str, data: dict, i: int, cap: float, p) -> dict:
-    st = {"variant": key, "name": tb.VARIANT_NAMES[key], "started": data["cal"][i], "capital": cap, "cash": cap,
+    st = {"variant": key, "name": tb.variant_name(key, p.top), "top": p.top, "started": data["cal"][i], "capital": cap, "cash": cap,
           "charges": 0.0, "slippage": 0.0, "as_of": data["cal"][i], "positions": {}, "orders": [],
           "started_at": now_ist(), "updated_at": now_ist()}
     _decide(st, data, i, p)
@@ -110,7 +109,7 @@ def _decide(st: dict, data: dict, i: int, p) -> None:
     closes = data["index_close"]
     now = tb.filter_day(p.regime_mode, i, closes)
     before = tb.filter_day(p.regime_mode, i - 1, closes) if i else now
-    st["filter"] = {"name": st["name"], "state": tb.filter_label(now, p.regime_mode),
+    st["filter"] = {"name": st["name"], "top": p.top, "state": tb.filter_label(now, p.regime_mode),
                     "prev": tb.filter_label(before, p.regime_mode), "changed": now != before,
                     "slots": cap if regime_on else 0}
 
@@ -187,6 +186,10 @@ def _step(st: dict, data: dict, i: int, p) -> tuple[list, list]:
 def _advance(key: str, st: dict, data: dict, p) -> int:
     """Every session after st["as_of"]; returns how many were processed (0 when already up to date)."""
     cal = data["cal"]
+    if st.get("top", 200) != p.top:                       # the universe changed: noted in the log; positions stay
+        st.setdefault("notes", []).append({"day": st["as_of"], "text": f"universe top {st.get('top', 200)} → top {p.top} "
+                                                                       f"for new buys from the next session"})
+        st["top"], st["name"] = p.top, tb.variant_name(key, p.top)
     new = [i for i, d in enumerate(cal) if d > st["as_of"]]
     all_trades, all_fills, equity = [], [], []
     for i in new:
@@ -303,7 +306,7 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
             "account": account(key, st), "drawdown": round(dd, 2), "positions": positions,
             "orders": st.get("orders", []), "skipped": st.get("skipped", []), "cap": st.get("cap", p.max_pos),
             "allowed": st.get("allowed"), "filter": st.get("filter"), "decided": st.get("decided"),
-            "trades": trades, "won": len(won), "closed": len(trades),
+            "trades": trades, "won": len(won), "closed": len(trades), "notes": st.get("notes", []), "top": st.get("top"),
             "profit_factor": round(gain / loss, 2) if loss else None,
             "trade_totals": {k: round(sum(t[k] for t in trades), 2) for k in ("gross", "charges", "slippage", "costs", "net")},
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq], "gross": [e["gross"] for e in eq],

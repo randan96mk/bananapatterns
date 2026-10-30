@@ -7,6 +7,7 @@
 #   ./docker.sh update    git pull, rebuild and restart (after a PR is merged)
 #   ./docker.sh restart   restart without rebuilding
 #   ./docker.sh rebuild   rebuild from the code as it is now (no git pull), e.g. after checking out an older version
+#   ./docker.sh verify-e300   read-only check of strategy E's top-300 universe (prints, saves nothing, sends nothing)
 set -e
 cd "$(dirname "$0")"
 PORT="${BP_PORT:-8000}"
@@ -60,5 +61,6 @@ case "${1:-up}" in
     restart) docker compose restart && wait_healthy ;;
     update) git pull --ff-only && up --build ;;
     rebuild) up --build ;;
+    verify-e300) docker compose exec banana python -m backend.tools.verify_e300 ;;
     *) sed -n '2,9p' "$0"; exit 1 ;;
 esac

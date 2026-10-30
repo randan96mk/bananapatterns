@@ -13,7 +13,8 @@ export default function HowItWorks({ r, paper = false }) {
         <li><b>Market filter</b> (NIFTY 50's close): <b>A</b> buys only when NIFTY is above its 200-day average.
           {' '}<b>E</b> uses all {r.max_pos} slots above the 200-day, <b>{Math.floor(r.max_pos / 2)} slots</b> when NIFTY is above its 50-day but not its
           {' '}200-day, and makes no new buys below the 50-day. The filter only stops <i>new</i> buys; it never sells.</li>
-        <li><b>Stocks</b>: each day the {r.top} most traded Nifty 500 stocks (20-day average turnover), priced ₹{r.min_price} or more.</li>
+        <li><b>Stocks</b>: each day the most traded Nifty 500 stocks (20-day average turnover, data up to that day), priced ₹{r.min_price} or more:
+          {' '}<b>A</b> picks from the top {r.top}, <b>E</b> from the top {r.top_e}. A stock that later drops out is not sold for that.</li>
         <li><b>Buy signal</b>: an uptrend (close above the 50-, 150- and 200-day averages, in that order, the 200-day rising), within 25% of the
           {' '}52-week high and 30%+ above the 52-week low, a close above the previous {r.hi_window}-day high on at least {r.vol_mult}× the 50-day volume.</li>
         <li><b>Order</b>: the strongest 6-month return first, bought at the <b>next day's open</b>, each worth the account value ÷ {r.max_pos}

@@ -6,7 +6,7 @@ import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
 
 const SCEN = [['normal', 'Normal slippage'], ['stress', 'Stressed slippage']];
-const VARS = [['A', 'A · 200-day filter'], ['E', 'E · half filter']];
+const VARS = [['A', 'A · 200-day filter'], ['E', 'E · half filter']];   // the full names (with the universe) come from the run
 const EXIT = { stop: '🛑 stop', exit: '📉 trend exit', end: '⏹ end of test' };
 const SKIP = { no_slot: 'no free slot', market_off: 'market filter off', too_small: 'too small (under 1 share)' };
 const STATE = { ON: ['✅', 'up'], FULL: ['✅', 'up'], HALF: ['🟡', 'warn'], OFF: ['⛔', 'down'] };
@@ -127,6 +127,10 @@ export default function BreakoutPage() {
           {running ? <> · <span className="pulse running" /> running…</> : <> · <button className="linkbtn" onClick={run}>Re-run</button></>}</span></div>
       {err && <div className="warn small">{err}</div>}
 
+      {r.stale?.length > 0 && <div className="warn panel">⚠️ {r.stale.join(' and ')}'s universe changed since this run: its numbers are out of date.
+        {' '}{running ? 'Re-running…' : <button className="btn primary" onClick={run}>Re-run now</button>} (it also re-runs tonight).</div>}
+      {r.missing?.length > 0 && <div className="muted small panel">⚠️ {r.missing.length} Nifty 500 stock(s) without enough daily candles (left out, see the log):
+        {' '}{r.missing.slice(0, 20).join(', ')}{r.missing.length > 20 ? ' …' : ''}</div>}
       <div className="panel">
         <b>{keys.map((k) => `${V[k].verdict ? '✅' : '❌'} ${k}`).join(' · ')}</b>
         <span className="muted"> · ✅ = profitable after costs in all three periods (stressed too) and beats NIFTY 50</span>
@@ -148,6 +152,8 @@ export default function BreakoutPage() {
             {row('Average hold', (v) => `${v[scen].avg_hold.toFixed(0)} days`)}
             {row('Costs a trade', (v) => inr(v[scen].cost_per_trade))}
             {row('New buys allowed', (v) => `${v.allowed_pct.toFixed(0)}% of days`)}
+            {row('Universe', (v) => `top ${v.top ?? '—'}`)}
+            {row('Different stocks traded', (v) => v.stocks_traded ?? '—')}
             {row('Robustness', (v) => `${v.robust_pass} of ${v.robust.length} pass`)}
           </tbody></table></div></div>
         <div className="panel"><h3>{lakh(R.capital)} on each <span className="muted small">· {scen === 'stress' ? 'stressed' : 'normal'} slippage</span></h3>
@@ -206,7 +212,9 @@ export default function BreakoutPage() {
           {sc.buys?.length ? <div className="tablewrap"><table className="grid"><thead><tr><th>#</th><th>Breakout (next open)</th><th className="num">Close</th>
             <th className="num">Stop</th><th className="num">Qty · value</th><th className="num">₹ at risk</th></tr></thead>
             <tbody>{sc.buys.map((b, k) => <tr key={b.symbol}><td className="muted">{k + 1}</td><td><b>{b.symbol}</b>
-              {!phone && <span className="muted small"> 6M {pct(b.ret126, 0)}</span>}</td><td className="num">{rs(b.close)}</td>
+              {!phone && <span className="muted small"> 6M {pct(b.ret126, 0)}</span>}
+              {b.for && <span className={`tagchip ${b.for.length > 1 ? '' : `v${b.for[0]}`}`}>{b.for.length > 1 ? 'A+E' : `${b.for[0]} only`}
+                {b.turnover_rank ? ` · #${b.turnover_rank}` : ''}</span>}</td><td className="num">{rs(b.close)}</td>
               <td className="num">{rs(b.stop)} <span className="muted small">{b.stop_pct.toFixed(1)}%</span></td>
               <td className="num">{b.qty} · {inr(b.value)}</td><td className="num down">{inr(b.risk)}</td></tr>)}</tbody></table></div>
             : <p className="muted">No breakouts today.</p>}

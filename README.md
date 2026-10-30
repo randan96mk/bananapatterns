@@ -992,7 +992,15 @@ or **SELL at open** on a close under SMA50 or `sell_pct` (8%) under its average 
 is a "📈 Trend Breakout" section of the 7 PM evening report; otherwise its own silent message. Every line says
 "signals only, no orders".
 
-**Two variants side by side.** **A · 200-day filter** is the rule set above. **E · half filter** differs only in the
+**Two variants side by side.** **A · 200-day filter, top 200** is the rule set above. **E · half filter, top 300**
+picks from the **300** most traded stocks (`breakout.top_e`; A keeps `breakout.top` = 200): one shared universe
+function (`liquid(day, top)`), each variant passing its own top (`tb.rules(config, key)`); its robustness universe
+neighbours are 150 / 450 (A's 100 / 300). A stock that later drops out of the universe is never sold for that. A run
+made with another universe is flagged stale on the tab (and re-runs every evening). The scan tags each breakout
+"A+E" (turnover rank ≤ 200) or "E only" (201–300); paper notes the change date in E's log; real orders show the
+strategy, universe and turnover rank. Stocks without enough daily candles are logged by name and listed on the tab.
+`./docker.sh verify-e300` prints a read-only check: a sample day's universes and ranks 201–300, the A / E backtest
+next to the expected numbers, and dry runs of the paper and real evening plans. **E · half filter** differs only in the
 market filter (`regime_mode` = `half`, from swing.py `filter_day`): all `max_pos` (10) slots while NIFTY 50 closes over
 its 200-day SMA, `max_pos // 2` (5) while it is over its 50-day but not its 200-day SMA, no new buys below the 50-day;
 size stays equity / 10 and the filter never sells. On the same candles both give identical trades to swing.py (all
@@ -1021,12 +1029,17 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
 - **Evening** (after the scan): the account is marked at the close (morning fills corrected to the day's open from
   the daily candle) and tomorrow's orders are planned with `real.variant` (**E** by default; the A / E switch on the
   tab changes only NEW buys): EXIT on a close under SMA50; BUY the ranked breakouts into the free slots under that
-  variant's filter at account value ÷ 10, within `max_order_value` (₹30,000) and `max_buys_per_day` (5).
+  variant's filter at account value ÷ 10, within `max_order_pct` (15%) of the account value and `max_buys_per_day` (5).
 - **`send_time`–`send_until`** (9:16–9:30 AM): EXITs, then BUYs, **each sent once** (one key per day, stock and
   action); a failure is logged and alerted, never retried.
 - **Stops**: no stop-loss orders. Every `stop_check_min` (5) minutes in market hours the app reads live prices
   and sends EXIT once a position trades at or under its stop (needs the daily Kite login; without it a loud warning).
 - **Switches**: `real.enabled` (ON by default) and the ⛔ kill switch on the tab; both must allow sending.
+- **Capital** (`POST /api/real/capital`, the box on the tab): before the start it is simply the starting amount;
+  afterwards a change counts as money added or withdrawn (cash moves, the profit so far and the curve stay, a
+  withdrawal can't exceed the cash), and tomorrow's unsent BUYs are re-sized at once. The tab shows what it means
+  now: size per stock = account value ÷ 10, largest order = 15% of the value; quantity = size ÷ price, whole shares,
+  within the cash left.
 - **Tracking**: capital `real.capital` (₹2,00,000), before costs · charges · after costs, realised / unrealised,
   positions, the trade log and the **order log** (every webhook with Tradetron's reply, never deleted). The broker's
   own fills are not visible; prices are the ones seen when sending, corrected to the day's open in the evening.
@@ -1837,3 +1850,12 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `backend/broker/tradetron.py` (BUY / EXIT webhook, token from `.env`), `backend/engine/real.py` (evening plan,
   9:16 send once, 5-minute stop watch, tracking), `real_*` tables, `real` settings, `/api/real*`, the 💰 tab,
   loud 💰 REAL Telegram messages, attention signals; `TRADETRON_TOKEN` in `.env.example`.
+
+### 2026-10-31: Real trading: capital on the tab, sizes follow it
+- The capital box on 💰 Real trading (`/api/real/capital`): a change is money added / withdrawn; BUYs re-sized.
+- `real.max_order_value` (₹30,000) became `real.max_order_pct` (15% of the account value).
+
+### 2026-10-31: Strategy E uses the top 300 universe
+- `breakout.top_e` (300); `tb.rules()` / `liquid(day, top)` shared by the backtest, scan, paper and real; relative
+  universe neighbours; stale-run flag; "A+E / E only" scan tags; paper note; real order tags; missing-data logging;
+  `./docker.sh verify-e300`. A unchanged (identical results; parity with swing.py for A/200 and E/300).

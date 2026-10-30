@@ -531,7 +531,8 @@ def filter_line(fs: dict) -> str:
     """"A ⛔ OFF · E 🟡 HALF (5 slots)", with "(changed today)" when it flipped at today's close."""
     out = []
     for k, f in fs.items():
-        bit = f"<b>{k}</b> {FILTER_ICON.get(f['state'], '')} {f['state']}"
+        top = f" · top {f['top']}" if f.get("top") else ""
+        bit = f"<b>{k}</b>{top} {FILTER_ICON.get(f['state'], '')} {f['state']}"
         if f["state"] == "HALF":
             bit += f" ({f['slots']} slots)"
         if f.get("changed"):
@@ -557,8 +558,10 @@ def breakout_lines(res: dict, limit: int = 10) -> list[str]:
     if buys:
         lines.append(f"Breakouts today, ranked ({len(buys)}):")
         for n, b in enumerate(buys[:limit], 1):
+            tag = ("A+E" if b.get("for") == ["A", "E"] else f"{'+'.join(b['for'])} only") if b.get("for") else ""
             lines.append(f"{n} <b>{escape(b['symbol'])}</b> {_rup(b['close'])} · stop {_rup(b['stop'])} "
-                         f"({b['stop_pct']:.1f}%) · {b['qty']} sh {_rup(b['value'])} · risk {_rup(b['risk'])}")
+                         f"({b['stop_pct']:.1f}%) · {b['qty']} sh {_rup(b['value'])} · risk {_rup(b['risk'])}"
+                         + (f" · <i>{tag}</i>" if tag else ""))
         if len(buys) > limit:
             lines.append(f"+{len(buys) - limit} more on the Trend Breakout tab")
         if fs:
@@ -650,7 +653,7 @@ REAL = "💰 <b>REAL</b>"
 
 def real_plan(res: dict, variant: str) -> str:
     """The evening: tomorrow's orders (sent at the morning send time)."""
-    lines = [f"{REAL} · orders for the next open · {escape(tb_name(variant))}"]
+    lines = [f"{REAL} · orders for the next open · {escape(tb_name(variant, res.get('top')))}"]
     orders = res.get("orders") or []
     for o in orders:
         if o["action"] == "EXIT":
@@ -685,5 +688,6 @@ def real_stop(h: dict, at: str) -> str:
             f"≤ {escape(h['why'])} · net {_signed(h['net'])}")
 
 
-def tb_name(variant: str) -> str:
-    return {"A": "A · 200-day filter", "E": "E · half filter"}.get(variant, variant)
+def tb_name(variant: str, top: Optional[int] = None) -> str:
+    base = {"A": "A · 200-day filter", "E": "E · half filter"}.get(variant, variant)
+    return f"{base}, top {top}" if top else base

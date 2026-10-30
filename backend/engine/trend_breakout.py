@@ -33,7 +33,8 @@ logger = setup_logger("trend_breakout")
 INDEX = "NIFTY 50"
 SPLITS = ("Development", "Validation", "Out-of-sample")
 NEIGHBOURS = (("vol_mult", (1.3, 2.0)), ("stop_pct", (6.0, 10.0)), ("atr_mult", (1.5, 3.0)), ("hi_window", (10, 55)),
-              ("exit_sma", (20,)), ("max_pos", (5, 15)), ("top", (100, 300)), ("regime", (False,)))
+              ("exit_sma", (20,)), ("max_pos", (5, 15)), ("top", (0.5, 1.5)), ("regime", (False,)))
+# "top" moves relative to the variant's own universe: A (200) -> 100 / 300, E (300) -> 150 / 450
 LABELS = {"vol_mult": "volume ×{}", "stop_pct": "stop {:g}%", "atr_mult": "ATR ×{:g}", "hi_window": "breakout {} days",
           "exit_sma": "exit SMA {}", "max_pos": "max {} positions", "top": "universe top {}",
           "regime": "no market filter"}
@@ -90,11 +91,17 @@ def delivery_charges(value, sell):
 
 # --- the rules: decided at the close of calendar day i ---------------------------------------------------
 
-def liquid(S, cal_i, top=200, min_price=100.0):
-    """The day's `top` most traded stocks (20-day average turnover) priced at min_price or more."""
+def ranked_by_turnover(S, cal_i, min_price):
+    """The day's stocks priced at min_price or more, most traded first (20-day average turnover, data up to the day)."""
     xs = [(s["ind"]["turn20"][j], sym) for sym, s in S.items()
           if (j := s["at"].get(cal_i)) is not None and s["ind"]["turn20"][j] and s["rows"][j]["close"] >= min_price]
-    return {sym for _, sym in sorted(xs, reverse=True)[:top]}
+    return [sym for _, sym in sorted(xs, reverse=True)]
+
+
+def liquid(S, cal_i, top, min_price=100.0):
+    """The universe of a day: its `top` most traded stocks. Every strategy picks its stocks through this, with its
+    own top (A 200, E 300)."""
+    return set(ranked_by_turnover(S, cal_i, min_price)[:top])
 
 
 def val(s, j, k):
@@ -141,7 +148,17 @@ def decide(i, S, held, regime_on, p):
 # --- market filters: A = NIFTY over its 200-day SMA; E ("half") = 10 slots over the 200-day, 5 over the 50-day ----
 
 MODES = {"A": "sma200", "E": "half"}
-VARIANT_NAMES = {"A": "A · 200-day filter", "E": "E · half filter"}
+
+
+def rules(config, key: str):
+    """A variant's full rule set: the shared settings with its own market filter and universe (A: 200-day filter,
+    top `top`; E: half filter, top `top_e`)."""
+    b = config.breakout
+    return replace(b, regime_mode=MODES[key], top=b.top if key == "A" else b.top_e)
+
+
+def variant_name(key: str, top: int) -> str:
+    return f"A · 200-day filter, top {top}" if key == "A" else f"E · half filter, top {top}"
 
 
 def filter_day(mode, i, closes):
@@ -300,7 +317,13 @@ def evaluate(q, cal, S, index_ok, first, nifty_cagr, filters=None):
 
 
 def neighbours(p):
-    return [(LABELS[key].format(v), replace(p, **{key: v})) for key, vals in NEIGHBOURS for v in vals]
+    out = []
+    for key, vals in NEIGHBOURS:
+        for v in vals:
+            if key == "top":                          # half and 1.5x the variant's own universe (swing.py)
+                v = p.top // 2 if v < 1 else p.top * 3 // 2
+            out.append((LABELS[key].format(v), replace(p, **{key: v})))
+    return out
 
 
 # --- data ------------------------------------------------------------------------------------------------
@@ -318,6 +341,7 @@ def load(config: AppConfig) -> dict:
         end = date.fromisoformat(idx_all[-1]["date"])
         start = (end - timedelta(days=int((p.test_years + p.warmup_years) * 365))).isoformat()
         idx = [r for r in idx_all if r["date"] >= start]
+        missing = []
         if len(idx) < p.warmup_sessions + 100:
             return {"error": f"Only {len(idx)} NIFTY 50 sessions stored: need {p.warmup_sessions + 100}+ "
                              "(the daily backfill fetches the missing years)."}
@@ -330,9 +354,14 @@ def load(config: AppConfig) -> dict:
             if len(rows) >= 60:
                 S[s["symbol"]] = {"rows": rows, "ind": indicators(rows), "token": s["instrument_token"],
                                   "at": {pos_of[r["date"]]: j for j, r in enumerate(rows)}}
+            else:                                     # never skipped silently: logged and shown on the tab
+                missing.append(s["symbol"])
+    if missing:
+        logger.warning("Trend Breakout: %d Nifty 500 stocks without enough daily candles (under 60 sessions): %s",
+                       len(missing), ", ".join(sorted(missing)[:40]) + (" ..." if len(missing) > 40 else ""))
     close = [r["close"] for r in idx]
     m200 = sma(close, 200)
-    return {"cal": cal, "S": S, "index_close": close, "index_m200": m200,
+    return {"cal": cal, "S": S, "missing": sorted(missing), "index_close": close, "index_m200": m200,
             "index_ok": [m is not None and c > m for c, m in zip(close, m200)], "filters": market_filters(close),
             "tradingsymbol": {s["symbol"]: s.get("tradingsymbol", s["symbol"]) for s in u["stocks"]}}
 
@@ -359,7 +388,7 @@ def _variant(data: dict, p, key: str, first: int, nifty: list, nifty_cagr: float
     n = len(cal) - first
     eq, eqg, trades, funnel = simulate(cal, S, index_ok, p, p.slippage_pct, first, filters=filters)
     seq, seqg, strades, sfunnel = simulate(cal, S, index_ok, p, p.stress_slippage_pct, first, filters=filters)
-    out = {"name": VARIANT_NAMES[key], "mode": p.regime_mode, "funnel": funnel,
+    out = {"name": variant_name(key, p.top), "mode": p.regime_mode, "top": p.top, "funnel": funnel,
            "normal": _stats(eq, eqg, trades, p.capital, n), "stress": _stats(seq, seqg, strades, p.capital, n)}
     out["normal"]["skipped"] = {k: funnel[k] for k in ("no_slot", "market_off", "too_small")}
     out["stress"]["skipped"] = {k: sfunnel[k] for k in ("no_slot", "market_off", "too_small")}
@@ -397,6 +426,7 @@ def _variant(data: dict, p, key: str, first: int, nifty: list, nifty_cagr: float
     tidy = lambda ts: [{**t, "gross": round(t["gross"], 2), "costs": round(t["costs"], 2), "net": round(t["net"], 2)}
                        for t in sorted(ts, key=lambda t: (t["in"], t["sym"]), reverse=True)]
     out["trades"], out["stress_trades"] = tidy(trades), tidy(strades)
+    out["stocks_traded"] = len({t["sym"] for t in trades})
     return out
 
 
@@ -424,9 +454,11 @@ def run(config: AppConfig) -> dict:
                          "return": round((nifty[-1] / base.capital - 1) * 100, 2)},
                "curve": {"dates": [cal[first + k] for k in ix], "nifty": [round(nifty[k]) for k in ix]},
                "variants": {}, "settings": asdict(base)}
-        for key, mode in MODES.items():
-            _status["message"] = f"{VARIANT_NAMES[key]}: simulating {n} sessions, {len(data['S'])} stocks"
-            out["variants"][key] = _variant(data, replace(base, regime_mode=mode), key, first, nifty, nifty_cagr)
+        out["missing"] = data["missing"]
+        for key in MODES:
+            p = rules(config, key)
+            _status["message"] = f"{variant_name(key, p.top)}: simulating {n} sessions, {len(data['S'])} stocks"
+            out["variants"][key] = _variant(data, p, key, first, nifty, nifty_cagr)
         with get_db() as conn:
             conn.execute("INSERT OR REPLACE INTO breakout_runs (id, updated_at, payload) VALUES (1, ?, ?)",
                          (now_ist(), json.dumps(out)))
@@ -444,14 +476,19 @@ def run(config: AppConfig) -> dict:
         _lock.release()
 
 
-def saved() -> Optional[dict]:
-    """The latest run (None before the first run, or for a run from before the A / E variants)."""
+def saved(config: Optional[AppConfig] = None) -> Optional[dict]:
+    """The latest run (None before the first run, or for a run from before the A / E variants). With `config`,
+    "stale" lists the variants whose universe changed since that run (their numbers must not be trusted)."""
     with get_db() as conn:
         r = conn.execute("SELECT updated_at, payload FROM breakout_runs WHERE id = 1").fetchone()
     if not r:
         return None
     payload = json.loads(r["payload"])
-    return {**payload, "updated_at": r["updated_at"]} if "variants" in payload else None
+    if "variants" not in payload:
+        return None
+    if config is not None:
+        payload["stale"] = [k for k, v in payload["variants"].items() if v.get("top") != rules(config, k).top]
+    return {**payload, "updated_at": r["updated_at"]}
 
 
 # --- the evening scan -----------------------------------------------------------------------------------
@@ -472,19 +509,25 @@ def scan(config: AppConfig, holdings: Optional[list] = None) -> dict:
     for key, mode in MODES.items():
         now = filter_day(mode, i, closes)
         before = filter_day(mode, i - 1, closes) if i else now
-        fstate[key] = {"name": VARIANT_NAMES[key], "state": filter_label(now, mode),
+        fstate[key] = {"name": variant_name(key, rules(config, key).top), "top": rules(config, key).top,
+                       "state": filter_label(now, mode),
                        "prev": filter_label(before, mode), "changed": now != before,
                        "slots": p.max_pos if now >= 1 else p.max_pos // 2 if now > 0 else 0}
-    _, ranked, _, _ = decide(i, S, {}, True, p)
+    pa, pe = rules(config, "A"), rules(config, "E")
+    wide = pa if pa.top >= pe.top else pe                 # the larger universe; each breakout is tagged with who can buy it
+    turn_rank = {sym: k + 1 for k, sym in enumerate(ranked_by_turnover(S, i, p.min_price))}
+    _, ranked, _, _ = decide(i, S, {}, True, wide)
     buys = []
     for sym, stop in ranked:
+        r = turn_rank.get(sym)
+        who = [k for k, q in (("A", pa), ("E", pe)) if r and r <= q.top]
         s = S[sym]
         close = s["rows"][s["at"][i]]["close"]
         qty = floor(p.capital / p.max_pos / close)
         buys.append({"symbol": sym, "close": round(close, 2), "stop": round(stop, 2),
                      "stop_pct": round((1 - stop / close) * 100, 2), "qty": qty, "value": round(qty * close, 2),
                      "risk": round(qty * (close - stop), 2),
-                     "ret126": round((val(s, s["at"][i], "ret126") or 0) * 100, 1)})
+                     "ret126": round((val(s, s["at"][i], "ret126") or 0) * 100, 1), "turnover_rank": r, "for": who})
     by_ts = {ts: sym for sym, ts in data["tradingsymbol"].items()}
     held = []
     for h in holdings or []:
