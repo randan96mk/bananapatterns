@@ -6,12 +6,16 @@
     <script>
       // set the theme before the first paint (no dark/light flash); see src/theme.js
       (function () {
-        var m = 'auto';
+        var m = 'auto', skins = { fintech: 'light', precision: 'dark', consumer: 'dark', workspace: 'dark', glass: 'dark',
+          light: 'light', dark: 'dark' };
         try { m = localStorage.getItem('bp.theme') || 'auto'; } catch (e) {}
-        if (m === 'auto') m = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        document.documentElement.dataset.theme = m;
+        if (!(m in skins)) m = window.matchMedia('(prefers-color-scheme: light)').matches ? 'fintech' : 'precision';
+        document.documentElement.dataset.skin = m;
+        document.documentElement.dataset.theme = skins[m];
       })();
     </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍌</text></svg>" />
     <title>Banana Patterns</title>
   </head>

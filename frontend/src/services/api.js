@@ -66,6 +66,7 @@ export const getTodaySparks = () => req('GET', '/api/today/sparks');
 export const getBreakout = () => req('GET', '/api/breakout');
 export const getBreakoutTrades = (variant, scenario, limit, offset) => req('GET', `/api/breakout/trades?variant=${variant}&scenario=${scenario}&limit=${limit}&offset=${offset}`);
 export const getAttention = () => req('GET', '/api/attention');
+export const getSchedule = () => req('GET', '/api/schedule');
 export const getReal = () => req('GET', '/api/real');
 export const realSettings = (body) => req('POST', '/api/real/settings', body);
 export const realKill = (on) => req('POST', `/api/real/kill?on=${on}`);

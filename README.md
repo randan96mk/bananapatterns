@@ -1867,3 +1867,18 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 ### 2026-11-01: Real trading stop protection
 - The stop watch also checks the day's low (catch-up after a missed login); a repeating loud alarm while stops are
   not watched; optional `sig_stop` on each BUY to Tradetron (`real.send_stop`, off by default).
+
+### 2026-11-01: UI redesign: themes, status bar, ⏱ Next up, stop meter, sub-tabs
+- **Themes** (🎨 in the status bar, remembered per browser): Fintech Light · Precision Dark · Consumer Black · Pro
+  Workspace · Glass, plus Classic Light / Dark; **Auto** follows the device (Fintech Light by day, Precision Dark by
+  night). A theme sets colours, fonts, corners and shadows on the same layout (`data-skin` in `theme.js`, `App.css`).
+- **Status bar on every page**: Kite (the full Kite bar only when the login is missing or on a tap), NSE open/closed,
+  the last evening run, 💰 real ON/OFF and strategy, ⏱ the next job with a countdown, "needs attention", the clock.
+- **Grouped navigation**: Trade (Today · 📈 · 📝 · 💰) · Research (Screens · Universe) · ⚙️ System menu (Alerts, Data,
+  Settings, Logs); phone: Trade · Screens · Alerts · More.
+- **⏱ Next up** (`GET /api/schedule`, `backend/engine/schedule.py`): every scheduled job's next run (from the same
+  settings and trading days the scheduler uses) and last run, live countdowns; on Today, 📈, 📝 and 💰.
+- **Summary + sub-tabs**: 📈 (verdict, 4 key numbers; Results · Robustness · Tonight's scan · Trades · How it works),
+  📝 (Accounts · Trade logs · How it works), 💰 (value, after costs, ₹ at risk, positions; Today · Trade log · Order log).
+- **Stop meter** on paper and real positions (red under 3%, amber under 6%); **phone cards** instead of wide tables;
+  ⓘ tooltips; keyboard focus rings, larger tap targets, higher contrast.

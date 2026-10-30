@@ -5,6 +5,8 @@ import { useIsPhone } from '../useMedia';
 import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
 import { FilterBadge } from './BreakoutPage';
+import NextUp from './NextUp';
+import { StopMeter, SubTabs, Tip } from './ui';
 
 const EXIT = { stop: '🛑 stop', exit: '📉 trend exit' };
 const inr = (v) => (v == null ? '—' : `${v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
@@ -39,7 +41,7 @@ function Curve({ accts, capital }) {
   );
 }
 
-function Account({ k, a, maxPos, phone }) {
+function Account({ k, a, maxPos, phone, view }) {
   const A = a.account;
   const cmp = a.compare || {};
   const buys = a.orders.filter((o) => o.action === 'BUY');
@@ -57,14 +59,22 @@ function Account({ k, a, maxPos, phone }) {
         <tr><td>Paper vs backtest (same days)</td><td className="num">{pct(A.return)} vs {pct(cmp.return)}</td></tr>
       </tbody></table>
 
+      {view === 'overview' && <>
       <h4>Open ({a.positions.length} of {a.allowed ? a.cap : maxPos}{a.filter?.state === 'HALF' ? ' · HALF' : ''})</h4>
-      {!a.positions.length ? <p className="muted small">None.</p> : (
+      {!a.positions.length ? <p className="muted small">None.</p> : phone ? (
+        <div className="pcards">{a.positions.map((x) => (
+          <div key={x.symbol} className="pcard"><div className="t"><span>{x.symbol} <span className="muted small">{x.qty} sh</span></span>
+            <span className={cls(x.net)}>{sgn(x.net)}</span></div>
+            <StopMeter last={x.last} stop={x.stop} wide />
+            <details><summary>details</summary><div className="small">bought {day(x.in)} at {rs(x.buy)} · last {rs(x.last)} · stop {rs(x.stop)} ·
+              SMA50 {rs(x.sma)} · before costs {sgn(x.gross)} · costs {inr(x.costs)}</div></details>
+            {x.warning && <div className="warn small">⚠️ {x.warning}</div>}</div>))}</div>) : (
         <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought</th><th className="num">Stop</th>
-          {!phone && <th className="num">SMA50</th>}<th className="num">Last</th><th className="num">After costs, if sold</th></tr></thead>
+          <th className="num">SMA50</th><th className="num">Last</th><th>Distance to stop</th><th className="num">After costs, if sold</th></tr></thead>
           <tbody>{a.positions.map((x) => (
             <tr key={x.symbol}><td><b>{x.symbol}</b> <span className="muted small">{x.qty} sh</span>{x.warning && <div className="warn small">⚠️ {x.warning}</div>}</td>
-              <td>{day(x.in)} · {rs(x.buy)}</td><td className="num">{rs(x.stop)}</td>{!phone && <td className="num">{rs(x.sma)}</td>}
-              <td className="num">{rs(x.last)}</td>
+              <td>{day(x.in)} · {rs(x.buy)}</td><td className="num">{rs(x.stop)}</td><td className="num">{rs(x.sma)}</td>
+              <td className="num">{rs(x.last)}</td><td><StopMeter last={x.last} stop={x.stop} /></td>
               <td className={`num ${cls(x.net)}`} title={`before costs ${sgn(x.gross)} · costs ${inr(x.costs)}`}><b>{sgn(x.net)}</b>
                 <div className="muted small">{sgn(x.gross)} − {inr(x.costs)}</div></td></tr>))}</tbody></table></div>)}
 
@@ -77,6 +87,8 @@ function Account({ k, a, maxPos, phone }) {
       </ul>}
 
       {a.notes?.length > 0 && <p className="muted small">{a.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</p>}
+      </>}
+      {view === 'trades' && <>
       <h4>Trade log</h4>
       {!a.trades.length ? <p className="muted small">None yet.</p> : (
         <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought · sold</th><th className="num">Days</th>
@@ -87,6 +99,7 @@ function Account({ k, a, maxPos, phone }) {
               <td className={`num ${cls(t.net)}`}><b>{sgn(t.net)}</b></td><td>{EXIT[t.why] || t.why}</td></tr>))}
             <tr><td colSpan={3} className="muted">Total</td><td className={`num ${cls(a.trade_totals.gross)}`}>{sgn(a.trade_totals.gross)}</td>
               <td className="num muted">{inr(a.trade_totals.costs)}</td><td className={`num ${cls(a.trade_totals.net)}`}><b>{sgn(a.trade_totals.net)}</b></td><td /></tr></tbody></table></div>)}
+      </>}
     </div>);
 }
 
@@ -98,6 +111,7 @@ export default function PaperPage() {
   const [err, setErr] = useState('');
   const [cap, setCap] = useState('');
   const [tick, setTick] = useState(0);
+  const [sub, setSub] = useState('overview');
 
   useEffect(() => {
     api.getPaper().then((x) => { setD(x); setErr(''); if (!x.started) setCap(String(x.capital)); }).catch((e) => setErr(e.message));
@@ -138,15 +152,23 @@ export default function PaperPage() {
         {' '}<button className="btn" onClick={reset}>Reset…</button></span>)}
       <AttentionStrip tab="paper" />
       {err && <div className="warn small">{err}</div>}
-      <div className="panel">Today's market filter ({day(a0.decided)} close): {keys.map((k) => <FilterBadge key={k} k={k} f={accts[k].filter} />)}</div>
-      <div className="panel"><h3>Since the start <span className="muted small">· after costs</span></h3>
+      <div className="panel">Today's market filter ({day(a0.decided)} close): {keys.map((k) => <FilterBadge key={k} k={k} f={accts[k].filter} />)}
+        <div className="summary">{keys.map((k) => (
+          <div key={k} className="k"><div className={`v ${cls(accts[k].account.net)}`}>{sgn(accts[k].account.net)}</div>
+            <div className="l"><span className={`v${k}`}>{k}</span> after costs · {pct(accts[k].account.return)}<Tip text="Account value minus the starting capital: price moves minus Zerodha charges and slippage." /></div></div>))}
+          {keys.map((k) => (
+          <div key={`r${k}`} className="k"><div className="v">{accts[k].positions.length} / {accts[k].allowed ? accts[k].cap : d.max_pos}</div>
+            <div className="l"><span className={`v${k}`}>{k}</span> open positions · cash {inr(accts[k].account.cash)}</div></div>))}</div></div>
+      <SubTabs tabs={[['overview', 'Accounts'], ['trades', 'Trade logs'], ['how', 'How it works']]} value={sub} onChange={setSub} />
+      {sub === 'overview' && <div className="panel"><h3>Since the start <span className="muted small">· after costs</span></h3>
         <Curve accts={accts} capital={a0.account.capital} />
         <div className="small">{keys.map((k) => <span key={k} className={`v${k}`}><b>━ {k} {pct(accts[k].account.return)}</b> &nbsp; </span>)}
-          <span className="muted">╍ NIFTY 50 {pct(a0.account.nifty)}</span></div></div>
-      <div className="paperacc">{keys.map((k) => <Account key={k} k={k} a={accts[k]} maxPos={d.max_pos} phone={phone} />)}</div>
+          <span className="muted">╍ NIFTY 50 {pct(a0.account.nifty)}</span></div></div>}
+      {sub !== 'how' && <div className="paperacc">{keys.map((k) => <Account key={k} k={k} a={accts[k]} maxPos={d.max_pos} phone={phone} view={sub} />)}</div>}
       <p className="muted small">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and Zerodha delivery charges (STT, exchange,
         SEBI, GST, stamp, DP). Stops are checked on the day's low after the close (no live intraday price), as in the backtest. Past results don't guarantee future returns.</p>
-      <HowItWorks r={rules} paper />
+      {sub === 'how' && <HowItWorks r={rules} paper open />}
+      {sub === 'overview' && <NextUp />}
     </div>
   );
 }

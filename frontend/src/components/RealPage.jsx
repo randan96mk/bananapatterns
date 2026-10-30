@@ -3,6 +3,8 @@ import * as api from '../services/api';
 import { stamp } from '../timefmt';
 import { useIsPhone } from '../useMedia';
 import AttentionStrip from './AttentionStrip';
+import NextUp from './NextUp';
+import { StopMeter, SubTabs, Tip } from './ui';
 import { FilterBadge } from './BreakoutPage';
 
 const EXIT = { stop: '🛑 stop', exit: '📉 trend exit' };
@@ -21,6 +23,7 @@ export default function RealPage() {
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
   const [cap, setCap] = useState('');
+  const [sub, setSub] = useState('today');
   const reload = () => setTick((t) => t + 1);
 
   useEffect(() => {
@@ -52,14 +55,22 @@ export default function RealPage() {
   const s = d.settings || {};
   const live = d.enabled && !d.killed;
   const A = d.account;
+  const risk = (d.positions || []).reduce((t, x) => t + Math.max(0, x.qty * (x.last - x.stop)), 0);
   return (
     <div className="orb">
       <div className="realbanner"><span>💰 REAL TRADING · orders go to Tradetron by webhook (BUY / EXIT) · never to Kite</span>
         <span className="muted small">{d.started ? <>Started {day(d.start_date)} · capital {inr(A.capital)} · updated {stamp(d.updated_at)}</> : 'Starts at the next evening run'}</span></div>
       <AttentionStrip tab="real" />
       {err && <div className="warn small">{err}</div>}
+      {d.started && <div className="summary" style={{ marginBottom: 12 }}>
+        <div className="k"><div className="v">{inr(A.value)}</div><div className="l">account value · capital {inr(A.capital)}</div></div>
+        <div className="k"><div className={`v ${cls(A.net)}`}>{sgn(A.net)}</div><div className="l">after costs · {pct(A.return)}<Tip text="Account value minus the capital: price moves minus Zerodha charges (estimated; your broker's fills may differ)." /></div></div>
+        <div className="k"><div className="v down">{inr(risk)}</div><div className="l">at risk if every stop hits<Tip text="Sum over open positions of quantity × (last price − stop)." /></div></div>
+        <div className="k"><div className="v">{d.positions.length} / {d.allowed ? d.cap : d.max_pos}</div><div className="l">open positions · cash {inr(A.cash)}</div></div>
+      </div>}
+      <SubTabs tabs={[['today', 'Today'], ['trades', 'Trade log'], ['log', 'Order log']]} value={sub} onChange={setSub} />
 
-      <div className="realctrl">
+      {sub === 'today' && <div className="realctrl">
         <div className="panel"><h3>Controls</h3>
           <label className="realsw"><input type="checkbox" checked={d.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
             <b className={live ? 'up' : 'down'}>{d.enabled ? (d.killed ? 'ON · but the kill switch blocks it' : 'Real trading ON') : 'Real trading OFF'}</b></label>
@@ -98,9 +109,9 @@ export default function RealPage() {
             </tbody></table>)}
           {d.started && <p><button className="linkbtn" onClick={reset}>Reset tracking…</button></p>}
         </div>
-      </div>
+      </div>}
 
-      {d.started && <>
+      {sub === 'today' && d.started && <>
         <div className="panel"><h3>Orders for the next open <span className="muted small">· decided {day(d.decided)} · sent {s.send_time}</span></h3>
           {!d.orders?.length ? <p className="muted">None.</p> : (
             <div className="tablewrap"><table className="grid"><thead><tr><th>Action</th><th>Stock</th><th className="num">Qty</th>
@@ -117,17 +128,28 @@ export default function RealPage() {
 
         <div className="orbcmp">
           <div className="panel"><h3>Open positions ({d.positions.length} of {d.allowed ? d.cap : d.max_pos})</h3>
-            {!d.positions.length ? <p className="muted">None.</p> : (
+            {!d.positions.length ? <p className="muted">None.</p> : phone ? (
+              <div className="pcards">{d.positions.map((x) => (
+                <div key={x.symbol} className="pcard"><div className="t"><span>{x.symbol} <span className="muted small">{x.qty} sh · {x.variant}</span></span>
+                  <span className={cls(x.net)}>{sgn(x.net)}</span></div>
+                  <StopMeter last={x.last} stop={x.stop} wide />
+                  <details><summary>details</summary><div className="small">bought {day(x.in)} at {rs(x.buy)}{x.est ? ' (est.)' : ''} · last {rs(x.last)} ·
+                    stop {rs(x.stop)} · before costs {sgn(x.gross)} · costs {inr(x.costs)}</div></details></div>))}</div>) : (
               <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought</th><th className="num">Stop</th>
-                <th className="num">Last</th><th className="num">After costs</th>{!phone && <th>Strategy</th>}</tr></thead>
+                <th className="num">Last</th><th>Distance to stop</th><th className="num">After costs</th><th>Strategy</th></tr></thead>
                 <tbody>{d.positions.map((x) => (
                   <tr key={x.symbol}><td><b>{x.symbol}</b> <span className="muted small">{x.qty} sh</span></td>
                     <td>{day(x.in)} · {rs(x.buy)}{x.est && <span className="muted small"> (est.)</span>}</td>
-                    <td className="num">{rs(x.stop)}</td><td className="num">{rs(x.last)}</td>
+                    <td className="num">{rs(x.stop)}</td><td className="num">{rs(x.last)}</td><td><StopMeter last={x.last} stop={x.stop} /></td>
                     <td className={`num ${cls(x.net)}`}><b>{sgn(x.net)}</b><div className="muted small">{sgn(x.gross)} − {inr(x.costs)}</div></td>
-                    {!phone && <td className={`v${x.variant}`}>{x.variant}</td>}</tr>))}</tbody></table></div>)}
+                    <td className={`v${x.variant}`}>{x.variant}</td></tr>))}</tbody></table></div>)}
             <p className="muted small">No stop-loss orders: the app checks live prices every {s.stop_check_min} min and sends EXIT when a stop is reached
               {' '}(needs the daily Kite login). Prices are what the app saw when sending (est.), corrected to the day's open in the evening; your broker's fills may differ.</p></div>
+        </div>
+        <NextUp />
+      </>}
+      {sub === 'trades' && d.started && <>
+        <div>
           <div className="panel"><h3>Trade log</h3>
             {!d.trades?.length ? <p className="muted">None yet.</p> : (
               <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought · sold</th><th className="num">Before</th>
@@ -139,14 +161,15 @@ export default function RealPage() {
         </div>
       </>}
 
-      <div className="panel"><h3>Order log <span className="muted small">· every webhook to Tradetron, never deleted (the token is never shown)</span></h3>
+      {sub === 'trades' && !d.started && <p className="muted panel">No trades yet: real trading starts at the next evening run.</p>}
+      {sub === 'log' && <div className="panel"><h3>Order log <span className="muted small">· every webhook to Tradetron, never deleted (the token is never shown)</span></h3>
         {!d.log?.length ? <p className="muted">Nothing sent yet.</p> : (
           <div className="tablewrap"><table className="grid"><thead><tr><th>Time</th><th>Order</th><th>Why</th><th>Tradetron reply</th><th>Status</th></tr></thead>
             <tbody>{d.log.map((o, k) => (
               <tr key={k}><td className="muted">{stamp(o.created_at)}</td><td><b className={o.action === 'BUY' ? 'up' : 'down'}>{o.action}</b> <b>{o.symbol}</b> {o.qty ?? ''}
                 {o.price ? <span className="muted small"> ~{rs(o.price)}</span> : null}</td><td className="muted small">{o.reason}</td>
                 <td className="muted small wrap">{o.reply}</td><td><span className={`pill ${STATUS[o.status] || ''}`}>{o.status}</span></td></tr>))}</tbody></table></div>)}
-      </div>
+      </div>}
       <p className="muted small">Orders go to Tradetron, which routes them to your broker (or keeps them in its offline mode). The app never places
         {' '}an order in Kite; Kite is used only for prices. Past results don't guarantee future returns.</p>
     </div>

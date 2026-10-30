@@ -1,31 +1,55 @@
-// Light / dark theme. The mode (auto / light / dark) is remembered per browser; "auto" follows the
-// system setting. The resolved theme is set as <html data-theme="light|dark"> (index.html sets it
-// before React loads, so there is no flash) and announced with a "themechange" event.
+// Themes. A theme ("skin") sets colours, fonts, corners and shadows; each is light or dark underneath
+// (<html data-theme="light|dark" data-skin="...">) so charts and components keep working. The choice is remembered
+// per browser; "auto" follows the system: Fintech Light by day settings, Precision Dark by night settings.
+// index.html applies the same before React loads (no flash) and a "themechange" event announces changes.
 import { useEffect, useState } from 'react';
 
 const KEY = 'bp.theme';
 const media = () => window.matchMedia('(prefers-color-scheme: light)');
 
+// id -> [label, light|dark]
+export const THEMES = {
+  auto: ['◐ Auto (Fintech Light / Precision Dark)', null],
+  fintech: ['Fintech Light', 'light'],
+  precision: ['Precision Dark', 'dark'],
+  consumer: ['Consumer Black', 'dark'],
+  workspace: ['Pro Workspace', 'dark'],
+  glass: ['Glass', 'dark'],
+  light: ['Classic Light', 'light'],
+  dark: ['Classic Dark', 'dark'],
+};
+
 export function getMode() {
-  try { return localStorage.getItem(KEY) || 'auto'; } catch { return 'auto'; }
+  try { const m = localStorage.getItem(KEY) || 'auto'; return THEMES[m] ? m : 'auto'; } catch { return 'auto'; }
 }
 
-export function resolve(mode) {
-  return mode === 'auto' ? (media().matches ? 'light' : 'dark') : mode;
+// mode -> {skin, theme}
+export function resolveSkin(mode) {
+  const m = THEMES[mode] ? mode : 'auto';
+  if (m === 'auto') return media().matches ? { skin: 'fintech', theme: 'light' } : { skin: 'precision', theme: 'dark' };
+  return { skin: m, theme: THEMES[m][1] };
 }
+
+export const resolve = (mode) => resolveSkin(mode).theme;
 
 export function applyMode(mode) {
   try { localStorage.setItem(KEY, mode); } catch { /* private mode: not remembered */ }
-  const theme = resolve(mode);
+  const { skin, theme } = resolveSkin(mode);
   document.documentElement.dataset.theme = theme;
-  window.dispatchEvent(new CustomEvent('themechange', { detail: theme }));
+  document.documentElement.dataset.skin = skin;
+  window.dispatchEvent(new CustomEvent('themechange', { detail: `${theme}:${skin}` }));
 }
 
 // Follow the system while in auto mode.
 media().addEventListener('change', () => { if (getMode() === 'auto') applyMode('auto'); });
 
+// "light|dark:skin": changes whenever the colours do (charts rebuild on it).
 export function useTheme() {
-  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || resolve(getMode()));
+  const [theme, setTheme] = useState(() => {
+    const d = document.documentElement.dataset;
+    const r = resolveSkin(getMode());
+    return `${d.theme || r.theme}:${d.skin || r.skin}`;
+  });
   useEffect(() => {
     const on = (e) => setTheme(e.detail);
     window.addEventListener('themechange', on);
