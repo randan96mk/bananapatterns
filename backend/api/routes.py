@@ -766,12 +766,29 @@ def flow_node(nid: str, values: dict):
 
 @router.post("/flow/mode")
 def flow_mode(req: FlowMode):
-    if req.mode not in ("off", "signals"):
-        raise HTTPException(422, "mode must be off or signals")
+    if req.mode not in ("off", "signals", "paper"):
+        raise HTTPException(422, "mode must be off, signals or paper")
     st = S()
     st.config.flow.mode = req.mode
     save_config(st.config)
     return {"mode": req.mode}
+
+
+@router.put("/flow/layout")
+def flow_layout(pos: dict):
+    """Save box positions dragged on the canvas: {node: [x, y]}; an empty body resets to the template's layout."""
+    from backend.intraday import flow
+    if not pos:
+        flow.reset_layout()
+        return {}
+    return flow.set_layout(pos)
+
+
+@router.get("/flow/journal")
+def flow_journal(days: int = 30):
+    """Closed paper trades: totals, by side / setup / time of day, the daily curve."""
+    from backend.intraday import flow
+    return flow.journal(max(1, min(days, 365)))
 
 
 @router.post("/flow/run")

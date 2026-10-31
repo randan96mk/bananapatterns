@@ -658,3 +658,7 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 .flowfield { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rowline); font-size: 13px; }
 .flownum { width: 80px; }
 .flowchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.flowtools { position: sticky; top: 0; left: 0; z-index: 5; display: flex; gap: 8px; align-items: center; padding: 8px 10px; }
+.flowcanvas.full { position: fixed; inset: 0; z-index: 60; border-radius: 0; background-color: var(--bg); }
+.fnode { touch-action: none; user-select: none; } .fnode.dragging { cursor: grabbing; opacity: .9; box-shadow: var(--shadow), 0 16px 40px rgba(0,0,0,.35); z-index: 3; }
+.flowpanel.floating { position: fixed; right: 16px; bottom: 16px; width: 300px; z-index: 61; }

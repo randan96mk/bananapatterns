@@ -790,9 +790,18 @@ class Scheduler:
         rep = res["report"]
         return int(self.notifier().send(f"{rep['as_of']}|paper", "plan", msg.paper_report(rep), silent=True))
 
-    def _flow_alert(self, sig: dict) -> None:
-        """⚡ Intraday Flow signal (signals only): a loud Telegram line."""
-        self.notifier().send(f"{datetime.now(IST).date()}|flow|{sig['symbol']}", "flow", msg.flow_signal(sig))
+    def _flow_alert(self, kind: str, data: dict) -> None:
+        """⚡ Intraday Flow: signals, paper fills / exits, the daily loss limit and the day's summary (loud)."""
+        d = datetime.now(IST).date()
+        if kind == "signal":
+            self.notifier().send(f"{d}|flow|{data['symbol']}", "flow", msg.flow_signal(data))
+        elif kind == "event":
+            p, ev = data["position"], data["event"]
+            self.notifier().send(f"{d}|flow-ev|{p.get('id')}|{ev['t']}|{ev.get('why', 'fill')}", "flow", msg.flow_event(p, ev))
+        elif kind == "loss_limit":
+            self.notifier().send(f"{d}|flow-loss", "flow", msg.flow_loss(data))
+        elif kind == "summary":
+            self.notifier().send(f"{d}|flow-summary", "flow", msg.flow_summary(data))
 
     def run_real_evening(self) -> int:
         """Mark the real account and plan tomorrow's orders (a loud message when there are any)."""

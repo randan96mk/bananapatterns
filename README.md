@@ -1896,3 +1896,17 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Extensible: modules register themselves (`backend/intraday/modules.py`: settings schema + run); templates wire them
   (`flow.TEMPLATES`); every run and signal is saved (`flow_runs`, `flow_signals`). Telegram: loud ⚡ INTRADAY SIGNAL,
   "signal only, no order placed". Phases 2–4: stop/size + paper, replay from saved data, real via Tradetron.
+
+### 2026-11-01: ⚡ Intraday Flow (phase 2: paper trading, long & short)
+- **Long and short**: ORB buys above the opening-range high and sells short below its low; Daily trend, Intraday
+  filters and the new **Market context** box (NIFTY vs VWAP / 20-EMA, INDIA VIX range, breadth) are side-aware.
+- **Score & rank** (RVOL, relative strength, RSI weights; top K). **Stop & target**: stop from ORB / ATR / signal bar /
+  VWAP / %, min–max stop %, target in R, partial booking, trailing (off / breakeven / previous bar / ATR / %, after N·R),
+  time stop, square-off time.
+- **Size & risk** from the configured capital (default ₹1,00,000): risk % per trade (0.5% = ₹500), max position %,
+  max open, max 6 trades a day, daily loss limit % (1.5% = ₹1,500). Change the capital and every limit follows.
+- **📝 Paper mode**: fills at the next 1-minute open + 0.05% slippage, Zerodha intraday charges, positions managed at
+  every 1-minute close (restart-safe, `flow_positions`). Telegram: entries, exits, loss-limit hit, day summary.
+  Sub-tabs **Flow · Positions · Journal** (by side, setup, time of day; equity curve). No order is ever sent.
+- **⛶ Full screen** canvas (Esc to exit) and **draggable boxes**; the layout is saved (`PUT /api/flow/layout`),
+  **↺ Reset layout** restores the template.

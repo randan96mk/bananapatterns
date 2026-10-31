@@ -71,6 +71,8 @@ export const getFlow = () => req('GET', '/api/flow');
 export const flowNode = (id, values) => req('PUT', `/api/flow/node/${id}`, values);
 export const flowMode = (mode) => req('POST', '/api/flow/mode', { mode });
 export const flowRun = () => req('POST', '/api/flow/run');
+export const flowLayout = (pos) => req('PUT', '/api/flow/layout', pos);
+export const flowJournal = (days) => req('GET', `/api/flow/journal?days=${days}`);
 export const getReal = () => req('GET', '/api/real');
 export const realSettings = (body) => req('POST', '/api/real/settings', body);
 export const realKill = (on) => req('POST', `/api/real/kill?on=${on}`);

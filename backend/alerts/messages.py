@@ -700,11 +700,33 @@ def tb_name(variant: str, top: Optional[int] = None) -> str:
 
 def flow_signal(s: dict) -> str:
     """⚡ Intraday Flow signal (phase 1: signals only, no order)."""
-    bits = [f"⚡ <b>INTRADAY SIGNAL</b> · {escape(s.get('signal') or 'BUY')} <b>{escape(s['symbol'])}</b> at {_rup(s['entry'])}"]
+    paper = s.get("mode") == "paper"
+    head = "📝 <b>PAPER INTRADAY</b>" if paper else "⚡ <b>INTRADAY SIGNAL</b>"
+    bits = [f"{head} · {escape(s.get('signal') or 'BUY')} <b>{escape(s['symbol'])}</b> at {_rup(s['entry'])}"
+            + (f" · {s['qty']} sh · risk {_rup(s['risk_rs'])}" if s.get("qty") else "")]
     if s.get("sl"):
         bits.append(f"SL {_rup(s['sl'])} · target {_rup(s['target'])}")
     extra = [f"RVOL {s['rvol']}×" if s.get("rvol") else "", f"RSI {s['rsi']}" if s.get("rsi") else ""]
     if any(extra):
         bits.append(" · ".join(x for x in extra if x))
-    bits.append("<i>signal only, no order placed</i>")
+    bits.append("<i>paper trade (simulated), fills at the next minute's open</i>" if paper else "<i>signal only, no order placed</i>")
     return "\n".join(bits)
+
+
+def flow_event(p: dict, ev: dict) -> str:
+    side = "BUY" if p["side"] == "long" else "SELL"
+    if "fill" in ev:
+        return (f"📝 <b>PAPER INTRADAY</b> · filled {side} <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['fill'])} · "
+                f"SL {_rup(p['stop0'])}" + (f" · target {_rup(p['target'])}" if p.get("target") else ""))
+    return (f"📝 <b>PAPER INTRADAY</b> · exit <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['price'])} · {escape(ev['why'])} · "
+            f"gross {_signed(ev['gross'])} · costs ₹{ev['costs']:,.0f} · net <b>{_signed(ev['net'])}</b>")
+
+
+def flow_loss(st: dict) -> str:
+    return (f"📝 <b>PAPER INTRADAY</b> · 🛑 daily loss limit hit: {_signed(st['realised'])} (limit −₹{st['loss_limit']:,.0f}). "
+            "No new entries today; open positions keep their exits.")
+
+
+def flow_summary(st: dict) -> str:
+    return (f"📝 <b>PAPER INTRADAY · day summary</b>\n{st['trades']} trades · {st['won']} won · net after costs "
+            f"<b>{_signed(st['realised'])}</b> on ₹{st['capital']:,.0f}")
