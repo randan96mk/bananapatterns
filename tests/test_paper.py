@@ -51,7 +51,6 @@ def cfg(capital=200_000.0):
 
 
 def check_account(c, data, s, key):
-    from dataclasses import replace
     p = tb.rules(c, key)
     eq, eqg, trades, _ = tb.simulate(data["cal"], data["S"], data["index_ok"], p, p.slippage_pct, s,
                                      capital=200_000.0, close_end=False, filters=data["filters"])
