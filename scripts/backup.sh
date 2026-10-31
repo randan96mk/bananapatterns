@@ -76,6 +76,8 @@ trap 'rm -rf "$TMP"' EXIT
 # SQLite's online backup: a consistent copy even while the app writes (WAL mode)
 sqlite3 "$DB" ".timeout 30000" ".backup '$TMP/bananapatterns.db'" 2>>"$LOG" || fail "sqlite3 .backup failed"
 sqlite3 "$TMP/bananapatterns.db" "PRAGMA journal_mode = DELETE" >/dev/null 2>&1 || true   # one self-contained file
+# intraday 1-minute candles (⚡ Intraday Flow) can be re-fetched from Kite: left out to keep backups small
+sqlite3 "$TMP/bananapatterns.db" "DELETE FROM candles_intraday; VACUUM" >/dev/null 2>>"$LOG" || true
 check="$(sqlite3 -readonly "$TMP/bananapatterns.db" "PRAGMA integrity_check" 2>&1 | head -1 || true)"
 [ "$check" = "ok" ] || fail "integrity check on the copy: ${check:-no answer}"
 tables="$(sqlite3 -readonly "$TMP/bananapatterns.db" "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'" \

@@ -696,3 +696,15 @@ def real_nologin(at: str) -> str:
 def tb_name(variant: str, top: Optional[int] = None) -> str:
     base = {"A": "A · 200-day filter", "E": "E · half filter"}.get(variant, variant)
     return f"{base}, top {top}" if top else base
+
+
+def flow_signal(s: dict) -> str:
+    """⚡ Intraday Flow signal (phase 1: signals only, no order)."""
+    bits = [f"⚡ <b>INTRADAY SIGNAL</b> · {escape(s.get('signal') or 'BUY')} <b>{escape(s['symbol'])}</b> at {_rup(s['entry'])}"]
+    if s.get("sl"):
+        bits.append(f"SL {_rup(s['sl'])} · target {_rup(s['target'])}")
+    extra = [f"RVOL {s['rvol']}×" if s.get("rvol") else "", f"RSI {s['rsi']}" if s.get("rsi") else ""]
+    if any(extra):
+        bits.append(" · ".join(x for x in extra if x))
+    bits.append("<i>signal only, no order placed</i>")
+    return "\n".join(bits)

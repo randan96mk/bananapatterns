@@ -376,6 +376,14 @@ class RealConfig:
     max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 2L = 30,000)
 
 
+@dataclass
+class FlowConfig:
+    """⚡ Intraday Flow (signals only in phase 1). Node settings are saved per node in app_settings (flow.nodes)."""
+    mode: str = "off"                      # off / signals
+    warmup_days: int = 2                   # saved sessions of 1-minute bars used to warm indicators up
+    retention_months: int = 12             # 1-minute bars kept this long, then shrunk to 5-minute bars
+
+
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
                "top_setups_time", "morning_plan_time", "gap_check_time")
 
@@ -405,7 +413,8 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
                       "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
-                      "paper": PaperConfig, "real": RealConfig}
+                      "paper": PaperConfig, "real": RealConfig,
+                      "flow": FlowConfig}
 
 
 @dataclass
@@ -423,6 +432,7 @@ class AppConfig:
     breakout: BreakoutConfig = field(default_factory=BreakoutConfig)
     paper: PaperConfig = field(default_factory=PaperConfig)
     real: RealConfig = field(default_factory=RealConfig)
+    flow: FlowConfig = field(default_factory=FlowConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

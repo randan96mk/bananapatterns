@@ -184,6 +184,14 @@ class KiteClient:
                         "low": float(r.get("low") or r["close"]), "volume": r.get("volume") or 0})
         return out
 
+    def historical_minute(self, token: int, start: date, end: date, label: str = "") -> list[dict]:
+        """1-minute candles for the sessions [start, end] (60-day requests, Kite's minute-data limit)."""
+        out = []
+        for c_start, c_end in _date_chunks(start, end, 60):
+            out += self._call(self.hist_bucket, f"historical_data({label or token} {c_start}..{c_end} minute)",
+                              self.kite.historical_data, token, f"{c_start} 09:00:00", f"{c_end} 15:35:00", "minute")
+        return out
+
     # --- core ---
 
     def _call(self, bucket: Optional[TokenBucket], what: str, fn, *args, **kwargs):
