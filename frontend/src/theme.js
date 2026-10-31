@@ -15,6 +15,7 @@ export const THEMES = {
   consumer: ['Consumer Black', 'dark'],
   workspace: ['Pro Workspace', 'dark'],
   glass: ['Glass', 'dark'],
+  clay: ['Clay', 'light'],
   light: ['Classic Light', 'light'],
   dark: ['Classic Dark', 'dark'],
 };

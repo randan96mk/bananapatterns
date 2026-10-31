@@ -6,7 +6,7 @@
     <script>
       // set the theme before the first paint (no dark/light flash); see src/theme.js
       (function () {
-        var m = 'auto', skins = { fintech: 'light', precision: 'dark', consumer: 'dark', workspace: 'dark', glass: 'dark',
+        var m = 'auto', skins = { fintech: 'light', precision: 'dark', consumer: 'dark', workspace: 'dark', glass: 'dark', clay: 'light',
           light: 'light', dark: 'dark' };
         try { m = localStorage.getItem('bp.theme') || 'auto'; } catch (e) {}
         if (!(m in skins)) m = window.matchMedia('(prefers-color-scheme: light)').matches ? 'fintech' : 'precision';
