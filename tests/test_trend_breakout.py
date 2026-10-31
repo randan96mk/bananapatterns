@@ -174,7 +174,7 @@ def test_run_scan_and_api(monkeypatch):
     for v in ("A", "E"):
         x = s["variants"][v]
         assert [y["name"] for y in x["splits"]] == ["Development", "Validation", "Out-of-sample"]
-        assert len(x["robust"]) == 14 and s["sessions"] == len(x["curve"]["normal"]) == len(s["curve"]["dates"])
+        assert len(x["robust"]) == (14 if v == "A" else 18) and s["sessions"] == len(x["curve"]["normal"]) == len(s["curve"]["dates"])
         assert x["normal"]["net"] == pytest.approx(x["normal"]["gross"] - x["normal"]["costs"], abs=0.02)
         assert 0 <= x["allowed_pct"] <= 100
     sc = tb.run_scan(cfg, FakeKite())

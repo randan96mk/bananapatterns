@@ -61,6 +61,8 @@ def _new(key: str, data: dict, i: int, cap: float, p) -> dict:
     st = {"variant": key, "name": tb.variant_name(key, p.top), "top": p.top, "started": data["cal"][i], "capital": cap, "cash": cap,
           "charges": 0.0, "slippage": 0.0, "as_of": data["cal"][i], "positions": {}, "orders": [],
           "started_at": now_ist(), "updated_at": now_ist()}
+    if p.late_at:                                         # started as E+: nothing to migrate
+        st["eplus_since"] = data["cal"][i]
     _decide(st, data, i, p)
     _save(key, st, [], [], [(data["cal"][i], cap, cap, data["index_close"][i])])
     return st
@@ -134,7 +136,8 @@ def _step(st: dict, data: dict, i: int, p) -> tuple[list, list]:
         t = {"symbol": sym, "qty": pos["qty"], "in": pos["d"], "out": d, "buy": round(pos["px"], 2),
              "sell": round(px, 2), "stop": round(pos["stop"], 2), "days": pos["days"], "gross": round(gross, 2),
              "charges": round(charges, 2), "slippage": round(slippage, 2), "costs": round(charges + slippage, 2),
-             "net": round(gross - charges - slippage, 2), "why": why}
+             "net": round(gross - charges - slippage, 2), "why": why,
+             "best": round(pos.get("best") or pos["px"], 2)}
         trades.append(t)
         fills.append({"day": d, "action": "SELL", "symbol": sym, "qty": pos["qty"], "price": round(px, 2), "why": why,
                       "gross": t["gross"], "costs": t["costs"], "net": t["net"], "days": pos["days"]})
@@ -166,6 +169,7 @@ def _step(st: dict, data: dict, i: int, p) -> tuple[list, list]:
         st["charges"] += ch
         st["slippage"] += sl
         pos_all[sym] = {"qty": qty, "px": b["open"], "d": d, "stop": o["stop"], "last": b["open"], "prev": b["open"],
+                        "best": b["open"],
                         "charges": ch, "slippage": sl, "days": 0}
         fills.append({"day": d, "action": "BUY", "symbol": sym, "qty": qty, "price": round(b["open"], 2),
                       "stop": round(o["stop"], 2), "value": round(qty * f, 2), "charges": round(ch, 2),
@@ -177,10 +181,49 @@ def _step(st: dict, data: dict, i: int, p) -> tuple[list, list]:
         pos = pos_all[sym]
         pos["days"] += 1
         if pos["stop"] and b["low"] <= pos["stop"]:
-            close_pos(sym, min(b["open"], pos["stop"]), "stop")
+            close_pos(sym, min(b["open"], pos["stop"]), "trail" if pos.get("trailed") else "stop")
             continue
         pos["prev"], pos["last"] = pos["last"], b["close"]
+        if p.late_at:                                     # E+: the late trail from today's close, used tomorrow
+            new = tb.raise_late(pos, b["close"], p)
+            if new is not None:
+                st.setdefault("raised", []).append(_raise_note(sym, pos, d))
     return trades, fills
+
+
+def _raise_note(sym: str, pos: dict, d: str) -> dict:
+    return {"day": d, "symbol": sym, "stop": round(pos["stop"], 2), "best": round(pos["best"], 2), "entry": round(pos["px"], 2)}
+
+
+def best_since(S: dict, sym: str, since: str, until: str) -> Optional[float]:
+    """The highest stored daily close of sym from `since` (the entry day) to `until`, both included."""
+    s = S.get(sym)
+    if not s:
+        return None
+    xs = [r["close"] for r in s["rows"] if since <= r["date"] <= until]
+    return max(xs) if xs else None
+
+
+def migrate_eplus(st: dict, data: dict, p) -> list:
+    """Once, when E becomes E+: each open position's best close is backfilled from the stored daily candles (entry
+    day to the last processed session) and the late trail is applied from that close, for the next session. Past
+    days are not re-simulated; a stop is never lowered. Returns the raises."""
+    if not p.late_at or st.get("eplus_since"):
+        return []
+    raised = []
+    for sym, pos in st["positions"].items():
+        best = best_since(data["S"], sym, pos["d"], st["as_of"])
+        if best is None:
+            best = max(pos["px"], pos["last"])
+        pos["best"] = best
+        if tb.raise_late(pos, best, p) is not None:
+            raised.append(_raise_note(sym, pos, st["as_of"]))
+    st["eplus_since"] = st["as_of"]
+    st["name"] = tb.variant_name(st.get("variant", "E"), p.top)
+    st.setdefault("notes", []).append({"day": st["as_of"], "text": f"strategy updated to E+ on {st['as_of']}: late "
+                                       f"trail ({p.late_pct:g}% under the highest close once +{p.late_at:g}%); best "
+                                       f"closes backfilled for {len(st['positions'])} open position(s)"})
+    return raised
 
 
 def _advance(key: str, st: dict, data: dict, p) -> int:
@@ -190,6 +233,7 @@ def _advance(key: str, st: dict, data: dict, p) -> int:
         st.setdefault("notes", []).append({"day": st["as_of"], "text": f"universe top {st.get('top', 200)} → top {p.top} "
                                                                        f"for new buys from the next session"})
         st["top"], st["name"] = p.top, tb.variant_name(key, p.top)
+    st["raised"] = migrate_eplus(st, data, p)            # once; then the trail runs in _step
     new = [i for i, d in enumerate(cal) if d > st["as_of"]]
     all_trades, all_fills, equity = [], [], []
     for i in new:
@@ -250,6 +294,7 @@ def report(states: dict) -> Optional[dict]:
         return None
     as_of = max(st["as_of"] for st in states.values())
     accounts = {k: {"name": st["name"], "fills": _fills(k, st["as_of"]), "orders": st.get("orders", []),
+                    "raised": st.get("raised", []),
                     "account": account(k, st), "cap": st.get("cap", 10), "allowed": st.get("allowed")}
                 for k, st in sorted(states.items())}
     first = next(iter(accounts.values()))["account"]
@@ -298,6 +343,8 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
         positions.append({"symbol": sym, "qty": x["qty"], "in": x["d"], "buy": round(x["px"], 2),
                           "last": round(x["last"], 2), "stop": round(x["stop"], 2), "sma": data_sma.get(sym),
                           "days": x["days"], "gross": round(gross, 2), "costs": round(costs, 2),
+                          "best": round(x["best"], 2) if x.get("best") else None, "trailed": bool(x.get("trailed")),
+                          "trail_active": bool(p.late_at and x.get("best") and x["best"] >= x["px"] * (1 + p.late_at / 100)),
                           "net": round(gross - costs, 2),
                           "warning": "big overnight change: split or bonus?" if jump else None})
     won = [t for t in trades if t["net"] > 0]

@@ -8,6 +8,7 @@
 
 import copy
 import sys
+from dataclasses import replace
 
 from backend.config import load_config
 from backend.database.models import init_db
@@ -27,7 +28,7 @@ def main() -> None:
         sys.exit(data["error"])
     cal, S = data["cal"], data["S"]
     i = len(cal) - 1
-    pa, pe = tb.rules(config, "A"), tb.rules(config, "E")
+    pa, pe = tb.rules(config, "A"), replace(tb.rules(config, "E"), late_at=0.0)   # E before E+ (no late trail)
     order = tb.ranked_by_turnover(S, i, pe.min_price)
     ua, ue = tb.liquid(S, i, pa.top), tb.liquid(S, i, pe.top)
     print(f"\n1) Sample day {cal[i]}: A universe {len(ua)} (top {pa.top}) · E universe {len(ue)} (top {pe.top}) · "
@@ -48,7 +49,7 @@ def main() -> None:
         nb = sum(tb.evaluate(q, cal, S, data["index_ok"], first, nifty_cagr, data["filters"])["ok"]
                  for _, q in tb.neighbours(p))
         e = EXPECTED[key]
-        print(f"   {tb.variant_name(key, p.top):<32} trades {r['trades']} (exp {e['trades']}) · CAGR {r['cagr']:.1f}% (exp {e['cagr']}) · "
+        print(f"   {tb.variant_name(key, p.top, bool(p.late_at)):<32} trades {r['trades']} (exp {e['trades']}) · CAGR {r['cagr']:.1f}% (exp {e['cagr']}) · "
               f"stressed {r['stress_cagr']:.1f}% (exp {e['stress_cagr']}) · PF {r['profit_factor']} (exp {e['pf']}) · "
               f"worst DD -{r['drawdown']:.0f}% (exp -{e['dd']}%) · robust {nb}/14 (exp {e['robust']})")
 

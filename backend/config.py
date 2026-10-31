@@ -347,6 +347,10 @@ class BreakoutConfig:
     slippage_pct: float = 0.10             # each fill
     stress_slippage_pct: float = 0.25
     sell_pct: float = 8.0                  # evening scan: a holding this far under its average price is a sell
+    late_at: float = 0.0                   # late trailing stop: active once the best close is late_at % over the
+    late_pct: float = 25.0                 # entry; stop = best close x (1 - late_pct %), only ever raised (0 = off)
+    late_at_e: float = 100.0               # E+ (Nov 2026): E's late trail, +100% / 25% under the best close (X2);
+    late_pct_e: float = 25.0               # A has none
     regime_mode: str = "sma200"            # market filter: sma200 (A) or half (E: 10 slots over the 200-day SMA,
                                            # 5 over the 50-day, none under it); the tab and paper run both
 
