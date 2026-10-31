@@ -62,6 +62,17 @@ def set_layout(pos: dict) -> dict:
     return cur
 
 
+def stopped() -> bool:
+    """⏹ The intraday kill switch: while on, no live data, no runs, no signals, no paper trades (kept across restarts)."""
+    with get_db() as conn:
+        return get_setting(conn, "flow.stopped") == "1"
+
+
+def set_stopped(on: bool) -> None:
+    with get_db() as conn:
+        set_setting(conn, "flow.stopped", "1" if on else "0")
+
+
 def reset_layout() -> None:
     with get_db() as conn:
         set_setting(conn, "flow.layout", "{}")
@@ -131,6 +142,8 @@ class Ctx:
 
     def open_paper(self, it: dict) -> None:
         from backend.intraday import positions as pos
+        if stopped():
+            return
         pos.open_new(self.day, it, it["signal_bar"]["t"], it["plan"])
 
     def today_bars(self, it):
@@ -233,7 +246,7 @@ def state(config: AppConfig, day: Optional[str] = None) -> dict:
     from backend.intraday import feed
     return {"template": t["name"], "mode": config.flow.mode, "interval": cfgs["trigger"]["interval"], "nodes": nodes,
             "signals": sigs, "last_run": json.loads(last["payload"]) if last else None, "feed": feed.status(),
-            "running": _state["running"], "positions": _positions(today), "stats": _stats(today)}
+            "running": _state["running"], "stopped": stopped(), "positions": _positions(today), "stats": _stats(today)}
 
 
 def _positions(day: str) -> list[dict]:

@@ -730,3 +730,10 @@ def flow_loss(st: dict) -> str:
 def flow_summary(st: dict) -> str:
     return (f"📝 <b>PAPER INTRADAY · day summary</b>\n{st['trades']} trades · {st['won']} won · net after costs "
             f"<b>{_signed(st['realised'])}</b> on ₹{st['capital']:,.0f}")
+
+
+def flow_switch(kind: str, st: dict) -> str:
+    if kind == "started":
+        return "▶ <b>INTRADAY STARTED</b>\nLive data and the flow resume from the next candle."
+    return (f"⏹ <b>INTRADAY STOPPED</b>\n{st.get('squared', 0)} paper positions squared off · today net after costs "
+            f"<b>{_signed(st.get('realised', 0))}</b>\nNo live data, signals or trades until ▶ Start.")

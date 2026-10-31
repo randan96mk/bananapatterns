@@ -167,8 +167,21 @@ def manage(day: str, bars_of, now_t: str) -> list[dict]:
     return out
 
 
+def square_off_all(day: str, price_of, t: str, why: str = "stopped") -> list:
+    """⏹ Stop intraday: every open position out at its last price, pending ones cancelled. Returns [(position, event)]."""
+    out = []
+    for p in load(day, ("pending", "open")):
+        if p["status"] == "pending":
+            p.update(status="cancelled", reason=why)
+        else:
+            px = price_of(p["token"]) or p.get("last_price") or p["entry"]
+            out.append((p, _exit(p, px, t, why)))
+        _save(p)
+    return out
+
+
 def day_stats(day: str) -> dict:
-    ps = load(day)
+    ps = [p for p in load(day) if p["status"] != "cancelled"]
     closed = [p for p in ps if p["status"] == "closed"]
     open_ = [p for p in ps if p["status"] in ("pending", "open")]
     realised = sum(p["net"] for p in closed)

@@ -230,6 +230,8 @@ def test_api(monkeypatch):
         assert next(n for n in tc.get("/api/flow").json()["nodes"] if n["id"] == "orb")["y"] == 700
         assert tc.put("/api/flow/layout", json={}).json() == {}
         assert tc.post("/api/flow/run").json()["status"] == "ok"
+        assert tc.post("/api/flow/stop").json()["squared"] == 0 and tc.get("/api/flow").json()["stopped"]
+        assert tc.post("/api/flow/start").json() == {"stopped": False} and not tc.get("/api/flow").json()["stopped"]
 
 
 def test_manage_runs_minute_by_minute_and_survives_a_restart():
@@ -243,3 +245,41 @@ def test_manage_runs_minute_by_minute_and_survives_a_restart():
     ev = pos.manage(DAY, lambda tok: day, "10:06")                                  # after a "restart": continues at 10:03
     p = pos.load(DAY)[0]
     assert p["status"] == "closed" and p["reason"] == "target" and [e["why"] for _, e in ev] == ["target"]
+
+
+def test_stop_squares_off_and_blocks_everything(monkeypatch):
+    from backend.intraday import feed
+    from backend.intraday import positions as pos
+    stocks = setup(monkeypatch)
+    loose()
+
+    class St:
+        config = AppConfig()
+        client = type("C", (), {"has_token": True})()
+    St.config.flow.mode = "paper"
+    r = feed.Runner(St())
+    r.day = DAY
+    it = {"symbol": "S", "token": 7, "side": "short", "qty": 10, "entry": 100, "sl": 102, "target": 96}
+    o = pos.open_new(DAY, it, "10:00", {"squareoff": "15:15"})
+    pos.step(o, {"t": "10:01", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}, None, {"squareoff": "15:15"})
+    pos._save(o)
+    pos.open_new(DAY, {**it, "symbol": "P", "token": 8}, "10:05", {"squareoff": "15:15"})   # still pending
+    f = feed_with(stocks)
+    f.builder.add(7, 98, 0, at(10, 6, 10))                                         # last price 98 (short: a profit)
+
+    class FakeFeed:
+        builder, tokens = f.builder, []
+        stop = lambda self: None
+    r.feed = FakeFeed()
+    sent = []
+    out = r.stop_all(at(10, 6, 30), lambda k, d: sent.append(k))
+    ps = {p["symbol"]: p for p in pos.load(DAY)}
+    assert out["squared"] == 1 and ps["S"]["status"] == "closed" and ps["S"]["reason"] == "stopped" and ps["S"]["gross"] > 0
+    assert ps["P"]["status"] == "cancelled" and pos.day_stats(DAY)["trades"] == 1
+    assert sent == ["event", "stopped"] and r.feed is None and r.kept is f.builder and flow.stopped()
+    assert r.tick(at(10, 10, 5), True) is None                                     # no feed, no runs while stopped
+    res = flow.run_now(St.config, f, now=at(10, 10))
+    assert len(pos.load(DAY)) == 2 and res["signals"] >= 0                          # no new paper positions
+    r.start_all(lambda k, d: sent.append(k))
+    assert not flow.stopped() and sent[-1] == "started"
+    assert r.tick(at(10, 10, 5), True) in ("warm_up", "feed")                       # resumes

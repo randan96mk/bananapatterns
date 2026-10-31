@@ -70,6 +70,8 @@ export const getSchedule = () => req('GET', '/api/schedule');
 export const getFlow = () => req('GET', '/api/flow');
 export const flowNode = (id, values) => req('PUT', `/api/flow/node/${id}`, values);
 export const flowMode = (mode) => req('POST', '/api/flow/mode', { mode });
+export const flowStop = () => req('POST', '/api/flow/stop');
+export const flowStart = () => req('POST', '/api/flow/start');
 export const flowRun = () => req('POST', '/api/flow/run');
 export const flowLayout = (pos) => req('PUT', '/api/flow/layout', pos);
 export const flowJournal = (days) => req('GET', `/api/flow/journal?days=${days}`);

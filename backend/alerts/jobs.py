@@ -802,6 +802,9 @@ class Scheduler:
             self.notifier().send(f"{d}|flow-loss", "flow", msg.flow_loss(data))
         elif kind == "summary":
             self.notifier().send(f"{d}|flow-summary", "flow", msg.flow_summary(data))
+        elif kind in ("stopped", "started"):
+            at = datetime.now(IST).strftime("%H%M%S")
+            self.notifier().send(f"{d}|flow-{kind}|{at}", "flow", msg.flow_switch(kind, data))
 
     def run_real_evening(self) -> int:
         """Mark the real account and plan tomorrow's orders (a loud message when there are any)."""

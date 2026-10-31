@@ -1910,3 +1910,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   Sub-tabs **Flow · Positions · Journal** (by side, setup, time of day; equity curve). No order is ever sent.
 - **⛶ Full screen** canvas (Esc to exit) and **draggable boxes**; the layout is saved (`PUT /api/flow/layout`),
   **↺ Reset layout** restores the template.
+- **⏹ Stop intraday / ▶ Start intraday** (the kill switch at the top of the tab): Stop squares off every open paper position
+  at its last price, cancels pending ones, closes the live feed and stops all runs, signals and alerts; a red STOPPED
+  banner shows, and the ⏱ status bar shows it as stopped. It stays stopped across restarts and days until ▶ Start.
+  Today's bars are kept, and the gap is re-fetched from Kite at the day close (or by the next day's warm-up).
+  Telegram: one message on stop, one on start.

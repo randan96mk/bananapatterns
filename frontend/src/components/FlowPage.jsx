@@ -81,6 +81,10 @@ export default function FlowPage() {
   const node = byId[sel] || d.nodes[0];
   const setMode = (mode) => api.flowMode(mode).then(load).catch((e) => setErr(e.message));
   const change = (key, v) => api.flowNode(node.id, { [key]: v }).then(load).catch((e) => setErr(e.message));
+  const toggleStop = () => {
+    if (!d.stopped && !window.confirm(`Stop all intraday activity?${d.stats?.open ? `\n${d.stats.open} open paper position(s) will be squared off at the last price.` : ''}\nNo live data, signals or trades until you press Start.`)) return;
+    (d.stopped ? api.flowStart() : api.flowStop()).then(load).catch((e) => setErr(e.message));
+  };
   const runNow = () => api.flowRun().then(load).catch((e) => setErr(e.message));
   const maxX = Math.max(...nodes.map((n) => n.x)) + W + 30, maxY = Math.max(...nodes.map((n) => n.y)) + H + 30;
   const f = d.feed || {};
@@ -89,6 +93,8 @@ export default function FlowPage() {
     <div className="flowpage">
       <div className="flowtop">
         <b className="flowtitle">⚡ Intraday Flow</b>
+        <button className={`btn killbtn ${d.stopped ? 'start' : 'stop'}`} onClick={toggleStop}>
+          {d.stopped ? '▶ Start intraday' : '⏹ Stop intraday'}</button>
         <span className="sb">Template: <b>{d.template}</b></span>
         <span className="seg">{MODES.map(([id, label]) => (
           <button key={id} className={d.mode === id ? 'active' : ''} onClick={() => setMode(id)}>{label}</button>))}</span>
@@ -98,6 +104,8 @@ export default function FlowPage() {
         {d.last_run && <span className="sb">Last run {ist(d.last_run.at)} · {d.last_run.ms} ms</span>}
         <button className="btn" onClick={runNow} disabled={d.running}>{d.running ? 'Running…' : '▶ Run now'}</button>
       </div>
+      {d.stopped && <div className="stopbanner">⏹ <b>INTRADAY STOPPED</b> · no live data, no flow runs, no signals, no paper
+        trades. Stays stopped (also after a restart or the next day) until you press ▶ Start intraday.</div>}
       {err && <div className="warn small">{err}</div>}
       {d.stats && <div className="summary" style={{ marginBottom: 12 }}>
         <div className="k"><div className={`v ${cls(d.stats.realised + d.stats.unrealised)}`}>{signed(d.stats.realised + d.stats.unrealised)}</div>

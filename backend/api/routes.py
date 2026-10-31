@@ -774,6 +774,31 @@ def flow_mode(req: FlowMode):
     return {"mode": req.mode}
 
 
+def _flow_runner():
+    from backend.intraday import feed
+    if feed.RUNNER is None:
+        feed.RUNNER = feed.Runner(S())
+    return feed.RUNNER
+
+
+def _flow_notify():
+    sch = S().scheduler
+    return sch._flow_alert if sch else None
+
+
+@router.post("/flow/stop")
+def flow_stop():
+    """⏹ Stop all intraday activity: paper positions squared off at the last price, live feed closed, no runs or
+    signals until ▶ start (kept across restarts and days)."""
+    return _flow_runner().stop_all(datetime.now(IST), _flow_notify())
+
+
+@router.post("/flow/start")
+def flow_start():
+    _flow_runner().start_all(_flow_notify())
+    return {"stopped": False}
+
+
 @router.put("/flow/layout")
 def flow_layout(pos: dict):
     """Save box positions dragged on the canvas: {node: [x, y]}; an empty body resets to the template's layout."""
