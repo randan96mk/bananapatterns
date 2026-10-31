@@ -154,6 +154,13 @@ class Scheduler:
         today = now.date()
         jobs = due_jobs(now, self.state.config.alerts, self.done_today(today), hol.is_trading_day(today),
                         self.last_intraday, self.not_before, self.last_login_check, self.last_filings)
+        try:                                               # ⚡ Intraday Flow: warm-up, live feed, runs, day close
+            from backend.intraday import feed
+            if feed.RUNNER is None:
+                feed.RUNNER = feed.Runner(self.state)
+            feed.RUNNER.tick(now, hol.is_trading_day(today), self._flow_alert)
+        except Exception:
+            logger.exception("Intraday Flow tick failed")
         from backend.engine import real
         if real.has_account():                             # 💰 only once real trading has started
             jobs += real.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_real_stops)
@@ -782,6 +789,10 @@ class Scheduler:
             return 0
         rep = res["report"]
         return int(self.notifier().send(f"{rep['as_of']}|paper", "plan", msg.paper_report(rep), silent=True))
+
+    def _flow_alert(self, sig: dict) -> None:
+        """⚡ Intraday Flow signal (signals only): a loud Telegram line."""
+        self.notifier().send(f"{datetime.now(IST).date()}|flow|{sig['symbol']}", "flow", msg.flow_signal(sig))
 
     def run_real_evening(self) -> int:
         """Mark the real account and plan tomorrow's orders (a loud message when there are any)."""

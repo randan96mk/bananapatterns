@@ -14,13 +14,14 @@ import RealPage from './components/RealPage';
 import { AttentionDot } from './components/AttentionStrip';
 import TodayPage from './components/TodayPage';
 import StatusBar from './components/StatusBar';
+import FlowPage from './components/FlowPage';
 import * as api from './services/api';
 import { useIsPhone } from './useMedia';
 
 // Navigation in groups: Trade · Research, and a ⚙️ System menu. Phone: Trade (Today), Screens, Alerts in the bottom
 // bar, the rest under "More".
 const GROUPS = [
-  ['Trade', [['today', '⚡ Today'], ['breakout', '📈 Trend Breakout'], ['paper', '📝 Paper'], ['real', '💰 Real']]],
+  ['Trade', [['today', '⚡ Today'], ['flow', '🔀 Intraday Flow'], ['breakout', '📈 Trend Breakout'], ['paper', '📝 Paper'], ['real', '💰 Real']]],
   ['Research', [['screens', 'Screens'], ['universe', 'Universe']]],
 ];
 const SYSTEM = [['alerts', '🔔 Alerts'], ['data', '🗄 Data'], ['settings', '⚙️ Settings'], ['logs', '📜 Logs']];
@@ -85,6 +86,7 @@ export default function App() {
         {tab === 'paper' && <PaperPage />}
         {tab === 'real' && <RealPage />}
         {tab === 'today' && <TodayPage />}
+        {tab === 'flow' && <FlowPage />}
         {tab === 'universe' && (
           <>
             {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}

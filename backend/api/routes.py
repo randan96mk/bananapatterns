@@ -741,6 +741,47 @@ def breakout_scan():
     return tb.saved_scan() or {}
 
 
+# --- ⚡ Intraday Flow (signals only) ---
+
+class FlowMode(BaseModel):
+    mode: str
+
+
+@router.get("/flow")
+def flow_view():
+    """The canvas: every box (settings, schema, live state), today's signals, the feed."""
+    from backend.intraday import flow
+    return flow.state(S().config)
+
+
+@router.put("/flow/node/{nid}")
+def flow_node(nid: str, values: dict):
+    """Change one box's settings (applies from the next candle)."""
+    from backend.intraday import flow
+    try:
+        return flow.set_node(nid, values)
+    except KeyError:
+        raise HTTPException(404, f"No box {nid}")
+
+
+@router.post("/flow/mode")
+def flow_mode(req: FlowMode):
+    if req.mode not in ("off", "signals"):
+        raise HTTPException(422, "mode must be off or signals")
+    st = S()
+    st.config.flow.mode = req.mode
+    save_config(st.config)
+    return {"mode": req.mode}
+
+
+@router.post("/flow/run")
+def flow_run():
+    """Run the flow once now on whatever bars there are (live feed if running), e.g. to try settings."""
+    from backend.intraday import feed, flow
+    r = feed.RUNNER
+    return flow.run_now(S().config, r.feed if r else None)
+
+
 # --- ⏱ schedule and the status bar ---
 
 @router.get("/schedule")

@@ -314,6 +314,15 @@ CREATE TABLE IF NOT EXISTS real_orders (
 CREATE TABLE IF NOT EXISTS real_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS real_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
 
+-- ⚡ Intraday Flow (backend/intraday): 1-minute bars, one compressed row per stock per day (shrunk to 5-minute bars
+-- after the retention); every run (each node's in / out / drop reasons) and every signal.
+CREATE TABLE IF NOT EXISTS candles_intraday (
+    instrument_token INTEGER NOT NULL, day TEXT NOT NULL, interval INTEGER NOT NULL DEFAULT 1, bars BLOB NOT NULL,
+    n INTEGER NOT NULL, source TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (instrument_token, day));
+CREATE TABLE IF NOT EXISTS flow_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, at TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS flow_signals (day TEXT NOT NULL, symbol TEXT NOT NULL, at TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (day, symbol));
+
 -- Trend Breakout backtest (backend/engine/trend_breakout.py): the latest run (summary, splits, years, robustness,
 -- curves, trades) as one JSON document.
 CREATE TABLE IF NOT EXISTS breakout_runs (

@@ -57,7 +57,7 @@ def split_caption(html: str, limit: int = MAX_CAPTION) -> tuple[str, str]:
     return "\n".join(cap), "\n".join(lines).strip("\n")
 
 
-NEVER_HELD = ("system", "bot", "report", "real")                 # always sent at once, even while holding
+NEVER_HELD = ("system", "bot", "report", "real", "flow")                 # always sent at once, even while holding
 
 
 class Notifier:

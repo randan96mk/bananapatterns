@@ -1882,3 +1882,17 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   📝 (Accounts · Trade logs · How it works), 💰 (value, after costs, ₹ at risk, positions; Today · Trade log · Order log).
 - **Stop meter** on paper and real positions (red under 3%, amber under 6%); **phone cards** instead of wide tables;
   ⓘ tooltips; keyboard focus rings, larger tap targets, higher contrast.
+
+### 2026-11-01: ⚡ Intraday Flow (phase 1: signals only)
+- New tab **🔀 Intraday Flow**: an n8n-style canvas of boxes (Trigger → Universe → Daily trend ∥ Intraday filters → AND →
+  Setup: ORB → Dedup → Alert → Execute). Each box shows live status, count in → out, run time and why stocks were
+  dropped; click a box to change its settings (applies from the next candle). Mode Off / Signals; ▶ Run now.
+- **Live data**: Kite WebSocket ticks (quote mode) build 1-minute candles from 9:10 AM; the flow runs at each candle
+  close (1 / 3 / 5 / 15 min) inside the trigger window. Daily trend uses the saved daily history.
+- **Saved daily, fetched once** (`backend/intraday/store.py`, `candles_intraday`): one compressed row per stock per day
+  (~2 MB a day for the Nifty 500). Warm-up before 9:15 reads saved sessions and fetches only missing stock-days; the
+  3:35 PM day close saves today's bars and re-fetches only stocks with gaps; after `flow.retention_months` (12)
+  1-minute days are shrunk to 5-minute bars. Left out of the nightly backup (re-fetchable).
+- Extensible: modules register themselves (`backend/intraday/modules.py`: settings schema + run); templates wire them
+  (`flow.TEMPLATES`); every run and signal is saved (`flow_runs`, `flow_signals`). Telegram: loud ⚡ INTRADAY SIGNAL,
+  "signal only, no order placed". Phases 2–4: stop/size + paper, replay from saved data, real via Tradetron.

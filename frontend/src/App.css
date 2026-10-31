@@ -630,3 +630,31 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 :root[data-skin="clay"] .stopmeter .track { height: 9px; border-radius: 999px; box-shadow: var(--clay-in); }
 :root[data-skin="clay"] .attnstrip, :root[data-skin="clay"] .realbanner, :root[data-skin="clay"] .paperbanner, :root[data-skin="clay"] .caveat {
   border-width: 0; border-radius: 22px; box-shadow: var(--clay-out); }
+
+/* ⚡ Intraday Flow canvas */
+.flowtop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 12px; } .flowtitle { font-size: 16px; margin-right: 4px; }
+.flowbody { display: grid; grid-template-columns: 1fr 320px; gap: 12px; margin-bottom: 12px; }
+@media (max-width: 1000px) { .flowbody { grid-template-columns: 1fr; } }
+.flowcanvas { overflow: auto; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel);
+  background-image: radial-gradient(color-mix(in srgb, var(--muted) 30%, transparent) 1px, transparent 1px); background-size: 22px 22px; }
+.flowinner { position: relative; }
+.flowedges { position: absolute; left: 0; top: 0; pointer-events: none; }
+.edge { fill: none; stroke: var(--border-strong); stroke-width: 2.2; stroke-dasharray: 7 6; }
+.edge.live { stroke: var(--accent); animation: flowdash 1s linear infinite; }
+@keyframes flowdash { to { stroke-dashoffset: -26; } }
+@media (prefers-reduced-motion: reduce) { .edge.live { animation: none; } }
+.fnode { position: absolute; text-align: left; background: var(--panel); border: 1px solid var(--border-strong); border-radius: calc(var(--radius) - 2px);
+  padding: 10px 12px; color: var(--text); font: inherit; cursor: pointer; box-shadow: var(--shadow), 0 8px 22px rgba(0,0,0,.18); min-height: 96px; }
+.fnode.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fh { display: flex; align-items: center; gap: 7px; } .fh b { font-size: 13.5px; }
+.fico { width: 26px; height: 26px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--hover); }
+.fst { margin-left: auto; font-size: 10.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--hover); color: var(--muted); }
+.fst.ok { background: var(--ok-bg); color: var(--ok); } .fst.run { background: var(--blue-bg); color: var(--blue); } .fst.err { background: var(--bad-bg); color: var(--bad); }
+.fio { margin-top: 6px; font-size: 12px; color: var(--muted); } .fio b { font-size: 18px; color: var(--text); } .fio b.up { color: var(--ok); }
+.fsum { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
+.port { position: absolute; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: var(--panel); border: 2px solid var(--border-strong); }
+.port.in { left: -6px; } .port.out { right: -6px; }
+.flowpanel h4 { margin: 14px 0 6px; }
+.flowfield { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rowline); font-size: 13px; }
+.flownum { width: 80px; }
+.flowchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
