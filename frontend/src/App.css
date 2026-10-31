@@ -50,6 +50,17 @@
   --page-bg: radial-gradient(900px 600px at 15% 0%, #2c4fd6 0, transparent 60%), radial-gradient(800px 600px at 90% 20%, #7c3aed 0, transparent 60%),
     radial-gradient(900px 700px at 50% 110%, #0891b2 0, transparent 60%), #0b1020;
   --font: 'Inter', -apple-system, 'Segoe UI', sans-serif; color-scheme: dark; }
+:root[data-skin="clay"] {
+  --bg: #eef0fb; --panel: #f7f8ff; --border: rgba(110,100,190,.10); --text: #2d2a4a; --muted: #7a7799;
+  --accent: #8b7cf6; --ok: #2fb380; --bad: #f0607a; --warn: #f2a33a; --blue: #5b8def; --purple: #9b7cf6;
+  --accent-text: #6d5ce8; --on-accent: #ffffff; --on-ok: #ffffff;
+  --hover: #eceefb; --rowline: rgba(110,100,190,.08); --border-strong: rgba(110,100,190,.22); --grid: #e8eaf8;
+  --radius: 26px; --font: 'Inter', -apple-system, 'Segoe UI', sans-serif; color-scheme: light;
+  --clay-out: 10px 12px 24px rgba(120,110,200,.20), -8px -8px 18px rgba(255,255,255,.95);
+  --clay-in: inset 4px 4px 10px rgba(120,110,200,.14), inset -5px -5px 10px rgba(255,255,255,.9);
+  --shadow: var(--clay-out), var(--clay-in);
+  --page-bg: radial-gradient(800px 500px at 10% 0%, #fde2f3 0, transparent 60%), radial-gradient(800px 600px at 95% 15%, #dfe7ff 0, transparent 60%),
+    radial-gradient(900px 600px at 50% 110%, #e3fbf0 0, transparent 60%), #eef0fb; }
 /* tints derived from the base colours, so both themes stay consistent */
 :root { --ok-bg: color-mix(in srgb, var(--ok) 14%, transparent); --bad-bg: color-mix(in srgb, var(--bad) 14%, transparent);
   --warn-bg: color-mix(in srgb, var(--warn) 14%, transparent); --blue-bg: color-mix(in srgb, var(--blue) 14%, transparent);
@@ -600,3 +611,22 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
   font-size: 12px; max-width: 130px; }
 .statusbar .themepick { padding-right: 6px; }
 @media (max-width: 760px) { .statusbar .themepick select { max-width: 92px; } .statusbar button.sb { min-height: 0; } }
+
+/* Clay: puffy cards, pill buttons, pressed-in inputs and chips */
+:root[data-skin="clay"] .panel { border: 0; }
+:root[data-skin="clay"] .summary .k, :root[data-skin="clay"] .pcard, :root[data-skin="clay"] .nunext {
+  background: var(--panel); border: 0; border-radius: 20px; box-shadow: var(--clay-out), var(--clay-in); }
+:root[data-skin="clay"] .sb { border: 0; box-shadow: 4px 5px 12px rgba(120,110,200,.18), -4px -4px 10px rgba(255,255,255,.9); }
+:root[data-skin="clay"] .btn, :root[data-skin="clay"] .spill, :root[data-skin="clay"] .groupnav button.active, :root[data-skin="clay"] .seg button {
+  border: 0; border-radius: 999px; box-shadow: 5px 6px 14px rgba(120,110,200,.2), -4px -4px 10px rgba(255,255,255,.95), inset 1px 1px 2px rgba(255,255,255,.8); }
+:root[data-skin="clay"] .btn.primary, :root[data-skin="clay"] .spill.on { background: linear-gradient(145deg, #a394ff, #7b69f0); color: #fff; }
+:root[data-skin="clay"] input, :root[data-skin="clay"] select, :root[data-skin="clay"] textarea {
+  border: 0; border-radius: 14px; background: #eceefb; box-shadow: var(--clay-in); }
+:root[data-skin="clay"] .statusbar .themepick select { background: transparent; box-shadow: none; }
+:root[data-skin="clay"] .subtabs { border-bottom: 0; gap: 8px; }
+:root[data-skin="clay"] .subtabs button { border: 0; border-radius: 999px; }
+:root[data-skin="clay"] .subtabs button.on { background: var(--panel); color: var(--accent-text);
+  box-shadow: 5px 6px 14px rgba(120,110,200,.2), -4px -4px 10px rgba(255,255,255,.95); }
+:root[data-skin="clay"] .stopmeter .track { height: 9px; border-radius: 999px; box-shadow: var(--clay-in); }
+:root[data-skin="clay"] .attnstrip, :root[data-skin="clay"] .realbanner, :root[data-skin="clay"] .paperbanner, :root[data-skin="clay"] .caveat {
+  border-width: 0; border-radius: 22px; box-shadow: var(--clay-out); }

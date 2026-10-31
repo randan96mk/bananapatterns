@@ -1870,7 +1870,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 
 ### 2026-11-01: UI redesign: themes, status bar, ⏱ Next up, stop meter, sub-tabs
 - **Themes** (🎨 in the status bar, remembered per browser): Fintech Light · Precision Dark · Consumer Black · Pro
-  Workspace · Glass, plus Classic Light / Dark; **Auto** follows the device (Fintech Light by day, Precision Dark by
+  Workspace · Glass · Clay (claymorphism: soft pastel, puffy cards, pill buttons), plus Classic Light / Dark; **Auto** follows the device (Fintech Light by day, Precision Dark by
   night). A theme sets colours, fonts, corners and shadows on the same layout (`data-skin` in `theme.js`, `App.css`).
 - **Status bar on every page**: Kite (the full Kite bar only when the login is missing or on a tap), NSE open/closed,
   the last evening run, 💰 real ON/OFF and strategy, ⏱ the next job with a countdown, "needs attention", the clock.
