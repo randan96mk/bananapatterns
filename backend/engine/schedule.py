@@ -88,6 +88,10 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
                         getattr(sch, "last_intraday", None)), a.intraday_interval_min)
         if a.close_check:
             add("close_check", "🕒", "Close check", "breakouts still holding near the close", _next_at(now, _hm(a.close_check_time)))
+    if config.flow.mode != "off":
+        from backend.intraday import flow
+        add("flow", "🔀", "Intraday Flow", f"{config.flow.mode} · live 1-minute candles, runs at each candle close",
+            _next_at(now, time(9, 0)), skip="⏹ stopped" if flow.stopped() else None)
     if a.filings:
         add("filings", "📰", "Filings check", f"every {a.filings_interval_min} min · results, deals, red flags",
             _next_every(now, time(7, 0), time(23, 0), a.filings_interval_min, getattr(sch, "last_filings", None), False),

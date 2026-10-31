@@ -90,27 +90,93 @@ def setup(monkeypatch, n=6):
     return stocks
 
 
-def test_a_run_filters_and_signals(monkeypatch):
-    stocks = setup(monkeypatch)
+def feed_with(stocks, falling=(100,)):
+    """Range 9:15-9:29 flat at 150, then a climb (or a fall) with a last bar on 5× volume."""
     b = CandleBuilder()
-    for s in stocks:                           # range 9:15-9:29 flat, then a climb with volume (breakout above the range)
-        for x in bars(15, start=150, step=0.0) + bars(40, start=150.5, step=0.2, vol=4000, t0=(9, 30)):
-            b.bars.setdefault(s["instrument_token"], []).append(x)
-        b.bars[s["instrument_token"]][-1]["v"] = 20_000                       # the last bar on 5× volume
-    b.bars[100] = bars(55, start=150, step=-0.2)                                # S0 falls: below VWAP
+    for s in stocks:
+        step = -0.2 if s["instrument_token"] in falling else 0.2
+        rows = bars(15, start=150, step=0.0) + bars(40, start=150 + step * 2.5, step=step, vol=4000, t0=(9, 30))
+        rows[-1]["v"] = 20_000
+        b.bars[s["instrument_token"]] = rows
 
     class F:
         builder = b
-    flow.set_node("filters", {"rsi_max": 100})
+    return F()
+
+
+def loose():
+    """Nodes opened up so the made-up data reaches the end (daily trend off, wide RSI, no VIX / NIFTY data)."""
     flow.set_node("trigger", {"interval": 1})
-    res = flow.run_now(AppConfig(), F(), now=at(10, 10))
+    flow.set_node("trend", {"above_50": False, "above_200": False, "mirror": False})
+    flow.set_node("filters", {"rsi_min": 0, "rsi_max": 100})
+    flow.set_node("context", {"follow": False, "vix_on": False})
+    flow.set_node("score", {"top_k": 10})
+    flow.set_node("stop", {"max_stop_pct": 10, "min_stop_pct": 0})
+    flow.set_node("size", {"max_open": 10, "max_trades": 10})
+
+
+def test_a_run_long_and_short_signals(monkeypatch):
+    stocks = setup(monkeypatch)
+    loose()
+    res = flow.run_now(AppConfig(), feed_with(stocks), now=at(10, 10))
     n = res["nodes"]
-    assert n["universe"]["in"] == 6 and n["filters"]["drops"].get("below VWAP") == 1
-    assert n["alert"]["out"] == 5 and res["signals"] == 5
+    assert n["universe"]["in"] == 6 and n["alert"]["out"] == 6 and res["signals"] == 6
     st = flow.state(AppConfig(), DAY)
-    assert len(st["signals"]) == 5 and {x["id"] for x in st["nodes"]} >= {"trigger", "filters", "orb", "execute"}
-    again = flow.run_now(AppConfig(), F(), now=at(10, 15))
-    assert again["nodes"]["dedup"]["drops"] == {"already signalled today": 5}           # one per stock per day
+    sides = {x["symbol"]: x["side"] for x in st["signals"]}
+    assert sides["S0"] == "short" and sides["S1"] == "long" and all(x["qty"] > 0 for x in st["signals"])
+    assert n["execute"]["drops"] == {"signals only (mode)": 6} and not st["positions"]       # signals mode: no paper
+    again = flow.run_now(AppConfig(), feed_with(stocks), now=at(10, 15))
+    assert again["nodes"]["dedup"]["drops"] == {"already signalled today": 6}
+
+
+def test_capital_drives_size_and_limits(monkeypatch):
+    stocks = setup(monkeypatch)
+    loose()
+    c = AppConfig()
+    c.flow.mode = "paper"
+    flow.set_node("size", {"capital": 200000, "risk_pct": 0.5, "max_open": 2})
+    res = flow.run_now(c, feed_with(stocks), now=at(10, 10))
+    assert res["nodes"]["size"]["out"] == 2 and res["nodes"]["size"]["drops"] == {"max open positions": 4}
+    sig = flow.state(c, DAY)["signals"]
+    assert all(abs(x["risk_rs"] - 1000) < x["entry"] for x in sig)                 # 0.5% of ₹2,00,000 ≈ ₹1,000 a trade
+    assert len(flow.state(c, DAY)["positions"]) == 2                               # paper: pending positions opened
+
+
+def test_paper_fill_costs_and_exits():
+    from backend.intraday import positions as pos
+    plan = {"trail": "breakeven", "trail_after_r": 1, "time_stop_min": 0, "squareoff": "15:15", "partial_on": True,
+            "partial_r": 1, "partial_pct": 50}
+    it = {"symbol": "X", "token": 1, "side": "long", "qty": 10, "entry": 100, "sl": 98, "target": 104}
+    p = pos.open_new(DAY, it, "10:00", plan)
+    bar = lambda t, o, h, l, c: {"t": t, "o": o, "h": h, "l": l, "c": c, "v": 1}
+    assert pos.step(p, bar("10:00", 100, 100, 100, 100), None, plan) == []        # the signal bar itself: no fill
+    ev = pos.step(p, bar("10:01", 100, 102.2, 99.5, 102), None, plan)              # fill at the open, partial at 1R
+    assert p["entry"] == pytest.approx(100.05) and any("partial" in e.get("why", "") for e in ev) and p["open_qty"] == 5
+    assert p["stop"] == pytest.approx(100.05)                                        # breakeven after +1R
+    ev = pos.step(p, bar("10:02", 101, 101, 99.9, 100), None, plan)                 # back to the entry: stopped
+    assert p["status"] == "closed" and p["reason"] == "trailing stop" and p["costs"] > 0
+    assert p["net"] == pytest.approx(p["gross"] - p["costs"], abs=0.02)
+    s = pos.open_new(DAY, {**it, "symbol": "Y", "side": "short", "sl": 102, "target": 96}, "10:00", {"squareoff": "15:15"})
+    pos.step(s, bar("10:01", 100, 100, 100, 100), None, {"squareoff": "15:15"})
+    pos.step(s, bar("10:02", 100, 102.5, 95, 101), None, {"squareoff": "15:15"})    # both touched: the stop counts
+    assert s["reason"] == "stop" and s["net"] < 0
+    c = pos.intraday_charges(100_000, 100_500)
+    assert 80 < c < 85                                                               # ≈ ₹83 a ₹1 lakh round trip
+
+
+def test_daily_loss_limit_blocks_new_entries(monkeypatch):
+    from backend.intraday import positions as pos
+    stocks = setup(monkeypatch)
+    loose()
+    c = AppConfig()
+    c.flow.mode = "paper"
+    p = pos.open_new(DAY, {"symbol": "L", "token": 9, "side": "long", "qty": 2000, "entry": 100, "sl": 99, "target": None},
+                     "09:40", {"squareoff": "15:15"})
+    pos.step(p, {"t": "09:41", "o": 100, "h": 100, "l": 97, "c": 97, "v": 1}, None, {"squareoff": "15:15"})
+    pos._save(p)
+    assert pos.day_stats(DAY)["realised"] < -1500
+    res = flow.run_now(c, feed_with(stocks), now=at(10, 10))
+    assert res["nodes"]["size"]["drops"] == {"daily loss limit hit": 6} and res["signals"] == 0
 
 
 def test_runs_at_candle_closes_only():
@@ -153,9 +219,67 @@ def test_api(monkeypatch):
     from backend import main
     with TestClient(main.app) as tc:
         d = tc.get("/api/flow").json()
-        assert d["mode"] == "off" and len(d["nodes"]) == 9 and d["nodes"][0]["schema"]
+        assert d["mode"] == "off" and len(d["nodes"]) == 14 and d["nodes"][0]["schema"] and "stats" in d
         assert tc.put("/api/flow/node/filters", json={"rvol_min": 2.0, "bogus": 1}).json()["rvol_min"] == 2.0
         assert tc.put("/api/flow/node/nope", json={}).status_code == 404
         assert tc.post("/api/flow/mode", json={"mode": "signals"}).json()["mode"] == "signals"
         assert tc.post("/api/flow/mode", json={"mode": "real"}).status_code == 422
+        assert tc.post("/api/flow/mode", json={"mode": "paper"}).json()["mode"] == "paper"
+        assert "total" in tc.get("/api/flow/journal").json()
+        assert tc.put("/api/flow/layout", json={"orb": [40, 700], "nope": [1, 1]}).json() == {"orb": [40, 700]}
+        assert next(n for n in tc.get("/api/flow").json()["nodes"] if n["id"] == "orb")["y"] == 700
+        assert tc.put("/api/flow/layout", json={}).json() == {}
         assert tc.post("/api/flow/run").json()["status"] == "ok"
+        assert tc.post("/api/flow/stop").json()["squared"] == 0 and tc.get("/api/flow").json()["stopped"]
+        assert tc.post("/api/flow/start").json() == {"stopped": False} and not tc.get("/api/flow").json()["stopped"]
+
+
+def test_manage_runs_minute_by_minute_and_survives_a_restart():
+    from backend.intraday import positions as pos
+    it = {"symbol": "M", "token": 5, "side": "long", "qty": 10, "entry": 100, "sl": 99, "target": 103}
+    pos.open_new(DAY, it, "10:00", {"squareoff": "15:15"})
+    day = bars(5, start=100, step=0.8, t0=(10, 1))                                  # 10:01 … 10:05, climbing
+    pos.manage(DAY, lambda tok: day[:2], "10:03")                                   # fill at 10:01, 10:02 seen
+    p = pos.load(DAY)[0]
+    assert p["status"] == "open" and p["last_t"] == "10:02"
+    ev = pos.manage(DAY, lambda tok: day, "10:06")                                  # after a "restart": continues at 10:03
+    p = pos.load(DAY)[0]
+    assert p["status"] == "closed" and p["reason"] == "target" and [e["why"] for _, e in ev] == ["target"]
+
+
+def test_stop_squares_off_and_blocks_everything(monkeypatch):
+    from backend.intraday import feed
+    from backend.intraday import positions as pos
+    stocks = setup(monkeypatch)
+    loose()
+
+    class St:
+        config = AppConfig()
+        client = type("C", (), {"has_token": True})()
+    St.config.flow.mode = "paper"
+    r = feed.Runner(St())
+    r.day = DAY
+    it = {"symbol": "S", "token": 7, "side": "short", "qty": 10, "entry": 100, "sl": 102, "target": 96}
+    o = pos.open_new(DAY, it, "10:00", {"squareoff": "15:15"})
+    pos.step(o, {"t": "10:01", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}, None, {"squareoff": "15:15"})
+    pos._save(o)
+    pos.open_new(DAY, {**it, "symbol": "P", "token": 8}, "10:05", {"squareoff": "15:15"})   # still pending
+    f = feed_with(stocks)
+    f.builder.add(7, 98, 0, at(10, 6, 10))                                         # last price 98 (short: a profit)
+
+    class FakeFeed:
+        builder, tokens = f.builder, []
+        stop = lambda self: None
+    r.feed = FakeFeed()
+    sent = []
+    out = r.stop_all(at(10, 6, 30), lambda k, d: sent.append(k))
+    ps = {p["symbol"]: p for p in pos.load(DAY)}
+    assert out["squared"] == 1 and ps["S"]["status"] == "closed" and ps["S"]["reason"] == "stopped" and ps["S"]["gross"] > 0
+    assert ps["P"]["status"] == "cancelled" and pos.day_stats(DAY)["trades"] == 1
+    assert sent == ["event", "stopped"] and r.feed is None and r.kept is f.builder and flow.stopped()
+    assert r.tick(at(10, 10, 5), True) is None                                     # no feed, no runs while stopped
+    res = flow.run_now(St.config, f, now=at(10, 10))
+    assert len(pos.load(DAY)) == 2 and res["signals"] >= 0                          # no new paper positions
+    r.start_all(lambda k, d: sent.append(k))
+    assert not flow.stopped() and sent[-1] == "started"
+    assert r.tick(at(10, 10, 5), True) in ("warm_up", "feed")                       # resumes

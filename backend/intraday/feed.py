@@ -28,8 +28,8 @@ def status() -> dict:
 class Feed:
     """KiteTicker in its own thread, feeding a CandleBuilder."""
 
-    def __init__(self, api_key: str, access_token: str, tokens: list[int], ticker_cls=None):
-        self.builder = CandleBuilder()
+    def __init__(self, api_key: str, access_token: str, tokens: list[int], ticker_cls=None, builder=None):
+        self.builder = builder or CandleBuilder()
         self.tokens = tokens
         self.ticker = None
         self.api_key, self.access_token = api_key, access_token
@@ -85,6 +85,45 @@ class Runner:
         self.day = None
         self.warmed = self.closed = None
         self.last_run: Optional[datetime] = None
+        self.last_manage = ""
+        self.loss_hit = False
+        self.notify_day = None
+        self.lock = threading.Lock()
+        self.kept: Optional[CandleBuilder] = None        # today's bars kept over a ⏹ stop, reused on ▶ start
+        self.gap = False                                 # stopped during the session: re-fetch today at the close
+
+    def last_price(self, token: int) -> Optional[float]:
+        if not self.feed:
+            return None
+        b = self.feed.builder
+        bar = b.cur.get(token) or (b.bars.get(token) or [None])[-1]
+        return bar["c"] if bar else None
+
+    def stop_all(self, now: datetime, notify=None) -> dict:
+        """⏹ Stop intraday: square off every paper position at its last price, close the live feed, no more runs."""
+        from backend.intraday import positions as pos
+        flow.set_stopped(True)
+        today, t = now.date().isoformat(), now.strftime("%H:%M")
+        with self.lock:
+            events = pos.square_off_all(today, self.last_price, t)
+            if self.feed:
+                self.kept = self.feed.builder if self.day == today else None
+                self.feed.stop()
+                self.feed = None
+                self.gap = True
+        st = flow._stats(today)
+        logger.warning("Intraday stopped: %d positions squared off", len(events))
+        if notify:
+            for p, ev in events:
+                notify("event", {"position": p, "event": ev})
+            notify("stopped", {**st, "squared": len(events)})
+        return {"squared": len(events), "stats": st}
+
+    def start_all(self, notify=None) -> None:
+        flow.set_stopped(False)
+        logger.info("Intraday started")
+        if notify:
+            notify("started", {})
 
     def _stocks(self):
         from backend.ingest import universe as uni
@@ -112,6 +151,24 @@ class Runner:
         logger.info("Flow warm-up: %d stock-days fetched (%d stocks needed some)", n, len(todo))
         return n
 
+    def manage(self, today: str, t: str, notify=None) -> None:
+        from backend.intraday import positions as pos
+        try:
+            with self.lock:
+                if self.feed is None:
+                    return
+                events = pos.manage(today, self.feed.builder.day, t)
+        except Exception:
+            logger.exception("Paper position management failed")
+            return
+        if notify:
+            for p, ev in events:
+                notify("event", {"position": p, "event": ev})
+            st = flow._stats(today)
+            if not self.loss_hit and st["realised"] <= -st["loss_limit"]:
+                self.loss_hit = True
+                notify("loss_limit", st)
+
     def close_day(self, today: str) -> dict:
         """Saves today's bars; re-fetches stocks with gaps for today only; retention."""
         saved = repaired = 0
@@ -122,37 +179,47 @@ class Runner:
                     store.save(tok, today, bars, "ticks")
                     saved += 1
             self.feed.stop()
-        for tok, _ in store.missing([s["instrument_token"] for s in self._stocks()], [today]):
+        toks = [s["instrument_token"] for s in self._stocks()]
+        todo = toks if self.gap else [tok for tok, _ in store.missing(toks, [today])]
+        for tok in todo:
             try:
                 repaired += store.fetch(self.state.client, tok, [today])
             except Exception as exc:
                 logger.warning("Day-close repair %s: %s", tok, exc)
         shrunk = store.prune(self.state.config.flow.retention_months * 31, today)
         logger.info("Flow day close %s: %d saved, %d repaired from Kite, %d old days shrunk", today, saved, repaired, shrunk)
+        if self.state.config.flow.mode == "paper" and self.notify_day:
+            self.notify_day("summary", flow._stats(today))
         return {"saved": saved, "repaired": repaired, "shrunk": shrunk}
 
     def tick(self, now: datetime, trading: bool, notify=None) -> Optional[str]:
         cfg, client = self.state.config, self.state.client
         today, t = now.date().isoformat(), now.strftime("%H:%M")
         if self.day != today:
-            self.day, self.warmed, self.closed, self.feed = today, None, None, None
-        if cfg.flow.mode == "off" or not trading or not getattr(client, "has_token", False):
+            self.day, self.warmed, self.closed, self.feed, self.loss_hit = today, None, None, None, False
+            self.kept, self.gap = None, False
+        if flow.stopped() or cfg.flow.mode == "off" or not trading or not getattr(client, "has_token", False):
             return None
         if self.warmed is None and "09:00" <= t < "15:30":
             self.warmed = True
             threading.Thread(target=self.warm_up, args=(today,), name="flow-warmup", daemon=True).start()
             return "warm_up"
         if self.feed is None and "09:10" <= t < "15:30":
-            toks = [s["instrument_token"] for s in self._stocks()]
-            self.feed = Feed(client.config.api_key, client.config.access_token, toks)
+            toks = [s["instrument_token"] for s in self._stocks()] + [flow.NIFTY_TOKEN, flow.VIX_TOKEN]
+            self.feed = Feed(client.config.api_key, client.config.access_token, toks, builder=self.kept)
             self.feed.start()
             return "feed"
+        if self.feed is not None and t != self.last_manage and now.second >= 2 and t <= "15:31":
+            self.last_manage = t                                  # every 1-minute close: manage paper positions
+            self.feed.builder.close_until(t)
+            self.manage(today, t, notify)
         if self.feed is not None and flow.due(now, cfg, self.last_run):
             self.last_run = now
             threading.Thread(target=flow.run_now, args=(cfg, self.feed, notify, now), name="flow-run", daemon=True).start()
             return "run"
         if self.closed is None and t >= "15:35" and self.feed is not None:
             self.closed = True
+            self.notify_day = notify
             threading.Thread(target=self.close_day, args=(today,), name="flow-close", daemon=True).start()
             return "close"
         return None
