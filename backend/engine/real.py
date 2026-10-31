@@ -124,6 +124,7 @@ def evening(config: AppConfig, data: Optional[dict] = None) -> dict:
                     st["cash"] += diff
                     t.update(sell=round(b["open"], 2), gross=round(t["gross"] + diff, 2), net=round(t["net"] + diff, 2), est=False)
                     conn.execute("UPDATE real_trades SET payload = ? WHERE id = ?", (json.dumps(t), r[0]))
+        raised = late_trail(st, data, day, _rules(config, "E"))
         _plan(st, data, i, config)
         st["as_of"] = day
         eq = _value(st)
@@ -131,7 +132,31 @@ def evening(config: AppConfig, data: Optional[dict] = None) -> dict:
             conn.execute("INSERT OR REPLACE INTO real_equity (day, equity, gross, nifty) VALUES (?, ?, ?, ?)",
                          (day, round(eq, 2), round(eq + st["charges"], 2), data["index_close"][i]))
         _save(st)
-        return {"status": "ok", "orders": st["orders"], "missed": missed, "as_of": day, "top": st.get("top")}
+        return {"status": "ok", "orders": st["orders"], "missed": missed, "as_of": day, "top": st.get("top"),
+                "raised": raised}
+
+
+def late_trail(st: dict, data: dict, day: str, p) -> list:
+    """E+: each position bought under E gets its best close (the highest stored daily close since its entry day,
+    so a missed evening or the first evening after the update backfills it) and the late trail from it. The new
+    stop is watched from the next session by watch_stops, like any stop. Never lowered; A's positions untouched."""
+    from backend.engine.paper import best_since
+    raised = []
+    if not p.late_at:
+        return raised
+    for sym, pos in st["positions"].items():
+        if pos.get("variant") != "E":
+            continue
+        best = best_since(data["S"], sym, pos["d"], day)
+        pos["best"] = max(pos.get("best") or pos["px"], best or pos["px"])
+        if tb.raise_late(pos, pos["best"], p) is not None:
+            raised.append({"day": day, "symbol": sym, "stop": round(pos["stop"], 2), "best": round(pos["best"], 2),
+                           "entry": round(pos["px"], 2)})
+    if not st.get("eplus_since"):
+        st["eplus_since"] = day
+        st.setdefault("notes", []).append({"day": day, "text": f"strategy updated to E+ on {day}: late trail "
+                                           f"({p.late_pct:g}% under the highest close once +{p.late_at:g}%) on E positions"})
+    return raised
 
 
 def _rebook(st: dict, pos: dict, px: float) -> None:
@@ -242,6 +267,7 @@ def _close(st: dict, sym: str, px: float, day: str, why: str, est: bool) -> dict
     gross = (px - pos["px"]) * pos["qty"]
     t = {"symbol": sym, "qty": pos["qty"], "in": pos["d"], "out": day, "buy": round(pos["px"], 2), "sell": round(px, 2),
          "stop": round(pos["stop"], 2), "days": pos.get("days", 0), "variant": pos.get("variant"), "gross": round(gross, 2),
+         "best": round(pos["best"], 2) if pos.get("best") else None,
          "costs": round(pos["charges"] + ch, 2), "net": round(gross - pos["charges"] - ch, 2), "why": why, "est": est}
     with get_db() as conn:
         conn.execute("INSERT INTO real_trades (payload) VALUES (?)", (json.dumps(t),))
@@ -333,7 +359,7 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
                 hits.append({**o, "price": ltp, "error": str(exc)[:120]})
                 continue
             _log(key, today, o, "sent", reply, ltp)
-            t = _close(st, sym, ltp, today, "stop", est=False)
+            t = _close(st, sym, ltp, today, "trail" if pos.get("trailed") else "stop", est=False)
             hits.append({**o, "price": ltp, "net": t["net"]})
         _save(st)
         return {"status": "ok", "hits": hits}
@@ -377,15 +403,22 @@ def summary(config: AppConfig) -> dict:
     for e in eq:
         peak = max(peak, e["equity"])
         dd = max(dd, (peak - e["equity"]) / peak * 100)
-    positions = []
+    positions, checks = [], []
+    pe = tb.rules(config, "E")
     for sym, x in sorted(st["positions"].items(), key=lambda kv: kv[1]["d"], reverse=True):
         last = x.get("live") or x["last"]
+        active = bool(x.get("variant") == "E" and pe.late_at and x.get("best") and x["best"] >= x["px"] * (1 + pe.late_at / 100))
+        want = tb.late_stop(x["px"], x["best"], pe) if active else None
+        if want and x["stop"] < want - 0.01:              # a check only: warns, never trades
+            checks.append(f"{sym}: stop {x['stop']:.2f} is under its E+ trail {want:.2f} (best close {x['best']:.2f})")
         exit_ch = tb.delivery_charges(x["qty"] * last, True)
         gross = (last - x["px"]) * x["qty"]
         positions.append({"symbol": sym, "qty": x["qty"], "in": x["d"], "buy": round(x["px"], 2), "last": round(last, 2),
                           "stop": round(x["stop"], 2), "variant": x.get("variant"), "days": x.get("days", 0),
                           "gross": round(gross, 2), "costs": round(x["charges"] + exit_ch, 2),
-                          "net": round(gross - x["charges"] - exit_ch, 2), "est": x.get("est", False)})
+                          "net": round(gross - x["charges"] - exit_ch, 2), "est": x.get("est", False),
+                          "best": round(x["best"], 2) if x.get("best") else None, "trailed": bool(x.get("trailed")),
+                          "trail_active": active})
     won = [t for t in trades if t["net"] > 0]
     loss = -sum(t["net"] for t in trades if t["net"] <= 0)
     nifty = round((eq[-1]["nifty"] / eq[0]["nifty"] - 1) * 100, 2) if len(eq) > 1 and eq[0]["nifty"] else 0.0
@@ -397,7 +430,8 @@ def summary(config: AppConfig) -> dict:
                         "gross": round(value + st["charges"] - cap, 2), "costs": round(st["charges"], 2),
                         "net": round(value - cap, 2), "return": round((value - cap) / cap * 100, 2),
                         "realised": round(realised, 2), "unrealised": round(value - cap - realised, 2), "nifty": nifty},
-            "positions": positions, "trades": trades, "won": len(won), "closed": len(trades),
+            "positions": positions, "checks": checks, "notes": st.get("notes", []), "trades": trades, "won": len(won),
+            "closed": len(trades),
             "profit_factor": round(sum(t["net"] for t in won) / loss, 2) if loss else None, "drawdown": round(dd, 2),
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq],
                       "nifty": [round(e["nifty"] / eq[0]["nifty"] * first_cap, 2) if eq and eq[0]["nifty"] else None for e in eq]}}

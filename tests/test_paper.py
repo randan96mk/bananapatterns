@@ -52,7 +52,7 @@ def cfg(capital=200_000.0):
 
 def check_account(c, data, s, key):
     from dataclasses import replace
-    p = replace(c.breakout, regime_mode=tb.MODES[key])
+    p = tb.rules(c, key)
     eq, eqg, trades, _ = tb.simulate(data["cal"], data["S"], data["index_ok"], p, p.slippage_pct, s,
                                      capital=200_000.0, close_end=False, filters=data["filters"])
     sm = paper.summary(c)["accounts"][key]
@@ -126,7 +126,7 @@ def test_messages_say_paper_trading(monkeypatch):
     rep = paper.process(c, data)["report"]
     text = msg.paper_report(rep)
     assert text.startswith("📝 <b>PAPER TRADING</b>") and "simulated, no real orders" in text
-    assert "before costs" in text and "A · 200-day filter" in text and "E · half filter" in text and "Filter:" in text
+    assert "before costs" in text and "A · 200-day filter" in text and "E+ · half filter" in text and "Filter:" in text
     html, _ = report.build(rep["as_of"], [], paper=rep)
     assert "PAPER TRADING" in html
 
@@ -188,7 +188,7 @@ def test_a_universe_change_is_noted_and_keeps_the_positions(monkeypatch):
     c.breakout.top_e = 250
     paper.process(c, data)
     e = paper.summary(c)["accounts"]["E"]
-    assert e["top"] == 250 and "top 300 → top 250" in e["notes"][0]["text"] and e["name"].endswith("top 250")
+    assert e["top"] == 250 and "top 300 → top 250" in e["notes"][0]["text"] and "top 250" in e["name"]
     assert paper.summary(c)["accounts"]["A"]["top"] == 200 and not paper.summary(c)["accounts"]["A"]["notes"]
 
 

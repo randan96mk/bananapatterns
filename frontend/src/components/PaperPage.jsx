@@ -8,7 +8,9 @@ import { FilterBadge } from './BreakoutPage';
 import NextUp from './NextUp';
 import { StopMeter, SubTabs, Tip } from './ui';
 
-const EXIT = { stop: '🛑 stop', exit: '📉 trend exit' };
+const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
+// E+ late trail: the best close, and a tag once the trail is active (+100%) or has raised the stop
+const Trail = ({ x }) => (x.trail_active || x.trailed ? <div className="small up" title="E+ late trail: 25% under the highest close once +100%; only ever raised, from the next session">🪜 trail {x.trailed ? 'stop' : 'active'} · best {rs(x.best)}</div> : x.best ? <div className="muted small">best {rs(x.best)}</div> : null);
 const inr = (v) => (v == null ? '—' : `${v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
 const sgn = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
 const rs = (v) => (v == null ? '—' : `₹${v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
@@ -65,7 +67,7 @@ function Account({ k, a, maxPos, phone, view }) {
         <div className="pcards">{a.positions.map((x) => (
           <div key={x.symbol} className="pcard"><div className="t"><span>{x.symbol} <span className="muted small">{x.qty} sh</span></span>
             <span className={cls(x.net)}>{sgn(x.net)}</span></div>
-            <StopMeter last={x.last} stop={x.stop} wide />
+            <StopMeter last={x.last} stop={x.stop} wide /><Trail x={x} />
             <details><summary>details</summary><div className="small">bought {day(x.in)} at {rs(x.buy)} · last {rs(x.last)} · stop {rs(x.stop)} ·
               SMA50 {rs(x.sma)} · before costs {sgn(x.gross)} · costs {inr(x.costs)}</div></details>
             {x.warning && <div className="warn small">⚠️ {x.warning}</div>}</div>))}</div>) : (
@@ -73,7 +75,7 @@ function Account({ k, a, maxPos, phone, view }) {
           <th className="num">SMA50</th><th className="num">Last</th><th>Distance to stop</th><th className="num">After costs, if sold</th></tr></thead>
           <tbody>{a.positions.map((x) => (
             <tr key={x.symbol}><td><b>{x.symbol}</b> <span className="muted small">{x.qty} sh</span>{x.warning && <div className="warn small">⚠️ {x.warning}</div>}</td>
-              <td>{day(x.in)} · {rs(x.buy)}</td><td className="num">{rs(x.stop)}</td><td className="num">{rs(x.sma)}</td>
+              <td>{day(x.in)} · {rs(x.buy)}</td><td className="num">{rs(x.stop)}<Trail x={x} /></td><td className="num">{rs(x.sma)}</td>
               <td className="num">{rs(x.last)}</td><td><StopMeter last={x.last} stop={x.stop} /></td>
               <td className={`num ${cls(x.net)}`} title={`before costs ${sgn(x.gross)} · costs ${inr(x.costs)}`}><b>{sgn(x.net)}</b>
                 <div className="muted small">{sgn(x.gross)} − {inr(x.costs)}</div></td></tr>))}</tbody></table></div>)}
@@ -132,7 +134,7 @@ export default function PaperPage() {
       <>
         {banner(null)}
         <div className="panel"><h3>Start paper trading</h3>
-          <p>Two virtual accounts start the same day, <b className="vA">A · 200-day filter, top {rules?.top ?? 200}</b> and <b className="vE">E · half filter, top {rules?.top_e ?? 300}</b>, each with
+          <p>Two virtual accounts start the same day, <b className="vA">A · 200-day filter, top {rules?.top ?? 200}</b> and <b className="vE">E+ · half filter, top {rules?.top_e ?? 300}, late trail</b>, each with
             {' '}this capital. Every evening the breakouts are "filled" at the next open from the daily candle, with the same size, stop, exit
             {' '}and Zerodha delivery costs as the backtest. Nothing is sent to Kite.</p>
           <p>Capital per account <input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 130 }} />

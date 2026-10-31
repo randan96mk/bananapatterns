@@ -135,6 +135,13 @@ class Scheduler:
     # --- loop ---
 
     def start(self) -> None:
+        try:                                              # rules changed since the saved run (E -> E+): re-run now
+            from backend.engine import trend_breakout as tb
+            run = tb.saved(self.state.config)
+            if run and run.get("stale"):
+                threading.Thread(target=tb.run, args=(self.state.config,), name="breakout-stale", daemon=True).start()
+        except Exception:
+            logger.exception("Stale Trend Breakout check failed")
         self._thread = threading.Thread(target=self._loop, name="alerts-scheduler", daemon=True)
         self._thread.start()
 
@@ -785,10 +792,18 @@ class Scheduler:
         """Paper trading's new sessions; in summary style they go into the evening report, otherwise a silent message."""
         from backend.engine import paper
         res = paper.process(self.state.config)
+        for k, a in ((res.get("report") or {}).get("accounts") or {}).items():
+            self._trail_alerts(msg.PAPER, f"paper-{k}", a.get("raised") or [])
         if res["status"] != "ok" or not res["sessions"] or self.summary():
             return 0
         rep = res["report"]
         return int(self.notifier().send(f"{rep['as_of']}|paper", "plan", msg.paper_report(rep), silent=True))
+
+    def _trail_alerts(self, where: str, tag: str, raised: list) -> None:
+        """E+ · a late trail raised a stop (once per account, stock and day)."""
+        for r in raised:
+            self.notifier().send(f"{r['day']}|trail|{tag}|{r['symbol']}", "real" if tag == "real" else "plan",
+                                 msg.trail_raised(where, r["symbol"], r["stop"], r["best"], r["entry"]))
 
     def _flow_alert(self, kind: str, data: dict) -> None:
         """⚡ Intraday Flow: signals, paper fills / exits, the daily loss limit and the day's summary (loud)."""
@@ -810,6 +825,7 @@ class Scheduler:
         """Mark the real account and plan tomorrow's orders (a loud message when there are any)."""
         from backend.engine import real
         res = real.evening(self.state.config)
+        self._trail_alerts(msg.REAL, "real", res.get("raised") or [])
         if res["status"] != "ok" or not (res["orders"] or res["missed"]):
             return 0
         return int(self.notifier().send(f"{res['as_of']}|real-plan", "real", msg.real_plan(res, self.state.config.real.variant)))
@@ -842,6 +858,7 @@ class Scheduler:
         from backend.engine import trend_breakout as tb
         if tb.saved() is None or tb.status()["state"] != "idle":
             return
+        # (a run made before a rule change, e.g. E -> E+, is "stale" and is simply replaced by this one)
         threading.Thread(target=tb.run, args=(self.state.config,), name="breakout-daily", daemon=True).start()
 
     def run_morning_plan(self, now: datetime) -> dict:

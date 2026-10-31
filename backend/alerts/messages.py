@@ -694,7 +694,9 @@ def real_nologin(at: str) -> str:
 
 
 def tb_name(variant: str, top: Optional[int] = None) -> str:
-    base = {"A": "A · 200-day filter", "E": "E · half filter"}.get(variant, variant)
+    base = {"A": "A · 200-day filter", "E": "E+ · half filter"}.get(variant, variant)
+    if variant == "E" and top:
+        return f"{base}, top {top}, late trail"
     return f"{base}, top {top}" if top else base
 
 
@@ -737,3 +739,11 @@ def flow_switch(kind: str, st: dict) -> str:
         return "▶ <b>INTRADAY STARTED</b>\nLive data and the flow resume from the next candle."
     return (f"⏹ <b>INTRADAY STOPPED</b>\n{st.get('squared', 0)} paper positions squared off · today net after costs "
             f"<b>{_signed(st.get('realised', 0))}</b>\nNo live data, signals or trades until ▶ Start.")
+
+
+def trail_raised(where: str, sym: str, stop: float, best: float, entry: float) -> str:
+    """E+'s late trail moved a stop up (after the close; it applies from the next session)."""
+    return (f"{where} · <b>E+ · {escape(sym)}</b> trail stop raised to <b>₹{stop:,.2f}</b> (best close ₹{best:,.2f}, "
+            f"+{(best / entry - 1) * 100:.0f}% over the entry {_rup(entry)}) · from the next session"
+            + ("\nWatched by the app like any stop: an EXIT goes to Tradetron automatically if it is hit (while real "
+               "trading is on). A stop sent to Tradetron with the BUY is not moved." if where == REAL else ""))

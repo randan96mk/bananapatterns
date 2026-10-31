@@ -9,7 +9,7 @@ import { SubTabs, Tip } from './ui';
 import { signed as signedInr } from '../fmt';
 
 const SCEN = [['normal', 'Normal slippage'], ['stress', 'Stressed slippage']];
-const EXIT = { stop: '🛑 stop', exit: '📉 trend exit', end: '⏹ end of test' };
+const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit (SMA50)', end: '⏹ end of test' };
 const SKIP = { no_slot: 'no free slot', market_off: 'market filter off', too_small: 'too small (under 1 share)' };
 const STATE = { ON: ['✅', 'up'], FULL: ['✅', 'up'], HALF: ['🟡', 'warn'], OFF: ['⛔', 'down'] };
 const PAGE = 100;
@@ -130,7 +130,8 @@ export default function BreakoutPage() {
           {running ? <> · <span className="pulse running" /> running…</> : <> · <button className="linkbtn" onClick={run}>Re-run</button></>}</span></div>
       {err && <div className="warn small">{err}</div>}
 
-      {r.stale?.length > 0 && <div className="warn panel">⚠️ {r.stale.join(' and ')}'s universe changed since this run: its numbers are out of date.
+      {V.E?.updated_note && <div className="muted small panel">ℹ️ E+ · {V.E.updated_note}.</div>}
+      {r.stale?.length > 0 && <div className="warn panel">⚠️ {r.stale.join(' and ')}'s rules changed since this run (universe or late trail): its numbers are out of date.
         {' '}{running ? 'Re-running…' : <button className="btn primary" onClick={run}>Re-run now</button>} (it also re-runs tonight).</div>}
       {r.missing?.length > 0 && <div className="muted small panel">⚠️ {r.missing.length} Nifty 500 stock(s) without enough daily candles (left out, see the log):
         {' '}{r.missing.slice(0, 20).join(', ')}{r.missing.length > 20 ? ' …' : ''}</div>}
@@ -145,7 +146,7 @@ export default function BreakoutPage() {
           <div className="k"><div className={`v ${cls(V.E[scen].net)}`}>{signedInr(V.E[scen].net)}</div>
             <div className="l">E net · {inr(V.E[scen].gross)} before − {inr(V.E[scen].costs)} costs<Tip text="Profit on the starting capital: the price moves (before costs) minus Zerodha charges and slippage." /></div></div>
           <div className="k"><div className="v down">{pct(-V.E[scen].drawdown, 0)}</div><div className="l">E worst drawdown<Tip text="The largest fall from a peak of the account value, after costs." /></div></div>
-          <div className="k"><div className="v">{V.E.robust_pass} / {V.E.robust.length}</div><div className="l">E robust neighbours<Tip text="Each of 14 settings moved one step; how many still pass every period (stressed too) and beat NIFTY 50." /></div></div>
+          <div className="k"><div className="v">{V.E.robust_pass} / {V.E.robust.length}</div><div className="l">E robust neighbours<Tip text="Each setting moved one step (14; E+ adds 4 for the late trail: from +50% / +150%, trail 20% / 30%); how many still pass every period (stressed too) and beat NIFTY 50." /></div></div>
         </div>}
       </div>
       <SubTabs tabs={[['results', 'Results'], ['robust', 'Robustness'], ['scan', "Tonight's scan"], ['trades', 'Trades'], ['how', 'How it works']]}
@@ -163,6 +164,9 @@ export default function BreakoutPage() {
             {row('Worst drawdown', (v) => <span className="down">{pct(-v[scen].drawdown, 0)}</span>, pct(-r.nifty.drawdown, 0))}
             {row('Trades · won', (v) => `${v[scen].trades} · ${v[scen].win_rate.toFixed(0)}%`)}
             {row('Profit factor', (v) => v[scen].profit_factor ?? '—')}
+            {row('Average win / loss', (v) => (v[scen].avg_win != null ? <span><span className="up">{inr(v[scen].avg_win)}</span> / <span className="down">{inr(v[scen].avg_loss)}</span></span> : '—'))}
+            {row('Biggest winner', (v) => (v[scen].best_trade_pct != null ? <span className="up">+{v[scen].best_trade_pct.toFixed(0)}%</span> : '—'))}
+            {row('Late trail', (v) => (v.late_at ? `${v.late_pct}% under the best close once +${v.late_at}% · ${v[scen].exits?.trail ?? 0} exits` : 'none'))}
             {row('Average hold', (v) => `${v[scen].avg_hold.toFixed(0)} days`)}
             {row('Costs a trade', (v) => inr(v[scen].cost_per_trade))}
             {row('New buys allowed', (v) => `${v.allowed_pct.toFixed(0)}% of days`)}
@@ -246,7 +250,7 @@ export default function BreakoutPage() {
       </div>}
 
       {sub === 'trades' && <div className="panel"><h3>Trades <span className="muted small">· newest first · {scen === 'stress' ? 'stressed' : 'normal'} slippage</span></h3>
-        <div className="orbfilters"><Chips items={[['A', `A · 200-day filter, top ${R.top}`], ['E', `E · half filter, top ${R.top_e}`]]} value={tv} onChange={setTv} /></div>
+        <div className="orbfilters"><Chips items={[['A', `A · 200-day filter, top ${R.top}`], ['E', `E+ · half filter, top ${R.top_e}, late trail`]]} value={tv} onChange={setTv} /></div>
         <div className="tablewrap"><table className="grid orbtrades"><thead><tr><th>Stock</th><th>Entry</th><th>Exit</th>
           <th className="num">Days</th>{!phone && <th className="num">Before costs</th>}{!phone && <th className="num">Costs</th>}<th className="num">After costs</th><th>Exit reason</th></tr></thead>
           <tbody>{trades.rows.map((t) => (

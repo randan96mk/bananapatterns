@@ -35,7 +35,8 @@ SPLITS = ("Development", "Validation", "Out-of-sample")
 NEIGHBOURS = (("vol_mult", (1.3, 2.0)), ("stop_pct", (6.0, 10.0)), ("atr_mult", (1.5, 3.0)), ("hi_window", (10, 55)),
               ("exit_sma", (20,)), ("max_pos", (5, 15)), ("top", (0.5, 1.5)), ("regime", (False,)))
 # "top" moves relative to the variant's own universe: A (200) -> 100 / 300, E (300) -> 150 / 450
-LABELS = {"vol_mult": "volume ×{}", "stop_pct": "stop {:g}%", "atr_mult": "ATR ×{:g}", "hi_window": "breakout {} days",
+LATE_NEIGHBOURS = (("late_at", (50.0, 150.0)), ("late_pct", (20.0, 30.0)))   # E+ only: 14 + 4 = 18
+LABELS = {"late_at": "trail from +{:g}%", "late_pct": "trail {:g}%", "vol_mult": "volume ×{}", "stop_pct": "stop {:g}%", "atr_mult": "ATR ×{:g}", "hi_window": "breakout {} days",
           "exit_sma": "exit SMA {}", "max_pos": "max {} positions", "top": "universe top {}",
           "regime": "no market filter"}
 
@@ -112,6 +113,25 @@ def stop_of(c, atr, p):
     return max(c - p.atr_mult * atr, c * (1 - p.stop_pct / 100))
 
 
+def late_stop(entry: float, best: float, p) -> Optional[float]:
+    """E+'s late trailing stop after a close (swing.py late_stop, "pct"): None below +late_at %, else late_pct %
+    under the best close since entry. The caller only ever raises the stop with it, from the next session."""
+    if not p.late_at or best < entry * (1 + p.late_at / 100):
+        return None
+    return best * (1 - p.late_pct / 100)
+
+
+def raise_late(pos: dict, close: float, p) -> Optional[float]:
+    """Today's close into pos (px = entry, best, stop, trailed): best close, then the late trail. Returns the new
+    stop when it went up (used from the next session), else None. Shared by the backtest, paper and real."""
+    pos["best"] = max(pos.get("best") or pos["px"], close)
+    new = late_stop(pos["px"], pos["best"], p)
+    if new is not None and new > (pos["stop"] or 0):
+        pos["stop"], pos["trailed"] = new, True
+        return new
+    return None
+
+
 def decide(i, S, held, regime_on, p):
     """(symbols to sell at the next open, ranked [(symbol, stop)] to buy at the next open, the day's signals and
     pool size). Signals are counted on market-filter-off days too, but not bought."""
@@ -152,13 +172,20 @@ MODES = {"A": "sma200", "E": "half"}
 
 def rules(config, key: str):
     """A variant's full rule set: the shared settings with its own market filter and universe (A: 200-day filter,
-    top `top`; E: half filter, top `top_e`)."""
+    top `top`, no late trail; E+: half filter, top `top_e`, the late trail late_at_e / late_pct_e)."""
     b = config.breakout
-    return replace(b, regime_mode=MODES[key], top=b.top if key == "A" else b.top_e)
+    if key == "A":
+        return replace(b, regime_mode=MODES[key], top=b.top, late_at=0.0)
+    return replace(b, regime_mode=MODES[key], top=b.top_e, late_at=b.late_at_e, late_pct=b.late_pct_e)
 
 
-def variant_name(key: str, top: int) -> str:
-    return f"A · 200-day filter, top {top}" if key == "A" else f"E · half filter, top {top}"
+EPLUS_SINCE = "2026-11-01"                               # E became E+ (the late trail) from this update
+
+
+def variant_name(key: str, top: int, late: bool = True) -> str:
+    if key == "A":
+        return f"A · 200-day filter, top {top}"
+    return f"E+ · half filter, top {top}, late trail" if late else f"E · half filter, top {top}"
 
 
 def filter_day(mode, i, closes):
@@ -218,6 +245,7 @@ def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True, fil
         costs_cum += ch + (px - f) * pos["qty"]
         trades.append({"sym": sym, "in": pos["d"], "out": d, "qty": pos["qty"], "buy": round(pos["px"], 2),
                        "sell": round(px, 2), "stop": round(pos["stop"], 2), "days": len(pos["days"]),
+                       "best": round(pos.get("best") or pos["px"], 2),
                        "gross": gross, "costs": cost, "net": gross - cost, "why": why})
 
     for i in range(first, len(cal)):
@@ -245,7 +273,7 @@ def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True, fil
             cash -= qty * f + ch
             costs_cum += ch + (f - b["open"]) * qty
             held[sym] = {"qty": qty, "px": b["open"], "d": d, "i": i, "stop": stop, "last": b["open"],
-                         "cost": ch + (f - b["open"]) * qty, "days": {d}}
+                         "best": b["open"], "cost": ch + (f - b["open"]) * qty, "days": {d}}
         pend_sell, pend_buy = set(), []
         for sym in list(held):                           # 3) stops during the day, then the close
             b = bar(sym)
@@ -254,9 +282,11 @@ def simulate(cal, S, index_ok, p, slip, first, capital=None, close_end=True, fil
             pos = held[sym]
             pos["days"].add(d)
             if pos["stop"] and b["low"] <= pos["stop"]:
-                close_pos(sym, min(b["open"], pos["stop"]), d, "stop")
+                close_pos(sym, min(b["open"], pos["stop"]), d, "trail" if pos.get("trailed") else "stop")
                 continue
             pos["last"] = b["close"]
+            if p.late_at:                                # E+: the late trail from today's close, used tomorrow
+                raise_late(pos, b["close"], p)
         e = cash + sum(pos["qty"] * pos["last"] for pos in held.values())
         eq.append(e)
         eq_gross.append(e + costs_cum)
@@ -323,6 +353,8 @@ def neighbours(p):
             if key == "top":                          # half and 1.5x the variant's own universe (swing.py)
                 v = p.top // 2 if v < 1 else p.top * 3 // 2
             out.append((LABELS[key].format(v), replace(p, **{key: v})))
+    if p.late_at:
+        out += [(LABELS[key].format(v), replace(p, **{key: v})) for key, vals in LATE_NEIGHBOURS for v in vals]
     return out
 
 
@@ -379,7 +411,10 @@ def _stats(eq, eqg, trades, capital, n):
             "profit_factor": round(sum(t["net"] for t in won) / lost, 2) if lost else None,
             "avg_hold": round(sum(t["days"] for t in trades) / nt, 1),
             "cost_per_trade": round((eqg[-1] - eq[-1]) / nt, 2),
-            "exits": {k: sum(t["why"] == k for t in trades) for k in ("stop", "exit", "end")}}
+            "exits": {k: sum(t["why"] == k for t in trades) for k in ("stop", "trail", "exit", "end")},
+            "avg_win": round(sum(t["net"] for t in won) / len(won), 2) if won else None,
+            "avg_loss": round(-lost / (len(trades) - len(won)), 2) if len(trades) > len(won) else None,
+            "best_trade_pct": round(max(((t["sell"] / t["buy"] - 1) * 100 for t in trades), default=0), 1)}
 
 
 def _variant(data: dict, p, key: str, first: int, nifty: list, nifty_cagr: float) -> dict:
@@ -388,7 +423,10 @@ def _variant(data: dict, p, key: str, first: int, nifty: list, nifty_cagr: float
     n = len(cal) - first
     eq, eqg, trades, funnel = simulate(cal, S, index_ok, p, p.slippage_pct, first, filters=filters)
     seq, seqg, strades, sfunnel = simulate(cal, S, index_ok, p, p.stress_slippage_pct, first, filters=filters)
-    out = {"name": variant_name(key, p.top), "mode": p.regime_mode, "top": p.top, "funnel": funnel,
+    out = {"name": variant_name(key, p.top, bool(p.late_at)), "mode": p.regime_mode, "top": p.top, "funnel": funnel,
+           "late_at": p.late_at, "late_pct": p.late_pct if p.late_at else None,
+           "updated_note": f"Updated on {EPLUS_SINCE}: added late trail ({p.late_pct:g}% under the highest close once "
+                           f"+{p.late_at:g}%)" if p.late_at else None,
            "normal": _stats(eq, eqg, trades, p.capital, n), "stress": _stats(seq, seqg, strades, p.capital, n)}
     out["normal"]["skipped"] = {k: funnel[k] for k in ("no_slot", "market_off", "too_small")}
     out["stress"]["skipped"] = {k: sfunnel[k] for k in ("no_slot", "market_off", "too_small")}
@@ -487,7 +525,11 @@ def saved(config: Optional[AppConfig] = None) -> Optional[dict]:
     if "variants" not in payload:
         return None
     if config is not None:
-        payload["stale"] = [k for k, v in payload["variants"].items() if v.get("top") != rules(config, k).top]
+        def stale(k, v):                                 # universe or late trail changed: the numbers are not these rules'
+            p = rules(config, k)
+            return v.get("top") != p.top or (v.get("late_at") or 0) != p.late_at or \
+                (p.late_at and v.get("late_pct") != p.late_pct)
+        payload["stale"] = [k for k, v in payload["variants"].items() if stale(k, v)]
     return {**payload, "updated_at": r["updated_at"]}
 
 

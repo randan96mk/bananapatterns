@@ -7,7 +7,9 @@ import NextUp from './NextUp';
 import { StopMeter, SubTabs, Tip } from './ui';
 import { FilterBadge } from './BreakoutPage';
 
-const EXIT = { stop: '🛑 stop', exit: '📉 trend exit' };
+const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
+// E+ late trail: the best close, and a tag once the trail is active (+100%) or has raised the stop
+const Trail = ({ x }) => (x.trail_active || x.trailed ? <div className="small up" title="E+ late trail: 25% under the highest close once +100%; only ever raised, from the next session">🪜 trail {x.trailed ? 'stop' : 'active'} · best {rs(x.best)}</div> : x.best ? <div className="muted small">best {rs(x.best)}</div> : null);
 const STATUS = { sent: 'ok', failed: 'err', skipped: 'wait' };
 const inr = (v) => (v == null ? '—' : `${v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
 const sgn = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
@@ -78,7 +80,7 @@ export default function RealPage() {
           <p><b>Strategy for new buys</b>{' '}
             <span className="seg">{['A', 'E'].map((k) => (
               <button key={k} className={d.variant === k ? 'active' : ''} onClick={() => set({ variant: k })}>
-                {k === 'A' ? 'A · 200-day' : 'E · half'} · top {d.tops?.[k]}</button>))}</span></p>
+                {k === 'A' ? 'A · 200-day' : 'E+ · half, late trail'} · top {d.tops?.[k]}</button>))}</span></p>
           <p className="muted small">Switching changes only NEW buys; open positions keep their own stop and exit.</p>
           {d.killed ? <button className="btn primary" onClick={() => kill(false)}>Turn the kill switch off</button>
             : <button className="btn killbtn" onClick={() => kill(true)}>⛔ Stop all · kill switch</button>}
@@ -132,7 +134,7 @@ export default function RealPage() {
               <div className="pcards">{d.positions.map((x) => (
                 <div key={x.symbol} className="pcard"><div className="t"><span>{x.symbol} <span className="muted small">{x.qty} sh · {x.variant}</span></span>
                   <span className={cls(x.net)}>{sgn(x.net)}</span></div>
-                  <StopMeter last={x.last} stop={x.stop} wide />
+                  <StopMeter last={x.last} stop={x.stop} wide /><Trail x={x} />
                   <details><summary>details</summary><div className="small">bought {day(x.in)} at {rs(x.buy)}{x.est ? ' (est.)' : ''} · last {rs(x.last)} ·
                     stop {rs(x.stop)} · before costs {sgn(x.gross)} · costs {inr(x.costs)}</div></details></div>))}</div>) : (
               <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought</th><th className="num">Stop</th>
@@ -140,9 +142,13 @@ export default function RealPage() {
                 <tbody>{d.positions.map((x) => (
                   <tr key={x.symbol}><td><b>{x.symbol}</b> <span className="muted small">{x.qty} sh</span></td>
                     <td>{day(x.in)} · {rs(x.buy)}{x.est && <span className="muted small"> (est.)</span>}</td>
-                    <td className="num">{rs(x.stop)}</td><td className="num">{rs(x.last)}</td><td><StopMeter last={x.last} stop={x.stop} /></td>
+                    <td className="num">{rs(x.stop)}<Trail x={x} /></td><td className="num">{rs(x.last)}</td><td><StopMeter last={x.last} stop={x.stop} /></td>
                     <td className={`num ${cls(x.net)}`}><b>{sgn(x.net)}</b><div className="muted small">{sgn(x.gross)} − {inr(x.costs)}</div></td>
                     <td className={`v${x.variant}`}>{x.variant}</td></tr>))}</tbody></table></div>)}
+            {d.checks?.length > 0 && <div className="warn small">⚠️ Position checks (warnings only, nothing is traded): {d.checks.join(' · ')}</div>}
+            {d.notes?.length > 0 && <p className="muted small">{d.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</p>}
+            <p className="muted small">E+ positions: once the best close is +100% over the entry, the stop is raised to 25% under it after the close
+              {' '}(never lowered) and watched from the next session like any stop; a stop sent to Tradetron with the BUY is not moved.</p>
             <p className="muted small">No stop-loss orders: the app checks live prices every {s.stop_check_min} min and sends EXIT when a stop is reached
               {' '}(needs the daily Kite login). Prices are what the app saw when sending (est.), corrected to the day's open in the evening; your broker's fills may differ.</p></div>
         </div>
