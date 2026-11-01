@@ -1931,3 +1931,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   **Several setups**: side by side with the best value highlighted and the curves overlaid; click one for its report.
 - Runtime: about 10 s a session for the Nifty 500 at 5-minute candles (≈ 40 min for 1 year, per setup). Nothing is sent and
   the live paper positions are never touched. Saved per setup and period (`flow_backtests`).
+- **📚 Presets** (read-only, load or test like any setup): **ORB 5m · stocks in play** (Zarattini & Aziz 2023: the ~20
+  stocks with the most unusual first-5-minute turnover, trade in the first candle's direction, stop 10% of the daily
+  ATR(14), no target, out at square-off) and **ORB 30m · with the trend** (30-minute range, daily trend + NIFTY VWAP +
+  stock VWAP + RVOL 1.5, target 2R, breakeven after 1R, max 2 trades a day). New box options: Universe "only stocks in
+  play", ORB "only in the opening range's direction", Stop "daily_atr".
+- **💸 Before vs after charges** in every report: plain profit (exact signal prices) → slippage → charges → profit after
+  costs, in total and per trade, with win rate, profit factor and CAGR before → after; the plain curve on the chart; the
+  same rows in the side-by-side comparison.

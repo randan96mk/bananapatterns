@@ -103,7 +103,45 @@ def test_api(monkeypatch):
         assert tc.post("/api/flow/setups", json={"name": ""}).status_code == 422
         assert tc.post("/api/flow/setups", json={"name": "A1"}).status_code == 200
         d = tc.get("/api/flow/backtest").json()
-        assert list(d["setups"]) == [bt.CANVAS, "A1"] and d["periods"] == ["6m", "1y", "2y"]
+        assert list(d["setups"]) == [bt.CANVAS, *bt.PRESETS, "A1"] and d["setups"][next(iter(bt.PRESETS))]["preset"] and d["periods"] == ["6m", "1y", "2y"]
         assert tc.post("/api/flow/backtest", json={"setups": ["nope"], "period": "1y"}).json()["status"] == "bad_request"
         assert tc.post("/api/flow/setups/load", json={"name": "zz"}).status_code == 404
         assert tc.post("/api/flow/setups/delete", json={"name": "A1"}).json() == {"deleted": "A1"}
+        assert tc.post("/api/flow/setups/delete", json={"name": next(iter(bt.PRESETS))}).status_code == 422
+        assert tc.post("/api/flow/setups", json={"name": next(iter(bt.PRESETS))}).status_code == 422
+
+
+def test_charges_add_up_and_presets_run(monkeypatch):
+    stocks, ds = data(monkeypatch)
+    names = [bt.CANVAS, *bt.PRESETS]
+    assert bt.run(AppConfig(), None, names, "6m")["status"] == "ok"
+    for r in bt.results("6m"):
+        c = r["charges"]
+        assert abs(c["plain"] - c["slip"] - c["costs"] - c["net"]) < 1 and abs(c["net"] - r["net"]) < 1
+        assert len(r["curve"]["plain"]) == len(ds) and (not r["trades"] or c["costs"] > 0)
+    r = {x["setup"]: x for x in bt.results("6m")}
+    assert r[bt.CANVAS]["trades"] > 0 and r[bt.CANVAS]["charges"]["plain"] > r[bt.CANVAS]["net"]
+
+
+def test_in_play_open_direction_and_daily_atr_stop(monkeypatch):
+    from backend.intraday import modules as m
+    stocks, ds = data(monkeypatch)
+    cfgs = bt.configs_of(bt.CANVAS)
+    bars = {s["instrument_token"]: bt_session(k) for k, s in enumerate(stocks)}
+    ctx = bt._Replay(ds[-1], 5, bt._View(bars), {}, {s["symbol"]: {"atr14": 4.0} for s in stocks},
+                     {s["symbol"]: 1e6 for s in stocks}, None, "paper", "10:00", book=[], signalled=set())
+    ctx.feed.t = "10:00"
+    items = [{"symbol": s["symbol"], "token": s["instrument_token"]} for s in stocks]
+    out, drops = m.Universe().run(ctx, items, {**cfgs["universe"], "in_play": True, "in_play_top": 2})
+    assert [x["symbol"] for x in out] == ["S5", "S4"] and drops["not in play"] == 4       # the biggest openings
+    got, _ = m.OpeningRangeBreakout().run(ctx, [{**x, "sides": ["long", "short"]} for x in out],
+                                         {"minutes": 5, "with_open": True})
+    assert got and all(x["side"] == "long" for x in got)                                # green opening: long only
+    st, _ = m.StopTarget().run(ctx, got, {**cfgs["stop"], "stop": "daily_atr", "daily_atr_frac": 0.1, "min_stop_pct": 0})
+    assert st and abs(st[0]["entry"] - st[0]["sl"] - 0.4) < 0.01                        # 10% of the daily ATR
+
+
+def bt_session(k):
+    """A green first 5 minutes with volume growing by stock, then a climb."""
+    rows = bars(5, start=150, step=0.1, vol=1000 * (k + 1)) + bars(40, start=150.6, step=0.2, vol=1000, t0=(9, 20))
+    return rows

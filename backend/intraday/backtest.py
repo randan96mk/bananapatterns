@@ -33,6 +33,42 @@ def status() -> dict:
     return dict(_status)
 
 
+# --- presets: well-known strategies, ready to load or test (read-only) ------------------------------------
+
+_NO_FILTERS = {"trend": {"above_50": False, "above_200": False, "mirror": False},
+               "filters": {"vwap": False, "rsi_on": False, "rvol_on": False, "ema_on": False, "st_on": False},
+               "context": {"direction": "both", "follow": False, "ema_on": False, "vix_on": False, "breadth_on": False}}
+PRESETS = {
+    "📚 ORB 5m · stocks in play": {
+        "desc": "Zarattini & Aziz (2023): only the ~20 stocks with unusual volume in the first 5 minutes; trade in the "
+                "first 5-minute candle's direction when price breaks its high (green) or low (red); stop 10% of the daily "
+                "ATR(14); no target, out at square-off. Entry here: a 5-minute close beyond the range, filled at the next open.",
+        "nodes": {**_NO_FILTERS, "trigger": {"interval": 5, "start": "09:20", "end": "14:30"},
+                  "universe": {"top": 500, "in_play": True, "in_play_top": 20, "in_play_min": 5},
+                  "orb": {"minutes": 5, "with_open": True}, "score": {"top_k": 20}, "dedup": {"per_day": 20},
+                  "stop": {"stop": "daily_atr", "daily_atr_frac": 0.1, "min_stop_pct": 0.05, "max_stop_pct": 2.5,
+                           "target_r": 0, "partial_on": False, "trail": "off", "time_stop_min": 0, "squareoff": "15:15"},
+                  "size": {"risk_pct": 0.5, "max_pos_pct": 50, "max_open": 4, "max_trades": 20, "daily_loss_pct": 2}}},
+    "📚 ORB 30m · with the trend": {
+        "desc": "Classic opening range breakout (Crabel style): the first 30 minutes' range, only with the daily trend "
+                "(50 / 200-day) and NIFTY's side of its VWAP, above VWAP with RVOL ≥ 1.5; stop at the other side of the "
+                "range; target 2R, stop to breakeven after 1R; at most 2 trades a day.",
+        "nodes": {"trigger": {"interval": 5, "start": "09:45", "end": "13:30"}, "universe": {"top": 200},
+                  "trend": {"above_50": True, "above_200": True, "mirror": True},
+                  "filters": {"vwap": True, "rsi_on": False, "rvol_on": True, "rvol_min": 1.5, "ema_on": False, "st_on": False},
+                  "context": {"direction": "both", "follow": True, "ema_on": False, "vix_on": False, "breadth_on": False},
+                  "orb": {"minutes": 30, "with_open": False}, "score": {"top_k": 2}, "dedup": {"per_day": 2},
+                  "stop": {"stop": "orb", "min_stop_pct": 0.2, "max_stop_pct": 2.0, "target_r": 2, "partial_on": False,
+                           "trail": "breakeven", "trail_after_r": 1, "time_stop_min": 0, "squareoff": "15:15"},
+                  "size": {"risk_pct": 0.5, "max_pos_pct": 30, "max_open": 2, "max_trades": 2, "daily_loss_pct": 1.5}}},
+}
+
+
+def all_setups() -> dict:
+    """Presets (read-only) and the saved setups."""
+    return {**{k: {**v, "preset": True} for k, v in PRESETS.items()}, **setups()}
+
+
 # --- saved setups: a named copy of every box's settings -------------------------------------------------
 
 def setups() -> dict:
@@ -47,7 +83,7 @@ def _put(all_: dict) -> None:
 
 def save_setup(name: str) -> dict:
     name = name.strip()[:60]
-    if not name or name == CANVAS:
+    if not name or name == CANVAS or name in PRESETS:
         raise ValueError("a name is needed")
     all_ = setups()
     all_[name] = {"nodes": flow.node_configs(), "saved_at": now_ist()}
@@ -56,6 +92,8 @@ def save_setup(name: str) -> dict:
 
 
 def delete_setup(name: str) -> None:
+    if name in PRESETS:
+        raise ValueError("a preset can't be deleted")
     all_ = setups()
     all_.pop(name, None)
     _put(all_)
@@ -65,7 +103,7 @@ def delete_setup(name: str) -> None:
 
 def load_setup(name: str) -> None:
     """Puts a saved setup's settings on the canvas (the live flow uses them from the next candle)."""
-    nodes = setups()[name]["nodes"]
+    nodes = configs_of(name) if name in PRESETS else setups()[name]["nodes"]
     with get_db() as conn:
         set_setting(conn, "flow.nodes", json.dumps(nodes))
 
@@ -73,7 +111,7 @@ def load_setup(name: str) -> None:
 def configs_of(name: str) -> dict:
     if name == CANVAS:
         return flow.node_configs()
-    saved = setups()[name]["nodes"]
+    saved = all_setups()[name]["nodes"]
     return {nid: {**REGISTRY[kind].defaults(), **saved.get(nid, {})} for nid, kind, _, _ in flow.template()["nodes"]}
 
 
@@ -134,18 +172,21 @@ class _Daily:
         with get_db() as conn:
             for st in stocks:
                 rows = get_candles(conn, st["instrument_token"], start=start)
-                c, t = [0.0], [0.0]
-                for r in rows:
+                c, t, tr = [0.0], [0.0], [0.0]
+                for k, r in enumerate(rows):
                     c.append(c[-1] + r["close"])
                     t.append(t[-1] + r["close"] * r["volume"])
-                self.s[st["symbol"]] = ([r["date"] for r in rows], c, t)
+                    pc = rows[k - 1]["close"] if k else r["close"]
+                    tr.append(tr[-1] + max(r["high"], pc) - min(r["low"], pc))
+                self.s[st["symbol"]] = ([r["date"] for r in rows], c, t, tr)
 
     def at(self, day: str) -> tuple[dict, dict]:
         daily, turn = {}, {}
-        for sym, (dates, c, t) in self.s.items():
+        for sym, (dates, c, t, tr) in self.s.items():
             i = bisect_left(dates, day)                    # rows before the day
             daily[sym] = {"sma50": (c[i] - c[i - 50]) / 50 if i >= 50 else None,
-                          "sma200": (c[i] - c[i - 200]) / 200 if i >= 200 else None}
+                          "sma200": (c[i] - c[i - 200]) / 200 if i >= 200 else None,
+                          "atr14": (tr[i] - tr[i - 14]) / 14 if i >= 15 else None}
             n = min(20, i)
             turn[sym] = (t[i] - t[i - n]) / n if n else 0
         return daily, turn
@@ -260,14 +301,28 @@ def _curve_stats(nets: list, capital: float, n_days: int) -> dict:
             "curve": curve}
 
 
+def _charges(trades: list, plain_curve: dict) -> dict:
+    """Plain profit (no slippage, no charges) -> slippage -> charges -> after costs, in total and per trade."""
+    n = max(len(trades), 1)
+    tot = {k: round(sum(t[k] for t in trades), 2) for k in ("plain", "slip", "costs", "net")}
+    won_p = sum(t["plain"] > 0 for t in trades)
+    loss_p = -sum(t["plain"] for t in trades if t["plain"] <= 0)
+    return {**tot, "per_trade": {k: round(v / n, 2) for k, v in tot.items()},
+            "win_rate_plain": round(100 * won_p / n, 1) if trades else None,
+            "pf_plain": round(sum(t["plain"] for t in trades if t["plain"] > 0) / loss_p, 2) if loss_p else None,
+            "cagr_plain": plain_curve["cagr"], "share": round(100 * (tot["slip"] + tot["costs"]) / tot["plain"], 1)
+            if tot["plain"] > 0 else None}
+
+
 def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
-    by_day = defaultdict(float)
-    by_day_s = defaultdict(float)
+    by_day, by_day_s, by_day_p = defaultdict(float), defaultdict(float), defaultdict(float)
     for t in trades:
         by_day[t["day"]] += t["net"]
         by_day_s[t["day"]] += t["net_stress"]
+        by_day_p[t["day"]] += t["plain"]
     nets, nets_s = [by_day[d] for d in days], [by_day_s[d] for d in days]
     main, stress = _curve_stats(nets, capital, len(days)), _curve_stats(nets_s, capital, len(days))
+    plain = _curve_stats([by_day_p[d] for d in days], capital, len(days))
     splits, n = [], len(days)
     for name, a, b in (("Development", 0, n // 2), ("Validation", n // 2, n * 3 // 4), ("Out-of-sample", n * 3 // 4, n)):
         base = capital + sum(nets[:a])
@@ -282,7 +337,8 @@ def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
             "gross": round(sum(t["gross"] for t in trades), 2), "costs": round(sum(t["costs"] for t in trades), 2),
             "stress": {k: stress[k] for k in ("net", "return", "cagr", "drawdown")},
             "nifty": round((nf[-1] / nf[0] - 1) * 100, 2) if len(nf) > 1 else None,
-            "curve": {"dates": days, "net": main["curve"], "stress": stress["curve"],
+            "charges": _charges(trades, plain),
+            "curve": {"dates": days, "net": main["curve"], "stress": stress["curve"], "plain": plain["curve"],
                       "nifty": [round(nifty[d] / nf[0] * capital, 2) if nifty.get(d) and nf else None for d in days]},
             "splits": splits, "ok_periods": all(s["net"] > 0 and s["stress"] > 0 for s in splits),
             "by_side": group(lambda t: t["side"]), "by_time": group(lambda t: bucket(t["entry_t"])),
@@ -293,11 +349,14 @@ def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
 
 def _trade(p: dict) -> dict:
     sold = sum(e["price"] * e["qty"] for e in p["exits"])
-    extra = STRESS_EXTRA_PCT / 100 * (p["entry"] * p["qty"] + sold)
+    value = p["entry"] * p["qty"] + sold
+    extra = STRESS_EXTRA_PCT / 100 * value
+    slip = pos.SLIPPAGE_PCT / 100 * value                 # the slippage already inside the fills
     return {"day": p["day"], "symbol": p["symbol"], "side": p["side"], "setup": p.get("setup"), "qty": p["qty"],
             "entry_t": p["entry_t"], "entry": p["entry"], "exit_t": p["exit_t"],
             "exit": round(sold / max(p["qty"], 1), 2), "reason": p["reason"], "gross": p["gross"], "costs": p["costs"],
-            "net": p["net"], "net_stress": round(p["net"] - extra, 2), "r": p.get("r")}
+            "net": p["net"], "net_stress": round(p["net"] - extra, 2), "r": p.get("r"),
+            "slip": round(slip, 2), "plain": round(p["gross"] + slip, 2)}
 
 
 # --- a run ----------------------------------------------------------------------------------------------
@@ -309,7 +368,7 @@ def run(config: AppConfig, client, names: list[str], period: str) -> dict:
         return {"status": "busy"}
     try:
         months = PERIODS[period]
-        _status.update(state="running", pct=0, message="preparing", at=now_ist())
+        _status.update(state="running", pct=0, message="preparing", at=now_ist(), period=period, setups=names)
         warm, days, nifty = sessions(months, config.flow.warmup_days)
         if not days:
             raise RuntimeError("No NIFTY 50 daily candles saved yet (run the daily sync).")
@@ -359,7 +418,7 @@ def run(config: AppConfig, client, names: list[str], period: str) -> dict:
 def start(config: AppConfig, client, names: list[str], period: str) -> dict:
     if _lock.locked():
         return {"status": "busy"}
-    known = set(setups()) | {CANVAS}
+    known = set(all_setups()) | {CANVAS}
     names = [n for n in names if n in known][:6]
     if not names or period not in PERIODS:
         return {"status": "bad_request"}

@@ -803,7 +803,7 @@ def flow_start():
 def flow_backtest(period: Optional[str] = None):
     """🧪 Saved setups, the latest result of each (setup, period), and the running job's progress."""
     from backend.intraday import backtest as bt
-    return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.setups()},
+    return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.all_setups()},
             "periods": list(bt.PERIODS), "results": bt.results(period)}
 
 
@@ -836,7 +836,10 @@ def flow_setup_load(req: dict):
 @router.post("/flow/setups/delete")
 def flow_setup_delete(req: dict):
     from backend.intraday import backtest as bt
-    bt.delete_setup(str(req.get("name")))
+    try:
+        bt.delete_setup(str(req.get("name")))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     return {"deleted": req.get("name")}
 
 

@@ -55,10 +55,14 @@ class Trigger(Module):
 class Universe(Module):
     title, icon = "Universe", "🧺"
     fields = [("top", "Top N by turnover", "number", 300, {"min": 20, "max": 500, "step": 10}),
-              ("min_price", "Min price ₹", "number", 100, {"min": 0, "max": 5000, "step": 10})]
+              ("min_price", "Min price ₹", "number", 100, {"min": 0, "max": 5000, "step": 10}),
+              ("in_play", "Only stocks in play (unusual opening volume)", "bool", False),
+              ("in_play_top", "…top N by opening turnover ÷ usual daily", "number", 20, {"min": 5, "max": 100, "step": 5}),
+              ("in_play_min", "…opening minutes", "select", 5, {"options": [5, 15]})]
 
     def summary(self, cfg):
-        return f"top {cfg['top']} turnover · price ≥ ₹{cfg['min_price']} · complete data only"
+        play = f" · in play: top {cfg['in_play_top']} by first {cfg['in_play_min']}m volume" if cfg["in_play"] else ""
+        return f"top {cfg['top']} turnover · price ≥ ₹{cfg['min_price']}{play}"
 
     def run(self, ctx, items, cfg):
         drops = Counter()
@@ -74,6 +78,18 @@ class Universe(Module):
                 drops["price too low"] += 1
             else:
                 out.append({**it, "price": px, "sides": ctx.sides()})
+        if cfg["in_play"]:                            # "stocks in play" (Zarattini & Aziz): unusual opening activity
+            end, play = 9 * 60 + 15 + cfg["in_play_min"], []
+            for it in out:
+                first = [b for b in ctx.today_bars(it) if int(b["t"][:2]) * 60 + int(b["t"][3:]) < end]
+                usual = ctx.turnover.get(it["symbol"]) or 0
+                if len(first) < cfg["in_play_min"] or not usual:
+                    drops["opening not complete"] += 1
+                    continue
+                play.append((sum(b["c"] * b["v"] for b in first) / usual, it))
+            play.sort(key=lambda x: x[0], reverse=True)
+            drops["not in play"] += max(0, len(play) - cfg["in_play_top"])
+            out = [it for _, it in play[:cfg["in_play_top"]]]
         return out, drops
 
 
@@ -217,10 +233,11 @@ class And(Module):
 @module("orb")
 class OpeningRangeBreakout(Module):
     title, icon = "Setup: ORB", "🎯"
-    fields = [("minutes", "Opening range (minutes)", "select", 15, {"options": [5, 15, 30]})]
+    fields = [("minutes", "Opening range (minutes)", "select", 15, {"options": [5, 15, 30]}),
+              ("with_open", "Only in the opening range's direction (green: long, red: short)", "bool", False)]
 
     def summary(self, cfg):
-        return f"close above / below the first {cfg['minutes']} min range"
+        return f"close above / below the first {cfg['minutes']} min range" + (" · its direction only" if cfg["with_open"] else "")
 
     def run(self, ctx, items, cfg):
         out, drops = [], Counter()
@@ -233,7 +250,10 @@ class OpeningRangeBreakout(Module):
                 drops["range not complete"] += 1
                 continue
             hi, lo = max(b["h"] for b in rng), min(b["l"] for b in rng)
-            side = "long" if "long" in it["sides"] and last["c"] > hi else "short" if "short" in it["sides"] and last["c"] < lo else None
+            up, down = rng[-1]["c"] > rng[0]["o"], rng[-1]["c"] < rng[0]["o"]
+            ok_l, ok_s = (up, down) if cfg["with_open"] else (True, True)
+            side = ("long" if "long" in it["sides"] and ok_l and last["c"] > hi
+                    else "short" if "short" in it["sides"] and ok_s and last["c"] < lo else None)
             if not side:
                 drops["no breakout"] += 1
                 continue
@@ -290,7 +310,8 @@ class Dedup(Module):
 @module("stop")
 class StopTarget(Module):
     title, icon = "Stop & target", "🛡"
-    fields = [("stop", "Stop", "select", "orb", {"options": ["orb", "atr", "signal_bar", "vwap", "percent"]}),
+    fields = [("stop", "Stop", "select", "orb", {"options": ["orb", "atr", "daily_atr", "signal_bar", "vwap", "percent"]}),
+              ("daily_atr_frac", "Daily ATR(14) × (daily_atr stop)", "number", 0.1, {"min": 0.05, "max": 2, "step": 0.05}),
               ("atr_mult", "ATR × (atr stop)", "number", 1.5, {"min": 0.5, "max": 5, "step": 0.1}),
               ("stop_pct", "% (percent stop)", "number", 0.8, {"min": 0.1, "max": 5, "step": 0.1}),
               ("min_stop_pct", "Skip if stop under %", "number", 0.2, {"min": 0, "max": 5, "step": 0.05}),
@@ -322,6 +343,9 @@ class StopTarget(Module):
                 sl = it["or_low"] if lg else it["or_high"]
             elif st == "atr":
                 sl = e - cfg["atr_mult"] * atr if atr and lg else e + cfg["atr_mult"] * atr if atr else None
+            elif st == "daily_atr":                    # a fraction of the daily ATR(14), from the days before
+                da = (ctx.daily.get(it["symbol"]) or {}).get("atr14")
+                sl = (e - cfg["daily_atr_frac"] * da if lg else e + cfg["daily_atr_frac"] * da) if da else None
             elif st == "signal_bar":
                 sl = bar["l"] if lg else bar["h"]
             elif st == "vwap":

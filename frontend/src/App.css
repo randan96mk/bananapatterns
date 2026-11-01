@@ -671,7 +671,10 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 /* 🧪 Intraday Flow backtest */
 .flowcols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 760px) { .flowcols { grid-template-columns: 1fr; } }
-.flowtools .chip { display: inline-flex; align-items: center; gap: 4px; margin: 6px 6px 0 0; }
-.flowtools + .panel .bar, .panel .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.bttools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bttools .seg { margin-left: 0; }
+.bttools .seg button { white-space: nowrap; }
+.bttools .chip { display: inline-flex; align-items: center; gap: 4px; margin: 6px 6px 0 0; }
+@media (max-width: 760px) { .bttools .seg { width: 100%; } .bttools .seg button { flex: 1; } }
+.panel .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
 .panel .bar i { display: block; height: 100%; background: var(--accent); }
-.flowtools .seg button { white-space: nowrap; }
