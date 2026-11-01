@@ -98,7 +98,7 @@ export default function App() {
         {tab === 'alerts' && <AlertsPanel />}
         {tab === 'logs' && <LogsPanel />}
       </main>
-      <footer className="muted">Personal use only · {realOn ? '💰 real trading ON: orders go to Tradetron by webhook' : 'screen-only mode (no orders)'} · data © NSE via Zerodha Kite</footer>
+      <footer className="muted">Personal use only · {realOn ? '💰 real trading ON: orders go to Tradetron by webhook' : 'screen-only mode (no orders)'} · data © NSE via Kite</footer>
       {phone && (
         <>
           {more && (

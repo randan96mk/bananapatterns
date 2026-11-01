@@ -24,7 +24,7 @@ export default function HowItWorks({ r, paper = false, open = false }) {
           {' '}+{r.late_at_e}% over its entry, the stop is raised after each close to {r.late_pct_e}% under the best close (never lowered,
           {' '}used from the next session); A has none. <b>Exit</b>: a close under the {r.exit_sma}-day average sells at the next open.
           {' '}No profit target.</li>
-        <li><b>Costs</b>: Zerodha delivery charges (STT, exchange, SEBI, GST, stamp, DP) and {r.slippage_pct}% slippage on every buy and sell
+        <li><b>Costs</b>: delivery charges (STT, exchange, SEBI, GST, stamp, DP) and {r.slippage_pct}% slippage on every buy and sell
           {' '}({r.stress_slippage_pct}% in the stressed test). Before costs, costs and after costs are always shown apart.</li>
         {paper ? <li><b>Paper trading</b>: two virtual accounts (A and E) follow these rules from the start day, filled from the daily candles.
           {' '}<b>Simulated: no order is ever sent to Kite.</b> Stops are checked on the day's low after the close, as in the backtest.</li>

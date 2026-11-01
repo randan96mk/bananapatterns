@@ -144,7 +144,7 @@ export default function BreakoutPage() {
           <div className="k"><div className="v"><span className="vA">{pct(V.A?.[scen].cagr)}</span> · <span className="vE">{pct(V.E[scen].cagr)}</span></div>
             <div className="l">CAGR after costs A · E · NIFTY {pct(r.nifty.cagr)}<Tip text="Yearly growth of the account after all charges and slippage, over the whole test." /></div></div>
           <div className="k"><div className={`v ${cls(V.E[scen].net)}`}>{signedInr(V.E[scen].net)}</div>
-            <div className="l">E net · {inr(V.E[scen].gross)} before − {inr(V.E[scen].costs)} costs<Tip text="Profit on the starting capital: the price moves (before costs) minus Zerodha charges and slippage." /></div></div>
+            <div className="l">E net · {inr(V.E[scen].gross)} before − {inr(V.E[scen].costs)} costs<Tip text="Profit on the starting capital: the price moves (before costs) minus charges and slippage." /></div></div>
           <div className="k"><div className="v down">{pct(-V.E[scen].drawdown, 0)}</div><div className="l">E worst drawdown<Tip text="The largest fall from a peak of the account value, after costs." /></div></div>
           <div className="k"><div className="v">{V.E.robust_pass} / {V.E.robust.length}</div><div className="l">E robust neighbours<Tip text="Each setting moved one step (14; E+ adds 4 for the late trail: from +50% / +150%, trail 20% / 30%); how many still pass every period (stressed too) and beat NIFTY 50." /></div></div>
         </div>}

@@ -1,5 +1,5 @@
 """🧪 Intraday Flow backtest (phase 3): replays saved 1-minute candles day by day through the same boxes and the same
-paper-position code as live (next 1-minute open + slippage, Zerodha intraday charges, stops / trails / square-off),
+paper-position code as live (next 1-minute open + slippage, intraday charges, stops / trails / square-off),
 for the canvas or a saved setup, over 6 months / 1 year / 2 years. Only data up to each minute is used: daily
 averages and turnover from the days before, warm-up from the saved sessions before, bars closed before the minute.
 Missing stock-days are fetched from Kite once (then saved). Never orders, never touches the live paper positions."""
@@ -304,7 +304,7 @@ def _curve_stats(nets: list, capital: float, n_days: int) -> dict:
 def _charges(trades: list, plain_curve: dict) -> dict:
     """Plain profit (no slippage, no charges) -> slippage -> charges -> after costs, in total and per trade."""
     n = max(len(trades), 1)
-    tot = {k: round(sum(t[k] for t in trades), 2) for k in ("plain", "slip", "costs", "net")}
+    tot = {k: round(sum(t.get(k) or 0 for t in trades), 2) for k in ("plain", "slip", "brk", "gov", "costs", "net")}
     won_p = sum(t["plain"] > 0 for t in trades)
     loss_p = -sum(t["plain"] for t in trades if t["plain"] <= 0)
     return {**tot, "per_trade": {k: round(v / n, 2) for k, v in tot.items()},
@@ -344,7 +344,8 @@ def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
             "by_side": group(lambda t: t["side"]), "by_time": group(lambda t: bucket(t["entry_t"])),
             "by_month": group(lambda t: t["day"][:7]), "by_setup": group(lambda t: t.get("setup") or "—"),
             "exits": dict(Counter(t["reason"] for t in trades).most_common()),
-            "rows": sorted(trades, key=lambda t: (t["day"], t["entry_t"]), reverse=True)[:1500]}
+            "rows": [{k: v for k, v in t.items() if k != "orders"}
+                     for t in sorted(trades, key=lambda t: (t["day"], t["entry_t"]), reverse=True)[:1500]]}
 
 
 def _trade(p: dict) -> dict:
@@ -352,11 +353,65 @@ def _trade(p: dict) -> dict:
     value = p["entry"] * p["qty"] + sold
     extra = STRESS_EXTRA_PCT / 100 * value
     slip = pos.SLIPPAGE_PCT / 100 * value                 # the slippage already inside the fills
+    long = p["side"] == "long"
     return {"day": p["day"], "symbol": p["symbol"], "side": p["side"], "setup": p.get("setup"), "qty": p["qty"],
             "entry_t": p["entry_t"], "entry": p["entry"], "exit_t": p["exit_t"],
             "exit": round(sold / max(p["qty"], 1), 2), "reason": p["reason"], "gross": p["gross"], "costs": p["costs"],
             "net": p["net"], "net_stress": round(p["net"] - extra, 2), "r": p.get("r"),
-            "slip": round(slip, 2), "plain": round(p["gross"] + slip, 2)}
+            "slip": round(slip, 2), "plain": round(p["gross"] + slip, 2), "risk": p.get("risk"),
+            "signal_t": p.get("signal_t"), "signal_price": p.get("signal_price"), "sl": p.get("stop0"),
+            "target": p.get("target"), "exits": [{k: e.get(k) for k in ("t", "qty", "price", "why")} for e in p["exits"]],
+            "orders": [[round(p["entry"] * p["qty"], 2), long]] + [[round(e["price"] * e["qty"], 2), not long] for e in p["exits"]]}
+
+
+# --- the cost model: what the report counts (slippage, brokerage % / ₹ per order, government charges) ------
+
+DEFAULT_COSTS = {"slip": True, "brk_pct": 0.03, "brk_rs": 20.0, "gov": True}     # default: the lower of 0.03% and ₹20 an order
+
+
+def brokerage(value: float, m: dict) -> float:
+    """One order: % and ₹ both set -> the lower ; only one set -> that one; none -> free."""
+    pct, rs = (m.get("brk_pct") or 0) / 100 * value, m.get("brk_rs") or 0
+    return min(pct, rs) if pct and rs else pct or rs
+
+
+def order_costs(orders: list, m: dict) -> tuple[float, float]:
+    """(brokerage + its GST, government charges: STT on the sell, exchange, SEBI, GST on them, stamp on the buy)."""
+    brk = sum(brokerage(v, m) for v, _ in orders)
+    total = sum(v for v, _ in orders)
+    exch, sebi = total * 0.0000297, total * 10 / 1e7
+    stt = sum(v for v, buy in orders if not buy) * 0.00025
+    stamp = sum(v for v, buy in orders if buy) * 0.00003
+    return brk * 1.18, stt + exch + sebi + 0.18 * (exch + sebi) + stamp
+
+
+def apply_costs(trades: list, m: dict, run_capital: Optional[float] = None) -> list:
+    """The same trades under another cost model and capital. Fills and exits do not change, only each trade's
+    profit; another capital scales every quantity (sizes are % of capital: risk % and max position %), whole
+    shares, so it matches a run at that capital to within a share's rounding. A trade under 1 share is left out."""
+    out = []
+    f = (m.get("capital") or run_capital) / run_capital if run_capital and m.get("capital") else 1.0
+    for t in trades:
+        if "orders" not in t:
+            out.append(t)
+            continue
+        if f != 1.0:
+            q = int(t["qty"] * f)
+            if q < 1:
+                continue
+            k = q / t["qty"]
+            t = {**t, "qty": q, "plain": t["plain"] * k, "slip": t["slip"] * k, "gross": t["gross"] * k,
+                 "risk": (t.get("risk") or 0) * k or None, "orders": [[v * k, b] for v, b in t["orders"]],
+                 "exits": [{**e, "qty": round(e["qty"] * k)} for e in t.get("exits", [])]}
+        brk, gov = order_costs(t["orders"], m)
+        costs = brk + (gov if m.get("gov", True) else 0)
+        slip = t["slip"] if m.get("slip", True) else 0.0
+        extra = STRESS_EXTRA_PCT / 100 * sum(v for v, _ in t["orders"])
+        net = t["plain"] - slip - costs
+        out.append({**t, "plain": round(t["plain"], 2), "gross": round(t["gross"], 2), "costs": round(costs, 2), "brk": round(brk, 2), "gov": round(gov if m.get("gov", True) else 0, 2),
+                    "slip": round(slip, 2), "net": round(net, 2), "net_stress": round(t["plain"] - t["slip"] - extra - costs, 2),
+                    "r": round(net / t["risk"], 2) if t.get("risk") else t.get("r")})
+    return out
 
 
 # --- a run ----------------------------------------------------------------------------------------------
@@ -396,9 +451,10 @@ def run(config: AppConfig, client, names: list[str], period: str) -> dict:
         out = {}
         with get_db() as conn:
             for name in names:
-                rep = report(trades[name], days, float(cfgs[name]["size"]["capital"]), nifty)
+                rep = report(apply_costs(trades[name], DEFAULT_COSTS), days, float(cfgs[name]["size"]["capital"]), nifty)
                 rep.update(setup=name, period=period, covered=covered, missing=got["missing"], fetched=got["fetched"],
-                           settings=cfgs[name], ran_at=now_ist())
+                           settings=cfgs[name], ran_at=now_ist(), raw=trades[name],
+                           nifty_px={d: nifty[d] for d in days if d in nifty})
                 conn.execute("DELETE FROM flow_backtests WHERE setup = ? AND period = ?", (name, period))
                 conn.execute("INSERT INTO flow_backtests (setup, period, created, payload) VALUES (?, ?, ?, ?)",
                              (name, period, rep["ran_at"], json.dumps(rep)))
@@ -426,9 +482,64 @@ def start(config: AppConfig, client, names: list[str], period: str) -> dict:
     return {"status": "started", "setups": names, "period": period}
 
 
-def results(period: Optional[str] = None) -> list:
+CSV_COLS = ["date", "stock", "side", "setup", "signal_time", "signal_price", "entry_time", "entry_price", "qty",
+            "entry_value", "stop", "target", "risk_rs", "partial_time", "partial_qty", "partial_price", "partial_type",
+            "remaining_qty", "exit_time", "exit_qty", "exit_price", "exit_type", "avg_exit_price", "exit_reason",
+            "minutes_held", "plain_profit", "slippage", "brokerage_with_gst", "govt_charges", "total_costs", "net_profit",
+            "r_multiple", "result"]
+
+
+def _r2(v):
+    return round(v, 2) if isinstance(v, (int, float)) else ""
+
+
+def csv_rows(setup: str, period: str, costs: Optional[dict] = None) -> tuple[list, dict]:
+    """Every trade of a saved result (not only the latest shown on the page), one row each, under the cost model:
+    the partial exit(s), what stayed open after them, and the final exit, with each cost apart."""
+    with get_db() as conn:
+        r = conn.execute("SELECT payload FROM flow_backtests WHERE setup = ? AND period = ?", (setup, period)).fetchone()
+    if not r:
+        return [], {}
+    rep = json.loads(r[0])
+    m = {**DEFAULT_COSTS, **(costs or {})}
+    trades = apply_costs(rep.get("raw") or [], m, rep["capital"])
+    mins = lambda t: int(t[:2]) * 60 + int(t[3:5])
+    rows = []
+    for t in sorted(trades, key=lambda t: (t["day"], t["entry_t"])):
+        ex = t.get("exits") or []
+        parts, last = ex[:-1], (ex[-1] if ex else {})
+        sold = sum(e["qty"] for e in parts)
+        rows.append([t["day"], t["symbol"], t["side"], t.get("setup") or "", t.get("signal_t") or "", _r2(t.get("signal_price")),
+                     t["entry_t"], t["entry"], t["qty"], round(t["entry"] * t["qty"], 2), _r2(t.get("sl")), _r2(t.get("target")),
+                     round(t["risk"], 2) if t.get("risk") else "",
+                     " | ".join(e["t"] for e in parts), " | ".join(str(e["qty"]) for e in parts),
+                     " | ".join(str(e["price"]) for e in parts), " | ".join(e.get("why") or "" for e in parts),
+                     t["qty"] - sold, last.get("t", t["exit_t"]), last.get("qty", t["qty"] - sold), last.get("price", t["exit"]),
+                     last.get("why", t["reason"]), t["exit"], t["reason"], mins(t["exit_t"]) - mins(t["entry_t"]),
+                     t["plain"], t["slip"], t.get("brk", 0), t.get("gov", 0), round(t["slip"] + t["costs"], 2), t["net"],
+                     t.get("r") if t.get("r") is not None else "", "win" if t["net"] > 0 else "loss"])
+    return rows, {"capital": m.get("capital") or rep["capital"], **{k: m[k] for k in ("slip", "brk_pct", "brk_rs", "gov")}}
+
+
+KEEP = ("setup", "period", "covered", "missing", "fetched", "settings", "ran_at")
+
+
+def results(period: Optional[str] = None, costs: Optional[dict] = None) -> list:
+    """Saved results; with `costs`, each report is rebuilt from its saved trades under that cost model."""
     q, args = "SELECT payload FROM flow_backtests", []
     if period:
         q, args = q + " WHERE period = ?", [period]
     with get_db() as conn:
-        return [json.loads(r[0]) for r in conn.execute(q + " ORDER BY created DESC", args)]
+        rows = [json.loads(r[0]) for r in conn.execute(q + " ORDER BY created DESC", args)]
+    out = []
+    for r in rows:
+        raw = r.pop("raw", None)
+        px = r.pop("nifty_px", None)
+        if costs is not None and raw is not None:
+            cap = costs.get("capital") or r["capital"]
+            r = {**report(apply_costs(raw, costs, r["capital"]), r["curve"]["dates"], cap, px or {}),
+                 **{k: r.get(k) for k in KEEP}, "run_capital": r["capital"]}
+        r["costs_model"] = costs or DEFAULT_COSTS
+        r["split_costs"] = raw is not None
+        out.append(r)
+    return out
