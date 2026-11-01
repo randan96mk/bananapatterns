@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as api from '../services/api';
 import { inr, pct, cls } from '../fmt';
 
@@ -79,34 +79,39 @@ export default function FlowBacktest() {
   const [sel, setSel] = useState([]);
   const [focus, setFocus] = useState(null);
   const [err, setErr] = useState('');
-  const load = () => api.flowBacktest(period).then((x) => {
+  const was = useRef(null);
+  const load = () => api.flowBacktest().then((x) => {                 // every period's results; filtered below
+    if (was.current === 'running' && x.status.state !== 'running' && x.status.period) setPeriod(x.status.period);   // a run ended: show it
+    if (was.current === null && x.results.length) setPeriod(x.results[0].period);   // opened: the latest run's period
+    was.current = x.status.state;
     setD(x);
     setSel((s) => (s.length ? s.filter((n) => n in x.setups) : Object.keys(x.setups).slice(0, 1)));
   }).catch((e) => setErr(e.message));
-  useEffect(() => { load(); }, [period]);
+  useEffect(() => { load(); }, []);
   useEffect(() => {
     if (d?.status.state !== 'running') return undefined;
     const id = setInterval(load, 3000);
     return () => clearInterval(id);
-  }, [d?.status.state, period]);
+  }, [d?.status.state]);
   if (!d) return <div className="panel muted">Loading…</div>;
   const names = Object.keys(d.setups);
   const colors = Object.fromEntries(names.map((n, i) => [n, COLORS[i % COLORS.length]]));
-  const results = d.results.filter((r) => sel.includes(r.setup));
+  const results = d.results.filter((r) => sel.includes(r.setup) && r.period === period);
+  const other = [...new Set(d.results.filter((r) => sel.includes(r.setup) && r.period !== period).map((r) => r.period))];
   const shown = focus && results.find((r) => r.setup === focus);
   const running = d.status.state === 'running';
   const act = (p) => p.then(load).catch((e) => setErr(e.message));
   const save = () => { const n = window.prompt('Name this setup (a copy of every box\'s settings on the canvas):'); if (n) act(api.flowSetupSave(n)); };
 
   return <>
-    <div className="panel flowtools">
+    <div className="panel bttools">
       <span className="seg">{PERIODS.map(([k, l]) => <button key={k} className={period === k ? 'active' : ''} onClick={() => setPeriod(k)}>{l}</button>)}</span>
       <button className="btn primary" disabled={running || !sel.length} onClick={() => act(api.flowBacktestRun(sel, period))}>
         {running ? 'Running…' : `▶ Run ${sel.length > 1 ? `selected (${sel.length})` : 'backtest'}`}</button>
       <button className="btn" onClick={save}>💾 Save canvas as setup…</button>
       <div style={{ width: '100%' }}>{names.map((n) => (
         <label key={n} className="chip" style={{ borderColor: colors[n] }}>
-          <input type="checkbox" checked={sel.includes(n)} onChange={(e) => setSel(e.target.checked ? [...sel, n] : sel.filter((x) => x !== n))} />
+          <input type="checkbox" checked={sel.includes(n)} aria-label={n} onChange={(e) => setSel(e.target.checked ? [...sel, n] : sel.filter((x) => x !== n))} />
           {' '}<b style={{ color: colors[n] }}>{n}</b>
           {d.setups[n] && <> <button className="linkbtn small" onClick={() => act(api.flowSetupLoad(n))}>load on canvas</button>
             <button className="linkbtn small" onClick={() => window.confirm(`Delete setup "${n}" and its results?`) && act(api.flowSetupDelete(n))}>delete</button></>}
@@ -115,6 +120,8 @@ export default function FlowBacktest() {
     {err && <div className="warn small">{err}</div>}
     {(running || d.status.message) && <div className="panel small">{running ? <b>Running… </b> : null}{d.status.message}
       {running && <div className="bar" style={{ marginTop: 6 }}><i style={{ width: `${d.status.pct}%` }} /></div>}</div>}
+    {!results.length && other.length > 0 && <div className="panel">Results saved for {other.map((k) => (
+      <button key={k} className="btn primary" style={{ marginRight: 8 }} onClick={() => setPeriod(k)}>{PERIODS.find((p) => p[0] === k)[1]} →</button>))}</div>}
     {!results.length ? <p className="muted panel">No results for the ticked setup(s) over {PERIODS.find((p) => p[0] === period)[1]} yet: press Run. Days not saved
       yet are fetched from Kite first (once, kept for next time). A run replays the same boxes as live, minute by minute, with paper fills and Zerodha costs.</p>
       : shown || results.length === 1 ? <>{results.length > 1 && <button className="linkbtn" onClick={() => setFocus(null)}>← back to side by side</button>}

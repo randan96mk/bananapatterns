@@ -309,7 +309,7 @@ def run(config: AppConfig, client, names: list[str], period: str) -> dict:
         return {"status": "busy"}
     try:
         months = PERIODS[period]
-        _status.update(state="running", pct=0, message="preparing", at=now_ist())
+        _status.update(state="running", pct=0, message="preparing", at=now_ist(), period=period, setups=names)
         warm, days, nifty = sessions(months, config.flow.warmup_days)
         if not days:
             raise RuntimeError("No NIFTY 50 daily candles saved yet (run the daily sync).")
