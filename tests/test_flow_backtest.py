@@ -145,3 +145,49 @@ def bt_session(k):
     """A green first 5 minutes with volume growing by stock, then a climb."""
     rows = bars(5, start=150, step=0.1, vol=1000 * (k + 1)) + bars(40, start=150.6, step=0.2, vol=1000, t0=(9, 20))
     return rows
+
+
+def test_costs_model_rebuilds_the_report(monkeypatch):
+    from backend.intraday import positions as pos
+    stocks, ds = data(monkeypatch)
+    bt.run(AppConfig(), None, [bt.CANVAS], "6m")
+    base = bt.results("6m")[0]
+    z = bt.results("6m", dict(bt.DEFAULT_COSTS))[0]
+    assert abs(z["net"] - base["net"]) < 1 and z["charges"]["brk"] > 0 and "orders" not in z["rows"][0]
+    free = bt.results("6m", {"slip": False, "gov": False, "brk_pct": 0, "brk_rs": 0})[0]
+    assert abs(free["net"] - free["charges"]["plain"]) < 0.5 and free["charges"]["costs"] == 0      # nothing taken
+    flat = bt.results("6m", {"slip": True, "gov": True, "brk_pct": 0, "brk_rs": 10})[0]
+    assert abs(flat["charges"]["brk"] - 10 * 1.18 * 2 * flat["trades"]) < 1                           # ₹10 an order + GST
+    assert free["net"] > flat["net"] and free["cagr"] > flat["cagr"] and len(free["curve"]["net"]) == len(ds)
+    b, g = bt.order_costs([[100_000, True], [100_500, False]], bt.DEFAULT_COSTS)
+    assert abs(b + g - pos.intraday_charges(100_000, 100_500)) < 0.01                                 # same as live
+    assert abs(bt.brokerage(10_000, {"brk_pct": 0.03, "brk_rs": 20}) - 3) < 1e-9 and bt.brokerage(10_000, {"brk_pct": 0, "brk_rs": 0}) == 0
+
+
+def test_api_costs_params(monkeypatch):
+    from fastapi.testclient import TestClient
+    data(monkeypatch)
+    bt.run(AppConfig(), None, [bt.CANVAS], "6m")
+    monkeypatch.setenv("BP_NO_STATIC", "1")
+    monkeypatch.setenv("BP_NO_SCHEDULER", "1")
+    from backend import main
+    with TestClient(main.app) as tc:
+        a = tc.get("/api/flow/backtest").json()["results"][0]
+        b = tc.get("/api/flow/backtest?slip=false&gov=false&brk_pct=0&brk_rs=0").json()["results"][0]
+        assert b["net"] > a["net"] and b["costs_model"]["brk_rs"] == 0 and "raw" not in a
+        c = tc.get(f"/api/flow/backtest/csv?setup={bt.CANVAS}&period=6m&brk_pct=0&brk_rs=0")
+        lines = c.text.strip().splitlines()
+        assert c.status_code == 200 and lines[1].startswith("date,stock,side") and len(lines) == 2 + a["trades"]
+        assert "attachment" in c.headers["content-disposition"]
+        assert tc.get("/api/flow/backtest/csv?setup=nope&period=6m").status_code == 404
+
+
+def test_capital_rescales_the_report(monkeypatch):
+    stocks, ds = data(monkeypatch)
+    bt.run(AppConfig(), None, [bt.CANVAS], "6m")
+    one = bt.results("6m", {**bt.DEFAULT_COSTS, "brk_rs": 0, "brk_pct": 0})[0]
+    two = bt.results("6m", {**bt.DEFAULT_COSTS, "brk_rs": 0, "brk_pct": 0, "capital": 2 * one["capital"]})[0]
+    assert two["capital"] == 2 * one["capital"] and two["run_capital"] == one["capital"]
+    assert abs(two["net"] - 2 * one["net"]) < 0.02 * abs(one["net"]) + 5 and abs(two["return"] - one["return"]) < 0.5
+    t = two["rows"][0]
+    assert {"signal_t", "signal_price", "sl", "target", "exits", "plain", "brk", "gov", "net"} <= set(t)

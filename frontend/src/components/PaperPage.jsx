@@ -136,7 +136,7 @@ export default function PaperPage() {
         <div className="panel"><h3>Start paper trading</h3>
           <p>Two virtual accounts start the same day, <b className="vA">A · 200-day filter, top {rules?.top ?? 200}</b> and <b className="vE">E+ · half filter, top {rules?.top_e ?? 300}, late trail</b>, each with
             {' '}this capital. Every evening the breakouts are "filled" at the next open from the daily candle, with the same size, stop, exit
-            {' '}and Zerodha delivery costs as the backtest. Nothing is sent to Kite.</p>
+            {' '}and delivery costs as the backtest. Nothing is sent to Kite.</p>
           <p>Capital per account <input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 130 }} />
             {' '}<button className="btn primary" onClick={start} disabled={!(Number(cap) > 0)}>Start</button></p>
           <p className="muted small">Position size = account value ÷ {d.max_pos}; quantities follow from the capital. The default is the paper capital setting.</p>
@@ -157,7 +157,7 @@ export default function PaperPage() {
       <div className="panel">Today's market filter ({day(a0.decided)} close): {keys.map((k) => <FilterBadge key={k} k={k} f={accts[k].filter} />)}
         <div className="summary">{keys.map((k) => (
           <div key={k} className="k"><div className={`v ${cls(accts[k].account.net)}`}>{sgn(accts[k].account.net)}</div>
-            <div className="l"><span className={`v${k}`}>{k}</span> after costs · {pct(accts[k].account.return)}<Tip text="Account value minus the starting capital: price moves minus Zerodha charges and slippage." /></div></div>))}
+            <div className="l"><span className={`v${k}`}>{k}</span> after costs · {pct(accts[k].account.return)}<Tip text="Account value minus the starting capital: price moves minus charges and slippage." /></div></div>))}
           {keys.map((k) => (
           <div key={`r${k}`} className="k"><div className="v">{accts[k].positions.length} / {accts[k].allowed ? accts[k].cap : d.max_pos}</div>
             <div className="l"><span className={`v${k}`}>{k}</span> open positions · cash {inr(accts[k].account.cash)}</div></div>))}</div></div>
@@ -167,7 +167,7 @@ export default function PaperPage() {
         <div className="small">{keys.map((k) => <span key={k} className={`v${k}`}><b>━ {k} {pct(accts[k].account.return)}</b> &nbsp; </span>)}
           <span className="muted">╍ NIFTY 50 {pct(a0.account.nifty)}</span></div></div>}
       {sub !== 'how' && <div className="paperacc">{keys.map((k) => <Account key={k} k={k} a={accts[k]} maxPos={d.max_pos} phone={phone} view={sub} />)}</div>}
-      <p className="muted small">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and Zerodha delivery charges (STT, exchange,
+      <p className="muted small">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and delivery charges (STT, exchange,
         SEBI, GST, stamp, DP). Stops are checked on the day's low after the close (no live intraday price), as in the backtest. Past results don't guarantee future returns.</p>
       {sub === 'how' && <HowItWorks r={rules} paper open />}
       {sub === 'overview' && <NextUp />}

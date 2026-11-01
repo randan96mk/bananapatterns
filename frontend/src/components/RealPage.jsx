@@ -66,7 +66,7 @@ export default function RealPage() {
       {err && <div className="warn small">{err}</div>}
       {d.started && <div className="summary" style={{ marginBottom: 12 }}>
         <div className="k"><div className="v">{inr(A.value)}</div><div className="l">account value · capital {inr(A.capital)}</div></div>
-        <div className="k"><div className={`v ${cls(A.net)}`}>{sgn(A.net)}</div><div className="l">after costs · {pct(A.return)}<Tip text="Account value minus the capital: price moves minus Zerodha charges (estimated; your broker's fills may differ)." /></div></div>
+        <div className="k"><div className={`v ${cls(A.net)}`}>{sgn(A.net)}</div><div className="l">after costs · {pct(A.return)}<Tip text="Account value minus the capital: price moves minus charges (estimated; your broker's fills may differ)." /></div></div>
         <div className="k"><div className="v down">{inr(risk)}</div><div className="l">at risk if every stop hits<Tip text="Sum over open positions of quantity × (last price − stop)." /></div></div>
         <div className="k"><div className="v">{d.positions.length} / {d.allowed ? d.cap : d.max_pos}</div><div className="l">open positions · cash {inr(A.cash)}</div></div>
       </div>}

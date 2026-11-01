@@ -799,12 +799,44 @@ def flow_start():
     return {"stopped": False}
 
 
-@router.get("/flow/backtest")
-def flow_backtest(period: Optional[str] = None):
-    """🧪 Saved setups, the latest result of each (setup, period), and the running job's progress."""
+def _costs(slip, gov, brk_pct, brk_rs, capital):
+    if brk_pct is None and brk_rs is None and not capital and slip and gov:
+        return None
+    return {"slip": slip, "gov": gov, "brk_pct": max(0.0, brk_pct or 0), "brk_rs": max(0.0, brk_rs or 0),
+            "capital": capital if capital and capital >= 1000 else None}
+
+
+@router.get("/flow/backtest/csv")
+def flow_backtest_csv(setup: str, period: str, slip: bool = True, gov: bool = True, brk_pct: Optional[float] = None,
+                      brk_rs: Optional[float] = None, capital: Optional[float] = None):
+    """⬇ Every trade of a result as CSV (one row a trade, partial and final exits, each cost apart)."""
+    import csv
+    import io
+    from fastapi.responses import Response
     from backend.intraday import backtest as bt
+    rows, m = bt.csv_rows(setup, period, _costs(slip, gov, brk_pct, brk_rs, capital))
+    if not m:
+        raise HTTPException(404, "No saved result for that setup and period (re-run it)")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([f"# {setup} · {period} · capital {m['capital']:.0f} · slippage {'on' if m['slip'] else 'off'} · brokerage "
+                f"{m['brk_pct']}% / Rs {m['brk_rs']} per order · govt charges {'on' if m['gov'] else 'off'}"])
+    w.writerow(bt.CSV_COLS)
+    w.writerows(rows)
+    name = "".join(ch if ch.isalnum() else "_" for ch in setup).strip("_")[:40] or "setup"
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="backtest_{name}_{period}.csv"'})
+
+
+@router.get("/flow/backtest")
+def flow_backtest(period: Optional[str] = None, slip: bool = True, gov: bool = True, brk_pct: Optional[float] = None,
+                  brk_rs: Optional[float] = None, capital: Optional[float] = None):
+    """🧪 Saved setups, the latest result of each (setup, period) under the chosen costs (slippage on / off,
+    brokerage % and / or ₹ per order, government charges on / off), and the running job's progress."""
+    from backend.intraday import backtest as bt
+    costs = _costs(slip, gov, brk_pct, brk_rs, capital)
     return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.all_setups()},
-            "periods": list(bt.PERIODS), "results": bt.results(period)}
+            "periods": list(bt.PERIODS), "results": bt.results(period, costs), "default_costs": bt.DEFAULT_COSTS}
 
 
 @router.post("/flow/backtest")

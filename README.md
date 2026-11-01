@@ -1939,3 +1939,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **💸 Before vs after charges** in every report: plain profit (exact signal prices) → slippage → charges → profit after
   costs, in total and per trade, with win rate, profit factor and CAGR before → after; the plain curve on the chart; the
   same rows in the side-by-side comparison.
+- **⚙️ Report as if** (every report and the side-by-side view): **capital** (the quantities scale with it, whole shares),
+  **brokerage % and / or ₹ per order** (both: the lower an order; 0 or empty: none), **slippage** and **govt charges**
+  on / off. Every number, chart and trade is rebuilt from the saved trades as you type (no re-run); remembered per device.
+- **📋 Trades, every column** (signal, entry, qty, value, stop, target, each exit with partials, held, plain, slippage,
+  brokerage, govt, net, R; cards on a phone) and **⬇ CSV** of all trades: one row a trade with the partial exit(s), the
+  quantity left after them, the final exit and each cost apart, under the costs and capital chosen on the page.
+- Broker names removed from the screens (costs are described by what they are).
