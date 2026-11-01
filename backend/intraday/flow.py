@@ -187,8 +187,10 @@ def daily_context(config: AppConfig, stocks: list[dict]) -> tuple[dict, dict]:
         for s in stocks:
             cs = get_candles(conn, s["instrument_token"], limit=200)
             closes = [c["close"] for c in cs]
+            tr = [max(c["high"], p["close"]) - min(c["low"], p["close"]) for p, c in zip(cs[-15:], cs[-14:])]
             daily[s["symbol"]] = {"sma50": sum(closes[-50:]) / 50 if len(closes) >= 50 else None,
-                                  "sma200": sum(closes) / 200 if len(closes) >= 200 else None}
+                                  "sma200": sum(closes) / 200 if len(closes) >= 200 else None,
+                                  "atr14": sum(tr) / 14 if len(tr) == 14 else None}
             last20 = cs[-20:]
             turnover[s["symbol"]] = sum(c["close"] * c["volume"] for c in last20) / max(len(last20), 1)
     return daily, turnover
