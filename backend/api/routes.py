@@ -799,6 +799,47 @@ def flow_start():
     return {"stopped": False}
 
 
+@router.get("/flow/backtest")
+def flow_backtest(period: Optional[str] = None):
+    """🧪 Saved setups, the latest result of each (setup, period), and the running job's progress."""
+    from backend.intraday import backtest as bt
+    return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.setups()},
+            "periods": list(bt.PERIODS), "results": bt.results(period)}
+
+
+@router.post("/flow/backtest")
+def flow_backtest_run(req: dict):
+    from backend.intraday import backtest as bt
+    st = S()
+    return bt.start(st.config, st.client, list(req.get("setups") or []), str(req.get("period") or "1y"))
+
+
+@router.post("/flow/setups")
+def flow_setup_save(req: dict):
+    from backend.intraday import backtest as bt
+    try:
+        return bt.save_setup(str(req.get("name") or ""))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.post("/flow/setups/load")
+def flow_setup_load(req: dict):
+    from backend.intraday import backtest as bt
+    try:
+        bt.load_setup(str(req.get("name")))
+    except KeyError:
+        raise HTTPException(404, "No such setup")
+    return {"loaded": req.get("name")}
+
+
+@router.post("/flow/setups/delete")
+def flow_setup_delete(req: dict):
+    from backend.intraday import backtest as bt
+    bt.delete_setup(str(req.get("name")))
+    return {"deleted": req.get("name")}
+
+
 @router.put("/flow/layout")
 def flow_layout(pos: dict):
     """Save box positions dragged on the canvas: {node: [x, y]}; an empty body resets to the template's layout."""

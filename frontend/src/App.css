@@ -668,3 +668,10 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 .killbtn.start { background: var(--ok); }
 .stopbanner { background: color-mix(in srgb, var(--bad) 14%, transparent); border: 1px solid var(--bad);
   border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+/* 🧪 Intraday Flow backtest */
+.flowcols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .flowcols { grid-template-columns: 1fr; } }
+.flowtools .chip { display: inline-flex; align-items: center; gap: 4px; margin: 6px 6px 0 0; }
+.flowtools + .panel .bar, .panel .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.panel .bar i { display: block; height: 100%; background: var(--accent); }
+.flowtools .seg button { white-space: nowrap; }

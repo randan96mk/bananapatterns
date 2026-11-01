@@ -45,14 +45,19 @@ def resample(bars: list[dict], n: int, start: str = "09:15") -> list[dict]:
     """1-minute bars -> n-minute bars aligned to `start` (9:15, 9:20 … for n = 5)."""
     if n <= 1:
         return list(bars)
-    out, s = [], _minutes(start)
+    out, s, last = [], _minutes(start), None
     for b in bars:
-        k = (_minutes(b["t"]) - s) // n
-        slot = s + k * n
-        t = f"{slot // 60:02d}:{slot % 60:02d}"
-        if out and out[-1]["t"] == t:
+        t = b["t"]
+        slot = s + (int(t[:2]) * 60 + int(t[3:5]) - s) // n * n
+        if slot == last:
             o = out[-1]
-            o.update(h=max(o["h"], b["h"]), l=min(o["l"], b["l"]), c=b["c"], v=o["v"] + b["v"])
+            if b["h"] > o["h"]:
+                o["h"] = b["h"]
+            if b["l"] < o["l"]:
+                o["l"] = b["l"]
+            o["c"] = b["c"]
+            o["v"] += b["v"]
         else:
-            out.append({**b, "t": t})
+            out.append({**b, "t": f"{slot // 60:02d}:{slot % 60:02d}"})
+            last = slot
     return out

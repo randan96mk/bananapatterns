@@ -3,6 +3,7 @@ import * as api from '../services/api';
 import { useIsPhone } from '../useMedia';
 import { StopMeter, SubTabs } from './ui';
 import { inr, signed, cls } from '../fmt';
+import FlowBacktest from './FlowBacktest';
 
 const W = 210, H = 112;                                   // box size on the canvas
 const STATUS = { ok: ['✓', 'ok'], running: ['…', 'run'], idle: ['idle', 'idle'], error: ['!', 'err'] };
@@ -115,7 +116,7 @@ export default function FlowPage() {
         <div className="k"><div className="v">{inr(Math.max(0, -d.stats.realised))} / {inr(d.stats.loss_limit)}</div>
           <div className="l">daily loss used · capital {inr(d.stats.capital)}</div></div>
       </div>}
-      <SubTabs tabs={[['flow', 'Flow'], ['positions', `Positions (${d.positions?.length || 0})`], ['journal', 'Journal']]} value={sub} onChange={setSub} />
+      <SubTabs tabs={[['flow', 'Flow'], ['positions', `Positions (${d.positions?.length || 0})`], ['journal', 'Journal'], ['backtest', '🧪 Backtest']]} value={sub} onChange={setSub} />
       {sub === 'positions' && <div className="panel"><h3>📝 Paper positions today <span className="muted small">· simulated, no orders</span></h3>
         {!d.positions?.length ? <p className="muted">None today{d.mode !== 'paper' ? ' (switch the mode to 📝 Paper)' : ''}.</p> : (
           <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Side</th><th className="num">Qty</th><th className="num">Entry</th>
@@ -132,6 +133,7 @@ export default function FlowPage() {
                 <td className={`num ${cls(p.net ?? unreal)}`}><b>{signed(p.net ?? unreal)}</b>
                   {p.costs != null && <div className="muted small">{signed(p.gross)} − {inr(p.costs)}</div>}</td></tr>);
             })}</tbody></table></div>)}</div>}
+      {sub === 'backtest' && <FlowBacktest />}
       {sub === 'journal' && <div className="panel"><h3>📒 Journal <span className="muted small">· closed paper trades, last 30 days, after costs</span></h3>
         {!jr ? 'Loading…' : !jr.total.trades ? <p className="muted">No closed paper trades yet.</p> : <>
           <div className="summary">

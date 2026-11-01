@@ -24,9 +24,12 @@ def rsi(closes: list[float], n: int = 14):
 
 def vwap(today: list[dict]):
     """Session VWAP from today's bars (typical price × volume)."""
-    pv = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in today)
-    vol = sum(b["v"] for b in today)
-    return pv / vol if vol else None
+    pv = vol = 0.0
+    for b in today:
+        v = b["v"]
+        pv += (b["h"] + b["l"] + b["c"]) * v
+        vol += v
+    return pv / 3 / vol if vol else None
 
 
 def rvol(bars: list[dict], n: int = 20):

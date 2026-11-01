@@ -43,12 +43,13 @@ def load(day: str, status: Optional[tuple] = None) -> list[dict]:
         return [json.loads(r[0]) for r in conn.execute(q + " ORDER BY id", args)]
 
 
-def open_new(day: str, it: dict, signal_t: str, plan: dict) -> dict:
+def open_new(day: str, it: dict, signal_t: str, plan: dict, save: bool = True) -> dict:
     """A pending paper position: fills at the open of the first 1-minute bar after the signal candle."""
     p = {"day": day, "symbol": it["symbol"], "token": it["token"], "side": it["side"], "qty": it["qty"],
          "signal_t": signal_t, "status": "pending", "plan": plan, "signal_price": it["entry"],
          "stop0": it["sl"], "target": it.get("target"), "created": now_ist()}
-    _save(p)
+    if save:
+        _save(p)
     return p
 
 
@@ -148,22 +149,26 @@ def manage(day: str, bars_of, now_t: str) -> list[dict]:
     Returns [(position, event)] for alerts."""
     out = []
     for p in load(day, ("pending", "open")):
-        bars = [b for b in bars_of(p["token"]) if b["t"] < now_t]
-        last = p.get("last_t", "")
-        prev = None
-        for b in bars:
-            if b["t"] <= last:
-                prev = b
-                continue
-            for ev in step(p, b, prev, p["plan"]):
-                out.append((p, ev))
-            p["last_t"] = b["t"]
-            prev = b
-            if p["status"] == "closed":
-                break
-        if bars:
-            p["last_price"] = bars[-1]["c"]
+        out += [(p, ev) for ev in advance(p, bars_of(p["token"]), now_t)]
         _save(p)
+    return out
+
+
+def advance(p: dict, day_bars: list, now_t: str) -> list:
+    """One position over its closed 1-minute bars (t < now_t) not seen yet; returns the events. Also the backtest's."""
+    bars = [b for b in day_bars if b["t"] < now_t]
+    last, prev, out = p.get("last_t", ""), None, []
+    for b in bars:
+        if b["t"] <= last:
+            prev = b
+            continue
+        out += step(p, b, prev, p["plan"])
+        p["last_t"] = b["t"]
+        prev = b
+        if p["status"] == "closed":
+            break
+    if bars:
+        p["last_price"] = bars[-1]["c"]
     return out
 
 
@@ -181,7 +186,11 @@ def square_off_all(day: str, price_of, t: str, why: str = "stopped") -> list:
 
 
 def day_stats(day: str) -> dict:
-    ps = [p for p in load(day) if p["status"] != "cancelled"]
+    return stats_of(load(day))
+
+
+def stats_of(ps: list) -> dict:
+    ps = [p for p in ps if p["status"] != "cancelled"]
     closed = [p for p in ps if p["status"] == "closed"]
     open_ = [p for p in ps if p["status"] in ("pending", "open")]
     realised = sum(p["net"] for p in closed)

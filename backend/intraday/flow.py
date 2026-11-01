@@ -100,6 +100,7 @@ class Ctx:
         self.notify, self.mode, self.t = notify, mode, t
         self.emitted: list[dict] = []
         self._market = None
+        self.cache: dict = {}                       # resampled saved history (the backtest shares it through a day)
 
     def sides(self):
         return ["long", "short"]
@@ -150,7 +151,10 @@ class Ctx:
         return self.feed.day(it["token"]) if self.feed else []
 
     def bars(self, it):
-        return resample(self.history.get(it["token"], []), self.interval) + resample(self.today_bars(it), self.interval)
+        k = (it["token"], self.interval)
+        if k not in self.cache:
+            self.cache[k] = resample(self.history.get(it["token"], []), self.interval)
+        return self.cache[k] + resample(self.today_bars(it), self.interval)
 
     def last_closed(self, it):
         b = resample(self.today_bars(it), self.interval)
@@ -190,14 +194,17 @@ def daily_context(config: AppConfig, stocks: list[dict]) -> tuple[dict, dict]:
     return daily, turnover
 
 
-def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None) -> dict:
-    """Runs every node in order (inputs first); returns {node: {status, in, out, ms, drops, sample}}."""
+def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None, cfgs: Optional[dict] = None,
+             live: bool = True) -> dict:
+    """Runs every node in order (inputs first); returns {node: {status, in, out, ms, drops, sample}}.
+    cfgs: other settings than the canvas's (a saved setup); live=False: the canvas status is left alone (backtest)."""
     t = template(key)
-    cfgs = node_configs(key)
+    cfgs = cfgs or node_configs(key)
     out: dict[str, list] = {}
     res: dict = {}
     for nid, kind, inputs, _ in t["nodes"]:
-        _state["nodes"][nid] = {**_state["nodes"].get(nid, {}), "status": "running"}
+        if live:
+            _state["nodes"][nid] = {**_state["nodes"].get(nid, {}), "status": "running"}
         t0 = _time.perf_counter()
         if not inputs:
             src = items
@@ -222,7 +229,8 @@ def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None) -> dict:
         out[nid] = passed
         res[nid] = {"status": "ok", "in": n_in, "out": len(passed), "ms": round((_time.perf_counter() - t0) * 1000),
                     "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]]}
-        _state["nodes"][nid] = res[nid]
+        if live:
+            _state["nodes"][nid] = res[nid]
     return res
 
 
