@@ -385,7 +385,7 @@ class FlowConfig:
     """⚡ Intraday Flow (signals only in phase 1). Node settings are saved per node in app_settings (flow.nodes)."""
     mode: str = "off"                      # off / signals
     warmup_days: int = 2                   # saved sessions of 1-minute bars used to warm indicators up
-    retention_months: int = 12             # 1-minute bars kept this long, then shrunk to 5-minute bars
+    retention_months: int = 24             # 1-minute bars kept this long (2-year backtests), then 5-minute bars
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",

@@ -1915,3 +1915,19 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   banner shows, and the ⏱ status bar shows it as stopped. It stays stopped across restarts and days until ▶ Start.
   Today's bars are kept, and the gap is re-fetched from Kite at the day close (or by the next day's warm-up).
   Telegram: one message on stop, one on start.
+
+### 2026-11-01: 🧪 Intraday Flow backtest (phase 3)
+- New sub-tab **🧪 Backtest** on Intraday Flow: **💾 save the canvas as a named setup** (load it back on the canvas, delete),
+  tick one or more setups and **▶ Run** over **6 months / 1 year / 2 years** in the background with a progress bar.
+- **Replay** (`backend/intraday/backtest.py`): saved 1-minute candles day by day through the same boxes and the same
+  paper-position code as live (next 1-minute open + 0.05% slippage, Zerodha intraday charges, stops / trails / time stop /
+  square-off), every candle close in the trigger window; positions managed every minute. No look-ahead: daily averages and
+  turnover from the days before, warm-up from the saved sessions before, only bars closed before the minute.
+- **History**: stock-days not saved yet are fetched from Kite first (one request per stock per ~2 months, kept for next
+  time); 1-minute bars are now kept 24 months (`flow.retention_months`) so a 2-year test runs on 1-minute data.
+  Days with under half the stocks saved are left out (shown in the report).
+- **Report**: net after costs, CAGR, stressed (+0.10% a fill), worst drawdown, trades / won, profit factor, average R, costs,
+  curve vs NIFTY 50, development / validation / out-of-sample, by side, entry time and month, exits, every trade.
+  **Several setups**: side by side with the best value highlighted and the curves overlaid; click one for its report.
+- Runtime: about 10 s a session for the Nifty 500 at 5-minute candles (≈ 40 min for 1 year, per setup). Nothing is sent and
+  the live paper positions are never touched. Saved per setup and period (`flow_backtests`).
