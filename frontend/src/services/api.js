@@ -73,6 +73,8 @@ export const flowMode = (mode) => req('POST', '/api/flow/mode', { mode });
 export const flowStop = () => req('POST', '/api/flow/stop');
 export const flowStart = () => req('POST', '/api/flow/start');
 export const flowBacktest = (qs = '') => req('GET', `/api/flow/backtest${qs ? `?${qs}` : ''}`);
+export const flowBacktestStatus = () => req('GET', '/api/flow/backtest/status');
+export const flowBacktestStop = () => req('POST', '/api/flow/backtest/stop');
 export const flowBacktestRun = (setups, period) => req('POST', '/api/flow/backtest', { setups, period });
 export const flowSetupSave = (name) => req('POST', '/api/flow/setups', { name });
 export const flowSetupLoad = (name) => req('POST', '/api/flow/setups/load', { name });

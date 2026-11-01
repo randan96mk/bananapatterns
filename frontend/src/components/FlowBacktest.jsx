@@ -154,19 +154,25 @@ export default function FlowBacktest() {
     if (was.current === 'running' && x.status.state !== 'running' && x.status.period) setPeriod(x.status.period);   // a run ended: show it
     if (was.current === null && x.results.length) setPeriod(x.results[0].period);   // opened: the latest run's period
     was.current = x.status.state;
+    setErr('');
     setD(x);
     setSel((s) => (s.length ? s.filter((n) => n in x.setups) : Object.keys(x.setups).slice(0, 1)));
-  }).catch((e) => setErr(e.message));
+  }).catch((e) => setErr(/load failed|failed to fetch|network/i.test(e.message) ? 'Could not reach the app just now (busy or a weak connection): pull to refresh or wait a moment.' : e.message));
   useEffect(() => {
     try { localStorage.setItem('bt.costs', JSON.stringify(costs)); } catch { /* private mode */ }
     const id = setTimeout(load, 350);                        // as you type: the report is rebuilt for these costs
     return () => clearTimeout(id);
   }, [qs]);
-  useEffect(() => {
+  const [hiccup, setHiccup] = useState(0);              // missed progress checks in a row (the server is busy)
+  useEffect(() => {                                      // while running: the cheap progress call only
     if (d?.status.state !== 'running') return undefined;
-    const id = setInterval(load, 3000);
+    const id = setInterval(() => api.flowBacktestStatus().then((st) => {
+      setHiccup(0);
+      if (st.state !== 'running') load();
+      else setD((x) => ({ ...x, status: st }));
+    }).catch(() => setHiccup((h) => h + 1)), 4000);
     return () => clearInterval(id);
-  }, [d?.status.state]);
+  }, [d?.status.state, qs]);
   if (!d) return <div className="panel muted">Loading…</div>;
   const names = Object.keys(d.setups);
   const colors = Object.fromEntries(names.map((n, i) => [n, COLORS[i % COLORS.length]]));
@@ -180,8 +186,10 @@ export default function FlowBacktest() {
   return <>
     <div className="panel bttools">
       <span className="seg">{PERIODS.map(([k, l]) => <button key={k} className={period === k ? 'active' : ''} onClick={() => setPeriod(k)}>{l}</button>)}</span>
-      <button className="btn primary" disabled={running || !sel.length} onClick={() => act(api.flowBacktestRun(sel, period))}>
-        {running ? 'Running…' : `▶ Run ${sel.length > 1 ? `selected (${sel.length})` : 'backtest'}`}</button>
+      {running ? <button className="btn" style={{ background: 'var(--bad)', color: '#fff' }}
+        onClick={() => window.confirm('Stop the running backtest? Nothing from this run is saved.') && act(api.flowBacktestStop())}>⏹ Stop backtest</button>
+        : <button className="btn primary" disabled={!sel.length} onClick={() => act(api.flowBacktestRun(sel, period))}>
+          {`▶ Run ${sel.length > 1 ? `selected (${sel.length})` : 'backtest'}`}</button>}
       <button className="btn" onClick={save}>💾 Save canvas as setup…</button>
       <div style={{ width: '100%' }}>{names.map((n) => (
         <label key={n} className="chip" style={{ borderColor: colors[n] }}>
@@ -196,6 +204,7 @@ export default function FlowBacktest() {
     {results.length > 0 && <CostsBar c={costs} set={setCosts} runCap={results[0].run_capital || results[0].capital} />}
     {results.some((r) => !r.split_costs) && <p className="warn small panel">A result from before the cost options: re-run it to change its costs or capital and to download its CSV.</p>}
     {(running || d.status.message) && <div className="panel small">{running ? <b>Running… </b> : null}{d.status.message}
+      {running && hiccup > 1 && <span className="muted"> · the server is busy, still running (checking again)</span>}
       {running && <div className="bar" style={{ marginTop: 6 }}><i style={{ width: `${d.status.pct}%` }} /></div>}</div>}
     {!results.length && other.length > 0 && <div className="panel">Results saved for {other.map((k) => (
       <button key={k} className="btn primary" style={{ marginRight: 8 }} onClick={() => setPeriod(k)}>{PERIODS.find((p) => p[0] === k)[1]} →</button>))}</div>}

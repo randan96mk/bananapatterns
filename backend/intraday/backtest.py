@@ -5,6 +5,8 @@ averages and turnover from the days before, warm-up from the saved sessions befo
 Missing stock-days are fetched from Kite once (then saved). Never orders, never touches the live paper positions."""
 
 import json
+import multiprocessing as mp
+import os
 import threading
 import time as _time
 from bisect import bisect_left
@@ -27,10 +29,38 @@ CANVAS = "On the canvas"
 STRESS_EXTRA_PCT = 0.10                      # stressed: this much more slippage on every fill
 _status = {"state": "idle", "message": "", "pct": 0, "at": None}
 _lock = threading.Lock()
+_cancel = threading.Event()
+_job: Optional[threading.Thread] = None          # the run's thread (Kite fetch, then waits for the replay process)
+_proc = None                                     # the replay's own process: the app stays responsive, ⏹ kills it
+
+
+class Stopped(Exception):
+    pass
+
+
+def _set(**kw) -> None:
+    """Progress, shared through the database (the replay runs in its own process)."""
+    _status.update(kw)
+    with get_db() as conn:
+        set_setting(conn, "flow.bt_status", json.dumps(_status))
 
 
 def status() -> dict:
-    return dict(_status)
+    with get_db() as conn:
+        st = json.loads(get_setting(conn, "flow.bt_status") or "null") or dict(_status)
+    if st.get("state") == "running" and not (_job and _job.is_alive()) and not _lock.locked():
+        st.update(state="idle", message="stopped: the app restarted during the run · run it again")
+    return st
+
+
+def cancel() -> dict:
+    """⏹ Stops a running backtest now (the Kite fetch between stocks, the replay at once). Nothing is saved."""
+    if not (_job and _job.is_alive()):
+        return {"status": "idle"}
+    _cancel.set()
+    if _proc is not None and _proc.is_alive():
+        _proc.terminate()
+    return {"status": "stopping"}
 
 
 # --- presets: well-known strategies, ready to load or test (read-only) ------------------------------------
@@ -416,69 +446,118 @@ def apply_costs(trades: list, m: dict, run_capital: Optional[float] = None) -> l
 
 # --- a run ----------------------------------------------------------------------------------------------
 
-def run(config: AppConfig, client, names: list[str], period: str) -> dict:
-    """Each setup in `names` over the period; saved (the latest per setup and period) for the tab."""
+def _universe(config: AppConfig, period: str, stocks: Optional[list] = None):
     from backend.ingest import universe as uni
+    warm, days, nifty = sessions(PERIODS[period], config.flow.warmup_days)
+    if not days:
+        raise RuntimeError("No NIFTY 50 daily candles saved yet (run the daily sync).")
+    stocks = stocks if stocks is not None else uni.resolve_universe(config.ingest)["stocks"]
+    return warm, days, nifty, stocks, [s["instrument_token"] for s in stocks] + [flow.NIFTY_TOKEN, flow.VIX_TOKEN]
+
+
+def _replay(config: AppConfig, names: list[str], period: str, got: dict, stocks: list) -> dict:
+    """The replay of every session and the saved results (in the replay process when started from the tab)."""
+    warm, days, nifty, stocks, tokens = _universe(config, period, stocks)
+    daily = _Daily(stocks, (date.fromisoformat(days[0]) - timedelta(days=330)).isoformat())
+    cfgs = {name: configs_of(name) for name in names}
+    trades = {name: [] for name in names}
+    prev: list[dict] = [_day_bars(d) for d in warm]
+    covered = 0
+    for k, day in enumerate(days):
+        _set(pct=40 + round(60 * k / len(days)), message=f"replaying {day} ({k + 1} of {len(days)} sessions)")
+        bars = _day_bars(day)
+        if len([s for s in stocks if s["instrument_token"] in bars]) < len(stocks) // 2:
+            prev = (prev + [bars])[-config.flow.warmup_days:] if config.flow.warmup_days else []
+            continue                                    # under half the stocks saved: the day is left out
+        covered += 1
+        history = {tok: [b for d in prev for b in d.get(tok, [])] for tok in tokens}
+        dctx, turn = daily.at(day)
+        for name in names:
+            trades[name] += [_trade(p) for p in replay_day(day, bars, history, dctx, turn, stocks, cfgs[name])]
+        prev = (prev + [bars])[-config.flow.warmup_days:] if config.flow.warmup_days else []
+    out = {}
+    with get_db() as conn:
+        for name in names:
+            rep = report(apply_costs(trades[name], DEFAULT_COSTS), days, float(cfgs[name]["size"]["capital"]), nifty)
+            rep.update(setup=name, period=period, covered=covered, missing=got["missing"], fetched=got["fetched"],
+                       settings=cfgs[name], ran_at=now_ist(), raw=trades[name],
+                       nifty_px={d: nifty[d] for d in days if d in nifty})
+            conn.execute("DELETE FROM flow_backtests WHERE setup = ? AND period = ?", (name, period))
+            conn.execute("INSERT INTO flow_backtests (setup, period, created, payload) VALUES (?, ?, ?, ?)",
+                         (name, period, rep["ran_at"], json.dumps(rep)))
+            out[name] = {"trades": rep["trades"], "net": rep["net"]}
+    msg = " · ".join(f"{n}: {x['trades']} trades, net {x['net']:+,.0f}" for n, x in out.items())
+    logger.info("Flow backtest %s (%d of %d sessions with data): %s", period, covered, len(days), msg)
+    _set(state="idle", pct=100, message=f"done · {msg}", at=now_ist())
+    return {"status": "ok", "covered": covered, **out}
+
+
+def _child(config: AppConfig, names: list[str], period: str, got: dict, stocks: list) -> None:
+    """The replay process: lower priority, so the app and the live flow always come first."""
+    try:
+        os.nice(10)
+    except OSError:
+        pass
+    with get_db() as conn:
+        _status.update(json.loads(get_setting(conn, "flow.bt_status") or "{}"))
+    try:
+        _replay(config, names, period, got, stocks)
+    except Exception as exc:
+        logger.exception("Flow backtest replay failed")
+        _set(state="idle", message=f"failed: {exc}")
+
+
+def run(config: AppConfig, client, names: list[str], period: str, own_process: bool = False) -> dict:
+    """Each setup in `names` over the period; saved (the latest per setup and period) for the tab. own_process:
+    the replay runs in a separate process (from the tab), which ⏹ can stop at once."""
+    global _proc
     if not _lock.acquire(blocking=False):
         return {"status": "busy"}
     try:
-        months = PERIODS[period]
-        _status.update(state="running", pct=0, message="preparing", at=now_ist(), period=period, setups=names)
-        warm, days, nifty = sessions(months, config.flow.warmup_days)
-        if not days:
-            raise RuntimeError("No NIFTY 50 daily candles saved yet (run the daily sync).")
-        stocks = uni.resolve_universe(config.ingest)["stocks"]
-        tokens = [s["instrument_token"] for s in stocks] + [flow.NIFTY_TOKEN, flow.VIX_TOKEN]
-        got = fetch_missing(client, tokens, warm + days, lambda k, n: _status.update(
-            pct=round(40 * k / n), message=f"1-minute history from Kite: {k} of {n} stocks (only missing days)"))
-        daily = _Daily(stocks, (date.fromisoformat(days[0]) - timedelta(days=330)).isoformat())
-        cfgs = {name: configs_of(name) for name in names}
-        trades = {name: [] for name in names}
-        prev: list[dict] = [_day_bars(d) for d in warm]
-        covered = 0
-        for k, day in enumerate(days):
-            _status.update(pct=40 + round(60 * k / len(days)), message=f"replaying {day} ({k + 1} of {len(days)} sessions)")
-            bars = _day_bars(day)
-            if len([s for s in stocks if s["instrument_token"] in bars]) < len(stocks) // 2:
-                prev = (prev + [bars])[-config.flow.warmup_days:] if config.flow.warmup_days else []
-                continue                                    # under half the stocks saved: the day is left out
-            covered += 1
-            history = {tok: [b for d in prev for b in d.get(tok, [])] for tok in tokens}
-            dctx, turn = daily.at(day)
-            for name in names:
-                trades[name] += [_trade(p) for p in replay_day(day, bars, history, dctx, turn, stocks, cfgs[name])]
-            prev = (prev + [bars])[-config.flow.warmup_days:] if config.flow.warmup_days else []
-        out = {}
-        with get_db() as conn:
-            for name in names:
-                rep = report(apply_costs(trades[name], DEFAULT_COSTS), days, float(cfgs[name]["size"]["capital"]), nifty)
-                rep.update(setup=name, period=period, covered=covered, missing=got["missing"], fetched=got["fetched"],
-                           settings=cfgs[name], ran_at=now_ist(), raw=trades[name],
-                           nifty_px={d: nifty[d] for d in days if d in nifty})
-                conn.execute("DELETE FROM flow_backtests WHERE setup = ? AND period = ?", (name, period))
-                conn.execute("INSERT INTO flow_backtests (setup, period, created, payload) VALUES (?, ?, ?, ?)",
-                             (name, period, rep["ran_at"], json.dumps(rep)))
-                out[name] = {"trades": rep["trades"], "net": rep["net"]}
-        msg = " · ".join(f"{n}: {x['trades']} trades, net {x['net']:+,.0f}" for n, x in out.items())
-        logger.info("Flow backtest %s (%d of %d sessions with data): %s", period, covered, len(days), msg)
-        _status.update(state="idle", pct=100, message=f"done · {msg}", at=now_ist())
-        return {"status": "ok", "covered": covered, **out}
+        _set(state="running", pct=0, message="preparing", at=now_ist(), period=period, setups=names)
+
+        def progress(k, n):
+            if _cancel.is_set():
+                raise Stopped()
+            _set(pct=round(40 * k / n), message=f"1-minute history from Kite: {k} of {n} stocks (only missing days)")
+        warm, days, _, stocks, tokens = _universe(config, period)
+        got = fetch_missing(client, tokens, warm + days, progress)
+        if _cancel.is_set():
+            raise Stopped()
+        if not own_process:
+            return _replay(config, names, period, got, stocks)
+        _proc = mp.get_context("spawn").Process(target=_child, args=(config, names, period, got, stocks), name="flow-replay", daemon=True)
+        _proc.start()
+        _proc.join()
+        if _proc.exitcode == 0:                          # finished (and saved), even if ⏹ came just after
+            return {"status": "ok"}
+        if _cancel.is_set():
+            raise Stopped()
+        if _proc.exitcode:
+            raise RuntimeError(f"the replay process ended with code {_proc.exitcode}")
+        return {"status": "ok"}
+    except Stopped:
+        _set(state="idle", pct=0, message=f"⏹ stopped by you at {now_ist()[11:16]} · nothing saved", at=now_ist())
+        return {"status": "stopped"}
     except Exception as exc:
         logger.exception("Flow backtest failed")
-        _status.update(state="idle", message=f"failed: {exc}")
+        _set(state="idle", message=f"failed: {exc}")
         return {"status": "failed", "error": str(exc)}
     finally:
+        _cancel.clear()
         _lock.release()
 
 
 def start(config: AppConfig, client, names: list[str], period: str) -> dict:
-    if _lock.locked():
+    global _job
+    if _lock.locked() or (_job and _job.is_alive()):
         return {"status": "busy"}
     known = set(all_setups()) | {CANVAS}
     names = [n for n in names if n in known][:6]
     if not names or period not in PERIODS:
         return {"status": "bad_request"}
-    threading.Thread(target=run, args=(config, client, names, period), name="flow-backtest", daemon=True).start()
+    _job = threading.Thread(target=run, args=(config, client, names, period, True), name="flow-backtest", daemon=True)
+    _job.start()
     return {"status": "started", "setups": names, "period": period}
 
 
