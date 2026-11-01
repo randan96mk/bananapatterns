@@ -1946,3 +1946,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   brokerage, govt, net, R; cards on a phone) and **⬇ CSV** of all trades: one row a trade with the partial exit(s), the
   quantity left after them, the final exit and each cost apart, under the costs and capital chosen on the page.
 - Broker names removed from the screens (costs are described by what they are).
+- **⏹ Stop backtest** and a responsive app during long runs: the replay runs in its **own process** at a lower priority
+  (the Kite fetch stays in a background thread), so the app, the live flow and the phone keep answering; ⏹ ends the
+  replay at once (nothing from that run is saved). The page polls a light progress call (`/api/flow/backtest/status`)
+  and a missed check no longer shows "Load failed". A run cut by an app restart is shown as stopped.

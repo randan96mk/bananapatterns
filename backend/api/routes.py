@@ -839,6 +839,20 @@ def flow_backtest(period: Optional[str] = None, slip: bool = True, gov: bool = T
             "periods": list(bt.PERIODS), "results": bt.results(period, costs), "default_costs": bt.DEFAULT_COSTS}
 
 
+@router.get("/flow/backtest/status")
+def flow_backtest_status():
+    """The running backtest's progress only (cheap: polled every few seconds while it runs)."""
+    from backend.intraday import backtest as bt
+    return bt.status()
+
+
+@router.post("/flow/backtest/stop")
+def flow_backtest_stop():
+    """⏹ Stop the running backtest now (nothing is saved)."""
+    from backend.intraday import backtest as bt
+    return bt.cancel()
+
+
 @router.post("/flow/backtest")
 def flow_backtest_run(req: dict):
     from backend.intraday import backtest as bt

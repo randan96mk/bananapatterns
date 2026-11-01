@@ -191,3 +191,32 @@ def test_capital_rescales_the_report(monkeypatch):
     assert abs(two["net"] - 2 * one["net"]) < 0.02 * abs(one["net"]) + 5 and abs(two["return"] - one["return"]) < 0.5
     t = two["rows"][0]
     assert {"signal_t", "signal_price", "sl", "target", "exits", "plain", "brk", "gov", "net"} <= set(t)
+
+
+def _wait(cond, secs=60):
+    import time
+    t0 = time.time()
+    while time.time() - t0 < secs and not cond():
+        time.sleep(0.2)
+    return cond()
+
+
+def test_own_process_run_and_stop(monkeypatch):
+    stocks, ds = data(monkeypatch)
+    assert bt.start(AppConfig(), None, [bt.CANVAS], "6m")["status"] == "started"
+    assert bt.start(AppConfig(), None, [bt.CANVAS], "6m")["status"] == "busy"
+    assert _wait(lambda: bt.status()["state"] == "idle", 120)                  # the replay process finished
+    assert bt.status()["message"].startswith("done") and bt.results("6m")[0]["trades"] > 0
+    bt._proc = None
+    assert bt.start(AppConfig(), None, [bt.CANVAS], "6m")["status"] == "started"
+    assert _wait(lambda: bt._proc is not None and bt._proc.is_alive(), 60)            # the replay process is running
+    assert bt.cancel()["status"] == "stopping"
+    bt._job.join(30)
+    st = bt.status()
+    assert st["state"] == "idle" and (st["message"].startswith("⏹ stopped") or st["message"].startswith("done"))
+    assert not (bt._proc and bt._proc.is_alive())
+
+
+def test_stale_running_status_is_cleared():
+    bt._set(state="running", message="replaying", pct=50)
+    assert bt.status()["state"] == "idle" and "restarted" in bt.status()["message"]
