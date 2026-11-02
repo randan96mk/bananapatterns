@@ -889,6 +889,14 @@ def flow_setup_delete(req: dict):
     return {"deleted": req.get("name")}
 
 
+@router.post("/flow/reset")
+def flow_reset_nodes():
+    """↺ Every box back to its default settings (applies from the next candle)."""
+    from backend.intraday import flow
+    flow.reset_nodes()
+    return {"reset": True}
+
+
 @router.put("/flow/layout")
 def flow_layout(pos: dict):
     """Save box positions dragged on the canvas: {node: [x, y]}; an empty body resets to the template's layout."""

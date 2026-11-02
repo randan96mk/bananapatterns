@@ -79,6 +79,7 @@ export const flowBacktestRun = (setups, period) => req('POST', '/api/flow/backte
 export const flowSetupSave = (name) => req('POST', '/api/flow/setups', { name });
 export const flowSetupLoad = (name) => req('POST', '/api/flow/setups/load', { name });
 export const flowSetupDelete = (name) => req('POST', '/api/flow/setups/delete', { name });
+export const flowResetNodes = () => req('POST', '/api/flow/reset');
 export const flowRun = () => req('POST', '/api/flow/run');
 export const flowLayout = (pos) => req('PUT', '/api/flow/layout', pos);
 export const flowJournal = (days) => req('GET', `/api/flow/journal?days=${days}`);

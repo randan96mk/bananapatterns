@@ -1950,3 +1950,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   (the Kite fetch stays in a background thread), so the app, the live flow and the phone keep answering; ⏹ ends the
   replay at once (nothing from that run is saved). The page polls a light progress call (`/api/flow/backtest/status`)
   and a missed check no longer shows "Load failed". A run cut by an app restart is shown as stopped.
+- **Recommended defaults** (the basic flow runs without any setup): fewer, bigger trades so costs stay a small share:
+  RVOL ≥ 2, top 2 a candle, 6 signals a day; stop skipped under 0.4% / over 2%, target 2.5R, ATR trail after 1.5R, no
+  time stop, daily-ATR stop 0.3×; max 2 open, 3 trades a day, up to 50% of capital a position; stocks in play top 10.
+  **↺ Default settings** on the canvas puts every box back (your own changes are cleared; save them as a setup first).

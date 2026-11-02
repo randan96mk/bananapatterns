@@ -303,3 +303,12 @@ def test_no_target_setup_sends_every_signal_and_opens_every_paper_trade(monkeypa
     boom = lambda kind, row: (_ for _ in ()).throw(RuntimeError("telegram down"))
     flow.set_node("dedup", {"per_day": 50})
     assert flow.run_now(c, feed_with(stocks), boom, now=at(10, 15))["status"] == "ok"  # an alert failure: run goes on
+
+
+def test_default_settings_and_reset():
+    d = flow.node_configs()
+    assert (d["stop"]["min_stop_pct"], d["stop"]["trail"], d["stop"]["time_stop_min"], d["size"]["max_trades"]) == (0.4, "atr", 0, 3)
+    flow.set_node("stop", {"min_stop_pct": 0.05})
+    assert flow.node_configs()["stop"]["min_stop_pct"] == 0.05
+    flow.reset_nodes()
+    assert flow.node_configs() == d
