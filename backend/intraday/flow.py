@@ -13,7 +13,7 @@ from backend.config import IST, AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
 from backend.intraday import store
 from backend.intraday.candles import resample
-from backend.intraday.modules import REGISTRY
+from backend.intraday.modules import REGISTRY, SKIPPABLE
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("flow")
@@ -192,14 +192,18 @@ class Ctx:
 def daily_context(config: AppConfig, stocks: list[dict]) -> tuple[dict, dict]:
     """From the saved daily candles: 50 / 200-day averages and the 20-day average turnover of each stock."""
     daily, turnover = {}, {}
+    today = datetime.now(IST).date().isoformat()
     with get_db() as conn:
         for s in stocks:
             cs = get_candles(conn, s["instrument_token"], limit=200)
             closes = [c["close"] for c in cs]
             tr = [max(c["high"], p["close"]) - min(c["low"], p["close"]) for p, c in zip(cs[-15:], cs[-14:])]
+            prev = [c for c in cs if c["date"] < today] or [None]        # yesterday's candle (today's is saved in the evening)
             daily[s["symbol"]] = {"sma50": sum(closes[-50:]) / 50 if len(closes) >= 50 else None,
                                   "sma200": sum(closes) / 200 if len(closes) >= 200 else None,
-                                  "atr14": sum(tr) / 14 if len(tr) == 14 else None}
+                                  "atr14": sum(tr) / 14 if len(tr) == 14 else None,
+                                  "prev_high": prev[-1]["high"] if prev[-1] else None,
+                                  "prev_low": prev[-1]["low"] if prev[-1] else None}
             last20 = cs[-20:]
             turnover[s["symbol"]] = sum(c["close"] * c["volume"] for c in last20) / max(len(last20), 1)
     return daily, turnover
@@ -235,13 +239,15 @@ def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None, cfgs: Optio
             src = out[inputs[0]]
         ins[nid] = src if kind != "and" else list({x["symbol"]: x for i in inputs for x in out[i]}.values())
         n_in = len(src) if kind != "and" else sum(len(out[i]) for i in inputs)
-        passed, drops = (src, {}) if kind == "and" else REGISTRY[kind]().run(ctx, src, cfgs[nid])
+        skip = kind in SKIPPABLE and cfgs[nid].get("skip")
+        passed, drops = (src, {}) if kind == "and" or skip else REGISTRY[kind]().run(ctx, src, cfgs[nid])
         if kind == "monitor":
             st = ctx.positions()
             n_in, passed = st["open"], []
         out[nid] = passed
         res[nid] = {"status": "ok", "in": n_in, "out": len(passed), "ms": round((_time.perf_counter() - t0) * 1000),
-                    "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]]}
+                    "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]],
+                    **({"skipped": True} if skip else {})}
         if live:
             _state["nodes"][nid] = res[nid]
     if live:
@@ -259,7 +265,7 @@ def state(config: AppConfig, day: Optional[str] = None) -> dict:
         pos = moved.get(nid, pos)
         m = REGISTRY[kind]
         nodes.append({"id": nid, "kind": kind, "title": m.title, "icon": m.icon, "inputs": inputs, "x": pos[0], "y": pos[1],
-                      "summary": m().summary(cfgs[nid]), "config": cfgs[nid], "schema": m.schema(),
+                      "summary": ("⏭ skipped: every stock passes on" if kind in SKIPPABLE and cfgs[nid].get("skip") else m().summary(cfgs[nid])), "config": cfgs[nid], "schema": m.schema(),
                       **_state["nodes"].get(nid, {"status": "idle"})})
     today = day or datetime.now(IST).date().isoformat()
     with get_db() as conn:

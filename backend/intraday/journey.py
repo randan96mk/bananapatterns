@@ -11,11 +11,11 @@ alert and execute boxes are never re-run: they send messages and open paper trad
 
 from backend.intraday import flow
 from backend.intraday import indicators as ind
-from backend.intraday.modules import REGISTRY
+from backend.intraday.modules import REGISTRY, SKIPPABLE
 
 WAITING = {"no breakout", "range not complete"}
 NO_RERUN = {"and", "alert", "execute", "monitor"}
-KEEP = ("price", "side", "sides", "vwap", "rsi", "rvol", "or_high", "or_low", "entry", "score", "sl", "target", "qty",
+KEEP = ("price", "side", "sides", "setup", "vwap", "rsi", "rvol", "or_high", "or_low", "pdh", "pdl", "entry", "score", "sl", "target", "qty",
         "risk_rs", "stop_pct")
 
 
@@ -40,7 +40,7 @@ def _vals(it: dict) -> dict:
 
 def _single(tr, nid, kind, it):
     """(passed item or None, reason) for one stock in one box, on the traced candle."""
-    if kind in NO_RERUN:
+    if kind in NO_RERUN or (kind in SKIPPABLE and tr["cfgs"][nid].get("skip")):
         return it, None
     out, drops = REGISTRY[kind]().run(tr["ctx"], [it], tr["cfgs"][nid])
     if out:
@@ -95,8 +95,17 @@ def rules(cfgs: dict) -> list:
     if cx.get("breadth_on"):
         m.append(f"breadth ≥ {cx.get('breadth_min')}% with the trade")
     entry.append("Market: " + ", ".join(m) + ".")
-    entry.append(f"Trigger: a candle closes above the first {orb.get('minutes')} minutes' high (long) or below its low (short)"
-                 + (", only in the direction of that opening range" if orb.get("with_open") else "") + ".")
+    from backend.intraday.modules import Setups
+    on = Setups.ticked(orb)
+    need = min(max(1, int(orb.get("min_count") or 1)), len(on))
+    say = {"set_orb": f"ORB: closes beyond the first {orb.get('minutes')} minutes' high (long) / low (short)"
+                      + (", only in that range's direction" if orb.get("with_open") else ""),
+           "set_pdh": "previous day high / low: closes above yesterday's high (long) / below its low (short)",
+           "set_vwap": f"VWAP reclaim: dips to within {orb.get('vwap_dip')}% of VWAP and closes back on its side",
+           "set_nbar": f"N-candle breakout: closes beyond the last {orb.get('nbar_n')} candles' high / low",
+           "set_ema": "EMA cross: the 9 EMA crosses the 21 EMA on that candle"}
+    entry.append(("Trigger: " if len(on) == 1 else f"Trigger: at least {need} of these {len(on)} on the same candle, "
+                  "same side (long and short together: skipped): ") + "; ".join(say[k] for k, _ in on) + ".")
     entry.append(f"The best {sc.get('top_k')} a candle (relative volume, strength vs NIFTY, RSI) · 1 per stock a day · "
                  f"at most {dd.get('per_day')} signals a day.")
     cap = sz.get("capital", 0)
@@ -104,7 +113,7 @@ def rules(cfgs: dict) -> list:
             f"{sz.get('max_pos_pct')}% of the capital a position, {sz.get('max_open')} open at once, {sz.get('max_trades')} "
             f"trades a day; no new trade after losing {sz.get('daily_loss_pct')}% (₹{cap * sz.get('daily_loss_pct', 0) / 100:,.0f}) "
             "in a day."]
-    stops = {"orb": "the other side of the opening range", "atr": f"{st.get('atr_mult')} × ATR from the entry",
+    stops = {"orb": "the other side of the opening range", "setup": f"the fired setup's own level ({st.get('setup_stop')})", "atr": f"{st.get('atr_mult')} × ATR from the entry",
              "daily_atr": f"{st.get('daily_atr_frac')} × the daily ATR from the entry", "signal_bar": "the signal candle's low / high",
              "vwap": "VWAP", "percent": f"{st.get('stop_pct')}% from the entry"}
     ex = [f"Stop: {stops.get(st.get('stop'), st.get('stop'))} (skipped if under {st.get('min_stop_pct')}% or over "
@@ -120,6 +129,13 @@ def rules(cfgs: dict) -> list:
         ex.append(f"Time stop: out after {st.get('time_stop_min')} minutes unless up {st.get('time_stop_r')} × the risk.")
     ex.append(f"Square-off: everything out at {st.get('squareoff')}.")
     ex.append("Paper fills: the next 1-minute open + slippage, with intraday charges.")
+    for nid, prefix, label in (("trend", "Daily trend", "Daily trend"), ("filters", "Today:", "Today's filters"),
+                               ("context", "Market:", "Market"), ("score", None, "Score & rank"), ("dedup", None, "Dedup")):
+        if g(nid).get("skip"):
+            if prefix:
+                entry = [f"{label}: ⏭ skipped (every stock passes on)." if x.startswith(prefix) else x for x in entry]
+            else:
+                entry.append(f"{label}: ⏭ skipped (no ranking / no daily limit).")
     return [{"title": "📥 Entry: all of these", "lines": entry}, {"title": "📏 Size", "lines": size},
             {"title": "📤 Exit: whichever comes first", "lines": ex}]
 
@@ -204,7 +220,7 @@ def node_stocks(nid: str) -> dict:
         else:
             _, why = _single(tr, nid, kind, it)
             why = why or ("limit / ranking: " + ", ".join(batch) if batch else "dropped")
-        dropped.append({"symbol": it["symbol"], "reason": why, "waiting": why in WAITING, **_vals(it)})
+        dropped.append({"symbol": it["symbol"], "reason": why, "waiting": why in WAITING or str(why).startswith("only "), **_vals(it)})
     return {"id": nid, "title": _title(kind), "at": tr["t"], "in": len(ins), "passed": passed, "dropped": dropped,
             "reasons": batch}
 
@@ -254,7 +270,7 @@ def check(symbol: str) -> dict:
             continue
         res, why = _single(tr, nid, kind, src)
         cur[nid] = res
-        steps.append({"id": nid, "title": _title(kind), "state": "pass" if res else "wait" if why in WAITING else "drop",
+        steps.append({"id": nid, "title": _title(kind), "state": "pass" if res else "wait" if (why in WAITING or str(why).startswith("only ")) else "drop",
                       "why": why, "values": _vals(res or src)})
     # the facts behind the rules, computed directly (also for the boxes a stock never reached)
     bars, today = ctx.bars(base), ctx.today_bars(base)
@@ -272,3 +288,55 @@ def check(symbol: str) -> dict:
     verdict = ("passes every box: a signal" if not stop else
                f"waiting at {stop['title']}: {stop['why']}" if stop["state"] == "wait" else f"stopped at {stop['title']}: {stop['why']}")
     return {"symbol": symbol, "at": tr["t"], "steps": steps, "facts": facts, "verdict": verdict}
+
+
+def rerun(nid: str) -> dict:
+    """↻ Re-run a box and every box after it on the latest candle's data, with the boxes' current settings (a dry run:
+    the alert box sends nothing and the execute box opens nothing). The canvas counts and the journey show the result
+    until the next candle's live run."""
+    import time as _time
+    from collections import Counter
+    tr = _trace()
+    if not tr:
+        return {"error": "no live run yet: re-run works on the latest candle's data"}
+    nodes = _nodes(tr)
+    if nid not in {n for n, *_ in nodes}:
+        return {"error": "no such box"}
+    cfgs = flow.node_configs(tr.get("key"))
+    ins, outs, res = dict(tr["ins"]), dict(tr["outs"]), dict(tr["res"])
+    redo = set()
+    for n, kind, inputs, _ in nodes:                     # the box and everything downstream of it
+        if n == nid or any(i in redo for i in inputs):
+            redo.add(n)
+    for n, kind, inputs, _ in nodes:
+        if n not in redo or kind == "monitor":
+            continue
+        t0 = _time.perf_counter()
+        if kind == "and":
+            sets = [{x["symbol"] for x in outs.get(i, [])} for i in inputs]
+            keep = set.intersection(*sets) if sets else set()
+            merged = {}
+            for i in inputs:
+                for x in outs.get(i, []):
+                    if x["symbol"] in keep:
+                        m = merged.get(x["symbol"])
+                        sides = [y for y in (m or x)["sides"] if y in x.get("sides", [])] if m else x.get("sides", [])
+                        merged[x["symbol"]] = {**(m or {}), **x, "sides": sides}
+            src = list({x["symbol"]: x for i in inputs for x in outs.get(i, [])}.values())
+            passed, drops = [x for x in merged.values() if x["sides"]], {}
+            n_in = sum(len(outs.get(i, [])) for i in inputs)
+        else:
+            src = ins.get(n, []) if not inputs else outs.get(inputs[0], [])
+            n_in = len(src)
+            if kind in ("alert", "execute") or (kind in SKIPPABLE and cfgs[n].get("skip")):   # dry run / skipped
+                passed, drops = src, {}
+            else:
+                passed, drops = REGISTRY[kind]().run(tr["ctx"], src, cfgs[n])
+        ins[n], outs[n] = src, passed
+        res[n] = {"status": "ok", "in": n_in, "out": len(passed), "ms": round((_time.perf_counter() - t0) * 1000),
+                  "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]], "dry": True}
+        flow._state["nodes"][n] = res[n]
+    tr.update(ins=ins, outs=outs, res=res, cfgs=cfgs, rerun={"from": nid, "at": flow.now_ist()})
+    return {"from": nid, "boxes": sorted(redo, key=[n for n, *_ in nodes].index),
+            "result": {n: {k: res[n][k] for k in ("in", "out", "drops")} for n in redo if n in res},
+            "would_signal": res.get("alert", {}).get("out", 0)}

@@ -50,7 +50,10 @@ export default function FlowPage() {
   const phone = useIsPhone();
   const d = useLive('flow');
   const [journey, setJourney] = useState(false);          // 🧭 the side panel, and a stock to check in it
-  const [jsym, setJsym] = useState(null);                              // 📡 the flow's state from the live connection
+  const [jsym, setJsym] = useState(null);
+  const [rr, setRr] = useState(null);                    // the latest ↻ re-run (dry run) of a box
+  const rerun = (nid) => api.flowRerun(nid).then((x) => { setRr(x.error ? { error: x.error, from: nid } : x); load(); })
+    .catch((e) => setRr({ error: e.message, from: nid }));                              // 📡 the flow's state from the live connection
   const [sel, setSel] = useState('filters');
   const [err, setErr] = useState('');
   const [, tick] = useState(0);
@@ -103,7 +106,18 @@ export default function FlowPage() {
   const resetLayout = () => api.flowLayout({}).then(() => { setMoved({}); load(); }).catch((e) => setErr(e.message));
   const node = byId[sel] || d.nodes[0];
   const setMode = (mode) => api.flowMode(mode).then(load).catch((e) => setErr(e.message));
-  const change = (key, v) => api.flowNode(node.id, { [key]: v }).then(load).catch((e) => setErr(e.message));
+  const change = (key, v) => {
+    if (node.kind === 'orb' && key.startsWith('set_') && !v                     // at least one entry setup stays ticked
+      && !node.schema.some((f) => f.key.startsWith('set_') && f.key !== key && node.config[f.key])) {
+      setErr('At least one entry setup must stay ticked.');
+      return;
+    }
+    api.flowNode(node.id, { [key]: v }).then(load).catch((e) => setErr(e.message));
+  };
+  // a setting labelled "…" belongs to the switch above it: hidden while that switch is off
+  const visible = (schema, cfg) => { let on = true; return schema.filter((f) => {
+    if (f.type === 'bool' && !f.label.startsWith('…')) { on = !!cfg[f.key]; return true; }
+    return !f.label.startsWith('…') || on; }); };
   const toggleStop = () => {
     if (!d.stopped && !window.confirm(`Stop all intraday activity?${d.stats?.open ? `\n${d.stats.open} open paper position(s) will be squared off at the last price.` : ''}\nNo live data, signals or trades until you press Start.`)) return;
     (d.stopped ? api.flowStart() : api.flowStop()).then(load).catch((e) => setErr(e.message));
@@ -195,7 +209,7 @@ export default function FlowPage() {
           {nodes.map((n) => {
             const [label, cls] = STATUS[n.status] || STATUS.idle;
             return (
-              <button key={n.id} className={`fnode ${sel === n.id ? 'sel' : ''} ${drag?.id === n.id ? 'dragging' : ''}`}
+              <button key={n.id} className={`fnode ${n.config?.skip ? 'skipped' : ''} ${sel === n.id ? 'sel' : ''} ${drag?.id === n.id ? 'dragging' : ''}`}
                       style={{ left: n.x, top: n.y, width: W }} onPointerDown={(e) => down(e, n)}
                       onKeyDown={(e) => { if (e.key === 'Enter') setSel(n.id); }}>
                 <div className="fh"><span className="fico">{n.icon}</span><b>{n.title}</b><span className={`fst ${cls}`}>{label}</span></div>
@@ -215,15 +229,19 @@ export default function FlowPage() {
           <h3>{node.icon} {node.title}</h3>
           <div className="muted small">{node.summary}</div>
           {node.schema.length > 0 && <><h4>Settings</h4>
-            {node.schema.map((s) => (
+            {visible(node.schema, node.config).map((s) => (
               <label key={s.key} className="flowfield"><span>{s.label}</span><Field f={s} value={node.config[s.key]} onChange={(v) => change(s.key, v)} /></label>))}
             <div className="muted small">Applies from the next candle.</div></>}
-          {node.in != null && <><h4>Last run</h4>
+          {node.kind !== 'monitor' && <div style={{ margin: '10px 0' }}>
+            <button className="btn" onClick={() => rerun(node.id)} title="Same candle's data, the settings above; no alert, no trade">↻ Re-run from this box</button>
+            {rr?.from === node.id && <div className={`small ${rr.error ? 'warn' : 'muted'}`} style={{ marginTop: 6 }}>{rr.error ? rr.error
+              : <>Dry run on the latest candle with these settings: {rr.boxes.length} box(es) re-run · <b>{rr.would_signal}</b> would signal (no alert sent, no trade opened).</>}</div>}</div>}
+          {node.in != null && <><h4>Last run {node.dry && <span className="achip">dry run</span>}</h4>
             <div className="small">{node.in} in · <b>{node.out} passed</b> · {node.ms} ms</div>
             {Object.keys(node.drops || {}).length > 0 && <div className="small muted" style={{ marginTop: 4 }}>Dropped: {Object.entries(node.drops).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>}
             {node.sample?.length > 0 && <div className="flowchips">{node.sample.map((s) => <span key={s} className="spill">{s}</span>)}
               {node.out > node.sample.length && <span className="muted small">+{node.out - node.sample.length}</span>}</div>}</>}
-          {node.kind !== 'monitor' && <NodeStocks nid={node.id} stamp={d.last_run?.at} onSymbol={(x) => { setJsym(x); setJourney(true); }} />}
+          {node.kind !== 'monitor' && <NodeStocks nid={node.id} stamp={`${d.last_run?.at}|${rr?.from || ''}|${node.in}|${node.out}`} onSymbol={(x) => { setJsym(x); setJourney(true); }} />}
         </div>
       </div></>}
       {sub === 'flow' && <div className="panel"><h3>🟢 Today's signals <span className="muted small">· {d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : 'signals only, no orders'}</span></h3>

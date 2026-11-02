@@ -18,6 +18,9 @@ def module(kind: str):
     return wrap
 
 
+SKIPPABLE = {"daily_trend", "intraday_filters", "context", "score", "dedup"}   # pure filters: safe to pass through
+
+
 class Module:
     kind = ""
     title = ""
@@ -105,7 +108,7 @@ def _keep(it, sides, drops, reason):
 @module("daily_trend")
 class DailyTrend(Module):
     title, icon = "Daily trend", "📈"
-    fields = [("above_50", "Long: close above 50-day avg", "bool", True), ("above_200", "Long: close above 200-day avg", "bool", True),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("above_50", "Long: close above 50-day avg", "bool", True), ("above_200", "Long: close above 200-day avg", "bool", True),
               ("mirror", "Short: mirror (below the averages)", "bool", True)]
 
     def summary(self, cfg):
@@ -132,7 +135,7 @@ class DailyTrend(Module):
 @module("intraday_filters")
 class IntradayFilters(Module):
     title, icon = "Intraday filters", "📊"
-    fields = [("vwap", "Long above / short below VWAP", "bool", True),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("vwap", "Long above / short below VWAP", "bool", True),
               ("rsi_on", "RSI(14) in range (short: mirrored)", "bool", True), ("rsi_min", "RSI min", "number", 55, {"min": 0, "max": 100}),
               ("rsi_max", "RSI max", "number", 75, {"min": 0, "max": 100}),
               ("rvol_on", "Relative volume", "bool", True), ("rvol_min", "RVOL ≥", "number", 2.0, {"min": 0, "max": 10, "step": 0.1}),
@@ -181,7 +184,7 @@ class IntradayFilters(Module):
 @module("context")
 class MarketContext(Module):
     title, icon = "Market context", "🌍"
-    fields = [("direction", "Trades allowed", "select", "both", {"options": ["both", "long", "short"]}),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("direction", "Trades allowed", "select", "both", {"options": ["both", "long", "short"]}),
               ("follow", "Follow NIFTY (long above / short below its VWAP)", "bool", True),
               ("ema_on", "…and its 20-EMA", "bool", False),
               ("vix_on", "India VIX in range", "bool", True), ("vix_min", "VIX min", "number", 10, {"min": 0, "max": 80}),
@@ -230,42 +233,140 @@ class And(Module):
         return "passes stocks (and sides) that every input passed"
 
 
+SETUPS = (("set_orb", "ORB"), ("set_pdh", "PDH/PDL"), ("set_vwap", "VWAP reclaim"), ("set_nbar", "N-candle breakout"),
+          ("set_ema", "EMA cross"))
+
+
 @module("orb")
-class OpeningRangeBreakout(Module):
-    title, icon = "Setup: ORB", "🎯"
-    fields = [("minutes", "Opening range (minutes)", "select", 15, {"options": [5, 15, 30]}),
-              ("with_open", "Only in the opening range's direction (green: long, red: short)", "bool", False)]
+class Setups(Module):
+    """Entry setups: tick one or more; a stock passes when at least N of the ticked ones fire on the last closed
+    candle, on the same side (long and short together = conflict, skipped). Each setup gives its own stop level."""
+    title, icon = "Setup (entry triggers)", "🎯"
+    fields = [("set_orb", "ORB: close beyond the opening range", "bool", True),
+              ("minutes", "…opening range (minutes)", "select", 15, {"options": [5, 15, 30]}),
+              ("with_open", "…only in the opening range's direction (green: long, red: short)", "bool", False),
+              ("set_pdh", "Previous day high / low: close beyond yesterday's high / low", "bool", False),
+              ("pdh_buffer", "…stop buffer under / over yesterday's level %", "number", 0.1, {"min": 0, "max": 2, "step": 0.05}),
+              ("set_vwap", "VWAP reclaim: dips to VWAP and closes back on its side", "bool", False),
+              ("vwap_dip", "…dip to within % of VWAP", "number", 0.2, {"min": 0, "max": 2, "step": 0.05}),
+              ("set_nbar", "N-candle breakout: close beyond the last N candles' high / low", "bool", False),
+              ("nbar_n", "…N candles", "number", 20, {"min": 3, "max": 100}),
+              ("set_ema", "EMA cross: 9 EMA crosses the 21 EMA on this candle", "bool", False),
+              ("min_count", "Pass when at least N of the ticked setups fire", "number", 1, {"min": 1, "max": 5})]
+
+    @staticmethod
+    def ticked(cfg) -> list:
+        on = [(k, n) for k, n in SETUPS if cfg.get(k)]
+        return on or [("set_orb", "ORB")]                 # at least one: ORB when none is ticked
 
     def summary(self, cfg):
-        return f"close above / below the first {cfg['minutes']} min range" + (" · its direction only" if cfg["with_open"] else "")
+        on = self.ticked(cfg)
+        need = min(max(1, int(cfg.get("min_count") or 1)), len(on))
+        names = [f"ORB {cfg['minutes']}m" if k == "set_orb" else n for k, n in on]
+        return " · ".join(names) + (f" · at least {need} of {len(on)}" if len(on) > 1 else "")
+
+    def _fire(self, key, ctx, it, cfg, last):
+        """{side: stop level} for the sides this setup fires on (plus extra fields), on the last closed candle."""
+        c, fired, extra = last["c"], {}, {}
+        if key == "set_orb":
+            end = 9 * 60 + 15 + cfg["minutes"]
+            rng = [b for b in ctx.today_bars(it) if int(b["t"][:2]) * 60 + int(b["t"][3:]) < end]
+            if len(rng) < cfg["minutes"]:
+                return None, {}
+            hi, lo = max(b["h"] for b in rng), min(b["l"] for b in rng)
+            extra = {"or_high": round(hi, 2), "or_low": round(lo, 2)}
+            up, down = rng[-1]["c"] > rng[0]["o"], rng[-1]["c"] < rng[0]["o"]
+            ok_l, ok_s = (up, down) if cfg["with_open"] else (True, True)
+            if ok_l and c > hi:
+                fired["long"] = lo
+            if ok_s and c < lo:
+                fired["short"] = hi
+        elif key == "set_pdh":
+            d = ctx.daily.get(it["symbol"]) or {}
+            ph, pl, buf = d.get("prev_high"), d.get("prev_low"), (cfg.get("pdh_buffer") or 0) / 100
+            if ph is None or pl is None:
+                return None, {}
+            extra = {"pdh": ph, "pdl": pl}
+            if c > ph:
+                fired["long"] = ph * (1 - buf)
+            if c < pl:
+                fired["short"] = pl * (1 + buf)
+        elif key == "set_vwap":
+            v = ind.vwap(ctx.today_bars(it))
+            if not v:
+                return None, {}
+            dip = (cfg.get("vwap_dip") or 0) / 100
+            if last["l"] <= v * (1 + dip) and c > v and last["o"] > v * (1 - dip):
+                fired["long"] = last["l"]
+            if last["h"] >= v * (1 - dip) and c < v and last["o"] < v * (1 + dip):
+                fired["short"] = last["h"]
+        elif key == "set_nbar":
+            n = int(cfg.get("nbar_n") or 20)
+            bars = ctx.bars(it)
+            if len(bars) < n + 1:
+                return None, {}
+            prior = bars[-n - 1:-1]
+            hi, lo = max(b["h"] for b in prior), min(b["l"] for b in prior)
+            if c > hi:
+                fired["long"] = lo
+            if c < lo:
+                fired["short"] = hi
+        elif key == "set_ema":
+            closes = [b["c"] for b in ctx.bars(it)]
+            e9, e21 = ind.ema(closes, 9), ind.ema(closes, 21)
+            p9, p21 = ind.ema(closes[:-1], 9), ind.ema(closes[:-1], 21)
+            if None in (e9, e21, p9, p21):
+                return None, {}
+            if p9 <= p21 and e9 > e21:
+                fired["long"] = e21
+            if p9 >= p21 and e9 < e21:
+                fired["short"] = e21
+        return fired, extra
 
     def run(self, ctx, items, cfg):
         out, drops = [], Counter()
-        end = 9 * 60 + 15 + cfg["minutes"]           # minutes after midnight: 9:15 + the range
+        on = self.ticked(cfg)
+        need = min(max(1, int(cfg.get("min_count") or 1)), len(on))
         for it in items:
-            today = ctx.today_bars(it)
-            rng = [b for b in today if int(b["t"][:2]) * 60 + int(b["t"][3:]) < end]
             last = ctx.last_closed(it)
-            if len(rng) < cfg["minutes"] or not last:
+            if not last:
                 drops["range not complete"] += 1
                 continue
-            hi, lo = max(b["h"] for b in rng), min(b["l"] for b in rng)
-            up, down = rng[-1]["c"] > rng[0]["o"], rng[-1]["c"] < rng[0]["o"]
-            ok_l, ok_s = (up, down) if cfg["with_open"] else (True, True)
-            side = ("long" if "long" in it["sides"] and ok_l and last["c"] > hi
-                    else "short" if "short" in it["sides"] and ok_s and last["c"] < lo else None)
-            if not side:
-                drops["no breakout"] += 1
+            by_side, extra, ready = {"long": {}, "short": {}}, {}, 0
+            for key, name in on:
+                fired, ex = self._fire(key, ctx, it, cfg, last)
+                extra.update(ex)
+                if fired is None:
+                    continue
+                ready += 1
+                for side, lvl in fired.items():
+                    if side in it["sides"]:
+                        by_side[side][name] = round(lvl, 2)
+            if not ready:
+                drops["range not complete"] += 1
                 continue
-            out.append({**it, "side": side, "signal": "BUY" if side == "long" else "SELL", "entry": last["c"],
-                        "or_high": round(hi, 2), "or_low": round(lo, 2), "signal_bar": last, "setup": "ORB"})
+            sides = [s for s in ("long", "short") if len(by_side[s]) >= need]
+            if len(sides) == 2:
+                drops["long and short both fired (skipped)"] += 1
+                continue
+            if not sides:
+                best = max(len(by_side["long"]), len(by_side["short"]))
+                drops["no breakout" if best == 0 else f"only {best} of {need} setups fired"] += 1
+                continue
+            side = sides[0]
+            names = list(by_side[side])
+            out.append({**it, **extra, "side": side, "signal": "BUY" if side == "long" else "SELL", "entry": last["c"],
+                        "signal_bar": last, "setup": "+".join(names), "setups": names, "setup_stops": by_side[side]})
         return out, drops
+
+
+OpeningRangeBreakout = Setups                             # the box's former name (ORB only)
 
 
 @module("score")
 class ScoreRank(Module):
     title, icon = "Score & rank", "🏅"
-    fields = [("top_k", "Keep top K a candle", "number", 2, {"min": 1, "max": 20}),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("top_k", "Keep top K a candle", "number", 2, {"min": 1, "max": 20}),
               ("w_rvol", "Weight: relative volume", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
               ("w_rs", "Weight: strength vs NIFTY", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
               ("w_rsi", "Weight: RSI", "number", 0.5, {"min": 0, "max": 5, "step": 0.5})]
@@ -288,7 +389,7 @@ class ScoreRank(Module):
 @module("dedup")
 class Dedup(Module):
     title, icon = "Dedup", "🧹"
-    fields = [("per_day", "Max signals a day", "number", 6, {"min": 1, "max": 100})]
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("per_day", "Max signals a day", "number", 6, {"min": 1, "max": 100})]
 
     def summary(self, cfg):
         return f"1 per stock per day · max {cfg['per_day']} a day"
@@ -310,7 +411,8 @@ class Dedup(Module):
 @module("stop")
 class StopTarget(Module):
     title, icon = "Stop & target", "🛡"
-    fields = [("stop", "Stop", "select", "orb", {"options": ["orb", "atr", "daily_atr", "signal_bar", "vwap", "percent"]}),
+    fields = [("stop", "Stop", "select", "orb", {"options": ["orb", "setup", "atr", "daily_atr", "signal_bar", "vwap", "percent"]}),
+              ("setup_stop", "…setup stop when several fired", "select", "nearest", {"options": ["nearest", "widest"]}),
               ("daily_atr_frac", "Daily ATR(14) × (daily_atr stop)", "number", 0.3, {"min": 0.05, "max": 2, "step": 0.05}),
               ("atr_mult", "ATR × (atr stop)", "number", 1.5, {"min": 0.5, "max": 5, "step": 0.1}),
               ("stop_pct", "% (percent stop)", "number", 0.8, {"min": 0.1, "max": 5, "step": 0.1}),
@@ -339,8 +441,12 @@ class StopTarget(Module):
             lg, e, bar = it["side"] == "long", it["entry"], it["signal_bar"]
             atr = ind.atr(ctx.bars(it))
             st = cfg["stop"]
-            if st == "orb":
+            levels = [x for x in (it.get("setup_stops") or {}).values() if (x < e if lg else x > e)]
+            if st == "orb" and it.get("or_low") is not None and "ORB" in (it.get("setups") or ["ORB"]):
                 sl = it["or_low"] if lg else it["or_high"]
+            elif st in ("orb", "setup"):                  # the fired setups' own level: nearest (tighter) or widest
+                pick = max if (cfg.get("setup_stop", "nearest") == "nearest") == lg else min
+                sl = pick(levels) if levels else None
             elif st == "atr":
                 sl = e - cfg["atr_mult"] * atr if atr and lg else e + cfg["atr_mult"] * atr if atr else None
             elif st == "daily_atr":                    # a fraction of the daily ATR(14), from the days before

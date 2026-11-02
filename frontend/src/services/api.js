@@ -85,6 +85,7 @@ export const getPortfolio = (days = 365) => req('GET', `/api/portfolio?days=${da
 export const getOverview = () => req('GET', '/api/overview');
 export const flowCheck = (symbol) => req('GET', `/api/flow/journey/check?symbol=${encodeURIComponent(symbol)}`);
 export const flowNodeStocks = (nid) => req('GET', `/api/flow/journey/node/${nid}`);
+export const flowRerun = (nid) => req('POST', `/api/flow/journey/rerun/${nid}`);
 export const flowRun = () => req('POST', '/api/flow/run');
 export const flowLayout = (pos) => req('PUT', '/api/flow/layout', pos);
 export const flowJournal = (days) => req('GET', `/api/flow/journal?days=${days}`);

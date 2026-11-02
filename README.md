@@ -2008,3 +2008,16 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   found when asked by running that box again for that one stock on the same candle (the alert and execute boxes are
   never re-run). Endpoints `/api/flow/journey`, `/journey/node/{id}`, `/journey/check?symbol=`; the summary is also
   a live topic.
+- **↻ Re-run from this box** (in every box's panel): re-runs that box and every box after it on the latest candle's
+  data with the current settings, so a changed setting shows its effect at once (counts, stock lists, journey). A dry
+  run: no alert, no saved signal, no paper trade; the boxes show "dry run" until the next candle's live run.
+- **⏭ Skip this box** (Daily trend, Intraday filters, Market context, Score & rank, Dedup): every stock passes straight
+  on to the next box; the box shows "⏭ skipped" (faded, dashed), the Rules text says so, and backtests of a setup
+  honour it. The other boxes add what later boxes need (price, entry, stop, quantity), so they can't be skipped.
+- **🎯 Setup (entry triggers)**: tick one or more of five setups (at least one stays ticked); **"pass when at least N
+  of the ticked setups fire"** (1 = any one); long and short on the same candle = conflict, skipped:
+  **ORB** (as before), **previous day high / low** (yesterday's level ± a stop buffer), **VWAP reclaim** (a dip to
+  within x% of VWAP that closes back on its side), **N-candle breakout** (the last N candles' high / low), **EMA cross**
+  (9 over / under 21 on that candle). Each gives its own stop level: Stop & target "**setup**" (or "orb", which falls
+  back to it) with **nearest / widest** when several fired. Signals, trades and backtests record which fired ("ORB+PDH/PDL")
+  and the backtest report shows **By setup**. With only ORB ticked (the default) nothing changes.
