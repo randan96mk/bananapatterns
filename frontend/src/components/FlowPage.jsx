@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
+import { push, useLive } from '../services/live';
 import { useIsPhone } from '../useMedia';
 import { StopMeter, SubTabs } from './ui';
 import { inr, signed, cls } from '../fmt';
@@ -46,19 +47,13 @@ function SignalCard({ s, r }) {
 // Signals only in phase 1: nothing is ever ordered from here.
 export default function FlowPage() {
   const phone = useIsPhone();
-  const [d, setD] = useState(null);
+  const d = useLive('flow');                              // 📡 the flow's state from the live connection
   const [sel, setSel] = useState('filters');
   const [err, setErr] = useState('');
   const [, tick] = useState(0);
   const [sub, setSub] = useState('flow');
-  const [lv, setLv] = useState(null);                    // live prices and P&L of today's signals
+  const lv = useLive('flow_live');                       // live prices and P&L of today's signals (every 3 s when live)
   const feedLive = d?.feed?.state === 'live';
-  useEffect(() => {
-    const get = () => api.flowLive().then(setLv).catch(() => {});
-    get();
-    const id = setInterval(get, feedLive ? 5000 : 60000);   // every 5 s while the feed is live
-    return () => clearInterval(id);
-  }, [feedLive, d?.signals?.length]);
   const [jr, setJr] = useState(null);
   const [full, setFull] = useState(false);
   const [drag, setDrag] = useState(null);                 // {id, dx, dy, x, y} while a box is dragged
@@ -69,11 +64,13 @@ export default function FlowPage() {
     return () => window.removeEventListener('keydown', esc);
   }, []);
   useEffect(() => { if (sub === 'journal') api.flowJournal(30).then(setJr).catch((e) => setErr(e.message)); }, [sub]);
-  const load = () => api.getFlow().then((x) => { setD(x); setErr(''); }).catch((e) => setErr(e.message));
+  // after an action: fetch now and share it (the live connection keeps it current otherwise)
+  const load = () => Promise.all([api.getFlow().then((x) => { push('flow', x); setErr(''); }),
+    api.flowLive().then((x) => push('flow_live', x))]).catch((e) => setErr(e.message));
   useEffect(() => {
     load();
-    const a = setInterval(load, 5000), b = setInterval(() => tick((x) => x + 1), 1000);
-    return () => { clearInterval(a); clearInterval(b); };
+    const b = setInterval(() => tick((x) => x + 1), 1000);
+    return () => clearInterval(b);
   }, []);
   if (!d) return <div className="panel">{err ? <span className="warn">{err}</span> : 'Loading…'}</div>;
 

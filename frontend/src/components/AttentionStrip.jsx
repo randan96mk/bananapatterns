@@ -1,25 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import * as api from '../services/api';
+import { useLive } from '../services/live';
 
 const ICON = { warn: '⚠️', sell: '🔴', filter: '🟡', buy: '🟢', running: '🔵' };
 
-// Shared: the blinking signals (GET /api/attention), polled every minute by the tab bar and the strips.
-let cache = { at: 0, data: null, wait: null };
+// Shared: the blinking signals, from the live connection (📡 services/live.js).
 export function useAttention() {
-  const [data, setData] = useState(cache.data);
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      if (Date.now() - cache.at < 20000 && cache.data) { setData(cache.data); return; }
-      cache.wait = cache.wait || api.getAttention().then((x) => { cache = { at: Date.now(), data: x, wait: null }; return x; })
-        .catch(() => { cache.wait = null; return null; });
-      cache.wait.then((x) => { if (alive && x) setData(x); });
-    };
-    load();
-    const t = setInterval(load, 60000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
-  return data;
+  return useLive('attention') || null;
 }
 
 const seenKey = (tab) => `bp.seen.${tab}`;

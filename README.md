@@ -1969,3 +1969,27 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **No Kite holdings or broker positions** anywhere: the Kite position guard (`alerts.position_guard`) is now
   `alerts.kite_holdings_guard`, off (an older saved "on" does not carry over); its settings, "Run guard now", the
   holdings cards (Screens, Today, the evening scan) are gone. Kite stays for login and market data.
+
+### 2026-11-02: v2 step 2 — one live connection
+- **`GET /api/stream?topics=…`** (server-sent events): schedule, attention, Kite, the flow, live prices and P&L, backtest
+  progress. Each topic is checked on its own interval (faster while the live feed or a backtest runs) and **sent only when
+  it changes**; a heartbeat keeps proxies open; a failing topic never closes the stream.
+- **`frontend/src/services/live.js`**: one connection for the whole page and a shared store (`useLive(topic)`); the
+  connection carries only the topics on screen, reconnects by itself, and an action pushes its fresh result into the
+  store (`push`). Replaces the timers of the status bar, attention dots, Kite status, the Flow page (every 5 s), live
+  prices and backtest progress; the clock still ticks locally.
+
+### 2026-11-02: v2 steps 3–6 — Home, Portfolio, Strategies, System, stock panel
+- **🏠 Home** (`/api/overview`, live on the connection): today across every account (intraday today; swing accounts'
+  last session), one tile per account (Real, Paper A, Paper E+, Intraday), every open position (P&L after exit costs,
+  stop meter), needs attention, next up, activity (orders, fills, signals).
+- **💼 Portfolio › All accounts** (`/api/portfolio`): an account filter (All / Real / Paper A / Paper E+ / Intraday);
+  positions, trade history (⬇ CSV), orders (Tradetron and paper fills), a daily P&L calendar and the curves. The Real
+  and Paper pages stay next to it for their controls.
+- **🧠 Strategies › All strategies**: a card per strategy (today, backtest CAGR and drawdown, open positions, curve)
+  and every saved intraday setup with its latest backtest.
+- **🔎 Research**: Screens, **Today's plan** (the former Today page), Universe; any stock (⌘K, the index ticker,
+  Home, Portfolio) opens in a **side panel**.
+- **⚙️ System › Connections**: Kite (login and market data only), Tradetron, Telegram, the evening job, the live feed,
+  and the theme (Auto / Dark / Light, also on a phone).
+- The attention list no longer mentions Kite holdings.
