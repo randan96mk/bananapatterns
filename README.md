@@ -2008,3 +2008,6 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   found when asked by running that box again for that one stock on the same candle (the alert and execute boxes are
   never re-run). Endpoints `/api/flow/journey`, `/journey/node/{id}`, `/journey/check?symbol=`; the summary is also
   a live topic.
+- **↻ Re-run from this box** (in every box's panel): re-runs that box and every box after it on the latest candle's
+  data with the current settings, so a changed setting shows its effect at once (counts, stock lists, journey). A dry
+  run: no alert, no saved signal, no paper trade; the boxes show "dry run" until the next candle's live run.

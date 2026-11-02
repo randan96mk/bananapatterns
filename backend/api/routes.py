@@ -911,6 +911,17 @@ def flow_journey_node(nid: str):
     return journey.node_stocks(nid)
 
 
+@router.post("/flow/journey/rerun/{nid}")
+def flow_journey_rerun(nid: str):
+    """↻ Re-run a box and everything after it on the latest candle with the current settings (dry run: no alert, no
+    paper trade)."""
+    from backend.intraday import journey
+    res = journey.rerun(nid)
+    if res.get("error") == "no such box":
+        raise HTTPException(404, res["error"])
+    return res
+
+
 @router.get("/flow/journey/check")
 def flow_journey_check(symbol: str):
     """One stock through every box on the latest candle."""

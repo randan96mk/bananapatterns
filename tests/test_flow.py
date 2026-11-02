@@ -361,3 +361,24 @@ def test_journey_explains_the_run(monkeypatch):
     assert f["passed"] == [] and {d["reason"] for d in f["dropped"]} == {"low volume"}
     assert "Intraday filters" in journey.summary()["headline"]
     assert journey.check("S1")["verdict"].startswith("stopped at Intraday filters")
+
+
+def test_rerun_a_box_is_a_dry_run_with_the_new_settings(monkeypatch):
+    from backend.intraday import journey
+    from backend.intraday import positions as pos
+    stocks = setup(monkeypatch)
+    loose()
+    c = AppConfig()
+    c.flow.mode = "paper"
+    flow.set_node("filters", {"rvol_on": True, "rvol_min": 50})                      # nobody passes
+    sent = []
+    flow.run_now(c, feed_with(stocks), lambda k, r: sent.append(r), now=at(10, 10))
+    assert flow._state["nodes"]["filters"]["out"] == 0 and sent == []
+    flow.set_node("filters", {"rvol_min": 1})                                         # loosen, then re-run that box
+    r = journey.rerun("filters")
+    assert r["boxes"][0] == "filters" and "alert" in r["boxes"] and r["result"]["filters"]["out"] == 6
+    assert r["would_signal"] > 0 and flow._state["nodes"]["filters"]["dry"]
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM flow_signals").fetchone()[0] == 0          # nothing sent or saved
+    assert pos.load(DAY) == [] and sent == []                                                 # no paper trade
+    assert journey.node_stocks("filters")["passed"] and journey.rerun("nope")["error"]

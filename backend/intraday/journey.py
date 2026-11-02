@@ -272,3 +272,55 @@ def check(symbol: str) -> dict:
     verdict = ("passes every box: a signal" if not stop else
                f"waiting at {stop['title']}: {stop['why']}" if stop["state"] == "wait" else f"stopped at {stop['title']}: {stop['why']}")
     return {"symbol": symbol, "at": tr["t"], "steps": steps, "facts": facts, "verdict": verdict}
+
+
+def rerun(nid: str) -> dict:
+    """↻ Re-run a box and every box after it on the latest candle's data, with the boxes' current settings (a dry run:
+    the alert box sends nothing and the execute box opens nothing). The canvas counts and the journey show the result
+    until the next candle's live run."""
+    import time as _time
+    from collections import Counter
+    tr = _trace()
+    if not tr:
+        return {"error": "no live run yet: re-run works on the latest candle's data"}
+    nodes = _nodes(tr)
+    if nid not in {n for n, *_ in nodes}:
+        return {"error": "no such box"}
+    cfgs = flow.node_configs(tr.get("key"))
+    ins, outs, res = dict(tr["ins"]), dict(tr["outs"]), dict(tr["res"])
+    redo = set()
+    for n, kind, inputs, _ in nodes:                     # the box and everything downstream of it
+        if n == nid or any(i in redo for i in inputs):
+            redo.add(n)
+    for n, kind, inputs, _ in nodes:
+        if n not in redo or kind == "monitor":
+            continue
+        t0 = _time.perf_counter()
+        if kind == "and":
+            sets = [{x["symbol"] for x in outs.get(i, [])} for i in inputs]
+            keep = set.intersection(*sets) if sets else set()
+            merged = {}
+            for i in inputs:
+                for x in outs.get(i, []):
+                    if x["symbol"] in keep:
+                        m = merged.get(x["symbol"])
+                        sides = [y for y in (m or x)["sides"] if y in x.get("sides", [])] if m else x.get("sides", [])
+                        merged[x["symbol"]] = {**(m or {}), **x, "sides": sides}
+            src = list({x["symbol"]: x for i in inputs for x in outs.get(i, [])}.values())
+            passed, drops = [x for x in merged.values() if x["sides"]], {}
+            n_in = sum(len(outs.get(i, [])) for i in inputs)
+        else:
+            src = ins.get(n, []) if not inputs else outs.get(inputs[0], [])
+            n_in = len(src)
+            if kind in ("alert", "execute"):               # dry run: no message, no paper trade
+                passed, drops = src, {}
+            else:
+                passed, drops = REGISTRY[kind]().run(tr["ctx"], src, cfgs[n])
+        ins[n], outs[n] = src, passed
+        res[n] = {"status": "ok", "in": n_in, "out": len(passed), "ms": round((_time.perf_counter() - t0) * 1000),
+                  "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]], "dry": True}
+        flow._state["nodes"][n] = res[n]
+    tr.update(ins=ins, outs=outs, res=res, cfgs=cfgs, rerun={"from": nid, "at": flow.now_ist()})
+    return {"from": nid, "boxes": sorted(redo, key=[n for n, *_ in nodes].index),
+            "result": {n: {k: res[n][k] for k in ("in", "out", "drops")} for n in redo if n in res},
+            "would_signal": res.get("alert", {}).get("out", 0)}
