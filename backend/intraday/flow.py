@@ -212,6 +212,7 @@ def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None, cfgs: Optio
     t = template(key)
     cfgs = cfgs or node_configs(key)
     out: dict[str, list] = {}
+    ins: dict[str, list] = {}                         # each box's input, kept for 🧭 Journey (live runs only)
     res: dict = {}
     for nid, kind, inputs, _ in t["nodes"]:
         if live:
@@ -232,6 +233,7 @@ def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None, cfgs: Optio
             src = [x for x in merged.values() if x["sides"]]
         else:
             src = out[inputs[0]]
+        ins[nid] = src if kind != "and" else list({x["symbol"]: x for i in inputs for x in out[i]}.values())
         n_in = len(src) if kind != "and" else sum(len(out[i]) for i in inputs)
         passed, drops = (src, {}) if kind == "and" else REGISTRY[kind]().run(ctx, src, cfgs[nid])
         if kind == "monitor":
@@ -242,6 +244,8 @@ def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None, cfgs: Optio
                     "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]]}
         if live:
             _state["nodes"][nid] = res[nid]
+    if live:
+        _state["trace"] = {"ctx": ctx, "cfgs": cfgs, "ins": ins, "outs": out, "res": res, "key": key, "t": ctx.t, "day": ctx.day}
     return res
 
 

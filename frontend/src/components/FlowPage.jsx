@@ -5,6 +5,7 @@ import { useIsPhone } from '../useMedia';
 import { StopMeter, SubTabs } from './ui';
 import { inr, signed, cls } from '../fmt';
 import FlowBacktest from './FlowBacktest';
+import JourneyPanel, { NodeStocks } from './JourneyPanel';
 
 const W = 210, H = 112;                                   // box size on the canvas
 const STATUS = { ok: ['✓', 'ok'], running: ['…', 'run'], idle: ['idle', 'idle'], error: ['!', 'err'] };
@@ -47,7 +48,9 @@ function SignalCard({ s, r }) {
 // Signals only in phase 1: nothing is ever ordered from here.
 export default function FlowPage() {
   const phone = useIsPhone();
-  const d = useLive('flow');                              // 📡 the flow's state from the live connection
+  const d = useLive('flow');
+  const [journey, setJourney] = useState(false);          // 🧭 the side panel, and a stock to check in it
+  const [jsym, setJsym] = useState(null);                              // 📡 the flow's state from the live connection
   const [sel, setSel] = useState('filters');
   const [err, setErr] = useState('');
   const [, tick] = useState(0);
@@ -153,6 +156,8 @@ export default function FlowPage() {
                 <td className={`num ${cls(p.net ?? unreal)}`}><b>{signed(p.net ?? unreal)}</b>
                   {p.costs != null && <div className="muted small">{signed(p.gross)} − {inr(p.costs)}</div>}</td></tr>);
             })}</tbody></table></div>)}</div>}
+      {journey && <><div className="drawer-back" onClick={() => setJourney(false)} />
+        <JourneyPanel symbol={jsym} onSymbol={setJsym} onClose={() => setJourney(false)} /></>}
       {sub === 'backtest' && <FlowBacktest />}
       {sub === 'journal' && <div className="panel"><h3>📒 Journal <span className="muted small">· closed paper trades, last 30 days, after costs</span></h3>
         {!jr ? 'Loading…' : !jr.total.trades ? <p className="muted">No closed paper trades yet.</p> : <>
@@ -171,6 +176,7 @@ export default function FlowPage() {
         <div className={`flowcanvas ${full ? 'full' : ''}`} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
           <div className="flowtools">
             <button className="btn" onClick={() => setFull(!full)} title={full ? 'Exit full screen (Esc)' : 'Full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button>
+            <button className="btn" onClick={() => { setJsym(null); setJourney(true); }} title="Why a trade or not: every step, the rules, a stock's check">🧭 Journey</button>
             <button className="btn" onClick={resetLayout} title="Put every box back in its place">↺ Reset layout</button>
             <button className="btn" title="Every box's settings back to the recommended defaults"
               onClick={() => window.confirm('Put every box back to its default settings? Applies from the next candle. Save the canvas as a setup first (🧪 Backtest) if you want to keep the current one.')
@@ -217,6 +223,7 @@ export default function FlowPage() {
             {Object.keys(node.drops || {}).length > 0 && <div className="small muted" style={{ marginTop: 4 }}>Dropped: {Object.entries(node.drops).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>}
             {node.sample?.length > 0 && <div className="flowchips">{node.sample.map((s) => <span key={s} className="spill">{s}</span>)}
               {node.out > node.sample.length && <span className="muted small">+{node.out - node.sample.length}</span>}</div>}</>}
+          {node.kind !== 'monitor' && <NodeStocks nid={node.id} stamp={d.last_run?.at} onSymbol={(x) => { setJsym(x); setJourney(true); }} />}
         </div>
       </div></>}
       {sub === 'flow' && <div className="panel"><h3>🟢 Today's signals <span className="muted small">· {d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : 'signals only, no orders'}</span></h3>

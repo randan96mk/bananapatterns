@@ -896,6 +896,28 @@ def flow_live():
     return flow.live()
 
 
+@router.get("/flow/journey")
+def flow_journey():
+    """🧭 The latest candle's run explained: each box's in → out and reasons, why (no) trade, the stocks closest to the
+    trigger, and the rules in plain words."""
+    from backend.intraday import journey
+    return journey.summary()
+
+
+@router.get("/flow/journey/node/{nid}")
+def flow_journey_node(nid: str):
+    """Who came into a box, who passed (values, where each is now), who dropped and why."""
+    from backend.intraday import journey
+    return journey.node_stocks(nid)
+
+
+@router.get("/flow/journey/check")
+def flow_journey_check(symbol: str):
+    """One stock through every box on the latest candle."""
+    from backend.intraday import journey
+    return journey.check(symbol)
+
+
 @router.post("/flow/reset")
 def flow_reset_nodes():
     """↺ Every box back to its default settings (applies from the next candle)."""
@@ -1259,6 +1281,8 @@ def _stream_topics() -> dict:
         "attention": (attention, lambda d: 30),
         "kite": (lambda: kite_status(False), lambda d: 60),
         "flow": (lambda: flow.state(S().config), lambda d: 3 if live_feed(d) or (d or {}).get("running") else 15),
+        "journey": (lambda: __import__("backend.intraday.journey", fromlist=["summary"]).summary(),
+                    lambda d: 10 if (d or {}).get("at") else 30),
         "flow_live": (flow.live, lambda d: 3 if live_feed(d) else 30),
         "overview": (overview_view, lambda d: 5 if (d or {}).get("feed") == "live" else 30),
         "backtest": (bt.status, lambda d: 2 if (d or {}).get("state") == "running" else 5),

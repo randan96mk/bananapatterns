@@ -338,3 +338,26 @@ def test_live_rows_price_and_pnl_after_costs():
     assert S["status"] == "closed" and S["pnl"] == sp["net"] < 0 and S["reason"] == "stop"
     assert Q["status"] == "signal" and Q["move_pct"] == -1.0 and "pnl" not in Q                   # signals only
     assert abs(d["stats"]["unrealised"] - shut["net"]) < 0.01
+
+
+def test_journey_explains_the_run(monkeypatch):
+    from backend.intraday import journey
+    stocks = setup(monkeypatch)
+    loose()
+    c = AppConfig()
+    flow.run_now(c, feed_with(stocks), now=at(10, 10))
+    s = journey.summary()
+    titles = [x["title"] for x in s["funnel"]]
+    assert "Universe" in titles and s["headline"] and [r["title"].split(":")[0] for r in s["rules"]] == ["📥 Entry", "📏 Size", "📤 Exit"]
+    assert any("square-off" in line.lower() for line in s["rules"][2]["lines"])
+    u = journey.node_stocks("universe")
+    assert u["in"] == 6 and len(u["passed"]) + len(u["dropped"]) == 6 and all("now" in x for x in u["passed"])
+    ck = journey.check("S1")
+    assert ck["steps"][0]["state"] == "pass" and "facts" in ck and ck["verdict"]
+    assert journey.check("NOPE")["error"]
+    flow.set_node("filters", {"rvol_on": True, "rvol_min": 50})                      # nobody passes volume now
+    flow.run_now(c, feed_with(stocks), now=at(10, 15))
+    f = journey.node_stocks("filters")
+    assert f["passed"] == [] and {d["reason"] for d in f["dropped"]} == {"low volume"}
+    assert "Intraday filters" in journey.summary()["headline"]
+    assert journey.check("S1")["verdict"].startswith("stopped at Intraday filters")
