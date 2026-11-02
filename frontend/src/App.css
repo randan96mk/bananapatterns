@@ -772,3 +772,8 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 .cards2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
 .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .calgrid div { border-radius: 6px; padding: 6px 4px; font-size: 11px; text-align: center; background: var(--hover); }
+@media (max-width: 760px) {
+  .kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpis > .kpi2:first-child { grid-column: 1 / -1; }
+  .kpi2 { padding: 10px; } .kpi2 .v { font-size: 17px; } .kpi2 .s { font-size: 11px; }
+}

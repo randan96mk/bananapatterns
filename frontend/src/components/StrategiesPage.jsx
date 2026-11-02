@@ -8,7 +8,7 @@ import { inr, pct, cls, signed } from '../fmt';
 // latest backtest; "Open" goes to the strategy's own page (rules / canvas, backtest, live).
 function Card({ title, kind, chip, today, cagr, dd, open, curve, color, onOpen, note }) {
   return <div className="v2card"><h3>{title} {chip && <span className="achip b">{chip}</span>}<span className="r">{kind}</span></h3>
-    <div className="kpis" style={{ marginBottom: 6 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 6 }}>
       <div><div className="muted small">Today</div><b className={`mono ${cls(today)}`}>{today == null ? '—' : signed(today)}</b></div>
       <div><div className="muted small">Backtest CAGR</div><b className="mono">{cagr == null ? '—' : pct(cagr)}</b></div>
       <div><div className="muted small">Max drawdown</div><b className="mono down">{dd == null ? '—' : pct(-dd)}</b></div>

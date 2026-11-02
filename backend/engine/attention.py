@@ -28,7 +28,7 @@ def signals(config, kite: bool) -> dict:
         bt.append(("running", "Trend Breakout backtest running"))
     scan = tb.saved_scan()
     if not kite:
-        bt.append(("warn", "Kite not logged in: holdings not checked, candles not updated"))
+        bt.append(("warn", "Kite not logged in: candles not updated"))
     if not scan:
         bt.append(("warn", "No evening scan yet"))
     else:
@@ -36,9 +36,6 @@ def signals(config, kite: bool) -> dict:
         if changed:
             bt.append(("filter", "Market filter changed: " + ", ".join(changed)))
             pp.append(("filter", "Market filter changed: " + ", ".join(changed)))
-        sells = [h["symbol"] for h in scan.get("holdings") or [] if h["action"] != "HOLD"]
-        if sells:
-            bt.append(("sell", f"SELL at open: {', '.join(sells[:6])}" + (f" +{len(sells) - 6}" if len(sells) > 6 else "")))
         if scan.get("buys"):
             bt.append(("buy", f"{len(scan['buys'])} breakout(s) for the next open"))
     rep = paper.latest_report()
