@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import KiteBar from './components/KiteBar';
 import UniverseTable from './components/UniverseTable';
 import ScreensHome from './components/ScreensHome';
@@ -15,106 +15,143 @@ import { AttentionDot } from './components/AttentionStrip';
 import TodayPage from './components/TodayPage';
 import StatusBar from './components/StatusBar';
 import FlowPage from './components/FlowPage';
+import CommandPalette from './components/CommandPalette';
 import * as api from './services/api';
 import { useIsPhone } from './useMedia';
 
-// Navigation in groups: Trade · Research, and a ⚙️ System menu. Phone: Trade (Today), Screens, Alerts in the bottom
-// bar, the rest under "More".
-const GROUPS = [
-  ['Trade', [['today', '⚡ Today'], ['flow', '🔀 Intraday Flow'], ['breakout', '📈 Trend Breakout'], ['paper', '📝 Paper'], ['real', '💰 Real']]],
-  ['Research', [['screens', 'Screens'], ['universe', 'Universe']]],
+// v2 layout: five sections (sidebar on a computer, bottom bar on a phone), each with its pages. The page is kept in the
+// address (#/section/page), so links and the back button work.
+const ICONS = {
+  home: 'M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
+  strategies: 'M4 19V9m6 10V5m6 14v-7m4 7H2',
+  portfolio: 'M3 7h18v13H3zM8 7V4h8v3',
+  research: 'M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm10 17-5-5',
+  system: 'M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM3 12h2m14 0h2M12 3v2m0 14v2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17m10-10 1.4-1.4',
+};
+export const SECTIONS = [
+  ['home', 'Home', [['today', 'Overview']]],
+  ['strategies', 'Strategies', [['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout']]],
+  ['portfolio', 'Portfolio', [['real', 'Real (Tradetron)'], ['paper', 'Paper · swing']]],
+  ['research', 'Research', [['screens', 'Screens'], ['universe', 'Universe']]],
+  ['system', 'System', [['alerts', 'Alerts & schedule'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
 ];
-const SYSTEM = [['alerts', '🔔 Alerts'], ['data', '🗄 Data'], ['settings', '⚙️ Settings'], ['logs', '📜 Logs']];
-const TABS = [...GROUPS.flatMap(([, t]) => t), ...SYSTEM];
-const PHONE_TABS = ['today', 'screens', 'alerts'];
+const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
 const DOTS = ['breakout', 'paper', 'real'];
+const Icon = ({ id }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+  strokeLinejoin="round" aria-hidden="true"><path d={ICONS[id]} /></svg>;
+
+const fromHash = () => {
+  const p = window.location.hash.replace(/^#\/?/, '').split('/')[1];
+  return SECTION_OF[p] ? p : 'today';
+};
 
 export default function App() {
-  const [tab, setTab] = useState('screens');
+  const [tab, setTab] = useState(fromHash);
   const [kite, setKite] = useState(null);
   const [universe, setUniverse] = useState(null);
   const [selected, setSelected] = useState(null);
-  const [indexChart, setIndexChart] = useState(null);
+  const [stock, setStock] = useState(null);                // a stock opened from ⌘K or the index ticker
   const [backendErr, setBackendErr] = useState('');
   const [showKite, setShowKite] = useState(false);
-  const [sysOpen, setSysOpen] = useState(false);
+  const [cmdk, setCmdk] = useState(false);
+  const [more, setMore] = useState(false);
   const phone = useIsPhone();
   const [realOn, setRealOn] = useState(false);
   useEffect(() => { api.getReal().then((r) => setRealOn(r.enabled && !r.killed)).catch(() => {}); }, [tab]);
-  const [more, setMore] = useState(false);
-  const go = (id) => { setTab(id); setMore(false); setSysOpen(false); window.scrollTo(0, 0); };
+  const section = SECTION_OF[tab] || 'home';
+  const go = useCallback((id) => {
+    const p = SECTION_OF[id] ? id : (SECTIONS.find(([s]) => s === id)?.[2][0][0] || 'today');
+    setTab(p); setMore(false);
+    if (window.location.hash !== `#/${SECTION_OF[p]}/${p}`) window.history.pushState(null, '', `#/${SECTION_OF[p]}/${p}`);
+    window.scrollTo(0, 0);
+  }, []);
+  useEffect(() => {
+    const on = () => setTab(fromHash());
+    window.addEventListener('popstate', on);
+    const key = (e) => {
+      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !/input|textarea|select/i.test(e.target.tagName))) {
+        e.preventDefault(); setCmdk(true);
+      }
+    };
+    window.addEventListener('keydown', key);
+    return () => { window.removeEventListener('popstate', on); window.removeEventListener('keydown', key); };
+  }, []);
 
   const loadKite = useCallback(async (verify = false) => {
     try { setKite(await api.kiteStatus(verify)); setBackendErr(''); } catch (e) { setBackendErr(e.message); }
   }, []);
   const loadUniverse = useCallback(() => api.getUniverse().then(setUniverse).catch(() => {}), []);
-
   useEffect(() => {
     const justLoggedIn = new URLSearchParams(window.location.search).get('kite') === 'connected';
-    if (justLoggedIn) window.history.replaceState(null, '', window.location.pathname);
+    if (justLoggedIn) window.history.replaceState(null, '', window.location.pathname + window.location.hash);
     loadKite(justLoggedIn);
     loadUniverse();
     const t = setInterval(() => loadKite(false), 60000); // catches the 06:00 IST expiry
     return () => clearInterval(t);
   }, [loadKite, loadUniverse]);
 
-  const tabBtn = ([id, label]) => (
-    <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => go(id)}>{label}
-      {DOTS.includes(id) && <AttentionDot tab={id} active={tab === id} />}</button>);
+  const symbols = useMemo(() => (universe?.rows || []).map((r) => r.symbol), [universe]);
+  const [, title, pages] = SECTIONS.find(([s]) => s === section);
+  const pageTitle = pages.find(([p]) => p === tab)?.[1];
+
   return (
-    <div className="app">
-      <header>
-        <h1>🍌 Banana Patterns</h1>
-        {!phone && <nav className="groupnav">
-          {GROUPS.map(([g, tabs]) => <div key={g} className="navgroup"><span className="navlabel">{g}</span>{tabs.map(tabBtn)}</div>)}
-          <div className="navgroup sysmenu">
-            <button className={SYSTEM.some(([id]) => id === tab) ? 'active' : ''} aria-expanded={sysOpen} onClick={() => setSysOpen(!sysOpen)}>
-              ⚙️ System ▾</button>
-            {sysOpen && <div className="sysdrop" role="menu">{SYSTEM.map(([id, label]) => (
-              <button key={id} role="menuitem" className={tab === id ? 'active' : ''} onClick={() => go(id)}>{label}</button>))}</div>}
-          </div>
-        </nav>}
-      </header>
-      {!backendErr && <StatusBar kite={kite} onKite={() => setShowKite(!showKite)} onGo={go} />}
-      {!backendErr && <IndexTicker onSelect={(s) => setIndexChart(indexChart === s ? null : s)} />}
-      {indexChart && <StockChart symbol={indexChart} onClose={() => setIndexChart(null)} />}
-      {backendErr ? <div className="kitebar warn">Backend unreachable: {backendErr}. Is `python run.py` running?</div>
-        : (!kite?.has_token || showKite) && <KiteBar status={kite} onChange={setKite} />}
-      <main>
-        {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
-        {tab === 'breakout' && <BreakoutPage />}
-        {tab === 'paper' && <PaperPage />}
-        {tab === 'real' && <RealPage />}
-        {tab === 'today' && <TodayPage />}
-        {tab === 'flow' && <FlowPage />}
-        {tab === 'universe' && (
-          <>
+    <div className="shell">
+      {!phone && <aside className="sidebar" aria-label="Sections">
+        <div className="brand">🍌 Banana<span>Patterns</span></div>
+        {SECTIONS.map(([s, label, sub], i) => (
+          <React.Fragment key={s}>
+            {s === 'system' && <div className="navsep" />}
+            <button className={`navsec ${section === s ? 'active' : ''}`} aria-current={section === s ? 'page' : undefined}
+              onClick={() => go(s === section ? tab : s)}><Icon id={s} />{label}
+              {sub.some(([p]) => DOTS.includes(p)) && section !== s && <AttentionDot tab={sub.find(([p]) => DOTS.includes(p))[0]} />}</button>
+            {section === s && sub.length > 1 && <div className="navsub">{sub.map(([p, pl]) => (
+              <button key={p} className={tab === p ? 'active' : ''} onClick={() => go(p)}>{pl}
+                {DOTS.includes(p) && <AttentionDot tab={p} active={tab === p} />}</button>))}</div>}
+          </React.Fragment>))}
+        <div className="sidefoot">{realOn ? '💰 Real trading ON (Tradetron)' : 'Screen-only (no orders)'}<br />Personal use · data © NSE via Kite</div>
+      </aside>}
+      <div className="mainpane">
+        <div className="topbar">
+          {!backendErr && <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}><StatusBar kite={kite} onKite={() => setShowKite(!showKite)} onGo={go} /></div>
+            <button className="cmdk-btn" onClick={() => setCmdk(true)} aria-label="Search">⌕ {phone ? '' : 'Search stock, page…'}<kbd>⌘K</kbd></button>
+          </div>}
+          {!backendErr && !phone && <IndexTicker onSelect={(s) => setStock(stock === s ? null : s)} />}
+        </div>
+        {backendErr ? <div className="kitebar warn">Backend unreachable: {backendErr}. Is the app running?</div>
+          : (!kite?.has_token || showKite) && <KiteBar status={kite} onChange={setKite} />}
+        <div className="pagehead"><h2>{title}</h2>{pages.length > 1 && <span className="crumb">› {pageTitle}</span>}</div>
+        {pages.length > 1 && <nav className="subnav" aria-label={title}>{pages.map(([p, pl]) => (
+          <button key={p} className={tab === p ? 'active' : ''} onClick={() => go(p)}>{pl}{DOTS.includes(p) && <AttentionDot tab={p} active={tab === p} />}</button>))}</nav>}
+        {stock && <div style={{ padding: '12px 20px 0' }}><StockChart symbol={stock} onClose={() => setStock(null)} /></div>}
+        <main>
+          {tab === 'today' && <TodayPage />}
+          {tab === 'flow' && <FlowPage />}
+          {tab === 'breakout' && <BreakoutPage />}
+          {tab === 'real' && <RealPage />}
+          {tab === 'paper' && <PaperPage />}
+          {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
+          {tab === 'universe' && <>
             {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}
-            <UniverseTable data={universe} selected={selected} onSelect={setSelected} />
-          </>
-        )}
-        {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
-        {tab === 'settings' && <SettingsPanel />}
-        {tab === 'alerts' && <AlertsPanel />}
-        {tab === 'logs' && <LogsPanel />}
-      </main>
-      <footer className="muted">Personal use only · {realOn ? '💰 real trading ON: orders go to Tradetron by webhook' : 'screen-only mode (no orders)'} · data © NSE via Kite</footer>
-      {phone && (
-        <>
-          {more && (
-            <div className="sheet" role="dialog" aria-label="More">
-              {TABS.filter(([id]) => !PHONE_TABS.includes(id)).map(([id, label]) => (
-                <button key={id} className={`sheetitem ${tab === id ? 'active' : ''}`} onClick={() => go(id)}>{label}
-                  {DOTS.includes(id) && <AttentionDot tab={id} active={tab === id} />}</button>))}
-            </div>)}
-          <nav className="bottomnav">
-            {[['today', '📈', 'Trade'], ['screens', '📊', 'Screens'], ['alerts', '🔔', 'Alerts']].map(([id, icon, label]) => (
-              <button key={id} className={tab === id && !more ? 'active' : ''} onClick={() => go(id)}>
-                <span aria-hidden="true">{icon}</span>{label}</button>))}
-            <button className={more || !PHONE_TABS.includes(tab) ? 'active' : ''} onClick={() => setMore(!more)}>
-              <span aria-hidden="true">☰</span>More</button>
-          </nav>
-        </>)}
+            <UniverseTable data={universe} selected={selected} onSelect={setSelected} /></>}
+          {tab === 'alerts' && <AlertsPanel />}
+          {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
+          {tab === 'settings' && <SettingsPanel />}
+          {tab === 'logs' && <LogsPanel />}
+        </main>
+      </div>
+      {cmdk && <CommandPalette sections={SECTIONS} symbols={symbols} onClose={() => setCmdk(false)}
+        onPage={(p) => { go(p); setCmdk(false); }} onStock={(s) => { setStock(s); setCmdk(false); window.scrollTo(0, 0); }} />}
+      {phone && <>
+        {more && <div className="sheet" role="dialog" aria-label="System">
+          {SECTIONS.find(([s]) => s === 'system')[2].map(([p, pl]) => (
+            <button key={p} className={`sheetitem ${tab === p ? 'active' : ''}`} onClick={() => go(p)}>{pl}</button>))}</div>}
+        <nav className="bottomnav">
+          {SECTIONS.filter(([s]) => s !== 'system').map(([s, label]) => (
+            <button key={s} className={section === s && !more ? 'active' : ''} onClick={() => go(s === section ? tab : s)}>
+              <Icon id={s} />{label}</button>))}
+          <button className={more || section === 'system' ? 'active' : ''} onClick={() => setMore(!more)}><Icon id="system" />System</button>
+        </nav></>}
     </div>
   );
 }

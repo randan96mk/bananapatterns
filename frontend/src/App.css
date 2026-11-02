@@ -678,3 +678,73 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 @media (max-width: 760px) { .bttools .seg { width: 100%; } .bttools .seg button { flex: 1; } }
 .panel .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
 .panel .bar i { display: block; height: 100%; background: var(--accent); }
+
+/* ===== v2 terminal design: two skins (dark / light) and the shell (sidebar, top bar, ⌘K) ===== */
+:root[data-skin="terminal"] {
+  --bg: #0b0e13; --panel: #131821; --border: #222a36; --text: #e7ecf3; --muted: #8a96a8;
+  --accent: #6c8cff; --ok: #22c08a; --bad: #ef5a5f; --warn: #f2b84b; --blue: #6c8cff; --purple: #b39dff;
+  --accent-text: #9db2ff; --on-accent: #ffffff; --on-ok: #04140c;
+  --hover: #1a2230; --rowline: #1a212c; --border-strong: #2e3949; --grid: #1a212c; --side: #0f131a;
+  --radius: 10px; --shadow: none; --font: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif; color-scheme: dark; }
+:root[data-skin="terminal-light"] {
+  --bg: #f5f7fb; --panel: #ffffff; --border: #e3e7ef; --text: #1b2430; --muted: #5f6b7c;
+  --accent: #4f6bed; --ok: #13a37a; --bad: #d9434a; --warn: #b7791f; --blue: #4f6bed; --purple: #7c5cd6;
+  --accent-text: #3c55c9; --on-accent: #ffffff; --on-ok: #ffffff;
+  --hover: #eef1f7; --rowline: #edf0f5; --border-strong: #c9d0dc; --grid: #edf0f5; --side: #ffffff;
+  --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.05); --font: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif; color-scheme: light; }
+.num, .mono, td.num { font-variant-numeric: tabular-nums; }
+
+.shell { display: grid; grid-template-columns: 208px 1fr; min-height: 100vh; }
+.sidebar { position: sticky; top: 0; height: 100vh; background: var(--side, var(--panel)); border-right: 1px solid var(--border);
+  padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.sidebar .brand { font-weight: 700; font-size: 15px; padding: 4px 10px 16px; }
+.sidebar .brand span { color: var(--accent-text); }
+.navsec { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--muted); font: inherit; font-weight: 500; cursor: pointer; text-align: left; }
+.navsec:hover { background: var(--hover); color: var(--text); }
+.navsec.active { background: var(--hover); color: var(--text); }
+.navsec svg { width: 16px; height: 16px; flex: none; }
+.navsub { display: flex; flex-direction: column; margin: 2px 0 6px 26px; border-left: 1px solid var(--border); }
+.navsub button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; text-align: left;
+  padding: 6px 10px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.navsub button.active { color: var(--text); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+.navsep { height: 1px; background: var(--border); margin: 10px 6px; }
+.sidefoot { margin-top: auto; color: var(--muted); font-size: 11px; padding: 6px 10px; }
+.mainpane { min-width: 0; display: flex; flex-direction: column; }
+.topbar { position: sticky; top: 0; z-index: 40; background: var(--bg); border-bottom: 1px solid var(--border); }
+.topbar .statusbar { border: 0; margin: 0; }
+.cmdk-btn { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 8px;
+  padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.cmdk-btn kbd, .cmdk kbd { font-family: inherit; font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+.pagehead { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 0; flex-wrap: wrap; }
+.pagehead h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.pagehead .crumb { color: var(--muted); font-size: 12px; }
+.subnav { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding: 0 20px; margin-top: 10px; overflow-x: auto; }
+.subnav button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 500; padding: 9px 12px; cursor: pointer; white-space: nowrap; }
+.subnav button.active { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.shell main { padding: 14px 20px 24px; }
+.cmdk-back { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 90; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; }
+.cmdk { width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.cmdk input { width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font: inherit; font-size: 15px; padding: 14px 16px; outline: none; }
+.cmdk .items { max-height: 50vh; overflow-y: auto; padding: 6px; }
+.cmdk .item { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.cmdk .item.on { background: var(--hover); }
+.cmdk .item .k { margin-left: auto; color: var(--muted); font-size: 11px; }
+@media (max-width: 760px) {
+  .shell { display: block; }
+  .sidebar { display: none; }
+  .pagehead { padding: 12px 14px 0; }
+  .subnav { padding: 0 14px; }
+  .shell main { padding: 12px 14px 90px; }
+}
+@media (max-width: 760px) {
+  .bottomnav { grid-template-columns: repeat(5, 1fr); }
+  .bottomnav button svg { width: 20px; height: 20px; display: block; margin: 0 auto 3px; }
+  .bottomnav button { font-size: 11px; }
+}
+@media (max-width: 760px) {
+  .topbar .statusbar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .topbar .statusbar::-webkit-scrollbar { display: none; }
+  .topbar .themepick { display: none; }
+}
+.topbar .statusbar { padding-top: 8px; padding-bottom: 8px; }

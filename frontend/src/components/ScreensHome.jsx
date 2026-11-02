@@ -4,7 +4,6 @@ import StockChart from './StockChart';
 import StageList, { StagePeek } from './StageList';
 import MarketCard from './MarketCard';
 import PlanCard from './PlanCard';
-import PositionsCard from './PositionsCard';
 import { useIsPhone } from '../useMedia';
 import { NewsList, ResultsList } from './NewsFeed';
 
@@ -163,7 +162,6 @@ export default function ScreensHome({ hasData }) {
         {chart}
         {summary?.as_of && <div className="panel">{feedBox}</div>}
         <PlanCard plan={plan} onSelect={setSelected} />
-        <PositionsCard onSelect={setSelected} />
       </>
     );
   }
@@ -196,7 +194,6 @@ export default function ScreensHome({ hasData }) {
       {summary?.as_of && <StageList {...listProps} />}
       {chart}
       <PlanCard plan={plan} onSelect={setSelected} />
-      <PositionsCard onSelect={setSelected} />
     </>
   );
 }

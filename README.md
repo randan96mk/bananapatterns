@@ -1958,3 +1958,14 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   price from the live feed), P&L after costs (entry slippage plus the slippage and charges an exit now would cost), %, R,
   a stop meter and "↑ trailed"; every 5 s while the feed is live (`GET /api/flow/live`, no extra Kite calls); the tiles
   follow. Signals mode: the move since the signal. Phone: one card a stock.
+
+### 2026-11-02: v2 layout, step 1 (the frame)
+- **Five sections** in a sidebar (bottom bar on a phone): **Home** (Overview) · **Strategies** (Intraday Flow, Trend
+  Breakout) · **Portfolio** (Real, Paper · swing) · **Research** (Screens, Universe) · **System** (Alerts & schedule, Data,
+  Settings, Logs). Each section's pages are tabs under its title; the page is in the address (`#/strategies/flow`), so
+  links and the back button work. The existing pages sit inside it until their redesign (Home, Portfolio, Strategies).
+- **⌘K / Ctrl+K / "/"**: search any stock (opens its chart, filings, news) or page.
+- **Themes**: Dark, Light or Auto (follows the device), the "terminal" design (Inter, tabular figures, one accent).
+- **No Kite holdings or broker positions** anywhere: the Kite position guard (`alerts.position_guard`) is now
+  `alerts.kite_holdings_guard`, off (an older saved "on" does not carry over); its settings, "Run guard now", the
+  holdings cards (Screens, Today, the evening scan) are gone. Kite stays for login and market data.

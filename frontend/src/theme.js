@@ -1,6 +1,6 @@
 // Themes. A theme ("skin") sets colours, fonts, corners and shadows; each is light or dark underneath
 // (<html data-theme="light|dark" data-skin="...">) so charts and components keep working. The choice is remembered
-// per browser; "auto" follows the system: Fintech Light by day settings, Precision Dark by night settings.
+// per browser; "auto" follows the system (light or dark).
 // index.html applies the same before React loads (no flash) and a "themechange" event announces changes.
 import { useEffect, useState } from 'react';
 
@@ -9,15 +9,9 @@ const media = () => window.matchMedia('(prefers-color-scheme: light)');
 
 // id -> [label, light|dark]
 export const THEMES = {
-  auto: ['◐ Auto (Fintech Light / Precision Dark)', null],
-  fintech: ['Fintech Light', 'light'],
-  precision: ['Precision Dark', 'dark'],
-  consumer: ['Consumer Black', 'dark'],
-  workspace: ['Pro Workspace', 'dark'],
-  glass: ['Glass', 'dark'],
-  clay: ['Clay', 'light'],
-  light: ['Classic Light', 'light'],
-  dark: ['Classic Dark', 'dark'],
+  auto: ['◐ Auto', null],
+  terminal: ['☾ Dark', 'dark'],
+  'terminal-light': ['☀ Light', 'light'],
 };
 
 export function getMode() {
@@ -27,7 +21,7 @@ export function getMode() {
 // mode -> {skin, theme}
 export function resolveSkin(mode) {
   const m = THEMES[mode] ? mode : 'auto';
-  if (m === 'auto') return media().matches ? { skin: 'fintech', theme: 'light' } : { skin: 'precision', theme: 'dark' };
+  if (m === 'auto') return media().matches ? { skin: 'terminal-light', theme: 'light' } : { skin: 'terminal', theme: 'dark' };
   return { skin: m, theme: THEMES[m][1] };
 }
 

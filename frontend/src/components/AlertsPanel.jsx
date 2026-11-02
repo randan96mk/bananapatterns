@@ -13,7 +13,7 @@ const GROUPS = [
   ['Priority', [['tiering', '🅰️ A/B priority (A at once, B per setting)'], ['market_line', '📊 Market line on alerts'],
     ['market_sizing', '⚖️ Market-aware size (½ under pressure, ¼ in correction)']]],
   ['Daily plan', [['top_setups', '🎯 Top setups after the evening scan'], ['morning_plan', '☀️ Morning plan'],
-    ['gap_check', '🔔 Opening (gap) check'], ['position_guard', '📒 Position guard (Kite holdings, read-only)'],
+    ['gap_check', '🔔 Opening (gap) check'],
     ['alert_buttons', '🔘 Buttons under alerts (Watch · Mute · Chart · I bought)']]],
   ['Market hours', [['live_guard', '🔻 Live position guard (under stop, heavy selling, 9:10 AM and 3:15 PM checks)'],
     ['hard_stop', '🛑 Hard stop: under-stop alert says "exit now" (off: unconfirmed until the close)'],
@@ -27,7 +27,6 @@ const FIELDS = [['near_pivot_pct', 'Near pivot within (0.03 = 3%)'], ['job_time'
   ['plan_top_n', 'How many top setups'], ['profit_zone_pct', 'Guard: profit zone at (+%)'],
   ['extended_pct', 'Guard: extended above 50-day (%)'], ['failed_days', 'Guard: failed if under pivot within (days)'], ['morning_plan_time', 'Morning plan at'], ['gap_check_time', 'Opening check at'], ['universe_refresh_weekday', 'Weekly refresh day (0=Mon … 6=Sun)'],
   ['live_drop_pct', 'Live guard: heavy selling at (−% today)'], ['live_drop_volume', 'Live guard: … on volume (× normal)'],
-  ['holdings_refresh_min', 'Live guard: re-read holdings every (min)'],
   ['opening_range_min', 'Checklist: opening range (first N min)'], ['today_near_pct', 'Today page: near pivot within (%)']];
 const CHART_KINDS = [['breakout', '🚀 Breakout'], ['breakout_low_volume', '⚠️ Low-volume breakout'],
   ['near_pivot', '🎯 Near pivot'], ['forming', '🔵 Newly forming'], ['below_pivot', '🔻 Below pivot'],
@@ -245,7 +244,7 @@ export default function AlertsPanel() {
           <button className="btn ghost" onClick={() => act(() => api.runJob('intraday'), () => 'Intraday check started')}>Intraday check now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('close_check'), () => 'Close check started')}>Close check now</button>
           <button className="btn ghost" onClick={() => act(() => api.runJob('top_setups'), () => 'Top setups: ranking and sending')}>Top setups now</button>
-          <button className="btn ghost" onClick={() => act(() => api.runJob('guard'), () => 'Position guard: syncing holdings and checking')}>Run guard now</button>
+
           <button className="btn ghost" onClick={() => act(() => api.runJob('weekly'), () => 'Weekly refresh started')}>Weekly refresh now</button>
           <button className="btn ghost" onClick={load}>Refresh</button>
         </div>
