@@ -382,3 +382,21 @@ def test_rerun_a_box_is_a_dry_run_with_the_new_settings(monkeypatch):
         assert conn.execute("SELECT COUNT(*) FROM flow_signals").fetchone()[0] == 0          # nothing sent or saved
     assert pos.load(DAY) == [] and sent == []                                                 # no paper trade
     assert journey.node_stocks("filters")["passed"] and journey.rerun("nope")["error"]
+
+
+def test_skip_a_box_passes_every_stock_on(monkeypatch):
+    from backend.intraday import journey
+    stocks = setup(monkeypatch)
+    loose()
+    flow.set_node("filters", {"rvol_on": True, "rvol_min": 50})                      # nobody passes…
+    flow.run_now(AppConfig(), feed_with(stocks), now=at(10, 10))
+    assert flow._state["nodes"]["filters"]["out"] == 0
+    flow.set_node("filters", {"skip": True})                                          # …unless the box is skipped
+    res = flow.run_now(AppConfig(), feed_with(stocks), now=at(10, 15))
+    assert res["nodes"]["filters"]["out"] == res["nodes"]["filters"]["in"] == 6 and res["nodes"]["filters"]["skipped"]
+    st = flow.state(AppConfig())
+    assert next(n for n in st["nodes"] if n["id"] == "filters")["summary"].startswith("⏭ skipped")
+    assert any("skipped" in x for x in journey.summary()["rules"][0]["lines"])
+    assert journey.check("S1")["steps"][3]["state"] == "pass"
+    flow.set_node("orb", {"skip": True})                                              # not a skippable box: ignored
+    assert "skip" not in flow.node_configs()["orb"]

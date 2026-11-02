@@ -198,7 +198,7 @@ export default function FlowPage() {
           {nodes.map((n) => {
             const [label, cls] = STATUS[n.status] || STATUS.idle;
             return (
-              <button key={n.id} className={`fnode ${sel === n.id ? 'sel' : ''} ${drag?.id === n.id ? 'dragging' : ''}`}
+              <button key={n.id} className={`fnode ${n.config?.skip ? 'skipped' : ''} ${sel === n.id ? 'sel' : ''} ${drag?.id === n.id ? 'dragging' : ''}`}
                       style={{ left: n.x, top: n.y, width: W }} onPointerDown={(e) => down(e, n)}
                       onKeyDown={(e) => { if (e.key === 'Enter') setSel(n.id); }}>
                 <div className="fh"><span className="fico">{n.icon}</span><b>{n.title}</b><span className={`fst ${cls}`}>{label}</span></div>

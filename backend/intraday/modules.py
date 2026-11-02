@@ -18,6 +18,9 @@ def module(kind: str):
     return wrap
 
 
+SKIPPABLE = {"daily_trend", "intraday_filters", "context", "score", "dedup"}   # pure filters: safe to pass through
+
+
 class Module:
     kind = ""
     title = ""
@@ -105,7 +108,7 @@ def _keep(it, sides, drops, reason):
 @module("daily_trend")
 class DailyTrend(Module):
     title, icon = "Daily trend", "📈"
-    fields = [("above_50", "Long: close above 50-day avg", "bool", True), ("above_200", "Long: close above 200-day avg", "bool", True),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("above_50", "Long: close above 50-day avg", "bool", True), ("above_200", "Long: close above 200-day avg", "bool", True),
               ("mirror", "Short: mirror (below the averages)", "bool", True)]
 
     def summary(self, cfg):
@@ -132,7 +135,7 @@ class DailyTrend(Module):
 @module("intraday_filters")
 class IntradayFilters(Module):
     title, icon = "Intraday filters", "📊"
-    fields = [("vwap", "Long above / short below VWAP", "bool", True),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("vwap", "Long above / short below VWAP", "bool", True),
               ("rsi_on", "RSI(14) in range (short: mirrored)", "bool", True), ("rsi_min", "RSI min", "number", 55, {"min": 0, "max": 100}),
               ("rsi_max", "RSI max", "number", 75, {"min": 0, "max": 100}),
               ("rvol_on", "Relative volume", "bool", True), ("rvol_min", "RVOL ≥", "number", 2.0, {"min": 0, "max": 10, "step": 0.1}),
@@ -181,7 +184,7 @@ class IntradayFilters(Module):
 @module("context")
 class MarketContext(Module):
     title, icon = "Market context", "🌍"
-    fields = [("direction", "Trades allowed", "select", "both", {"options": ["both", "long", "short"]}),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("direction", "Trades allowed", "select", "both", {"options": ["both", "long", "short"]}),
               ("follow", "Follow NIFTY (long above / short below its VWAP)", "bool", True),
               ("ema_on", "…and its 20-EMA", "bool", False),
               ("vix_on", "India VIX in range", "bool", True), ("vix_min", "VIX min", "number", 10, {"min": 0, "max": 80}),
@@ -265,7 +268,7 @@ class OpeningRangeBreakout(Module):
 @module("score")
 class ScoreRank(Module):
     title, icon = "Score & rank", "🏅"
-    fields = [("top_k", "Keep top K a candle", "number", 2, {"min": 1, "max": 20}),
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("top_k", "Keep top K a candle", "number", 2, {"min": 1, "max": 20}),
               ("w_rvol", "Weight: relative volume", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
               ("w_rs", "Weight: strength vs NIFTY", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
               ("w_rsi", "Weight: RSI", "number", 0.5, {"min": 0, "max": 5, "step": 0.5})]
@@ -288,7 +291,7 @@ class ScoreRank(Module):
 @module("dedup")
 class Dedup(Module):
     title, icon = "Dedup", "🧹"
-    fields = [("per_day", "Max signals a day", "number", 6, {"min": 1, "max": 100})]
+    fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("per_day", "Max signals a day", "number", 6, {"min": 1, "max": 100})]
 
     def summary(self, cfg):
         return f"1 per stock per day · max {cfg['per_day']} a day"

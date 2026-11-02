@@ -13,7 +13,7 @@ from backend.config import IST, AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
 from backend.intraday import store
 from backend.intraday.candles import resample
-from backend.intraday.modules import REGISTRY
+from backend.intraday.modules import REGISTRY, SKIPPABLE
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("flow")
@@ -235,13 +235,15 @@ def run_once(ctx: Ctx, items: list[dict], key: Optional[str] = None, cfgs: Optio
             src = out[inputs[0]]
         ins[nid] = src if kind != "and" else list({x["symbol"]: x for i in inputs for x in out[i]}.values())
         n_in = len(src) if kind != "and" else sum(len(out[i]) for i in inputs)
-        passed, drops = (src, {}) if kind == "and" else REGISTRY[kind]().run(ctx, src, cfgs[nid])
+        skip = kind in SKIPPABLE and cfgs[nid].get("skip")
+        passed, drops = (src, {}) if kind == "and" or skip else REGISTRY[kind]().run(ctx, src, cfgs[nid])
         if kind == "monitor":
             st = ctx.positions()
             n_in, passed = st["open"], []
         out[nid] = passed
         res[nid] = {"status": "ok", "in": n_in, "out": len(passed), "ms": round((_time.perf_counter() - t0) * 1000),
-                    "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]]}
+                    "drops": dict(Counter(drops).most_common()), "sample": [x["symbol"] for x in passed[:8]],
+                    **({"skipped": True} if skip else {})}
         if live:
             _state["nodes"][nid] = res[nid]
     if live:
@@ -259,7 +261,7 @@ def state(config: AppConfig, day: Optional[str] = None) -> dict:
         pos = moved.get(nid, pos)
         m = REGISTRY[kind]
         nodes.append({"id": nid, "kind": kind, "title": m.title, "icon": m.icon, "inputs": inputs, "x": pos[0], "y": pos[1],
-                      "summary": m().summary(cfgs[nid]), "config": cfgs[nid], "schema": m.schema(),
+                      "summary": ("⏭ skipped: every stock passes on" if kind in SKIPPABLE and cfgs[nid].get("skip") else m().summary(cfgs[nid])), "config": cfgs[nid], "schema": m.schema(),
                       **_state["nodes"].get(nid, {"status": "idle"})})
     today = day or datetime.now(IST).date().isoformat()
     with get_db() as conn:

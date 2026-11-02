@@ -780,3 +780,4 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
 
 .hlbox { background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
   border-radius: 8px; padding: 9px 11px; font-size: 13px; margin-bottom: 12px; }
+.fnode.skipped { opacity: .55; border-style: dashed; }

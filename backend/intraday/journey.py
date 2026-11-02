@@ -11,7 +11,7 @@ alert and execute boxes are never re-run: they send messages and open paper trad
 
 from backend.intraday import flow
 from backend.intraday import indicators as ind
-from backend.intraday.modules import REGISTRY
+from backend.intraday.modules import REGISTRY, SKIPPABLE
 
 WAITING = {"no breakout", "range not complete"}
 NO_RERUN = {"and", "alert", "execute", "monitor"}
@@ -40,7 +40,7 @@ def _vals(it: dict) -> dict:
 
 def _single(tr, nid, kind, it):
     """(passed item or None, reason) for one stock in one box, on the traced candle."""
-    if kind in NO_RERUN:
+    if kind in NO_RERUN or (kind in SKIPPABLE and tr["cfgs"][nid].get("skip")):
         return it, None
     out, drops = REGISTRY[kind]().run(tr["ctx"], [it], tr["cfgs"][nid])
     if out:
@@ -120,6 +120,13 @@ def rules(cfgs: dict) -> list:
         ex.append(f"Time stop: out after {st.get('time_stop_min')} minutes unless up {st.get('time_stop_r')} × the risk.")
     ex.append(f"Square-off: everything out at {st.get('squareoff')}.")
     ex.append("Paper fills: the next 1-minute open + slippage, with intraday charges.")
+    for nid, prefix, label in (("trend", "Daily trend", "Daily trend"), ("filters", "Today:", "Today's filters"),
+                               ("context", "Market:", "Market"), ("score", None, "Score & rank"), ("dedup", None, "Dedup")):
+        if g(nid).get("skip"):
+            if prefix:
+                entry = [f"{label}: ⏭ skipped (every stock passes on)." if x.startswith(prefix) else x for x in entry]
+            else:
+                entry.append(f"{label}: ⏭ skipped (no ranking / no daily limit).")
     return [{"title": "📥 Entry: all of these", "lines": entry}, {"title": "📏 Size", "lines": size},
             {"title": "📤 Exit: whichever comes first", "lines": ex}]
 
@@ -312,7 +319,7 @@ def rerun(nid: str) -> dict:
         else:
             src = ins.get(n, []) if not inputs else outs.get(inputs[0], [])
             n_in = len(src)
-            if kind in ("alert", "execute"):               # dry run: no message, no paper trade
+            if kind in ("alert", "execute") or (kind in SKIPPABLE and cfgs[n].get("skip")):   # dry run / skipped
                 passed, drops = src, {}
             else:
                 passed, drops = REGISTRY[kind]().run(tr["ctx"], src, cfgs[n])

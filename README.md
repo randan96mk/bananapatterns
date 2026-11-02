@@ -2011,3 +2011,6 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **↻ Re-run from this box** (in every box's panel): re-runs that box and every box after it on the latest candle's
   data with the current settings, so a changed setting shows its effect at once (counts, stock lists, journey). A dry
   run: no alert, no saved signal, no paper trade; the boxes show "dry run" until the next candle's live run.
+- **⏭ Skip this box** (Daily trend, Intraday filters, Market context, Score & rank, Dedup): every stock passes straight
+  on to the next box; the box shows "⏭ skipped" (faded, dashed), the Rules text says so, and backtests of a setup
+  honour it. The other boxes add what later boxes need (price, entry, stop, quantity), so they can't be skipped.
