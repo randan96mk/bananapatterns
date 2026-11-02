@@ -748,3 +748,27 @@ button.sb { cursor: pointer; } .sb.bad { border-color: var(--bad); color: var(--
   .topbar .themepick { display: none; }
 }
 .topbar .statusbar { padding-top: 8px; padding-bottom: 8px; }
+/* v2 pages: tiles, chips, drawer */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kpi2 { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow); min-width: 0; }
+.kpi2 .l { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.kpi2 .v { font-size: 21px; font-weight: 650; margin-top: 4px; }
+.kpi2 .s { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+.achip { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 10px; background: var(--hover); color: var(--muted); white-space: nowrap; }
+.achip.g { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.achip.b { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent-text); }
+.v2grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+@media (max-width: 1000px) { .v2grid { grid-template-columns: 1fr; } }
+.v2card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); margin-bottom: 14px; min-width: 0; }
+.v2card h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.v2card h3 .r { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; }
+.v2list { display: flex; flex-direction: column; }
+.v2list .it { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--rowline); font-size: 12.5px; }
+.v2list .it:last-child { border-bottom: 0; }
+.v2list .it .t { color: var(--muted); min-width: 64px; }
+.drawer-back { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 80; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: var(--bg); border-left: 1px solid var(--border-strong);
+  z-index: 81; overflow-y: auto; padding: 12px; box-shadow: -10px 0 40px rgba(0,0,0,.25); }
+.cards2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.calgrid div { border-radius: 6px; padding: 6px 4px; font-size: 11px; text-align: center; background: var(--hover); }

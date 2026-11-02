@@ -16,6 +16,10 @@ import TodayPage from './components/TodayPage';
 import StatusBar from './components/StatusBar';
 import FlowPage from './components/FlowPage';
 import CommandPalette from './components/CommandPalette';
+import HomePage from './components/HomePage';
+import PortfolioPage from './components/PortfolioPage';
+import StrategiesPage from './components/StrategiesPage';
+import SystemHome from './components/SystemHome';
 import * as api from './services/api';
 import { useLive } from './services/live';
 import { useIsPhone } from './useMedia';
@@ -30,11 +34,11 @@ const ICONS = {
   system: 'M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM3 12h2m14 0h2M12 3v2m0 14v2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17m10-10 1.4-1.4',
 };
 export const SECTIONS = [
-  ['home', 'Home', [['today', 'Overview']]],
-  ['strategies', 'Strategies', [['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout']]],
-  ['portfolio', 'Portfolio', [['real', 'Real (Tradetron)'], ['paper', 'Paper · swing']]],
-  ['research', 'Research', [['screens', 'Screens'], ['universe', 'Universe']]],
-  ['system', 'System', [['alerts', 'Alerts & schedule'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
+  ['home', 'Home', [['home', 'Overview']]],
+  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout']]],
+  ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real (Tradetron)'], ['paper', 'Paper · swing']]],
+  ['research', 'Research', [['screens', 'Screens'], ['plan', "Today's plan"], ['universe', 'Universe']]],
+  ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
 const DOTS = ['breakout', 'paper', 'real'];
@@ -43,7 +47,7 @@ const Icon = ({ id }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentCol
 
 const fromHash = () => {
   const p = window.location.hash.replace(/^#\/?/, '').split('/')[1];
-  return SECTION_OF[p] ? p : 'today';
+  return SECTION_OF[p] ? p : 'home';
 };
 
 export default function App() {
@@ -63,7 +67,7 @@ export default function App() {
   useEffect(() => { if (liveKite && !liveKite.error) setKite(liveKite); }, [liveKite]);
   const section = SECTION_OF[tab] || 'home';
   const go = useCallback((id) => {
-    const p = SECTION_OF[id] ? id : (SECTIONS.find(([s]) => s === id)?.[2][0][0] || 'today');
+    const p = SECTION_OF[id] ? id : (SECTIONS.find(([s]) => s === id)?.[2][0][0] || 'home');
     setTab(p); setMore(false);
     if (window.location.hash !== `#/${SECTION_OF[p]}/${p}`) window.history.pushState(null, '', `#/${SECTION_OF[p]}/${p}`);
     window.scrollTo(0, 0);
@@ -124,9 +128,14 @@ export default function App() {
         <div className="pagehead"><h2>{title}</h2>{pages.length > 1 && <span className="crumb">› {pageTitle}</span>}</div>
         {pages.length > 1 && <nav className="subnav" aria-label={title}>{pages.map(([p, pl]) => (
           <button key={p} className={tab === p ? 'active' : ''} onClick={() => go(p)}>{pl}{DOTS.includes(p) && <AttentionDot tab={p} active={tab === p} />}</button>))}</nav>}
-        {stock && <div style={{ padding: '12px 20px 0' }}><StockChart symbol={stock} onClose={() => setStock(null)} /></div>}
+        {stock && <><div className="drawer-back" onClick={() => setStock(null)} />
+          <aside className="drawer" aria-label={stock}><StockChart symbol={stock} onClose={() => setStock(null)} /></aside></>}
         <main>
-          {tab === 'today' && <TodayPage />}
+          {tab === 'home' && <HomePage onGo={go} onStock={setStock} />}
+          {tab === 'strategies' && <StrategiesPage onGo={go} />}
+          {tab === 'portfolio' && <PortfolioPage onStock={setStock} />}
+          {tab === 'system' && <SystemHome onGo={go} onKite={() => { setShowKite(true); window.scrollTo(0, 0); }} />}
+          {tab === 'plan' && <TodayPage />}
           {tab === 'flow' && <FlowPage />}
           {tab === 'breakout' && <BreakoutPage />}
           {tab === 'real' && <RealPage />}
@@ -142,7 +151,7 @@ export default function App() {
         </main>
       </div>
       {cmdk && <CommandPalette sections={SECTIONS} symbols={symbols} onClose={() => setCmdk(false)}
-        onPage={(p) => { go(p); setCmdk(false); }} onStock={(s) => { setStock(s); setCmdk(false); window.scrollTo(0, 0); }} />}
+        onPage={(p) => { go(p); setCmdk(false); }} onStock={(s) => { setStock(s); setCmdk(false); }} />}
       {phone && <>
         {more && <div className="sheet" role="dialog" aria-label="System">
           {SECTIONS.find(([s]) => s === 'system')[2].map(([p, pl]) => (

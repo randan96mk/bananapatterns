@@ -1231,6 +1231,20 @@ def logs(level: Optional[str] = None, limit: int = Query(200, le=1000)):
         return get_logs(conn, level, limit)
 
 
+@router.get("/overview")
+def overview_view():
+    """🏠 Home: every account's figures, today's P&L across them, every open position, the latest activity."""
+    from backend.engine import overview as ov
+    return ov.overview(S().config)
+
+
+@router.get("/portfolio")
+def portfolio_view(days: int = 365):
+    """💼 Portfolio: positions, trades, orders, daily P&L and curves of every account (the app's own; no broker holdings)."""
+    from backend.engine import overview as ov
+    return ov.portfolio(S().config, max(1, min(days, 3650)))
+
+
 # --- 📡 one live connection: the page subscribes to topics; each is sent when it changes ---------------------
 
 def _stream_topics() -> dict:
@@ -1246,6 +1260,7 @@ def _stream_topics() -> dict:
         "kite": (lambda: kite_status(False), lambda d: 60),
         "flow": (lambda: flow.state(S().config), lambda d: 3 if live_feed(d) or (d or {}).get("running") else 15),
         "flow_live": (flow.live, lambda d: 3 if live_feed(d) else 30),
+        "overview": (overview_view, lambda d: 5 if (d or {}).get("feed") == "live" else 30),
         "backtest": (bt.status, lambda d: 2 if (d or {}).get("state") == "running" else 5),
     }
 

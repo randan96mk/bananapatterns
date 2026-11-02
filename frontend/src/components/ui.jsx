@@ -26,3 +26,21 @@ export function SubTabs({ tabs, value, onChange }) {
         <button key={id} role="tab" aria-selected={value === id} className={value === id ? 'on' : ''} onClick={() => onChange(id)}>{label}</button>))}
     </div>);
 }
+
+// v2 building blocks: a figure tile, a small line chart, an account chip.
+export function Kpi({ label, value, sub, cls = '', children }) {
+  return <div className="kpi2"><div className="l">{label}</div><div className={`v mono ${cls}`}>{value}</div>
+    {sub && <div className="s">{sub}</div>}{children}</div>;
+}
+
+export function Spark({ values, h = 46, color = 'var(--ok)', dash = false }) {
+  const v = (values || []).filter((x) => x != null);
+  if (v.length < 2) return null;
+  const lo = Math.min(...v), hi = Math.max(...v);
+  const pts = values.map((x, i) => (x == null ? '' : `${(i / (values.length - 1)) * 600},${h - 3 - ((x - lo) / (hi - lo || 1)) * (h - 6)}`)).join(' ');
+  return <svg width="100%" height={h} viewBox={`0 0 600 ${h}`} preserveAspectRatio="none" aria-hidden="true">
+    <polyline fill="none" stroke={color} strokeWidth="1.8" strokeDasharray={dash ? '4 3' : ''} vectorEffect="non-scaling-stroke" points={pts} /></svg>;
+}
+
+const ACCT_CLS = { real: 'g', intraday: 'b' };
+export const Acct = ({ book, name }) => <span className={`achip ${ACCT_CLS[book] || ''}`}>{name}</span>;
