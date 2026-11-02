@@ -74,24 +74,6 @@ export default function TodayPage() {
       </div>
       {d.error && <div className="warn small">Live prices failed: {d.error}</div>}
 
-      <div className="tdsec">Positions · {d.positions.length}</div>
-      <div className="panel tdlist">
-        {d.positions.length === 0 && <p className="muted">No positions followed. They come from your Kite holdings.</p>}
-        {d.positions.map((p) => {
-          const l = p.live, [st, sc] = POS_STATE[l?.state] || [];
-          return (
-            <button key={p.symbol} className={`tdrow ${l?.state === 'under_stop' ? 'alert' : ''}`} onClick={() => setSelected(p.symbol)}>
-              <span className="tdl"><span><b>{p.symbol}</b>{st && <span className={`tag ${sc}`}>{st}</span>}</span>
-                <span className="muted small">stop {rs(p.stop)}
-                  {l?.r != null && ` · ${l.r > 0 ? '+' : ''}${l.r.toFixed(1)}R`}
-                  {l?.state === 'under_stop' ? (l.pace ? ` · vol ${l.pace.toFixed(1)}×` : '')
-                    : l?.stop_dist_pct != null ? ` · ${l.stop_dist_pct.toFixed(1)}% above` : ''}</span></span>
-              <Spark points={sparks[p.symbol]} level={p.stop} />
-              <span className="tdr"><b>{rs(l?.ltp)}</b><span className={`small ${(l?.day_pct ?? 0) >= 0 ? 'up' : 'down'}`}>{pct(l?.day_pct)}</span></span>
-            </button>);
-        })}
-      </div>
-
       <div className="tdsec">Plan &amp; near the pivot · {d.setups.length}</div>
       <div className="panel tdlist">
         {d.setups.length === 0 && <p className="muted">No plan names or Forming names near their pivot.</p>}

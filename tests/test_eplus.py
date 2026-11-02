@@ -151,9 +151,11 @@ def test_paper_migration_backfills_once_and_rerun_is_a_no_op(monkeypatch):
         assert x["best"] == pytest.approx(want) and x["stop"] >= before["positions"][sym]["stop"]
     assert sum(n["text"].startswith("strategy updated to E+ on") for n in st["notes"]) == 1
     assert st["name"].startswith("E+") and st["cash"] == before["cash"]
-    snap = paper.summary(c)
+    def same(sm):                                                                   # all but the "updated at" time
+        return {**sm, "accounts": {k: {**a, "updated_at": None} for k, a in sm["accounts"].items()}}
+    snap = same(paper.summary(c))
     paper.process(c, data)                                                          # again: nothing changes
-    assert paper.summary(c) == snap and paper._states()["A"] == paper._states()["A"]
+    assert same(paper.summary(c)) == snap and paper._states()["A"] == paper._states()["A"]
 
 
 def test_real_trail_only_for_e_positions_and_never_lowered(monkeypatch):

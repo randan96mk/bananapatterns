@@ -305,7 +305,7 @@ class Scheduler:
             notifier.hold = self.hold
             sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
                                  st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
-            if st.config.alerts.position_guard:
+            if st.config.alerts.kite_holdings_guard:
                 sent["guard"] = self.run_guard(as_of)
         finally:
             self.hold = None
@@ -477,7 +477,7 @@ class Scheduler:
         res = self._forming_quotes()
         if res["status"] != "ok":
             out = {k: v for k, v in res.items() if k != "items"}
-            if res["status"] != "no_login" and cfg.live_guard and cfg.position_guard:
+            if res["status"] != "no_login" and cfg.live_guard and cfg.kite_holdings_guard:
                 out["guard"] = self._live_guard(now)        # positions are watched even with no Forming names
             return out
         notifier, sent, failed, held = self.notifier(), 0, 0, 0
@@ -527,7 +527,7 @@ class Scheduler:
                                          decorate(msg.failed_alert(p, ltp, it["live"]["high"], stop), "failed", None,
                                                   mc), sym):
                     failed += 1
-        guarded = self._live_guard(now, res.get("index_today")) if cfg.live_guard and cfg.position_guard else {}
+        guarded = self._live_guard(now, res.get("index_today")) if cfg.live_guard and cfg.kite_holdings_guard else {}
         return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed, "held": held,
                 "upgraded": upgraded, "guard": guarded}
 
@@ -626,7 +626,7 @@ class Scheduler:
         """09:10: positions that open under their stop (a gap the stop can't protect against)."""
         cfg, today = self.state.config.alerts, now.date().isoformat()
         positions = [p for p in guard.positions() if p.get("stop")]
-        if not (cfg.live_guard and cfg.position_guard and positions):
+        if not (cfg.live_guard and cfg.kite_holdings_guard and positions):
             return {"positions": 0}
         quotes = self._position_quotes(positions)
         broken, ok = [], 0
@@ -648,7 +648,7 @@ class Scheduler:
     def _close_positions(self, now: datetime) -> dict:
         """15:15: positions that were under the stop or sold off heavily today: still under -> exit; back above -> ✅."""
         cfg, today = self.state.config.alerts, now.date().isoformat()
-        if not (cfg.live_guard and cfg.position_guard):
+        if not (cfg.live_guard and cfg.kite_holdings_guard):
             return {}
         with get_db() as conn:
             day_flags = itd.flags(conn, today)

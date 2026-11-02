@@ -110,6 +110,7 @@ def setup(monkeypatch, names=("S1",), **cfg):
     tokens, piv = forming_db(list(names))
     fake, st, client = FakeTG(), FakeState(), Live()
     st.client = client
+    st.config.alerts.kite_holdings_guard = True              # these tests cover the (now opt-in) Kite holdings guard
     for k, v in cfg.items():
         setattr(st.config.alerts, k, v)
     monkeypatch.setattr("backend.alerts.jobs.uni.resolve_universe",

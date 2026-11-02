@@ -289,8 +289,9 @@ class AlertsConfig:
     gap_check_time: str = "09:10"          # after the 09:00-09:08 pre-open session sets the open
     coiled_volume: float = 0.5             # coiled: last day's volume <= this x 50-day average ...
     coiled_within_pct: float = 3.0         # ... within this % under the pivot, on an NR7 or inside day
-    # Position guard (Kite holdings, read-only): sell-rule alerts after the evening scan
-    position_guard: bool = True
+    # Kite holdings guard (read-only): sell-rule alerts on your Kite holdings. Off: the app follows only its own
+    # accounts (Real via Tradetron, paper); renamed from position_guard so an older saved "on" does not carry over.
+    kite_holdings_guard: bool = False
     alert_buttons: bool = True             # Watch / Mute / Chart / I bought under stock alerts
     mute_days: int = 30
     profit_zone_pct: float = 20.0          # gain from your average: consider selling part

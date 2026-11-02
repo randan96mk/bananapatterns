@@ -239,13 +239,7 @@ export default function BreakoutPage() {
             : <p className="muted">No breakouts today.</p>}
           {sc.buys?.length > 0 && <p className="muted small">{Object.entries(sc.filters || {}).map(([k, f]) => `${k}: ${f.state === 'OFF' ? 'not bought (filter off)'
             : f.state === 'HALF' ? `buy only while under ${f.slots} positions` : 'buy at the next open'}`).join(' · ')}</p>}
-          <h4>Your Kite holdings</h4>
-          {sc.holdings?.length ? <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th className="num">Qty</th>
-            <th className="num">Avg · close</th>{!phone && <th className="num">SMA{R.exit_sma}</th>}<th>Action</th></tr></thead>
-            <tbody>{sc.holdings.map((h) => <tr key={h.symbol}><td><b>{h.symbol}</b></td><td className="num">{h.qty}</td>
-              <td className="num">{rs(h.avg)} · {rs(h.close)}</td>{!phone && <td className="num">{rs(h.sma)}</td>}
-              <td><b className={h.action === 'HOLD' ? 'up' : 'down'}>{h.action}</b> <span className="muted small">{h.why}</span></td></tr>)}</tbody></table></div>
-            : <p className="muted">{sc.holdings_read ? 'No holdings.' : 'Not checked: log in to Kite (read-only holdings).'}</p>}
+
         </>}
       </div>}
 
