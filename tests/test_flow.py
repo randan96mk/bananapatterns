@@ -283,3 +283,23 @@ def test_stop_squares_off_and_blocks_everything(monkeypatch):
     r.start_all(lambda k, d: sent.append(k))
     assert not flow.stopped() and sent[-1] == "started"
     assert r.tick(at(10, 10, 5), True) in ("warm_up", "feed")                       # resumes
+
+
+def test_no_target_setup_sends_every_signal_and_opens_every_paper_trade(monkeypatch):
+    """A setup with no target (out at square-off) once crashed the Telegram text after the first signal, which
+    stopped the run: the other signals were lost and no paper trade was opened."""
+    from backend.alerts import messages as msg
+    from backend.intraday import positions as pos
+    stocks = setup(monkeypatch)
+    loose()
+    flow.set_node("stop", {"target_r": 0})
+    c = AppConfig()
+    c.flow.mode = "paper"
+    sent = []
+    res = flow.run_now(c, feed_with(stocks), lambda kind, row: sent.append(msg.flow_signal(row)), now=at(10, 10))
+    n = res["nodes"]["size"]["out"]
+    assert n > 1 and res["signals"] == n and len(sent) == n and "no target" in sent[0]
+    assert len(pos.load(DAY)) == n                                                    # every one opened (paper)
+    boom = lambda kind, row: (_ for _ in ()).throw(RuntimeError("telegram down"))
+    flow.set_node("dedup", {"per_day": 50})
+    assert flow.run_now(c, feed_with(stocks), boom, now=at(10, 15))["status"] == "ok"  # an alert failure: run goes on
