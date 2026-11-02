@@ -73,6 +73,12 @@ def set_stopped(on: bool) -> None:
         set_setting(conn, "flow.stopped", "1" if on else "0")
 
 
+def reset_nodes() -> None:
+    """Every box back to its default settings (the canvas's own changes are cleared)."""
+    with get_db() as conn:
+        set_setting(conn, "flow.nodes", "{}")
+
+
 def reset_layout() -> None:
     with get_db() as conn:
         set_setting(conn, "flow.layout", "{}")

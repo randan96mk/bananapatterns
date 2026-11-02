@@ -57,7 +57,7 @@ class Universe(Module):
     fields = [("top", "Top N by turnover", "number", 300, {"min": 20, "max": 500, "step": 10}),
               ("min_price", "Min price ₹", "number", 100, {"min": 0, "max": 5000, "step": 10}),
               ("in_play", "Only stocks in play (unusual opening volume)", "bool", False),
-              ("in_play_top", "…top N by opening turnover ÷ usual daily", "number", 20, {"min": 5, "max": 100, "step": 5}),
+              ("in_play_top", "…top N by opening turnover ÷ usual daily", "number", 10, {"min": 5, "max": 100, "step": 5}),
               ("in_play_min", "…opening minutes", "select", 5, {"options": [5, 15]})]
 
     def summary(self, cfg):
@@ -135,7 +135,7 @@ class IntradayFilters(Module):
     fields = [("vwap", "Long above / short below VWAP", "bool", True),
               ("rsi_on", "RSI(14) in range (short: mirrored)", "bool", True), ("rsi_min", "RSI min", "number", 55, {"min": 0, "max": 100}),
               ("rsi_max", "RSI max", "number", 75, {"min": 0, "max": 100}),
-              ("rvol_on", "Relative volume", "bool", True), ("rvol_min", "RVOL ≥", "number", 1.5, {"min": 0, "max": 10, "step": 0.1}),
+              ("rvol_on", "Relative volume", "bool", True), ("rvol_min", "RVOL ≥", "number", 2.0, {"min": 0, "max": 10, "step": 0.1}),
               ("ema_on", "EMA 9 vs EMA 21", "bool", False), ("st_on", "Supertrend (10,3) with the trade", "bool", False)]
 
     def summary(self, cfg):
@@ -265,7 +265,7 @@ class OpeningRangeBreakout(Module):
 @module("score")
 class ScoreRank(Module):
     title, icon = "Score & rank", "🏅"
-    fields = [("top_k", "Keep top K a candle", "number", 3, {"min": 1, "max": 20}),
+    fields = [("top_k", "Keep top K a candle", "number", 2, {"min": 1, "max": 20}),
               ("w_rvol", "Weight: relative volume", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
               ("w_rs", "Weight: strength vs NIFTY", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
               ("w_rsi", "Weight: RSI", "number", 0.5, {"min": 0, "max": 5, "step": 0.5})]
@@ -288,7 +288,7 @@ class ScoreRank(Module):
 @module("dedup")
 class Dedup(Module):
     title, icon = "Dedup", "🧹"
-    fields = [("per_day", "Max signals a day", "number", 10, {"min": 1, "max": 100})]
+    fields = [("per_day", "Max signals a day", "number", 6, {"min": 1, "max": 100})]
 
     def summary(self, cfg):
         return f"1 per stock per day · max {cfg['per_day']} a day"
@@ -311,19 +311,19 @@ class Dedup(Module):
 class StopTarget(Module):
     title, icon = "Stop & target", "🛡"
     fields = [("stop", "Stop", "select", "orb", {"options": ["orb", "atr", "daily_atr", "signal_bar", "vwap", "percent"]}),
-              ("daily_atr_frac", "Daily ATR(14) × (daily_atr stop)", "number", 0.1, {"min": 0.05, "max": 2, "step": 0.05}),
+              ("daily_atr_frac", "Daily ATR(14) × (daily_atr stop)", "number", 0.3, {"min": 0.05, "max": 2, "step": 0.05}),
               ("atr_mult", "ATR × (atr stop)", "number", 1.5, {"min": 0.5, "max": 5, "step": 0.1}),
               ("stop_pct", "% (percent stop)", "number", 0.8, {"min": 0.1, "max": 5, "step": 0.1}),
-              ("min_stop_pct", "Skip if stop under %", "number", 0.2, {"min": 0, "max": 5, "step": 0.05}),
-              ("max_stop_pct", "Skip if stop over %", "number", 2.5, {"min": 0.2, "max": 10, "step": 0.1}),
-              ("target_r", "Target × risk (0 = none)", "number", 2, {"min": 0, "max": 10, "step": 0.5}),
+              ("min_stop_pct", "Skip if stop under %", "number", 0.4, {"min": 0, "max": 5, "step": 0.05}),
+              ("max_stop_pct", "Skip if stop over %", "number", 2.0, {"min": 0.2, "max": 10, "step": 0.1}),
+              ("target_r", "Target × risk (0 = none)", "number", 2.5, {"min": 0, "max": 10, "step": 0.5}),
               ("partial_on", "Book part early", "bool", False), ("partial_r", "…at × risk", "number", 1, {"min": 0.5, "max": 5, "step": 0.5}),
               ("partial_pct", "…% of the quantity", "number", 50, {"min": 10, "max": 90, "step": 10}),
-              ("trail", "Trailing stop", "select", "breakeven", {"options": ["off", "breakeven", "prev_bar", "atr", "percent"]}),
-              ("trail_after_r", "Trail after × risk", "number", 1, {"min": 0, "max": 5, "step": 0.5}),
+              ("trail", "Trailing stop", "select", "atr", {"options": ["off", "breakeven", "prev_bar", "atr", "percent"]}),
+              ("trail_after_r", "Trail after × risk", "number", 1.5, {"min": 0, "max": 5, "step": 0.5}),
               ("trail_atr_mult", "Trail ATR ×", "number", 2, {"min": 0.5, "max": 5, "step": 0.5}),
               ("trail_pct", "Trail %", "number", 0.5, {"min": 0.1, "max": 5, "step": 0.1}),
-              ("time_stop_min", "Time stop (minutes, 0 = off)", "number", 60, {"min": 0, "max": 360, "step": 5}),
+              ("time_stop_min", "Time stop (minutes, 0 = off)", "number", 0, {"min": 0, "max": 360, "step": 5}),
               ("time_stop_r", "…unless up × risk", "number", 0.5, {"min": 0, "max": 3, "step": 0.25}),
               ("squareoff", "Square-off", "select", "15:15", {"options": ["14:45", "15:00", "15:10", "15:15", "15:20"]})]
 
@@ -377,9 +377,9 @@ class SizeRisk(Module):
     title, icon = "Size & risk", "📏"
     fields = [("capital", "Capital ₹", "number", 100000, {"min": 10000, "max": 100000000, "step": 10000}),
               ("risk_pct", "Risk a trade (% of capital)", "number", 0.5, {"min": 0.05, "max": 5, "step": 0.05}),
-              ("max_pos_pct", "Max position (% of capital)", "number", 20, {"min": 1, "max": 500, "step": 1}),
-              ("max_open", "Max open positions", "number", 3, {"min": 1, "max": 20}),
-              ("max_trades", "Max trades a day", "number", 6, {"min": 1, "max": 50}),
+              ("max_pos_pct", "Max position (% of capital)", "number", 50, {"min": 1, "max": 500, "step": 1}),
+              ("max_open", "Max open positions", "number", 2, {"min": 1, "max": 20}),
+              ("max_trades", "Max trades a day", "number", 3, {"min": 1, "max": 50}),
               ("daily_loss_pct", "Daily loss limit (% of capital)", "number", 1.5, {"min": 0.1, "max": 20, "step": 0.1})]
 
     def summary(self, cfg):

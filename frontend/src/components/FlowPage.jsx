@@ -152,6 +152,9 @@ export default function FlowPage() {
           <div className="flowtools">
             <button className="btn" onClick={() => setFull(!full)} title={full ? 'Exit full screen (Esc)' : 'Full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button>
             <button className="btn" onClick={resetLayout} title="Put every box back in its place">↺ Reset layout</button>
+            <button className="btn" title="Every box's settings back to the recommended defaults"
+              onClick={() => window.confirm('Put every box back to its default settings? Applies from the next candle. Save the canvas as a setup first (🧪 Backtest) if you want to keep the current one.')
+                && api.flowResetNodes().then(load).catch((e) => setErr(e.message))}>↺ Default settings</button>
             <span className="muted small">drag a box to move it · click to configure</span></div>
           <div className="flowinner" style={{ width: maxX, height: maxY }}>
           <svg className="flowedges" width={maxX} height={maxY}>
