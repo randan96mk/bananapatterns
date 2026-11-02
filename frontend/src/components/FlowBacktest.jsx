@@ -107,7 +107,8 @@ function Report({ r, color, csv }) {
       <div className="small">{r.splits.map((s) => <span key={s.name} style={{ marginRight: 14 }}>{s.name} <b className={cls(s.net)}>{pct(s.net)}</b>
         <span className="muted"> (stressed {pct(s.stress)})</span></span>)} {r.ok_periods ? '✅ all periods positive' : '❌ not every period positive'}</div></div>
     <div className="flowcols">
-      <div className="panel"><b>By side</b><Agg rows={r.by_side} /><b>By entry time</b><Agg rows={r.by_time} /></div>
+      <div className="panel"><b>By side</b><Agg rows={r.by_side} /><b>By entry time</b><Agg rows={r.by_time} />
+        {r.by_setup && <><b>By setup</b> <span className="muted small">· which entry setup(s) fired</span><Agg rows={r.by_setup} /></>}</div>
       <div className="panel"><b>By month</b> <span className="muted small">· net</span><div>{Object.entries(r.by_month).map(([m, a]) => (
         <span key={m} className={`chip ${cls(a.net)}`}>{m} {inr(a.net)}</span>))}</div>
         <p className="small"><b>Exits</b> {Object.entries(r.exits).map(([k, n]) => `${EXIT[k] || k} ${n}`).join(' · ')}</p>

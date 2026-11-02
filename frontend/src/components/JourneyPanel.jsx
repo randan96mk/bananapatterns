@@ -7,7 +7,7 @@ import { signed } from '../fmt';
 // the rules in plain words, one stock checked through every box, the open trades' exits.
 const n2 = (v) => (v == null ? '—' : (+v).toLocaleString('en-IN', { maximumFractionDigits: 2 }));
 const ICON = { pass: ['✓', 'up'], drop: ['✗', 'down'], wait: ['…', 'warn'], skip: ['·', 'muted'] };
-const VAL = { price: 'price', side: 'side', sides: 'sides', vwap: 'VWAP', rsi: 'RSI', rvol: 'RVOL', or_high: 'range high',
+const VAL = { price: 'price', side: 'side', sides: 'sides', setup: 'setup', pdh: 'prev high', pdl: 'prev low', vwap: 'VWAP', rsi: 'RSI', rvol: 'RVOL', or_high: 'range high',
   or_low: 'range low', entry: 'entry', score: 'score', sl: 'stop', target: 'target', qty: 'qty', risk_rs: 'risk ₹', stop_pct: 'stop %' };
 export const vals = (x) => Object.entries(VAL).filter(([k]) => x?.[k] != null && x[k] !== '')
   .map(([k, l]) => `${l} ${Array.isArray(x[k]) ? x[k].join('/') : typeof x[k] === 'string' ? x[k] : n2(x[k])}`).join(' · ');

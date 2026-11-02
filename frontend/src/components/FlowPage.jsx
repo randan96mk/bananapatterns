@@ -106,7 +106,18 @@ export default function FlowPage() {
   const resetLayout = () => api.flowLayout({}).then(() => { setMoved({}); load(); }).catch((e) => setErr(e.message));
   const node = byId[sel] || d.nodes[0];
   const setMode = (mode) => api.flowMode(mode).then(load).catch((e) => setErr(e.message));
-  const change = (key, v) => api.flowNode(node.id, { [key]: v }).then(load).catch((e) => setErr(e.message));
+  const change = (key, v) => {
+    if (node.kind === 'orb' && key.startsWith('set_') && !v                     // at least one entry setup stays ticked
+      && !node.schema.some((f) => f.key.startsWith('set_') && f.key !== key && node.config[f.key])) {
+      setErr('At least one entry setup must stay ticked.');
+      return;
+    }
+    api.flowNode(node.id, { [key]: v }).then(load).catch((e) => setErr(e.message));
+  };
+  // a setting labelled "…" belongs to the switch above it: hidden while that switch is off
+  const visible = (schema, cfg) => { let on = true; return schema.filter((f) => {
+    if (f.type === 'bool' && !f.label.startsWith('…')) { on = !!cfg[f.key]; return true; }
+    return !f.label.startsWith('…') || on; }); };
   const toggleStop = () => {
     if (!d.stopped && !window.confirm(`Stop all intraday activity?${d.stats?.open ? `\n${d.stats.open} open paper position(s) will be squared off at the last price.` : ''}\nNo live data, signals or trades until you press Start.`)) return;
     (d.stopped ? api.flowStart() : api.flowStop()).then(load).catch((e) => setErr(e.message));
@@ -218,7 +229,7 @@ export default function FlowPage() {
           <h3>{node.icon} {node.title}</h3>
           <div className="muted small">{node.summary}</div>
           {node.schema.length > 0 && <><h4>Settings</h4>
-            {node.schema.map((s) => (
+            {visible(node.schema, node.config).map((s) => (
               <label key={s.key} className="flowfield"><span>{s.label}</span><Field f={s} value={node.config[s.key]} onChange={(v) => change(s.key, v)} /></label>))}
             <div className="muted small">Applies from the next candle.</div></>}
           {node.kind !== 'monitor' && <div style={{ margin: '10px 0' }}>

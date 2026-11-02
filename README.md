@@ -2014,3 +2014,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **⏭ Skip this box** (Daily trend, Intraday filters, Market context, Score & rank, Dedup): every stock passes straight
   on to the next box; the box shows "⏭ skipped" (faded, dashed), the Rules text says so, and backtests of a setup
   honour it. The other boxes add what later boxes need (price, entry, stop, quantity), so they can't be skipped.
+- **🎯 Setup (entry triggers)**: tick one or more of five setups (at least one stays ticked); **"pass when at least N
+  of the ticked setups fire"** (1 = any one); long and short on the same candle = conflict, skipped:
+  **ORB** (as before), **previous day high / low** (yesterday's level ± a stop buffer), **VWAP reclaim** (a dip to
+  within x% of VWAP that closes back on its side), **N-candle breakout** (the last N candles' high / low), **EMA cross**
+  (9 over / under 21 on that candle). Each gives its own stop level: Stop & target "**setup**" (or "orb", which falls
+  back to it) with **nearest / widest** when several fired. Signals, trades and backtests record which fired ("ORB+PDH/PDL")
+  and the backtest report shows **By setup**. With only ORB ticked (the default) nothing changes.

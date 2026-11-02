@@ -208,15 +208,16 @@ class _Daily:
                     t.append(t[-1] + r["close"] * r["volume"])
                     pc = rows[k - 1]["close"] if k else r["close"]
                     tr.append(tr[-1] + max(r["high"], pc) - min(r["low"], pc))
-                self.s[st["symbol"]] = ([r["date"] for r in rows], c, t, tr)
+                self.s[st["symbol"]] = ([r["date"] for r in rows], c, t, tr, [(r["high"], r["low"]) for r in rows])
 
     def at(self, day: str) -> tuple[dict, dict]:
         daily, turn = {}, {}
-        for sym, (dates, c, t, tr) in self.s.items():
+        for sym, (dates, c, t, tr, hl) in self.s.items():
             i = bisect_left(dates, day)                    # rows before the day
             daily[sym] = {"sma50": (c[i] - c[i - 50]) / 50 if i >= 50 else None,
                           "sma200": (c[i] - c[i - 200]) / 200 if i >= 200 else None,
-                          "atr14": (tr[i] - tr[i - 14]) / 14 if i >= 15 else None}
+                          "atr14": (tr[i] - tr[i - 14]) / 14 if i >= 15 else None,
+                          "prev_high": hl[i - 1][0] if i else None, "prev_low": hl[i - 1][1] if i else None}
             n = min(20, i)
             turn[sym] = (t[i] - t[i - n]) / n if n else 0
         return daily, turn

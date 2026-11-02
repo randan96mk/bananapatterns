@@ -192,14 +192,18 @@ class Ctx:
 def daily_context(config: AppConfig, stocks: list[dict]) -> tuple[dict, dict]:
     """From the saved daily candles: 50 / 200-day averages and the 20-day average turnover of each stock."""
     daily, turnover = {}, {}
+    today = datetime.now(IST).date().isoformat()
     with get_db() as conn:
         for s in stocks:
             cs = get_candles(conn, s["instrument_token"], limit=200)
             closes = [c["close"] for c in cs]
             tr = [max(c["high"], p["close"]) - min(c["low"], p["close"]) for p, c in zip(cs[-15:], cs[-14:])]
+            prev = [c for c in cs if c["date"] < today] or [None]        # yesterday's candle (today's is saved in the evening)
             daily[s["symbol"]] = {"sma50": sum(closes[-50:]) / 50 if len(closes) >= 50 else None,
                                   "sma200": sum(closes) / 200 if len(closes) >= 200 else None,
-                                  "atr14": sum(tr) / 14 if len(tr) == 14 else None}
+                                  "atr14": sum(tr) / 14 if len(tr) == 14 else None,
+                                  "prev_high": prev[-1]["high"] if prev[-1] else None,
+                                  "prev_low": prev[-1]["low"] if prev[-1] else None}
             last20 = cs[-20:]
             turnover[s["symbol"]] = sum(c["close"] * c["volume"] for c in last20) / max(len(last20), 1)
     return daily, turnover

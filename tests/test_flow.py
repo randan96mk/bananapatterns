@@ -400,3 +400,63 @@ def test_skip_a_box_passes_every_stock_on(monkeypatch):
     assert journey.check("S1")["steps"][3]["state"] == "pass"
     flow.set_node("orb", {"skip": True})                                              # not a skippable box: ignored
     assert "skip" not in flow.node_configs()["orb"]
+
+
+class _Ctx:
+    """The parts of flow.Ctx the Setup box reads, from given bars."""
+
+    def __init__(self, today, hist=(), daily=None):
+        self._today, self._hist, self.daily = list(today), list(hist), daily or {}
+
+    def today_bars(self, it):
+        return self._today
+
+    def bars(self, it):
+        return self._hist + self._today
+
+    def last_closed(self, it):
+        return self._today[-1] if self._today else None
+
+
+def _bar(t, o, h, l, c, v=1000):
+    return {"t": t, "o": o, "h": h, "l": l, "c": c, "v": v}
+
+
+def test_entry_setups_fire_combine_and_give_stops():
+    from backend.intraday import modules as m
+    box, it = m.Setups(), {"symbol": "X", "token": 1, "sides": ["long", "short"]}
+    base = m.Setups.defaults()
+    rng = bars(15, start=100, step=0.0)                                  # 9:15-9:29 flat 100 (range 99.95-100.05)
+    up = rng + [_bar("09:30", 100, 101.2, 99.9, 101.0)]                  # closes above the range and yesterday's high
+    ctx = _Ctx(up, daily={"X": {"prev_high": 100.5, "prev_low": 98.0}})
+    out, drops = box.run(ctx, [it], base)                                 # ORB only (the default): as before
+    assert out[0]["setup"] == "ORB" and out[0]["side"] == "long" and out[0]["or_low"] == 99.95
+    both = {**base, "set_pdh": True, "min_count": 2}
+    out, _ = box.run(ctx, [it], both)                                     # ORB and PDH both fire: passes
+    assert out[0]["setup"] == "ORB+PDH/PDL" and out[0]["setup_stops"] == {"ORB": 99.95, "PDH/PDL": 100.4}
+    ctx2 = _Ctx(up, daily={"X": {"prev_high": 102.0, "prev_low": 98.0}})   # under yesterday's high: only ORB
+    out, drops = box.run(ctx2, [it], both)
+    assert out == [] and drops == {"only 1 of 2 setups fired": 1}
+    out, _ = box.run(ctx2, [it], {**both, "min_count": 1})                # at least 1: passes on ORB
+    assert out[0]["setup"] == "ORB"
+    none = {**base, "set_orb": False}                                      # nothing ticked: ORB is used
+    assert box.ticked(none) == [("set_orb", "ORB")] and box.run(ctx, [it], none)[0][0]["setup"] == "ORB"
+    # N-candle breakout and EMA cross on the candles; VWAP reclaim on the last candle
+    hist = [_bar(f"10:{k:02d}", 100, 100.5, 99.5, 100) for k in range(25)]
+    nb = _Ctx([_bar("11:00", 100, 101, 99.8, 100.9)], hist=hist)
+    out, _ = box.run(nb, [it], {**base, "set_orb": False, "set_nbar": True, "nbar_n": 20})
+    assert out[0]["setup"] == "N-candle breakout" and out[0]["setup_stops"]["N-candle breakout"] == 99.5
+    falling = [_bar(f"10:{k:02d}", 100 - k * 0.1, 100, 99, 100 - k * 0.1) for k in range(30)]
+    cross = _Ctx(falling[-1:] + [_bar("11:00", 98, 105, 98, 104)], hist=falling[:-1])
+    out, _ = box.run(cross, [it], {**base, "set_orb": False, "set_ema": True})
+    assert out and out[0]["setup"] == "EMA cross" and out[0]["side"] == "long"
+    vw = [_bar(f"09:{15 + k}", 100, 100.2, 99.8, 100, 1000) for k in range(10)] + [_bar("09:25", 100.3, 100.4, 100.05, 100.3)]
+    out, _ = box.run(_Ctx(vw), [it], {**base, "set_orb": False, "set_vwap": True, "vwap_dip": 0.2})
+    assert out and out[0]["setup"] == "VWAP reclaim" and out[0]["setup_stops"]["VWAP reclaim"] == 100.05
+    # the stop box: the setup's own level, nearest (tighter) or widest
+    st = m.StopTarget()
+    sig = {**it, "side": "long", "entry": 101.0, "signal_bar": up[-1], "setups": ["ORB", "PDH/PDL"],
+           "setup_stops": {"ORB": 99.95, "PDH/PDL": 100.4}}
+    cfg = {**m.StopTarget.defaults(), "stop": "setup", "min_stop_pct": 0, "max_stop_pct": 5}
+    assert st.run(_Ctx(up), [sig], cfg)[0][0]["sl"] == 100.4
+    assert st.run(_Ctx(up), [sig], {**cfg, "setup_stop": "widest"})[0][0]["sl"] == 99.95
