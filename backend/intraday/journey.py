@@ -128,7 +128,10 @@ def rules(cfgs: dict) -> list:
     if st.get("time_stop_min"):
         ex.append(f"Time stop: out after {st.get('time_stop_min')} minutes unless up {st.get('time_stop_r')} × the risk.")
     ex.append(f"Square-off: everything out at {st.get('squareoff')}.")
-    ex.append("Paper fills: the next 1-minute open + slippage, with intraday charges.")
+    ex.append(f"Entry: a limit at the signal price, valid {st.get('limit_min')} minutes (filled only at that price or better, "
+              "no slippage; cancelled if not filled or if it opens beyond the stop)." if st.get("limit_on") else
+              "Entry: the next 1-minute open + slippage.")
+    ex.append("Paper fills include intraday charges.")
     for nid, prefix, label in (("trend", "Daily trend", "Daily trend"), ("filters", "Today:", "Today's filters"),
                                ("context", "Market:", "Market"), ("score", None, "Score & rank"), ("dedup", None, "Dedup")):
         if g(nid).get("skip"):

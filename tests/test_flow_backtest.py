@@ -220,3 +220,14 @@ def test_own_process_run_and_stop(monkeypatch):
 def test_stale_running_status_is_cleared():
     bt._set(state="running", message="replaying", pct=50)
     assert bt.status()["state"] == "idle" and "restarted" in bt.status()["message"]
+
+
+def test_backtest_with_limit_entry(monkeypatch):
+    stocks, ds = data(monkeypatch)
+    flow.set_node("stop", {"limit_on": True, "limit_min": 10})
+    assert bt.run(AppConfig(), None, [bt.CANVAS], "6m")["status"] == "ok"
+    r = bt.results("6m")[0]
+    assert r["trades"] > 0
+    assert all((t["entry"] <= t["signal_price"] + 1e-6) if t["side"] == "long" else (t["entry"] >= t["signal_price"] - 1e-6)
+               for t in r["rows"])                                                    # never worse than the signal price
+    assert bt.configs_of(bt.CANVAS)["stop"]["limit_on"] is True

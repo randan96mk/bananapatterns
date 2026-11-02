@@ -2021,3 +2021,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   (9 over / under 21 on that candle). Each gives its own stop level: Stop & target "**setup**" (or "orb", which falls
   back to it) with **nearest / widest** when several fired. Signals, trades and backtests record which fired ("ORB+PDH/PDL")
   and the backtest report shows **By setup**. With only ORB ticked (the default) nothing changes.
+- **Limit entry** (Stop & target › "Limit entry at the signal price", **off by default**, with "…valid for (minutes)"):
+  instead of the next minute's open, the paper trade fills only when the price trades at the signal candle's close or
+  better (long: at or below, short: at or above), with no slippage; a gap through fills at the better open. Not filled
+  within N minutes → cancelled ("limit not filled"); opening beyond the stop → cancelled. Cancelled orders are not
+  trades (they don't count toward the daily limit). Live paper trading and backtests use the same rule; Telegram says
+  when one is cancelled; the box summary and the 🧭 Rules text show it.

@@ -427,13 +427,16 @@ class StopTarget(Module):
               ("trail_pct", "Trail %", "number", 0.5, {"min": 0.1, "max": 5, "step": 0.1}),
               ("time_stop_min", "Time stop (minutes, 0 = off)", "number", 0, {"min": 0, "max": 360, "step": 5}),
               ("time_stop_r", "…unless up × risk", "number", 0.5, {"min": 0, "max": 3, "step": 0.25}),
+              ("limit_on", "Limit entry at the signal price (instead of the next minute's open)", "bool", False),
+              ("limit_min", "…valid for (minutes), then cancelled", "number", 10, {"min": 1, "max": 60}),
               ("squareoff", "Square-off", "select", "15:15", {"options": ["14:45", "15:00", "15:10", "15:15", "15:20"]})]
 
     def summary(self, cfg):
         tgt = f"target {cfg['target_r']}R" if cfg["target_r"] else "no target"
         extra = f" · book {cfg['partial_pct']}% at {cfg['partial_r']}R" if cfg["partial_on"] else ""
         return (f"SL {cfg['stop']} · {tgt}{extra} · trail {cfg['trail']}"
-                + (f" · time stop {cfg['time_stop_min']}m" if cfg["time_stop_min"] else "") + f" · out {cfg['squareoff']}")
+                + (f" · time stop {cfg['time_stop_min']}m" if cfg["time_stop_min"] else "") + f" · out {cfg['squareoff']}"
+                + (f" · limit entry {cfg.get('limit_min')}m" if cfg.get("limit_on") else ""))
 
     def run(self, ctx, items, cfg):
         out, drops = [], Counter()
@@ -471,7 +474,7 @@ class StopTarget(Module):
             risk = abs(e - sl)
             tgt = (e + cfg["target_r"] * risk if lg else e - cfg["target_r"] * risk) if cfg["target_r"] else None
             plan = {k: cfg[k] for k in ("partial_on", "partial_r", "partial_pct", "trail", "trail_after_r", "trail_atr_mult",
-                                        "trail_pct", "time_stop_min", "time_stop_r", "squareoff")}
+                                        "trail_pct", "time_stop_min", "time_stop_r", "squareoff", "limit_on", "limit_min")}
             plan["atr"] = atr
             out.append({**it, "sl": round(sl, 2), "target": round(tgt, 2) if tgt else None, "plan": plan,
                         "stop_pct": round(pct, 2)})

@@ -460,3 +460,34 @@ def test_entry_setups_fire_combine_and_give_stops():
     cfg = {**m.StopTarget.defaults(), "stop": "setup", "min_stop_pct": 0, "max_stop_pct": 5}
     assert st.run(_Ctx(up), [sig], cfg)[0][0]["sl"] == 100.4
     assert st.run(_Ctx(up), [sig], {**cfg, "setup_stop": "widest"})[0][0]["sl"] == 99.95
+
+
+def test_limit_entry_fills_at_the_signal_price_or_expires():
+    from backend.intraday import positions as pos
+    it = {"symbol": "L", "token": 1, "side": "long", "qty": 10, "entry": 100.0, "sl": 99.0, "target": 103.0}
+    plan = {"squareoff": "15:15", "limit_on": True, "limit_min": 5}
+    b = lambda t, o, h, l, c: {"t": t, "o": o, "h": h, "l": l, "c": c, "v": 1}
+    p = pos.open_new(DAY, it, "10:00", plan, save=False)
+    assert pos.step(p, b("10:01", 100.4, 100.6, 100.2, 100.5), None, plan) == [] and p["status"] == "pending"  # above: waits
+    ev = pos.step(p, b("10:02", 100.3, 100.4, 99.9, 100.1), None, plan)                 # trades down to 100: filled
+    assert ev[0]["fill"] == 100.0 and p["entry"] == 100.0 and p["status"] == "open"     # at the limit, no slippage
+    g = pos.open_new(DAY, it, "10:00", plan, save=False)
+    pos.step(g, b("10:01", 99.6, 99.8, 99.5, 99.7), None, plan)                          # gapped under the limit
+    assert g["entry"] == 99.6                                                             # the open: better
+    x = pos.open_new(DAY, it, "10:00", plan, save=False)
+    for t in ("10:01", "10:02", "10:03", "10:04", "10:05"):
+        assert pos.step(x, b(t, 101, 101.2, 100.8, 101), None, plan) == []
+    ev = pos.step(x, b("10:06", 101, 101.2, 100.8, 101), None, plan)                      # 6 minutes: cancelled
+    assert x["status"] == "cancelled" and ev[0]["cancel"] == "limit not filled"
+    y = pos.open_new(DAY, it, "10:00", plan, save=False)
+    ev = pos.step(y, b("10:01", 98.5, 98.7, 98.2, 98.6), None, plan)                     # opened under the stop
+    assert y["status"] == "cancelled" and ev[0]["cancel"] == "opened beyond the stop"
+    sh = pos.open_new(DAY, {**it, "side": "short", "sl": 101.0, "target": 97.0}, "10:00", plan, save=False)
+    pos.step(sh, b("10:01", 99.8, 100.2, 99.7, 100.1), None, plan)                       # short: sells at 100 or more
+    assert sh["entry"] == 100.0
+    off = pos.open_new(DAY, it, "10:00", {"squareoff": "15:15"}, save=False)             # box unticked: next open
+    pos.step(off, b("10:01", 100.4, 100.6, 100.2, 100.5), None, {"squareoff": "15:15"})
+    assert off["entry"] == pytest.approx(100.4 * 1.0005, abs=0.01)
+    assert pos.stats_of([p, x])["trades"] == 1                                            # a cancelled one is no trade
+    from backend.alerts import messages as msg
+    assert "cancelled" in msg.flow_event(x, {"t": "10:06", "cancel": "limit not filled", "limit": 100.0})
