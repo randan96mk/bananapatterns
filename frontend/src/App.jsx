@@ -17,6 +17,7 @@ import StatusBar from './components/StatusBar';
 import FlowPage from './components/FlowPage';
 import CommandPalette from './components/CommandPalette';
 import * as api from './services/api';
+import { useLive } from './services/live';
 import { useIsPhone } from './useMedia';
 
 // v2 layout: five sections (sidebar on a computer, bottom bar on a phone), each with its pages. The page is kept in the
@@ -56,8 +57,10 @@ export default function App() {
   const [cmdk, setCmdk] = useState(false);
   const [more, setMore] = useState(false);
   const phone = useIsPhone();
-  const [realOn, setRealOn] = useState(false);
-  useEffect(() => { api.getReal().then((r) => setRealOn(r.enabled && !r.killed)).catch(() => {}); }, [tab]);
+  const sched = useLive('schedule');                       // 📡 the live connection (also feeds the status bar)
+  const realOn = !!(sched?.real?.enabled && !sched?.real?.killed);
+  const liveKite = useLive('kite');
+  useEffect(() => { if (liveKite && !liveKite.error) setKite(liveKite); }, [liveKite]);
   const section = SECTION_OF[tab] || 'home';
   const go = useCallback((id) => {
     const p = SECTION_OF[id] ? id : (SECTIONS.find(([s]) => s === id)?.[2][0][0] || 'today');
@@ -85,9 +88,7 @@ export default function App() {
     const justLoggedIn = new URLSearchParams(window.location.search).get('kite') === 'connected';
     if (justLoggedIn) window.history.replaceState(null, '', window.location.pathname + window.location.hash);
     loadKite(justLoggedIn);
-    loadUniverse();
-    const t = setInterval(() => loadKite(false), 60000); // catches the 06:00 IST expiry
-    return () => clearInterval(t);
+    loadUniverse();                                        // the 06:00 IST expiry arrives on the live connection
   }, [loadKite, loadUniverse]);
 
   const symbols = useMemo(() => (universe?.rows || []).map((r) => r.symbol), [universe]);

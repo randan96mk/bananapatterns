@@ -1969,3 +1969,12 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **No Kite holdings or broker positions** anywhere: the Kite position guard (`alerts.position_guard`) is now
   `alerts.kite_holdings_guard`, off (an older saved "on" does not carry over); its settings, "Run guard now", the
   holdings cards (Screens, Today, the evening scan) are gone. Kite stays for login and market data.
+
+### 2026-11-02: v2 step 2 — one live connection
+- **`GET /api/stream?topics=…`** (server-sent events): schedule, attention, Kite, the flow, live prices and P&L, backtest
+  progress. Each topic is checked on its own interval (faster while the live feed or a backtest runs) and **sent only when
+  it changes**; a heartbeat keeps proxies open; a failing topic never closes the stream.
+- **`frontend/src/services/live.js`**: one connection for the whole page and a shared store (`useLive(topic)`); the
+  connection carries only the topics on screen, reconnects by itself, and an action pushes its fresh result into the
+  store (`push`). Replaces the timers of the status bar, attention dots, Kite status, the Flow page (every 5 s), live
+  prices and backtest progress; the clock still ticks locally.

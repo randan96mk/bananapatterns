@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as api from '../services/api';
+import { useLive } from '../services/live';
 import { useIsPhone } from '../useMedia';
 import { inr, pct, cls } from '../fmt';
 
@@ -163,16 +164,12 @@ export default function FlowBacktest() {
     const id = setTimeout(load, 350);                        // as you type: the report is rebuilt for these costs
     return () => clearTimeout(id);
   }, [qs]);
-  const [hiccup, setHiccup] = useState(0);              // missed progress checks in a row (the server is busy)
-  useEffect(() => {                                      // while running: the cheap progress call only
-    if (d?.status.state !== 'running') return undefined;
-    const id = setInterval(() => api.flowBacktestStatus().then((st) => {
-      setHiccup(0);
-      if (st.state !== 'running') load();
-      else setD((x) => ({ ...x, status: st }));
-    }).catch(() => setHiccup((h) => h + 1)), 4000);
-    return () => clearInterval(id);
-  }, [d?.status.state, qs]);
+  const bst = useLive('backtest');                        // 📡 progress from the live connection
+  useEffect(() => {
+    if (!bst || !d) return;
+    if (d.status.state === 'running' && bst.state !== 'running') load();   // finished: the full results once
+    else if (bst.state !== d.status.state || bst.pct !== d.status.pct || bst.message !== d.status.message) setD((x) => ({ ...x, status: bst }));
+  }, [bst]);
   if (!d) return <div className="panel muted">Loading…</div>;
   const names = Object.keys(d.setups);
   const colors = Object.fromEntries(names.map((n, i) => [n, COLORS[i % COLORS.length]]));
@@ -204,7 +201,6 @@ export default function FlowBacktest() {
     {results.length > 0 && <CostsBar c={costs} set={setCosts} runCap={results[0].run_capital || results[0].capital} />}
     {results.some((r) => !r.split_costs) && <p className="warn small panel">A result from before the cost options: re-run it to change its costs or capital and to download its CSV.</p>}
     {(running || d.status.message) && <div className="panel small">{running ? <b>Running… </b> : null}{d.status.message}
-      {running && hiccup > 1 && <span className="muted"> · the server is busy, still running (checking again)</span>}
       {running && <div className="bar" style={{ marginTop: 6 }}><i style={{ width: `${d.status.pct}%` }} /></div>}</div>}
     {!results.length && other.length > 0 && <div className="panel">Results saved for {other.map((k) => (
       <button key={k} className="btn primary" style={{ marginRight: 8 }} onClick={() => setPeriod(k)}>{PERIODS.find((p) => p[0] === k)[1]} →</button>))}</div>}

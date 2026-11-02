@@ -1229,3 +1229,62 @@ def jobs_run(job: str):
 def logs(level: Optional[str] = None, limit: int = Query(200, le=1000)):
     with get_db() as conn:
         return get_logs(conn, level, limit)
+
+
+# --- 📡 one live connection: the page subscribes to topics; each is sent when it changes ---------------------
+
+def _stream_topics() -> dict:
+    """topic -> (producer, seconds until the next look given the last value). Read-only, the same data as the
+    matching GET endpoints."""
+    from backend.intraday import backtest as bt
+    from backend.intraday import flow
+    live_feed = lambda d: (d or {}).get("feed", {}).get("state") == "live" if isinstance((d or {}).get("feed"), dict) \
+        else (d or {}).get("feed") == "live"
+    return {
+        "schedule": (schedule_view, lambda d: 20),
+        "attention": (attention, lambda d: 30),
+        "kite": (lambda: kite_status(False), lambda d: 60),
+        "flow": (lambda: flow.state(S().config), lambda d: 3 if live_feed(d) or (d or {}).get("running") else 15),
+        "flow_live": (flow.live, lambda d: 3 if live_feed(d) else 30),
+        "backtest": (bt.status, lambda d: 2 if (d or {}).get("state") == "running" else 5),
+    }
+
+
+@router.get("/stream")
+async def stream(request: Request, topics: str = "schedule,attention,kite", once: bool = False):
+    """Server-sent events: `event: <topic>` with its JSON, whenever it changes (checked on each topic's own
+    interval: faster while the live feed or a backtest runs). One connection replaces the pages' timers. once=1:
+    every topic once, then the stream ends (tests)."""
+    import asyncio
+    import time as _t
+    from fastapi.responses import StreamingResponse
+    from starlette.concurrency import run_in_threadpool
+    prod = _stream_topics()
+    wanted = [t for t in dict.fromkeys(topics.split(",")) if t in prod]
+
+    async def gen():
+        last, due, beat = {}, {t: 0.0 for t in wanted}, _t.monotonic()
+        yield "retry: 3000\n\n"
+        while True:
+            now = _t.monotonic()
+            for t in wanted:
+                if now < due[t]:
+                    continue
+                try:
+                    data = await run_in_threadpool(prod[t][0])
+                except Exception as exc:                       # a topic failing never closes the stream
+                    data = {"error": str(exc)[:200]}
+                s = json.dumps(data, default=str)
+                if s != last.get(t):
+                    last[t] = s
+                    yield f"event: {t}\ndata: {s}\n\n"
+                due[t] = now + prod[t][1](data)
+            if once or await request.is_disconnected():
+                return
+            if now - beat > 15:                                 # keeps proxies from closing a quiet stream
+                beat = now
+                yield ": beat\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

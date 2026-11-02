@@ -1,23 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import * as api from '../services/api';
+import { useLive } from '../services/live';
 import { useAttention } from './AttentionStrip';
 import { THEMES, getMode, applyMode } from '../theme';
 
-// Shared schedule (GET /api/schedule), polled every minute; the clock and countdowns tick every second locally.
-let cache = { at: 0, data: null };
+// The schedule comes from the live connection (📡 services/live.js); the clock and countdowns tick every second here.
 export function useSchedule() {
-  const [data, setData] = useState(cache.data);
+  const data = useLive('schedule');
   const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      if (Date.now() - cache.at < 20000 && cache.data) { setData(cache.data); return; }
-      api.getSchedule().then((x) => { cache = { at: Date.now(), data: x }; if (alive) setData(x); }).catch(() => {});
-    };
-    load();
-    const t1 = setInterval(load, 60000), t2 = setInterval(() => setNow(Date.now()), 1000);
-    return () => { alive = false; clearInterval(t1); clearInterval(t2); };
-  }, []);
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   return { data, now };
 }
 
