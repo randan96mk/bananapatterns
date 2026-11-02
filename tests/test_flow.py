@@ -312,3 +312,29 @@ def test_default_settings_and_reset():
     assert flow.node_configs()["stop"]["min_stop_pct"] == 0.05
     flow.reset_nodes()
     assert flow.node_configs() == d
+
+
+def test_live_rows_price_and_pnl_after_costs():
+    import copy
+    import json
+    from backend.intraday import positions as pos
+    plan = {"squareoff": "15:15"}
+    with get_db() as conn:
+        for sym, tok, side in (("L", 1, "long"), ("S", 2, "short"), ("Q", 3, "long")):
+            conn.execute("INSERT INTO flow_signals (day, symbol, at, payload) VALUES (?, ?, ?, ?)",
+                         (DAY, sym, "x", json.dumps({"symbol": sym, "token": tok, "side": side, "entry": 100})))
+    lp = pos.open_new(DAY, {"symbol": "L", "token": 1, "side": "long", "qty": 10, "entry": 100, "sl": 98, "target": None}, "10:00", plan)
+    pos.step(lp, {"t": "10:01", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}, None, plan)
+    pos._save(lp)
+    sp = pos.open_new(DAY, {"symbol": "S", "token": 2, "side": "short", "qty": 10, "entry": 100, "sl": 102, "target": 96}, "10:00", plan)
+    pos.step(sp, {"t": "10:01", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1}, None, plan)
+    pos.step(sp, {"t": "10:02", "o": 100, "h": 103, "l": 99, "c": 101, "v": 1}, None, plan)        # stopped
+    pos._save(sp)
+    d = flow.live(DAY, price_of={1: 104.0, 2: 101.0, 3: 99.0}.get)
+    L, S, Q = d["rows"]["L"], d["rows"]["S"], d["rows"]["Q"]
+    shut = copy.deepcopy(lp)
+    pos._exit(shut, 104.0, "10:30", "now")                                     # what closing at 104 would book
+    assert L["status"] == "open" and L["now"] == 104.0 and abs(L["pnl"] - shut["net"]) < 0.01 and L["r"] > 1
+    assert S["status"] == "closed" and S["pnl"] == sp["net"] < 0 and S["reason"] == "stop"
+    assert Q["status"] == "signal" and Q["move_pct"] == -1.0 and "pnl" not in Q                   # signals only
+    assert abs(d["stats"]["unrealised"] - shut["net"]) < 0.01

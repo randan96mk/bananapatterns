@@ -175,8 +175,8 @@ class Ctx:
             return {r[0] for r in conn.execute("SELECT symbol FROM flow_signals WHERE day = ?", (self.day,))}
 
     def emit(self, it: dict, telegram: bool = True) -> None:
-        row = {k: it.get(k) for k in ("symbol", "side", "signal", "entry", "sl", "target", "qty", "risk_rs", "rvol", "rsi",
-                                      "score", "setup", "stop_pct")}
+        row = {k: it.get(k) for k in ("symbol", "token", "side", "signal", "entry", "sl", "target", "qty", "risk_rs", "rvol",
+                                      "rsi", "score", "setup", "stop_pct")}
         row["mode"] = self.mode
         with get_db() as conn:
             conn.execute("INSERT OR IGNORE INTO flow_signals (day, symbol, at, payload) VALUES (?, ?, ?, ?)",
@@ -266,6 +266,58 @@ def state(config: AppConfig, day: Optional[str] = None) -> dict:
     return {"template": t["name"], "mode": config.flow.mode, "interval": cfgs["trigger"]["interval"], "nodes": nodes,
             "signals": sigs, "last_run": json.loads(last["payload"]) if last else None, "feed": feed.status(),
             "running": _state["running"], "stopped": stopped(), "positions": _positions(today), "stats": _stats(today)}
+
+
+def live(day: Optional[str] = None, price_of=None) -> dict:
+    """Today's signals with their paper trade and the live price (polled every few seconds by the page): status, now,
+    P&L after costs (entry slippage, and the slippage and charges an exit now would cost), % and R. Signals mode:
+    the move since the signal."""
+    from backend.intraday import feed
+    from backend.intraday import positions as pos
+    day = day or datetime.now(IST).date().isoformat()
+    if price_of is None:
+        r = feed.RUNNER
+        price_of = (lambda tok: r.last_price(tok)) if r and r.feed else (lambda tok: None)
+    with get_db() as conn:
+        sigs = [json.loads(x[0]) for x in conn.execute("SELECT payload FROM flow_signals WHERE day = ? ORDER BY at", (day,))]
+    trades = {p["symbol"]: p for p in pos.load(day)}
+    rows, open_pnl = {}, 0.0
+    for sg in sigs:
+        p = trades.get(sg["symbol"])
+        tok = sg.get("token") or (p or {}).get("token")
+        now = (price_of(tok) if tok else None) or (p or {}).get("last_price")
+        sgn = 1 if sg.get("side", "long") == "long" else -1
+        row = {"now": now, "status": "signal",
+               "move_pct": round(sgn * (now / sg["entry"] - 1) * 100, 2) if now and sg.get("entry") else None}
+        if p:
+            row["status"] = p["status"]
+            done = sum(e["net"] for e in p.get("exits", []))
+            if p["status"] == "open":
+                q, e = p["open_qty"], p["entry"]
+                px = now or e
+                fill = pos._slip(px, buy=sgn < 0)
+                gross = sgn * (fill - e) * q
+                ch = pos.intraday_charges(e * q, fill * q) if sgn > 0 else pos.intraday_charges(fill * q, e * q)
+                pnl = done + gross - ch
+                open_pnl += gross - ch
+            elif p["status"] == "closed":
+                pnl = p["net"]
+                row.update(exit_t=p.get("exit_t"), reason=p.get("reason"),
+                           exit=round(sum(x["price"] * x["qty"] for x in p["exits"]) / max(p["qty"], 1), 2))
+            else:
+                pnl = None
+            if pnl is not None:
+                base = p.get("entry", sg["entry"]) * p["qty"]
+                row.update(pnl=round(pnl, 2), pct=round(pnl / base * 100, 2) if base else None,
+                           r=round(pnl / p["risk"], 2) if p.get("risk") else None)
+            row.update(entry=p.get("entry"), stop=p.get("stop", p.get("stop0")), stop0=p.get("stop0"),
+                       trailed=bool(p.get("stop") and p.get("stop0") and abs(p["stop"] - p["stop0"]) > 1e-6),
+                       target=p.get("target"), qty=p.get("qty"))
+        rows[sg["symbol"]] = row
+    st = _stats(day)
+    if any(r.get("status") == "open" for r in rows.values()):
+        st["unrealised"] = round(open_pnl, 2)
+    return {"at": datetime.now(IST).isoformat(timespec="seconds"), "feed": feed.status().get("state"), "rows": rows, "stats": st}
 
 
 def _positions(day: str) -> list[dict]:
