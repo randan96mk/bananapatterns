@@ -1954,3 +1954,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   RVOL ≥ 2, top 2 a candle, 6 signals a day; stop skipped under 0.4% / over 2%, target 2.5R, ATR trail after 1.5R, no
   time stop, daily-ATR stop 0.3×; max 2 open, 3 trades a day, up to 50% of capital a position; stocks in play top 10.
   **↺ Default settings** on the canvas puts every box back (your own changes are cleared; save them as a setup first).
+- **Live price and P&L on today's signals**: status (filling / open / closed with time and reason), now (last traded
+  price from the live feed), P&L after costs (entry slippage plus the slippage and charges an exit now would cost), %, R,
+  a stop meter and "↑ trailed"; every 5 s while the feed is live (`GET /api/flow/live`, no extra Kite calls); the tiles
+  follow. Signals mode: the move since the signal. Phone: one card a stock.

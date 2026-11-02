@@ -28,6 +28,20 @@ function Field({ f, value, onChange }) {
                 onChange={(e) => onChange(+e.target.value)} />;
 }
 
+const pctx = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`;
+const STATUS_TXT = { open: ['open', 'up'], pending: ['filling at the next minute', 'warn'], closed: ['closed', 'muted'], cancelled: ['cancelled', 'muted'], signal: ['signal', 'muted'] };
+function Status({ r }) {
+  const [t, c] = STATUS_TXT[r.status] || ['—', 'muted'];
+  return <span className={`small ${c}`}>{t}{r.status === 'closed' && r.exit_t ? ` ${r.exit_t}` : ''}</span>;
+}
+function SignalCard({ s, r }) {
+  return <div className="pcard"><div className="t"><span><b>{s.symbol}</b> <Status r={r} /></span>
+    <b className={cls(r.pnl ?? r.move_pct)}>{r.pnl != null ? `${signed(r.pnl)} · ${pctx(r.pct || 0)}` : r.move_pct != null ? pctx(r.move_pct) : '—'}</b></div>
+    <div className="muted small">{s.signal} {s.qty ? `${s.qty} @ ` : 'at '}{(r.entry ?? s.entry)?.toFixed(2)} · now <b>{r.now ? r.now.toFixed(2) : '—'}</b>{r.r != null ? ` · ${r.r}R` : ''} · {ist(s.at)}</div>
+    {r.status === 'open' && r.now && <StopMeter last={s.side === 'short' ? -r.now : r.now} stop={s.side === 'short' ? -r.stop : r.stop} wide />}
+    <div className="muted small">stop {(r.stop ?? s.sl)?.toFixed(2)}{r.trailed ? ' (trailed)' : ''} · {s.target ? `target ${s.target.toFixed(2)}` : 'no target'}</div></div>;
+}
+
 // ⚡ Intraday Flow: the template's boxes on a canvas, live (in → out, status, run time), settings per box.
 // Signals only in phase 1: nothing is ever ordered from here.
 export default function FlowPage() {
@@ -37,6 +51,14 @@ export default function FlowPage() {
   const [err, setErr] = useState('');
   const [, tick] = useState(0);
   const [sub, setSub] = useState('flow');
+  const [lv, setLv] = useState(null);                    // live prices and P&L of today's signals
+  const feedLive = d?.feed?.state === 'live';
+  useEffect(() => {
+    const get = () => api.flowLive().then(setLv).catch(() => {});
+    get();
+    const id = setInterval(get, feedLive ? 5000 : 60000);   // every 5 s while the feed is live
+    return () => clearInterval(id);
+  }, [feedLive, d?.signals?.length]);
   const [jr, setJr] = useState(null);
   const [full, setFull] = useState(false);
   const [drag, setDrag] = useState(null);                 // {id, dx, dy, x, y} while a box is dragged
@@ -89,6 +111,7 @@ export default function FlowPage() {
   const runNow = () => api.flowRun().then(load).catch((e) => setErr(e.message));
   const maxX = Math.max(...nodes.map((n) => n.x)) + W + 30, maxY = Math.max(...nodes.map((n) => n.y)) + H + 30;
   const f = d.feed || {};
+  const stats = lv?.stats || d.stats;
 
   return (
     <div className="flowpage">
@@ -108,13 +131,13 @@ export default function FlowPage() {
       {d.stopped && <div className="stopbanner">⏹ <b>INTRADAY STOPPED</b> · no live data, no flow runs, no signals, no paper
         trades. Stays stopped (also after a restart or the next day) until you press ▶ Start intraday.</div>}
       {err && <div className="warn small">{err}</div>}
-      {d.stats && <div className="summary" style={{ marginBottom: 12 }}>
-        <div className="k"><div className={`v ${cls(d.stats.realised + d.stats.unrealised)}`}>{signed(d.stats.realised + d.stats.unrealised)}</div>
-          <div className="l">today after costs · realised {signed(d.stats.realised)} · open {signed(d.stats.unrealised)}</div></div>
-        <div className="k"><div className="v">{d.stats.trades}</div><div className="l">paper trades · {d.stats.won} won · {d.stats.open} open</div></div>
-        <div className="k"><div className="v down">{inr(d.stats.at_risk)}</div><div className="l">at risk now (to the stops)</div></div>
-        <div className="k"><div className="v">{inr(Math.max(0, -d.stats.realised))} / {inr(d.stats.loss_limit)}</div>
-          <div className="l">daily loss used · capital {inr(d.stats.capital)}</div></div>
+      {stats && <div className="summary" style={{ marginBottom: 12 }}>
+        <div className="k"><div className={`v ${cls(stats.realised + stats.unrealised)}`}>{signed(stats.realised + stats.unrealised)}</div>
+          <div className="l">today after costs · realised {signed(stats.realised)} · open {signed(stats.unrealised)}</div></div>
+        <div className="k"><div className="v">{stats.trades}</div><div className="l">paper trades · {stats.won} won · {stats.open} open</div></div>
+        <div className="k"><div className="v down">{inr(stats.at_risk)}</div><div className="l">at risk now (to the stops)</div></div>
+        <div className="k"><div className="v">{inr(Math.max(0, -stats.realised))} / {inr(stats.loss_limit)}</div>
+          <div className="l">daily loss used · capital {inr(stats.capital)}</div></div>
       </div>}
       <SubTabs tabs={[['flow', 'Flow'], ['positions', `Positions (${d.positions?.length || 0})`], ['journal', 'Journal'], ['backtest', '🧪 Backtest']]} value={sub} onChange={setSub} />
       {sub === 'positions' && <div className="panel"><h3>📝 Paper positions today <span className="muted small">· simulated, no orders</span></h3>
@@ -200,14 +223,24 @@ export default function FlowPage() {
         </div>
       </div></>}
       {sub === 'flow' && <div className="panel"><h3>🟢 Today's signals <span className="muted small">· {d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : 'signals only, no orders'}</span></h3>
-        {!d.signals.length ? <p className="muted">None yet today.</p> : (
-          <div className="tablewrap"><table className="grid"><thead><tr><th>Time</th><th>Stock</th><th>Signal</th><th className="num">Entry</th>
-            <th className="num">SL</th><th className="num">Target</th>{!phone && <><th className="num">RVOL</th><th className="num">RSI</th></>}</tr></thead>
-            <tbody>{d.signals.map((s) => (
+        {lv && <span className="muted small">{feedLive ? <><i className="dot ok" /> live · prices {ist(lv.at)}</> : `prices as of ${ist(lv.at)} (feed ${lv.feed})`}</span>}
+        {!d.signals.length ? <p className="muted">None yet today.</p> : phone ? (
+          <div className="pcards">{d.signals.map((s) => <SignalCard key={s.symbol} s={s} r={lv?.rows?.[s.symbol] || {}} />)}</div>) : (
+          <div className="tablewrap"><table className="grid"><thead><tr><th>Time</th><th>Stock</th><th>Signal</th><th>Status</th><th className="num">Entry</th>
+            <th className="num">Now</th><th className="num">P&amp;L after costs</th><th className="num">%</th><th className="num">R</th><th>Stop ← price → target</th>
+            <th className="num">SL</th><th className="num">Target</th><th className="num">RVOL</th></tr></thead>
+            <tbody>{d.signals.map((s) => { const r = lv?.rows?.[s.symbol] || {}; return (
               <tr key={s.symbol}><td className="muted">{ist(s.at)}</td><td><b>{s.symbol}</b>{s.qty ? <span className="muted small"> {s.qty} sh</span> : null}</td>
-                <td className={s.side === 'short' ? 'down' : 'up'}>{s.signal}</td>
-                <td className="num">{s.entry?.toFixed(2)}</td><td className="num">{s.sl?.toFixed(2)}</td><td className="num">{s.target?.toFixed(2)}</td>
-                {!phone && <><td className="num">{s.rvol ?? '—'}×</td><td className="num">{s.rsi ?? '—'}</td></>}</tr>))}</tbody></table></div>)}
+                <td className={s.side === 'short' ? 'down' : 'up'}>{s.signal}</td><td><Status r={r} /></td>
+                <td className="num">{(r.entry ?? s.entry)?.toFixed(2)}</td>
+                <td className="num">{r.status === 'closed' ? <span className="muted">{r.exit} (exit)</span> : r.now ? <b>{r.now.toFixed(2)}</b> : '—'}</td>
+                <td className={`num ${cls(r.pnl)}`}>{r.pnl != null ? <b>{signed(r.pnl)}</b> : '—'}</td>
+                <td className={`num ${cls(r.pct ?? r.move_pct)}`}>{r.pct != null ? pctx(r.pct) : r.move_pct != null ? <span title="move since the signal">{pctx(r.move_pct)}</span> : '—'}</td>
+                <td className={`num ${cls(r.r)}`}>{r.r ?? '—'}</td>
+                <td>{r.status === 'open' && r.now ? <StopMeter last={s.side === 'short' ? -r.now : r.now} stop={s.side === 'short' ? -r.stop : r.stop} />
+                  : <span className="muted small">{r.status === 'closed' ? `out ${r.exit_t} · ${r.reason}` : r.status === 'pending' ? 'waiting for the fill' : ''}</span>}</td>
+                <td className="num">{(r.stop ?? s.sl)?.toFixed(2)}{r.trailed && <span className="muted small"> ↑ trailed</span>}</td>
+                <td className="num">{s.target ? s.target.toFixed(2) : '—'}</td><td className="num">{s.rvol ?? '—'}×</td></tr>); })}</tbody></table></div>)}
       </div>}
     </div>);
 }

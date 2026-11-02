@@ -889,6 +889,13 @@ def flow_setup_delete(req: dict):
     return {"deleted": req.get("name")}
 
 
+@router.get("/flow/live")
+def flow_live():
+    """Today's signals with the live price and the paper trade's P&L (polled every few seconds)."""
+    from backend.intraday import flow
+    return flow.live()
+
+
 @router.post("/flow/reset")
 def flow_reset_nodes():
     """↺ Every box back to its default settings (applies from the next candle)."""
