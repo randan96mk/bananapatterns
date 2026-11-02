@@ -1993,3 +1993,18 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **⚙️ System › Connections**: Kite (login and market data only), Tradetron, Telegram, the evening job, the live feed,
   and the theme (Auto / Dark / Light, also on a phone).
 - The attention list no longer mentions Kite holdings.
+
+### 2026-11-03: 🧭 Strategy journey (why a trade, or not)
+- **🧭 Journey** on the Intraday Flow toolbar opens a side panel:
+  - **Latest candle**: one sentence on why there was (no) trade, each box's in → out with the drop reasons, and the
+    stocks that reached the trigger with their distance to it.
+  - **Rules**: the strategy in plain words (entry, size, exit), written from the boxes' settings.
+  - **Check a stock**: one stock through every box (✓ passed, … waiting, ✗ dropped, with its values) and the facts
+    behind the rules (VWAP, RSI, RVOL, 50/200-day, opening range, NIFTY, VIX).
+  - **Open trades**: each paper trade's stop (trailed or not), target and P&L.
+- **Click a box**: who came in, who **passed** (values and where each is now) and who **dropped or is waiting**, grouped
+  by reason; a stock opens its check.
+- `backend/intraday/journey.py`: each live run keeps every box's input and output in memory; a drop's reason is
+  found when asked by running that box again for that one stock on the same candle (the alert and execute boxes are
+  never re-run). Endpoints `/api/flow/journey`, `/journey/node/{id}`, `/journey/check?symbol=`; the summary is also
+  a live topic.

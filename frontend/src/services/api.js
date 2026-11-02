@@ -83,6 +83,8 @@ export const flowResetNodes = () => req('POST', '/api/flow/reset');
 export const flowLive = () => req('GET', '/api/flow/live');
 export const getPortfolio = (days = 365) => req('GET', `/api/portfolio?days=${days}`);
 export const getOverview = () => req('GET', '/api/overview');
+export const flowCheck = (symbol) => req('GET', `/api/flow/journey/check?symbol=${encodeURIComponent(symbol)}`);
+export const flowNodeStocks = (nid) => req('GET', `/api/flow/journey/node/${nid}`);
 export const flowRun = () => req('POST', '/api/flow/run');
 export const flowLayout = (pos) => req('PUT', '/api/flow/layout', pos);
 export const flowJournal = (days) => req('GET', `/api/flow/journal?days=${days}`);
