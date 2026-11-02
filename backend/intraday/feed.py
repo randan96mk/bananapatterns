@@ -163,7 +163,10 @@ class Runner:
             return
         if notify:
             for p, ev in events:
-                notify("event", {"position": p, "event": ev})
+                try:                                  # an alert failure never stops managing the positions
+                    notify("event", {"position": p, "event": ev})
+                except Exception:
+                    logger.exception("Flow event alert failed for %s", p.get("symbol"))
             st = flow._stats(today)
             if not self.loss_hit and st["realised"] <= -st["loss_limit"]:
                 self.loss_hit = True

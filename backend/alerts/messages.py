@@ -707,7 +707,7 @@ def flow_signal(s: dict) -> str:
     bits = [f"{head} · {escape(s.get('signal') or 'BUY')} <b>{escape(s['symbol'])}</b> at {_rup(s['entry'])}"
             + (f" · {s['qty']} sh · risk {_rup(s['risk_rs'])}" if s.get("qty") else "")]
     if s.get("sl"):
-        bits.append(f"SL {_rup(s['sl'])} · target {_rup(s['target'])}")
+        bits.append(f"SL {_rup(s['sl'])} · " + (f"target {_rup(s['target'])}" if s.get("target") else "no target (out at square-off)"))
     extra = [f"RVOL {s['rvol']}×" if s.get("rvol") else "", f"RSI {s['rsi']}" if s.get("rsi") else ""]
     if any(extra):
         bits.append(" · ".join(x for x in extra if x))

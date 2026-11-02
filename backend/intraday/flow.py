@@ -177,7 +177,10 @@ class Ctx:
                          (self.day, it["symbol"], now_ist(), json.dumps(row)))
         self.emitted.append(row)
         if telegram and self.notify:
-            self.notify("signal", row)
+            try:                                  # a failed Telegram message never stops the run (the trade goes on)
+                self.notify("signal", row)
+            except Exception:
+                logger.exception("Flow signal alert failed for %s", it["symbol"])
 
 
 def daily_context(config: AppConfig, stocks: list[dict]) -> tuple[dict, dict]:
