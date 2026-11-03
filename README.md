@@ -2034,3 +2034,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   those before taking the order, so a retry can't place it twice. Every other error (timeouts, 5xx, connection) is
   still never retried. Telegram says "accepted after 1 retry (Tradetron was busy)", or "still too many requests after
   3 retries" when it gives up.
+- **↻ Retry now** (💰 Real page: a warning box for today's failed orders, and on the order-log row): sends a failed order
+  of today's plan again, by hand, once per press, after a confirmation (for anything but a 429 it asks you to check
+  Tradetron first, since the order may have gone in). Only while real trading is on and not killed, 9:15 AM – 3:30 PM,
+  only today's orders still marked failed; on success it's booked like any sent order, the log says "sent by manual
+  retry", and Telegram confirms (`POST /api/real/retry`).

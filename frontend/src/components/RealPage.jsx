@@ -53,6 +53,20 @@ export default function RealPage() {
     }
   };
 
+  const [busy, setBusy] = useState('');
+  const retry = (o) => {
+    const safe = /429/.test(o.reply || '');
+    const msg = `Send ${o.action} ${o.symbol} ${o.qty ?? ''} to Tradetron again now, at the market?\n\n`
+      + (safe ? 'It failed with "429 Too Many Requests": Tradetron refused it, so it was not placed.'
+        : `It failed with: ${o.reply || 'an error'}.\nThe order MAY have reached Tradetron. Check Tradetron's positions first: if ${o.symbol} is already there, do NOT retry.`);
+    if (!window.confirm(msg)) return;
+    setBusy(o.symbol);
+    api.realRetry(o.symbol, o.action).then((x) => { if (x.status !== 'sent') setErr(`Retry ${o.symbol}: ${x.error}`); reload(); })
+      .catch((e) => setErr(e.message)).finally(() => setBusy(''));
+  };
+  const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const failedToday = (d?.log || []).filter((o) => o.status === 'failed' && o.day === todayIst);
+
   if (!d) return <div className="panel">{err ? <span className="warn">{err}</span> : 'Loading…'}</div>;
   const s = d.settings || {};
   const live = d.enabled && !d.killed;
@@ -70,6 +84,11 @@ export default function RealPage() {
         <div className="k"><div className="v down">{inr(risk)}</div><div className="l">at risk if every stop hits<Tip text="Sum over open positions of quantity × (last price − stop)." /></div></div>
         <div className="k"><div className="v">{d.positions.length} / {d.allowed ? d.cap : d.max_pos}</div><div className="l">open positions · cash {inr(A.cash)}</div></div>
       </div>}
+      {failedToday.length > 0 && <div className="hlbox">⚠️ <b>{failedToday.length} order(s) failed today.</b>
+        {failedToday.map((o) => <div key={o.symbol + o.action} style={{ marginTop: 6 }}><b className={o.action === 'BUY' ? 'up' : 'down'}>{o.action}</b> <b>{o.symbol}</b> {o.qty ?? ''}
+          <span className="muted small"> · {o.reply}</span>{' '}
+          <button className="btn" disabled={!!busy || !live} onClick={() => retry(o)}>{busy === o.symbol ? 'Sending…' : '↻ Retry now'}</button></div>)}
+        {!live && <div className="muted small">Retry needs real trading ON and the kill switch off.</div>}</div>}
       <SubTabs tabs={[['today', 'Today'], ['trades', 'Trade log'], ['log', 'Order log']]} value={sub} onChange={setSub} />
 
       {sub === 'today' && <div className="realctrl">
@@ -174,7 +193,8 @@ export default function RealPage() {
             <tbody>{d.log.map((o, k) => (
               <tr key={k}><td className="muted">{stamp(o.created_at)}</td><td><b className={o.action === 'BUY' ? 'up' : 'down'}>{o.action}</b> <b>{o.symbol}</b> {o.qty ?? ''}
                 {o.price ? <span className="muted small"> ~{rs(o.price)}</span> : null}</td><td className="muted small">{o.reason}</td>
-                <td className="muted small wrap">{o.reply}</td><td><span className={`pill ${STATUS[o.status] || ''}`}>{o.status}</span></td></tr>))}</tbody></table></div>)}
+                <td className="muted small wrap">{o.reply}</td><td><span className={`pill ${STATUS[o.status] || ''}`}>{o.status}</span>
+                  {o.status === 'failed' && o.day === todayIst && <button className="linkbtn" disabled={!!busy || !live} onClick={() => retry(o)}> ↻ Retry now</button>}</td></tr>))}</tbody></table></div>)}
       </div>}
       <p className="muted small">Orders go to Tradetron, which routes them to your broker (or keeps them in its offline mode). The app never places
         {' '}an order in Kite; Kite is used only for prices. Past results don't guarantee future returns.</p>

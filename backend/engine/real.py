@@ -308,20 +308,71 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 o["sent"] = "failed"
                 continue
             _log(key, today, o, "sent", reply, price)
-            o["sent"] = "sent"
-            if o["action"] == "EXIT":
-                _close(st, o["symbol"], price, today, "exit", est=True)
-            else:
-                ch = tb.delivery_charges(o["qty"] * price, False)
-                st["cash"] -= o["qty"] * price + ch
-                st["charges"] += ch
-                st["positions"][o["symbol"]] = {"qty": o["qty"], "px": price, "d": today, "stop": o["stop"], "last": price,
-                                                "charges": ch, "days": 0, "ts": o["ts"], "variant": st.get("variant"),
-                                                "est": True}
+            _book(st, o, price, today)
             sent.append({**o, "price": price, "reply": reply[:120], "retries": getattr(tradetron, "last_retries", 0)
                          if sender is tradetron.send else 0})
         _save(st)
         return {"status": "ok", "sent": sent, "failed": failed}
+
+
+def _book(st: dict, o: dict, price: float, today: str) -> None:
+    """An order Tradetron accepted, booked in the account at the price seen when sending (corrected in the evening)."""
+    o["sent"] = "sent"
+    if o["action"] == "EXIT":
+        _close(st, o["symbol"], price, today, "exit", est=True)
+        return
+    ch = tb.delivery_charges(o["qty"] * price, False)
+    st["cash"] -= o["qty"] * price + ch
+    st["charges"] += ch
+    st["positions"][o["symbol"]] = {"qty": o["qty"], "px": price, "d": today, "stop": o["stop"], "last": price,
+                                    "charges": ch, "days": 0, "ts": o["ts"], "variant": st.get("variant"), "est": True}
+
+
+def retry_order(config: AppConfig, client, today: str, symbol: str, action: str, now: Optional[datetime] = None,
+                sender: Optional[Callable] = None) -> dict:
+    """↻ A FAILED order of today's plan sent again, by hand, once per press: only while real trading is on (not
+    killed) and the market is open, only if it is still marked failed. On success it is booked like any sent order."""
+    from backend.config import IST
+    sender = sender or tradetron.send
+    now = now or datetime.now(IST)
+    if not active(config):
+        return {"status": "error", "error": "real trading is off or the kill switch is on"}
+    if today != now.date().isoformat():
+        return {"status": "error", "error": "only today's orders can be retried"}
+    if not ("09:15" <= now.strftime("%H:%M") < "15:30"):
+        return {"status": "error", "error": "the market is closed (9:15 AM – 3:30 PM)"}
+    key = f"{today}|{symbol}|{action}"
+    with _lock:
+        with get_db() as conn:
+            row = conn.execute("SELECT status FROM real_orders WHERE key = ?", (key,)).fetchone()
+        if not row or row[0] != "failed":
+            return {"status": "error", "error": "no failed order for this stock today" if not row else f"this order is {row[0]}"}
+        st = _state()
+        o = next((x for x in (st or {}).get("orders", []) if x["symbol"] == symbol and x["action"] == action), None)
+        if not o:
+            return {"status": "error", "error": "the order is no longer in today's plan"}
+        if action == "EXIT" and symbol not in st["positions"]:
+            return {"status": "error", "error": "no open position to exit"}
+        price = _quotes(client, [o["ts"]]).get(o["ts"]) if client is not None else None
+        price = price or (st["positions"][symbol]["last"] if action == "EXIT" else o["close"])
+        if action == "BUY" and o["qty"] * price * 1.0012 > st["cash"]:
+            return {"status": "error", "error": "not enough cash"}
+        try:
+            if action == "BUY" and config.real.send_stop:
+                reply = sender(o["ts"], "BUY", o["qty"], stop=o["stop"])
+            else:
+                reply = sender(o["ts"], action, o["qty"] if action == "BUY" else None)
+        except Exception as exc:
+            with get_db() as conn:
+                conn.execute("UPDATE real_orders SET reply = ? WHERE key = ?", (f"manual retry failed: {exc}"[:300], key))
+            return {"status": "failed", "error": str(exc)[:200]}
+        with get_db() as conn:
+            conn.execute("UPDATE real_orders SET status = 'sent', reply = ?, price = ?, created_at = ?, "
+                         "reason = COALESCE(reason, '') || ' · sent by manual retry' WHERE key = ?",
+                         (str(reply)[:300], price, now_ist(), key))
+        _book(st, o, price, today)
+        _save(st)
+        return {"status": "sent", "symbol": symbol, "action": action, "qty": o.get("qty"), "price": price, "reply": str(reply)[:120]}
 
 
 def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable] = None) -> dict:

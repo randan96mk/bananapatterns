@@ -337,3 +337,33 @@ def test_sent_message_shows_retries_and_429_failures():
            "failed": [{"action": "BUY", "symbol": "GLENMARK", "error": "HTTP Error 429: Too Many Requests"}]}
     t = msg.real_sent(res, "9:16 AM")
     assert "accepted after 1 retry" in t and "after 3 retries" in t and "1 of 2 accepted" in t
+
+
+def test_manual_retry_of_a_failed_order(monkeypatch):
+    from datetime import datetime as dt
+    from backend.config import IST
+    c = setup(monkeypatch)
+    data, cut, end = first_day_with_buys(c)
+    res = real.evening(c, cut)
+    buys = [o for o in res["orders"] if o["action"] == "BUY"]
+    tomorrow = data["cal"][end + 1]
+    bad = buys[0]["symbol"]
+    kite = Kite({o["ts"]: o["close"] for o in buys})
+    out = real.send_orders(c, kite, tomorrow, Sender(fail={buys[0]["ts"]}))           # the first one fails
+    assert [f["symbol"] for f in out["failed"]] == [bad]
+    at = lambda h, m: dt.fromisoformat(f"{tomorrow}T{h:02d}:{m:02d}:00").replace(tzinfo=IST)
+    s = Sender()
+    assert real.retry_order(c, kite, tomorrow, bad, "BUY", at(16, 0), s)["error"].startswith("the market is closed")
+    assert real.retry_order(c, kite, "2001-01-01", bad, "BUY", at(10, 0), s)["error"] == "only today's orders can be retried"
+    real.set_killed(True)
+    assert "kill switch" in real.retry_order(c, kite, tomorrow, bad, "BUY", at(10, 0), s)["error"]
+    real.set_killed(False)
+    assert real.retry_order(c, kite, tomorrow, buys[1]["symbol"] if len(buys) > 1 else "NOPE", "BUY", at(10, 0), s)["status"] == "error"
+    r = real.retry_order(c, kite, tomorrow, bad, "BUY", at(10, 0), s)                 # sent and booked
+    assert r["status"] == "sent" and s.calls == [(buys[0]["ts"], "BUY", buys[0]["qty"])]
+    sm = real.summary(c)
+    assert bad in {p["symbol"] for p in sm["positions"]}
+    row = next(x for x in sm["log"] if x["symbol"] == bad)
+    assert row["status"] == "sent" and "manual retry" in row["reason"]
+    assert real.retry_order(c, kite, tomorrow, bad, "BUY", at(10, 1), s)["error"] == "this order is sent"   # once only
+    assert len(s.calls) == 1

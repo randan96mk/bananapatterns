@@ -91,6 +91,7 @@ export const flowLayout = (pos) => req('PUT', '/api/flow/layout', pos);
 export const flowJournal = (days) => req('GET', `/api/flow/journal?days=${days}`);
 export const getReal = () => req('GET', '/api/real');
 export const realSettings = (body) => req('POST', '/api/real/settings', body);
+export const realRetry = (symbol, action) => req('POST', '/api/real/retry', { symbol, action });
 export const realKill = (on) => req('POST', `/api/real/kill?on=${on}`);
 export const realReset = () => req('POST', '/api/real/reset');
 export const realCapital = (capital) => req('POST', '/api/real/capital', { capital });
