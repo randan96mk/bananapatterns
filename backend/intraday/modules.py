@@ -187,6 +187,7 @@ class MarketContext(Module):
     fields = [("skip", "⏭ Skip this box (every stock passes on)", "bool", False), ("direction", "Trades allowed", "select", "both", {"options": ["both", "long", "short"]}),
               ("follow", "Follow NIFTY (long above / short below its VWAP)", "bool", True),
               ("ema_on", "…and its 20-EMA", "bool", False),
+              ("long_ema", "Longs also need NIFTY above its 20-EMA (stricter longs)", "bool", True),
               ("vix_on", "India VIX in range", "bool", True), ("vix_min", "VIX min", "number", 10, {"min": 0, "max": 80}),
               ("vix_max", "VIX max", "number", 22, {"min": 0, "max": 80}),
               ("breadth_on", "Breadth (% above VWAP) with the trade", "bool", False),
@@ -198,6 +199,8 @@ class MarketContext(Module):
             bits.append("follows NIFTY vs VWAP" + (" & 20-EMA" if cfg["ema_on"] else ""))
         if cfg["vix_on"]:
             bits.append(f"VIX {cfg['vix_min']}–{cfg['vix_max']}")
+        if cfg.get("long_ema"):
+            bits.append("longs: NIFTY over 20-EMA")
         if cfg["breadth_on"]:
             bits.append(f"breadth ≥ {cfg['breadth_min']}%")
         return " · ".join(bits)
@@ -213,6 +216,10 @@ class MarketContext(Module):
             dn = m["nifty"] < m["nifty_vwap"] and (not cfg["ema_on"] or (m.get("nifty_ema") and m["nifty"] < m["nifty_ema"]))
             sides = [x for x in sides if (x == "long" and up) or (x == "short" and dn)]
             why = why or "against NIFTY"
+        if cfg.get("long_ema") and "long" in sides and m.get("nifty") is not None and m.get("nifty_ema"):
+            if m["nifty"] <= m["nifty_ema"]:
+                sides = [x for x in sides if x != "long"]
+                why = why or "long: NIFTY under its 20-EMA"
         if cfg["breadth_on"] and m.get("breadth") is not None:
             b = m["breadth"]
             sides = [x for x in sides if (b >= cfg["breadth_min"] if x == "long" else 100 - b >= cfg["breadth_min"])]
@@ -252,7 +259,9 @@ class Setups(Module):
               ("set_nbar", "N-candle breakout: close beyond the last N candles' high / low", "bool", False),
               ("nbar_n", "…N candles", "number", 20, {"min": 3, "max": 100}),
               ("set_ema", "EMA cross: 9 EMA crosses the 21 EMA on this candle", "bool", False),
-              ("min_count", "Pass when at least N of the ticked setups fire", "number", 1, {"min": 1, "max": 5})]
+              ("min_count", "Pass when at least N of the ticked setups fire", "number", 1, {"min": 1, "max": 5}),
+              ("from_candle", "No signals from candles starting before", "select", "09:35",
+               {"options": ["09:15", "09:20", "09:25", "09:30", "09:35", "09:40", "09:45", "10:00"]})]
 
     @staticmethod
     def ticked(cfg) -> list:
@@ -263,7 +272,8 @@ class Setups(Module):
         on = self.ticked(cfg)
         need = min(max(1, int(cfg.get("min_count") or 1)), len(on))
         names = [f"ORB {cfg['minutes']}m" if k == "set_orb" else n for k, n in on]
-        return " · ".join(names) + (f" · at least {need} of {len(on)}" if len(on) > 1 else "")
+        return (" · ".join(names) + (f" · at least {need} of {len(on)}" if len(on) > 1 else "")
+                + (f" · from the {cfg['from_candle']} candle" if cfg.get("from_candle", "09:15") > "09:15" else ""))
 
     def _fire(self, key, ctx, it, cfg, last):
         """{side: stop level} for the sides this setup fires on (plus extra fields), on the last closed candle."""
@@ -331,6 +341,9 @@ class Setups(Module):
             last = ctx.last_closed(it)
             if not last:
                 drops["range not complete"] += 1
+                continue
+            if last["t"] < cfg.get("from_candle", "09:15"):
+                drops[f"candle before {cfg['from_candle']}"] += 1
                 continue
             by_side, extra, ready = {"long": {}, "short": {}}, {}, 0
             for key, name in on:
@@ -417,7 +430,7 @@ class StopTarget(Module):
               ("atr_mult", "ATR × (atr stop)", "number", 1.5, {"min": 0.5, "max": 5, "step": 0.1}),
               ("stop_pct", "% (percent stop)", "number", 0.8, {"min": 0.1, "max": 5, "step": 0.1}),
               ("min_stop_pct", "Skip if stop under %", "number", 0.4, {"min": 0, "max": 5, "step": 0.05}),
-              ("max_stop_pct", "Skip if stop over %", "number", 2.0, {"min": 0.2, "max": 10, "step": 0.1}),
+              ("max_stop_pct", "Skip if stop over %", "number", 1.0, {"min": 0.2, "max": 10, "step": 0.1}),
               ("target_r", "Target × risk (0 = none)", "number", 2.5, {"min": 0, "max": 10, "step": 0.5}),
               ("partial_on", "Book part early", "bool", False), ("partial_r", "…at × risk", "number", 1, {"min": 0.5, "max": 5, "step": 0.5}),
               ("partial_pct", "…% of the quantity", "number", 50, {"min": 10, "max": 90, "step": 10}),

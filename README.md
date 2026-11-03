@@ -2046,6 +2046,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   backtests now record the signal at the candle's **last minute** (`flow.candle_last_minute`), so the earliest fill is
   the bar after the candle closes (10:10). The limit entry also waits from then. **Backtests from before this fix were
   too optimistic on 5- and 15-minute candles: re-run them.** 1-minute candles were not affected.
+- **Tuned defaults from the 1-year EMA-cross backtest** (each a setting in its box):
+  🎯 Setup "No signals from candles starting before" **09:35** (the 9:25 and 9:30 candles lost money);
+  🌍 Market context "Longs also need NIFTY above its 20-EMA" **on** (longs made ~₹15 a trade, shorts ~₹120);
+  🛡 Stop & target "Skip if stop over %" **1.0** (stops over 1% lost money). A box saved before keeps its own
+  saved value for the stop % (set it to 1 by hand); the two new settings apply as soon as you update.
 - **Signals mode now tracks each signal like a paper trade**: the same fill (after the candle closes), stop, target,
   trailing, time stop and square-off, every minute, with Telegram alerts headed "⚡ SIGNAL TRACK (not traded)", the
   daily loss limit and a day summary. Positions are marked `kind: signal` (Paper mode: `paper`); Home and Portfolio
