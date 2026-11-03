@@ -90,6 +90,8 @@ def rules(cfgs: dict) -> list:
     m = [f"trades allowed: {cx.get('direction')}"]
     if cx.get("follow"):
         m.append("long only while NIFTY is above its VWAP, short only below")
+    if cx.get("long_ema"):
+        m.append("longs also need NIFTY above its 20-EMA")
     if cx.get("vix_on"):
         m.append(f"India VIX {cx.get('vix_min')}–{cx.get('vix_max')}")
     if cx.get("breadth_on"):
@@ -105,7 +107,9 @@ def rules(cfgs: dict) -> list:
            "set_nbar": f"N-candle breakout: closes beyond the last {orb.get('nbar_n')} candles' high / low",
            "set_ema": "EMA cross: the 9 EMA crosses the 21 EMA on that candle"}
     entry.append(("Trigger: " if len(on) == 1 else f"Trigger: at least {need} of these {len(on)} on the same candle, "
-                  "same side (long and short together: skipped): ") + "; ".join(say[k] for k, _ in on) + ".")
+                  "same side (long and short together: skipped): ") + "; ".join(say[k] for k, _ in on)
+                 + (f"; no signals from candles starting before {orb['from_candle']}" if orb.get("from_candle", "09:15") > "09:15" else "")
+                 + ".")
     entry.append(f"The best {sc.get('top_k')} a candle (relative volume, strength vs NIFTY, RSI) · 1 per stock a day · "
                  f"at most {dd.get('per_day')} signals a day.")
     cap = sz.get("capital", 0)

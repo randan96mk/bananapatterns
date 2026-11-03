@@ -425,7 +425,7 @@ def _bar(t, o, h, l, c, v=1000):
 def test_entry_setups_fire_combine_and_give_stops():
     from backend.intraday import modules as m
     box, it = m.Setups(), {"symbol": "X", "token": 1, "sides": ["long", "short"]}
-    base = m.Setups.defaults()
+    base = {**m.Setups.defaults(), "from_candle": "09:15"}
     rng = bars(15, start=100, step=0.0)                                  # 9:15-9:29 flat 100 (range 99.95-100.05)
     up = rng + [_bar("09:30", 100, 101.2, 99.9, 101.0)]                  # closes above the range and yesterday's high
     ctx = _Ctx(up, daily={"X": {"prev_high": 100.5, "prev_low": 98.0}})
@@ -513,3 +513,33 @@ def test_signals_mode_tracks_each_signal_like_paper(monkeypatch):
     c.flow.mode = "paper"
     assert pos.open_new(DAY, {"symbol": "Z", "token": 9, "side": "long", "qty": 1, "entry": 1, "sl": 0.5}, "10:00",
                         {"squareoff": "15:15"}, save=False)["kind"] == "paper"
+
+
+def test_tuned_defaults_first_candle_stricter_longs_max_stop():
+    """From the 1-year EMA-cross backtest: no signals from candles before 9:35, longs also need NIFTY over its
+    20-EMA, stops over 1% skipped; each one a setting that can be changed back."""
+    from backend.intraday import modules as m
+    assert m.StopTarget.defaults()["max_stop_pct"] == 1.0
+    box, it = m.Setups(), {"symbol": "X", "token": 1, "sides": ["long", "short"]}
+    rng = bars(15, start=100, step=0.0)
+    early = rng + [_bar("09:30", 100, 101.2, 99.9, 101.0)]
+    out, drops = box.run(_Ctx(early), [it], m.Setups.defaults())
+    assert not out and drops == {"candle before 09:35": 1}
+    out, _ = box.run(_Ctx(early), [it], {**m.Setups.defaults(), "from_candle": "09:30"})
+    assert out and out[0]["side"] == "long"
+
+    class C:
+        def __init__(self, mk):
+            self.mk = mk
+
+        def market(self):
+            return self.mk
+    ctx_box, cfg = m.MarketContext(), {**m.MarketContext.defaults(), "vix_on": False}
+    both = [{"symbol": "X", "sides": ["long", "short"]}]
+    under = {"nifty": 100, "nifty_vwap": 99, "nifty_ema": 101}            # above VWAP, under the 20-EMA
+    out, drops = ctx_box.run(C(under), both, cfg)
+    assert not out and drops == {"against NIFTY": 1}                        # short against NIFTY, long under the EMA
+    out, _ = ctx_box.run(C(under), both, {**cfg, "long_ema": False})
+    assert out[0]["sides"] == ["long"]
+    out, _ = ctx_box.run(C({**under, "nifty_ema": 98}), both, cfg)
+    assert out[0]["sides"] == ["long"]
