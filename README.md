@@ -2027,3 +2027,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   within N minutes → cancelled ("limit not filled"); opening beyond the stop → cancelled. Cancelled orders are not
   trades (they don't count toward the daily limit). Live paper trading and backtests use the same rule; Telegram says
   when one is cancelled; the box summary and the 🧭 Rules text show it.
+
+### 2026-11-03: 💰 Tradetron "429 Too Many Requests" fix
+- Webhooks are spaced **1.5 s** apart (`tradetron.PACE_S`), the morning orders and the stop EXITs alike.
+- Only **HTTP 429** is retried, up to 3 times (2 / 4 / 8 s, or Tradetron's Retry-After if longer): Tradetron refuses
+  those before taking the order, so a retry can't place it twice. Every other error (timeouts, 5xx, connection) is
+  still never retried. Telegram says "accepted after 1 retry (Tradetron was busy)", or "still too many requests after
+  3 retries" when it gives up.

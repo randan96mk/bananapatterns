@@ -673,9 +673,12 @@ def real_sent(res: dict, at: str) -> str:
     for o in res["sent"]:
         lines.append(f"{'🔴 EXIT' if o['action'] == 'EXIT' else '🟢 BUY'} <b>{escape(o['symbol'])}</b>"
                      + (f" {o['qty']} · stop {_rup(o['stop'])}" if o["action"] == "BUY" else f" {o['qty']}")
-                     + f" · ~{_rup(o['price'])}")
+                     + f" · ~{_rup(o['price'])}"
+                     + (f" · accepted after {o['retries']} retr{'y' if o['retries'] == 1 else 'ies'} (Tradetron was busy)"
+                        if o.get("retries") else ""))
     for o in res["failed"]:
-        lines.append(f"⚠️ FAILED {o['action']} <b>{escape(o['symbol'])}</b>: {escape(o['error'])} (not retried)")
+        why = "still too many requests after 3 retries" if "429" in str(o["error"]) else "not retried"
+        lines.append(f"⚠️ FAILED {o['action']} <b>{escape(o['symbol'])}</b>: {escape(o['error'])} ({why})")
     lines.append(f"Tradetron: {len(res['sent'])} of {len(res['sent']) + len(res['failed'])} accepted")
     return "\n".join(lines)
 

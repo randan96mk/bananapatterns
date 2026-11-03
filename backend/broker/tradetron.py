@@ -5,6 +5,9 @@ environment (TRADETRON_TOKEN in .env) and is never logged, stored or returned.""
 
 import json
 import os
+import threading
+import time
+import urllib.error
 import urllib.request
 
 URL = os.getenv("TRADETRON_URL", "https://api.tradetron.tech/api?")
@@ -33,11 +36,43 @@ def public(b: dict) -> dict:
     return {k: v for k, v in b.items() if k != "auth-token"}
 
 
-def send(symbol: str, action: str, qty=None, stop=None) -> str:
-    """One webhook; raises on a network or HTTP error, or when no token is configured."""
+PACE_S = 1.5                       # at least this long between two webhooks (Tradetron answers 429 to bursts)
+RETRY_429 = (2, 4, 8)              # waits before the retries of a "429 Too Many Requests" (or Retry-After, if longer)
+_pace_lock = threading.Lock()
+_last_sent = [0.0]
+last_retries = 0                   # how many 429 retries the latest send() needed (for the order log and Telegram)
+
+
+def _pace() -> None:
+    with _pace_lock:
+        wait = _last_sent[0] + PACE_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_sent[0] = time.monotonic()
+
+
+def send(symbol: str, action: str, qty=None, stop=None, opener=None) -> str:
+    """One webhook; raises on a network or HTTP error, or when no token is configured. Webhooks are spaced PACE_S
+    apart. Only a 429 "Too Many Requests" is retried (Tradetron refuses those before taking the order, so a retry
+    can't place it twice); every other error is raised at once and never retried (the order may have gone in)."""
+    global last_retries
     auth = token()
     if not auth:
         raise RuntimeError("TRADETRON_TOKEN is not set in .env")
-    req = urllib.request.Request(URL, json.dumps(body(symbol, action, qty, auth, stop)).encode(),
-                                 {"Content-Type": "application/json", "User-Agent": "tt-webhook/1.0"})
-    return urllib.request.urlopen(req, timeout=15).read().decode()
+    data = json.dumps(body(symbol, action, qty, auth, stop)).encode()
+    opener = opener or urllib.request.urlopen
+    last_retries = 0
+    for attempt in range(len(RETRY_429) + 1):
+        _pace()
+        req = urllib.request.Request(URL, data, {"Content-Type": "application/json", "User-Agent": "tt-webhook/1.0"})
+        try:
+            return opener(req, timeout=15).read().decode()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == len(RETRY_429):
+                raise
+            try:
+                after = float(exc.headers.get("Retry-After") or 0) if exc.headers else 0.0
+            except ValueError:
+                after = 0.0
+            last_retries = attempt + 1
+            time.sleep(min(30.0, max(RETRY_429[attempt], after)))

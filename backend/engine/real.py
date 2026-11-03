@@ -318,7 +318,8 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 st["positions"][o["symbol"]] = {"qty": o["qty"], "px": price, "d": today, "stop": o["stop"], "last": price,
                                                 "charges": ch, "days": 0, "ts": o["ts"], "variant": st.get("variant"),
                                                 "est": True}
-            sent.append({**o, "price": price, "reply": reply[:120]})
+            sent.append({**o, "price": price, "reply": reply[:120], "retries": getattr(tradetron, "last_retries", 0)
+                         if sender is tradetron.send else 0})
         _save(st)
         return {"status": "ok", "sent": sent, "failed": failed}
 

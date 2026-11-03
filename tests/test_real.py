@@ -274,3 +274,66 @@ def test_nologin_alarm_repeats(monkeypatch):
         sch.run_real_stops(datetime(2026, 11, 3, hh, mm, tzinfo=IST))
     alarms = [m for m in fake.sent if "STOPS NOT WATCHED" in m[1]]
     assert len(alarms) == 3                                                 # 9:00-9:29, 9:30-9:59, 10:00-10:29 slots
+
+
+class _Reply:
+    def __init__(self, text):
+        self.text = text
+
+    def read(self):
+        return self.text.encode()
+
+
+def _opener(script):
+    """A fake Tradetron: each call takes the next answer (an HTTP code to raise, an exception, or a reply)."""
+    import urllib.error
+    calls = []
+
+    def op(req, timeout=15):
+        calls.append(req)
+        ans = script[len(calls) - 1]
+        if isinstance(ans, int):
+            raise urllib.error.HTTPError(req.full_url, ans, "x", {"Retry-After": "3"} if ans == 429 else {}, None)
+        if isinstance(ans, Exception):
+            raise ans
+        return _Reply(ans)
+    return op, calls
+
+
+def test_tradetron_retries_only_too_many_requests(monkeypatch):
+    import urllib.error
+    from backend.broker import tradetron as tt
+    slept = []
+    monkeypatch.setenv("TRADETRON_TOKEN", "t")
+    monkeypatch.setattr(tt.time, "sleep", lambda s: slept.append(s))
+    op, calls = _opener([429, '{"success":true}'])                              # busy, then accepted
+    assert tt.send("GLENMARK", "BUY", 5, opener=op) == '{"success":true}'
+    assert len(calls) == 2 and tt.last_retries == 1 and 3.0 in slept               # waited Retry-After (3 s > 2 s)
+    for err in (500, urllib.error.URLError("timeout"), TimeoutError()):            # may have been received: never again
+        op, calls = _opener([err, '{"success":true}'])
+        with pytest.raises(Exception):
+            tt.send("GLENMARK", "BUY", 5, opener=op)
+        assert len(calls) == 1
+    op, calls = _opener([429, 429, 429, 429])                                       # busy every time: gives up after 3
+    with pytest.raises(urllib.error.HTTPError):
+        tt.send("GLENMARK", "BUY", 5, opener=op)
+    assert len(calls) == 4
+
+
+def test_webhooks_are_spaced(monkeypatch):
+    from backend.broker import tradetron as tt
+    monkeypatch.setenv("TRADETRON_TOKEN", "t")
+    slept = []
+    monkeypatch.setattr(tt.time, "sleep", lambda s: slept.append(s))
+    op, _ = _opener(["ok", "ok"])
+    tt.send("A", "BUY", 1, opener=op)
+    tt.send("B", "BUY", 1, opener=op)                                                # straight after: waits ~1.5 s
+    assert slept and 1.0 < slept[-1] <= tt.PACE_S
+
+
+def test_sent_message_shows_retries_and_429_failures():
+    from backend.alerts import messages as msg
+    res = {"sent": [{"action": "BUY", "symbol": "GAIL", "qty": 113, "stop": 167, "price": 179, "retries": 1}],
+           "failed": [{"action": "BUY", "symbol": "GLENMARK", "error": "HTTP Error 429: Too Many Requests"}]}
+    t = msg.real_sent(res, "9:16 AM")
+    assert "accepted after 1 retry" in t and "after 3 retries" in t and "1 of 2 accepted" in t
