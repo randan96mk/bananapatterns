@@ -1028,6 +1028,24 @@ def real_capital(req: RealCapital):
     return res
 
 
+@router.post("/real/retry")
+def real_retry(req: dict):
+    """↻ Send a failed order of today's plan again (by hand, once per press; real trading on, market open)."""
+    from backend.engine import real
+    st = S()
+    res = real.retry_order(st.config, st.client, datetime.now(IST).date().isoformat(), str(req.get("symbol", "")),
+                           str(req.get("action", "BUY")))
+    if res["status"] == "sent" and st.scheduler:
+        try:
+            from backend.alerts import messages as msg
+            st.scheduler.notifier().send(f"{res['symbol']}|retry|{now_ist()}", "real",
+                                         f"{msg.REAL} · ↻ MANUAL RETRY SENT · {res['action']} <b>{res['symbol']}</b> "
+                                         f"{res['qty'] or ''} · ~₹{res['price']:,.2f}")
+        except Exception:
+            pass
+    return res
+
+
 @router.post("/real/kill")
 def real_kill(on: bool = True):
     """The kill switch: nothing is sent while it is on."""

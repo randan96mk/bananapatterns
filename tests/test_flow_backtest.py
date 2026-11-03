@@ -207,6 +207,7 @@ def test_own_process_run_and_stop(monkeypatch):
     assert bt.start(AppConfig(), None, [bt.CANVAS], "6m")["status"] == "busy"
     assert _wait(lambda: bt.status()["state"] == "idle", 120)                  # the replay process finished
     assert bt.status()["message"].startswith("done") and bt.results("6m")[0]["trades"] > 0
+    bt._job.join(30)                                                            # the first run has fully ended
     bt._proc = None
     assert bt.start(AppConfig(), None, [bt.CANVAS], "6m")["status"] == "started"
     assert _wait(lambda: bt._proc is not None and bt._proc.is_alive(), 60)            # the replay process is running
