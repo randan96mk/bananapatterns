@@ -48,11 +48,11 @@ export default function JourneyPanel({ onClose, symbol, onSymbol }) {
       {tab === 'candle' && <>
         <div className="hlbox">{j.headline}</div>
         {j.funnel?.length > 0 && <div className="v2card"><h3>Where stocks stopped <span className="r">this candle</span></h3>
-          <div className="v2list">{j.funnel.map((x) => { const info = x.kind === 'execute' && x.drops?.['signals only (mode)']; return <div key={x.id} className="it">
+          <div className="v2list">{j.funnel.map((x) => { const info = x.kind === 'execute' && x.drops?.['mode off']; return <div key={x.id} className="it">
             <b className={info ? 'muted' : x.out ? 'up' : 'down'} style={{ width: 14 }}>{info ? '·' : x.out ? '✓' : '✗'}</b>
             <div style={{ flex: 1 }}><b>{x.title}</b> <span className="mono" style={{ float: 'right' }}>{x.in} → {x.out}</span>
               {Object.keys(x.drops || {}).length > 0 && <div className="muted small">out: {Object.entries(x.drops).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>}
-              {info && <div className="muted small">Signals mode: nothing is traded, not even on paper (switch to 📝 Paper to trade on paper)</div>}
+              {info && <div className="muted small">Mode Off: nothing is traded or tracked (choose Signals or 📝 Paper)</div>}
               <div className="bar" style={{ marginTop: 4 }}><i style={{ width: `${x.in ? Math.round(100 * x.out / x.in) : 0}%` }} /></div></div></div>; })}</div></div>}
         {j.closest?.length > 0 && <div className="v2card"><h3>Closest to a trade <span className="r">reached the trigger · distance to it</span></h3>
           <table className="grid"><thead><tr><th>Stock</th><th>Side</th><th className="num">Last close</th><th className="num">Trigger</th><th className="num">Away</th><th className="num">RVOL</th></tr></thead>

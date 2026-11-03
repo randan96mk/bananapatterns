@@ -540,13 +540,14 @@ class Execute(Module):
     title, icon = "Execute", "🚀"
 
     def summary(self, cfg):
-        return "mode Paper: fills at the next 1-minute open + 0.05% slippage, intraday costs · Real: phase 4"
+        return ("Paper: a simulated trade · Signals: the signal is tracked the same way (fill, stop, target, trail, "
+                "square-off, alerts), not traded · Off: nothing")
 
     def run(self, ctx, items, cfg):
-        if ctx.mode != "paper":
-            return [], ({"signals only (mode)": len(items)} if items else {})
-        for it in items:
-            ctx.open_paper(it)
+        if ctx.mode not in ("paper", "signals"):
+            return [], ({"mode off": len(items)} if items else {})
+        for it in items:                                   # Signals mode: tracked like paper, marked as signals
+            ctx.open_paper(it, kind="paper" if ctx.mode == "paper" else "signal")
         return items, {}
 
 

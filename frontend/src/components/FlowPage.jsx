@@ -155,7 +155,7 @@ export default function FlowPage() {
       </div>}
       <SubTabs tabs={[['flow', 'Flow'], ['positions', `Positions (${d.positions?.length || 0})`], ['journal', 'Journal'], ['backtest', '🧪 Backtest']]} value={sub} onChange={setSub} />
       {sub === 'positions' && <div className="panel"><h3>📝 Paper positions today <span className="muted small">· simulated, no orders</span></h3>
-        {!d.positions?.length ? <p className="muted">None today{d.mode !== 'paper' ? ' (switch the mode to 📝 Paper)' : ''}.</p> : (
+        {!d.positions?.length ? <p className="muted">None today{d.mode === 'off' ? ' (the mode is Off)' : ''}.</p> : (
           <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Side</th><th className="num">Qty</th><th className="num">Entry</th>
             <th className="num">Stop</th><th className="num">Target</th><th>Distance to stop</th><th>Status</th><th className="num">After costs</th></tr></thead>
             <tbody>{d.positions.map((p) => {
@@ -244,7 +244,7 @@ export default function FlowPage() {
           {node.kind !== 'monitor' && <NodeStocks nid={node.id} stamp={`${d.last_run?.at}|${rr?.from || ''}|${node.in}|${node.out}`} onSymbol={(x) => { setJsym(x); setJourney(true); }} />}
         </div>
       </div></>}
-      {sub === 'flow' && <div className="panel"><h3>🟢 Today's signals <span className="muted small">· {d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : 'signals only, no orders'}</span></h3>
+      {sub === 'flow' && <div className="panel"><h3>🟢 Today's signals <span className="muted small">· {d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : d.mode === 'signals' ? 'signals only, no orders · each is tracked like a paper trade (fill, stop, target, exit)' : 'mode off'}</span></h3>
         {lv && <span className="muted small">{feedLive ? <><i className="dot ok" /> live · prices {ist(lv.at)}</> : `prices as of ${ist(lv.at)} (feed ${lv.feed})`}</span>}
         {!d.signals.length ? <p className="muted">None yet today.</p> : phone ? (
           <div className="pcards">{d.signals.map((s) => <SignalCard key={s.symbol} s={s} r={lv?.rows?.[s.symbol] || {}} />)}</div>) : (

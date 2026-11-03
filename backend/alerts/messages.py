@@ -714,29 +714,34 @@ def flow_signal(s: dict) -> str:
     extra = [f"RVOL {s['rvol']}×" if s.get("rvol") else "", f"RSI {s['rsi']}" if s.get("rsi") else ""]
     if any(extra):
         bits.append(" · ".join(x for x in extra if x))
-    bits.append("<i>paper trade (simulated), fills at the next minute's open</i>" if paper else "<i>signal only, no order placed</i>")
+    bits.append("<i>paper trade (simulated), fills at the next minute's open</i>" if paper else "<i>signal only, no order placed · tracked: you'll get its fill, stop / target / exit as alerts</i>")
     return "\n".join(bits)
+
+
+def _flow_head(kind: str = "paper") -> str:
+    return "⚡ <b>SIGNAL TRACK</b> <i>(not traded)</i>" if kind == "signal" else "📝 <b>PAPER INTRADAY</b>"
 
 
 def flow_event(p: dict, ev: dict) -> str:
     side = "BUY" if p["side"] == "long" else "SELL"
+    head = _flow_head(p.get("kind", "paper"))
     if "cancel" in ev:
-        return (f"📝 <b>PAPER INTRADAY</b> · {side} <b>{escape(p['symbol'])}</b> cancelled: {escape(ev['cancel'])} "
+        return (f"{head} · {side} <b>{escape(p['symbol'])}</b> cancelled: {escape(ev['cancel'])} "
                 f"(limit {_rup(ev['limit'])})")
     if "fill" in ev:
-        return (f"📝 <b>PAPER INTRADAY</b> · filled {side} <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['fill'])} · "
+        return (f"{head} · filled {side} <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['fill'])} · "
                 f"SL {_rup(p['stop0'])}" + (f" · target {_rup(p['target'])}" if p.get("target") else ""))
-    return (f"📝 <b>PAPER INTRADAY</b> · exit <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['price'])} · {escape(ev['why'])} · "
+    return (f"{head} · exit <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['price'])} · {escape(ev['why'])} · "
             f"gross {_signed(ev['gross'])} · costs ₹{ev['costs']:,.0f} · net <b>{_signed(ev['net'])}</b>")
 
 
-def flow_loss(st: dict) -> str:
-    return (f"📝 <b>PAPER INTRADAY</b> · 🛑 daily loss limit hit: {_signed(st['realised'])} (limit −₹{st['loss_limit']:,.0f}). "
+def flow_loss(st: dict, kind: str = "paper") -> str:
+    return (f"{_flow_head(kind)} · 🛑 daily loss limit hit: {_signed(st['realised'])} (limit −₹{st['loss_limit']:,.0f}). "
             "No new entries today; open positions keep their exits.")
 
 
-def flow_summary(st: dict) -> str:
-    return (f"📝 <b>PAPER INTRADAY · day summary</b>\n{st['trades']} trades · {st['won']} won · net after costs "
+def flow_summary(st: dict, kind: str = "paper") -> str:
+    return (f"{_flow_head(kind)} · <b>day summary</b>\n{st['trades']} trades · {st['won']} won · net after costs "
             f"<b>{_signed(st['realised'])}</b> on ₹{st['capital']:,.0f}")
 
 

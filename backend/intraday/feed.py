@@ -191,7 +191,7 @@ class Runner:
                 logger.warning("Day-close repair %s: %s", tok, exc)
         shrunk = store.prune(max(24, self.state.config.flow.retention_months) * 31, today)   # 2-year backtests need 1-minute bars
         logger.info("Flow day close %s: %d saved, %d repaired from Kite, %d old days shrunk", today, saved, repaired, shrunk)
-        if self.state.config.flow.mode == "paper" and self.notify_day:
+        if self.state.config.flow.mode in ("paper", "signals") and self.notify_day:
             self.notify_day("summary", flow._stats(today))
         return {"saved": saved, "repaired": repaired, "shrunk": shrunk}
 

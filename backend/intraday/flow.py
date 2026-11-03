@@ -154,11 +154,11 @@ class Ctx:
         from backend.intraday import positions as pos
         return pos.day_stats(self.day)
 
-    def open_paper(self, it: dict) -> None:
+    def open_paper(self, it: dict, kind: str = "paper") -> None:
         from backend.intraday import positions as pos
         if stopped():
             return
-        pos.open_new(self.day, it, candle_last_minute(it["signal_bar"]["t"], self.interval), it["plan"])
+        pos.open_new(self.day, {**it, "kind": kind}, candle_last_minute(it["signal_bar"]["t"], self.interval), it["plan"])
 
     def today_bars(self, it):
         return self.feed.day(it["token"]) if self.feed else []

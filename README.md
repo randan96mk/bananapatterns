@@ -2046,3 +2046,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   backtests now record the signal at the candle's **last minute** (`flow.candle_last_minute`), so the earliest fill is
   the bar after the candle closes (10:10). The limit entry also waits from then. **Backtests from before this fix were
   too optimistic on 5- and 15-minute candles: re-run them.** 1-minute candles were not affected.
+- **Signals mode now tracks each signal like a paper trade**: the same fill (after the candle closes), stop, target,
+  trailing, time stop and square-off, every minute, with Telegram alerts headed "⚡ SIGNAL TRACK (not traded)", the
+  daily loss limit and a day summary. Positions are marked `kind: signal` (Paper mode: `paper`); Home and Portfolio
+  show them as "Intraday · signals (tracked)". Mode Off: nothing is traded or tracked.
