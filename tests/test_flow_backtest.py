@@ -232,3 +232,20 @@ def test_backtest_with_limit_entry(monkeypatch):
     assert all((t["entry"] <= t["signal_price"] + 1e-6) if t["side"] == "long" else (t["entry"] >= t["signal_price"] - 1e-6)
                for t in r["rows"])                                                    # never worse than the signal price
     assert bt.configs_of(bt.CANVAS)["stop"]["limit_on"] is True
+
+
+def test_five_minute_signals_fill_only_after_the_candle_closes(monkeypatch):
+    """A signal on the 9:30-9:34 candle is known at 9:35: the paper fill must be the 9:35 bar or later, never a bar
+    inside the candle (that was a look-ahead before)."""
+    stocks, ds = data(monkeypatch)
+    flow.set_node("trigger", {"interval": 5})
+    flow.set_node("filters", {"rvol_on": False})
+    cfgs = bt.configs_of(bt.CANVAS)
+    full = {s["instrument_token"]: session() for s in stocks}
+    ps = bt.replay_day(ds[-1], full, {}, {}, {s["symbol"]: 1 for s in stocks}, stocks, cfgs)
+    assert ps
+    m = lambda t: int(t[:2]) * 60 + int(t[3:5])
+    for p in ps:
+        assert (m(p["signal_t"]) + 1 - (9 * 60 + 15)) % 5 == 0                       # the candle's last minute
+        assert m(p["entry_t"]) >= m(p["signal_t"]) + 1                               # filled after it, not inside it
+    assert flow.candle_last_minute("09:25", 5) == "09:29" and flow.candle_last_minute("10:05", 1) == "10:05"

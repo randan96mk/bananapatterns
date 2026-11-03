@@ -2039,3 +2039,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   Tradetron first, since the order may have gone in). Only while real trading is on and not killed, 9:15 AM – 3:30 PM,
   only today's orders still marked failed; on success it's booked like any sent order, the log says "sent by manual
   retry", and Telegram confirms (`POST /api/real/retry`).
+
+### 2026-11-03: ⚠️ Intraday fix: no fill inside the signal candle
+- With candles longer than 1 minute, a paper entry was filled at the first 1-minute bar after the signal candle's
+  **start** (e.g. 10:06 for the 10:05–10:09 candle), a price from before the signal existed. Live paper trading and
+  backtests now record the signal at the candle's **last minute** (`flow.candle_last_minute`), so the earliest fill is
+  the bar after the candle closes (10:10). The limit entry also waits from then. **Backtests from before this fix were
+  too optimistic on 5- and 15-minute candles: re-run them.** 1-minute candles were not affected.
