@@ -717,6 +717,9 @@ def flow_signal(s: dict) -> str:
 
 def flow_event(p: dict, ev: dict) -> str:
     side = "BUY" if p["side"] == "long" else "SELL"
+    if "cancel" in ev:
+        return (f"📝 <b>PAPER INTRADAY</b> · {side} <b>{escape(p['symbol'])}</b> cancelled: {escape(ev['cancel'])} "
+                f"(limit {_rup(ev['limit'])})")
     if "fill" in ev:
         return (f"📝 <b>PAPER INTRADAY</b> · filled {side} <b>{escape(p['symbol'])}</b> {ev['qty']} @ {_rup(ev['fill'])} · "
                 f"SL {_rup(p['stop0'])}" + (f" · target {_rup(p['target'])}" if p.get("target") else ""))

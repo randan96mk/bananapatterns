@@ -83,7 +83,21 @@ def step(p: dict, bar: dict, prev: Optional[dict], plan: dict) -> list[dict]:
     if p["status"] == "pending":
         if bar["t"] <= p["signal_t"]:
             return events
-        p.update(status="open", entry=round(_slip(bar["o"], buy=long), 2), entry_t=bar["t"], open_qty=p["qty"],
+        if plan.get("limit_on"):                          # a limit at the signal price: filled only at it or better
+            lim = p["signal_price"]
+            if _mins(bar["t"]) - _mins(p["signal_t"]) > int(plan.get("limit_min") or 10):
+                p.update(status="cancelled", reason="limit not filled")
+                return [{"t": bar["t"], "cancel": "limit not filled", "limit": lim}]
+            if not (bar["l"] <= lim if long else bar["h"] >= lim):
+                return events
+            fill = min(bar["o"], lim) if long else max(bar["o"], lim)      # gapped through: the open, which is better
+            if (fill <= p["stop0"]) if long else (fill >= p["stop0"]):     # opened beyond the stop: no trade
+                p.update(status="cancelled", reason="opened beyond the stop")
+                return [{"t": bar["t"], "cancel": "opened beyond the stop", "limit": lim}]
+            entry = round(fill, 2)                        # a limit fill: no slippage
+        else:
+            entry = round(_slip(bar["o"], buy=long), 2)
+        p.update(status="open", entry=entry, entry_t=bar["t"], open_qty=p["qty"],
                  stop=p["stop0"], best=bar["o"], partial_done=False, bars=0)
         p["risk"] = round(abs(p["entry"] - p["stop"]) * p["qty"], 2)
         events.append({"t": bar["t"], "fill": p["entry"], "qty": p["qty"]})
