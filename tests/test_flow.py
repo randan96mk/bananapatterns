@@ -124,7 +124,7 @@ def test_a_run_long_and_short_signals(monkeypatch):
     st = flow.state(AppConfig(), DAY)
     sides = {x["symbol"]: x["side"] for x in st["signals"]}
     assert sides["S0"] == "short" and sides["S1"] == "long" and all(x["qty"] > 0 for x in st["signals"])
-    assert n["execute"]["drops"] == {"signals only (mode)": 6} and not st["positions"]       # signals mode: no paper
+    assert n["execute"]["drops"] == {"mode off": 6} and not st["positions"]                 # mode off: nothing tracked
     again = flow.run_now(AppConfig(), feed_with(stocks), now=at(10, 15))
     assert again["nodes"]["dedup"]["drops"] == {"already signalled today": 6}
 
@@ -491,3 +491,25 @@ def test_limit_entry_fills_at_the_signal_price_or_expires():
     assert pos.stats_of([p, x])["trades"] == 1                                            # a cancelled one is no trade
     from backend.alerts import messages as msg
     assert "cancelled" in msg.flow_event(x, {"t": "10:06", "cancel": "limit not filled", "limit": 100.0})
+
+
+
+def test_signals_mode_tracks_each_signal_like_paper(monkeypatch):
+    from backend.alerts import messages as msg
+    from backend.intraday import positions as pos
+    stocks = setup(monkeypatch)
+    loose()
+    c = AppConfig()
+    c.flow.mode = "signals"
+    res = flow.run_now(c, feed_with(stocks), now=at(10, 10))
+    ps = pos.load(DAY)
+    assert res["nodes"]["execute"]["out"] == 6 and len(ps) == 6 and all(p["kind"] == "signal" for p in ps)
+    up = bars(10, start=200, step=1.0, t0=(10, 10))                                     # far past the targets
+    ev = pos.manage(DAY, lambda tok: up, "10:20")
+    assert any("fill" in e for _, e in ev) and any(e.get("why") in ("target", "stop") for _, e in ev)
+    p, e = next((p, e) for p, e in ev if "fill" in e)
+    assert "SIGNAL TRACK" in msg.flow_event(p, e) and "not traded" in msg.flow_event(p, e)
+    assert "SIGNAL TRACK" in msg.flow_summary({"trades": 6, "won": 3, "realised": 10, "capital": 1e5}, "signal")
+    c.flow.mode = "paper"
+    assert pos.open_new(DAY, {"symbol": "Z", "token": 9, "side": "long", "qty": 1, "entry": 1, "sl": 0.5}, "10:00",
+                        {"squareoff": "15:15"}, save=False)["kind"] == "paper"

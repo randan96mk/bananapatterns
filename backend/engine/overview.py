@@ -54,7 +54,8 @@ def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optiona
         p = by_sym.get(sym)
         if r.get("status") != "open" or not p:
             continue
-        out.append({"book": "intraday", "account": NAMES["intraday"], "strategy": "Intraday Flow", "symbol": sym,
+        out.append({"book": "intraday", "account": "Intraday · signals (tracked)" if p.get("kind") == "signal" else NAMES["intraday"],
+                    "strategy": "Intraday Flow", "symbol": sym,
                     "side": p["side"], "qty": p["open_qty"], "entry": p["entry"], "now": r.get("now"), "pnl": r.get("pnl"),
                     "pct": r.get("pct"), "stop": r.get("stop"), "stop_dist": _stop_dist(r.get("now"), r.get("stop"), p["side"]),
                     "opened": f"{today} {p.get('entry_t', '')}".strip()})
@@ -117,7 +118,8 @@ def trades(config: AppConfig, days: int = 365) -> list:
         for day, p in conn.execute("SELECT day, payload FROM flow_positions WHERE status = 'closed' AND day >= ?", (since,)):
             t = json.loads(p)
             sold = sum(e["price"] * e["qty"] for e in t.get("exits", []))
-            out.append({"book": "intraday", "account": NAMES["intraday"], "strategy": "Intraday Flow", "symbol": t["symbol"],
+            out.append({"book": "intraday", "account": "Intraday · signals (tracked)" if t.get("kind") == "signal" else NAMES["intraday"],
+                        "strategy": "Intraday Flow", "symbol": t["symbol"],
                         "side": t["side"], "qty": t["qty"], "opened": f"{day} {t.get('entry_t', '')}",
                         "closed": f"{day} {t.get('exit_t', '')}", "entry": t.get("entry"),
                         "exit": round(sold / max(t["qty"], 1), 2), "gross": t.get("gross"), "costs": t.get("costs"),

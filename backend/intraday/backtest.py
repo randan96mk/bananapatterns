@@ -249,8 +249,8 @@ class _Replay(flow.Ctx):
     def positions(self) -> dict:
         return pos.stats_of(self.book)
 
-    def open_paper(self, it: dict) -> None:
-        p = pos.open_new(self.day, it, it["signal_bar"]["t"], it["plan"], save=False)
+    def open_paper(self, it: dict, kind: str = "paper") -> None:
+        p = pos.open_new(self.day, it, flow.candle_last_minute(it["signal_bar"]["t"], self.interval), it["plan"], save=False)
         p["setup"] = it.get("setup")
         self.book.append(p)
 

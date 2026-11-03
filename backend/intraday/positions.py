@@ -47,7 +47,8 @@ def open_new(day: str, it: dict, signal_t: str, plan: dict, save: bool = True) -
     """A pending paper position: fills at the open of the first 1-minute bar after the signal candle."""
     p = {"day": day, "symbol": it["symbol"], "token": it["token"], "side": it["side"], "qty": it["qty"],
          "signal_t": signal_t, "status": "pending", "plan": plan, "signal_price": it["entry"],
-         "stop0": it["sl"], "target": it.get("target"), "setup": it.get("setup"), "created": now_ist()}
+         "stop0": it["sl"], "target": it.get("target"), "setup": it.get("setup"), "kind": it.get("kind", "paper"),
+         "created": now_ist()}
     if save:
         _save(p)
     return p

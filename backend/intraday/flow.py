@@ -96,6 +96,13 @@ def set_node(nid: str, values: dict) -> dict:
     return node_configs()[nid]
 
 
+def candle_last_minute(start: str, interval: int) -> str:
+    """The last 1-minute bar of an n-minute candle labelled `start` (9:25 for the 9:25–9:29 five-minute candle): a
+    signal on that candle is known only after it, so the earliest fill is the next minute's bar (9:30)."""
+    m = int(start[:2]) * 60 + int(start[3:5]) + max(1, int(interval)) - 1
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
 class Ctx:
     """What modules read: live bars (from the feed), saved history, daily data, today's signals."""
 
@@ -147,11 +154,11 @@ class Ctx:
         from backend.intraday import positions as pos
         return pos.day_stats(self.day)
 
-    def open_paper(self, it: dict) -> None:
+    def open_paper(self, it: dict, kind: str = "paper") -> None:
         from backend.intraday import positions as pos
         if stopped():
             return
-        pos.open_new(self.day, it, it["signal_bar"]["t"], it["plan"])
+        pos.open_new(self.day, {**it, "kind": kind}, candle_last_minute(it["signal_bar"]["t"], self.interval), it["plan"])
 
     def today_bars(self, it):
         return self.feed.day(it["token"]) if self.feed else []

@@ -814,9 +814,9 @@ class Scheduler:
             p, ev = data["position"], data["event"]
             self.notifier().send(f"{d}|flow-ev|{p.get('id')}|{ev['t']}|{ev.get('why', 'fill')}", "flow", msg.flow_event(p, ev))
         elif kind == "loss_limit":
-            self.notifier().send(f"{d}|flow-loss", "flow", msg.flow_loss(data))
+            self.notifier().send(f"{d}|flow-loss", "flow", msg.flow_loss(data, "signal" if self.state.config.flow.mode == "signals" else "paper"))
         elif kind == "summary":
-            self.notifier().send(f"{d}|flow-summary", "flow", msg.flow_summary(data))
+            self.notifier().send(f"{d}|flow-summary", "flow", msg.flow_summary(data, "signal" if self.state.config.flow.mode == "signals" else "paper"))
         elif kind in ("stopped", "started"):
             at = datetime.now(IST).strftime("%H%M%S")
             self.notifier().send(f"{d}|flow-{kind}|{at}", "flow", msg.flow_switch(kind, data))
