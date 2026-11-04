@@ -2022,6 +2022,12 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **📈 Follow: stop %, time stop, VCP + Flag**: two more "try it as" selectors, Stop under the pivot (5 / 6 / 7 /
+  8 %) and Time stop (off / 5–10 sessions: sold at the next open if not in profit by then). The page re-runs every
+  position's exits on its daily path (`path` = [[date, open, close]] from the entry day to the stored exit day;
+  both rules can only sell earlier, the 50-day-line exit stays), then every tile, the chart, the drawdown and the
+  table follow. Screens gains "VCP + Flag" (flagged by either; a stock is still one position, a second screen adds
+  its tag, never a second trade). `charges_in` per position in the API.
 - **📈 Follow: growth chart, "try it as", drawdown details**: every number on the page follows two selectors,
   Screens (All / VCP / Bases / Flag / VCP + Bases / Flag + Bases / Bases only / VCP only / Flag only) and Max open at
   once (All / 3 / 5 / 10: breakouts taken in entry order, one with no free slot is skipped, greyed in the table).
