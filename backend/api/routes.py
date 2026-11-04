@@ -88,8 +88,15 @@ class AppState:
         with self.scan_lock:
             u = uni.resolve_universe(self.config.ingest)
             index = next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None)
-            return run_scan(self.config.bases, self.config.screen, u["stocks"], self.config.trend, self.config.vcp,
-                            self.config.market, index, self.config.cup, self.config.flag)
+            out = run_scan(self.config.bases, self.config.screen, u["stocks"], self.config.trend, self.config.vcp,
+                           self.config.market, index, self.config.cup, self.config.flag)
+            if out.get("as_of"):
+                try:                                    # 📈 Follow steps after the scan; never fails the scan
+                    from backend.engine import follow
+                    follow.update(self.config, out["as_of"], u["stocks"])
+                except Exception:
+                    logger.exception("Follow update failed")
+            return out
 
     def token_valid(self) -> bool:
         """False once a DB-stored token passes 06:00 IST (also clears it from the client)."""
@@ -895,6 +902,29 @@ def flow_strategy():
     from backend.intraday import strategy
     mode = S().config.flow.mode
     return {"text": strategy.text(mode), "mode": mode, "changes": strategy.changes()}
+@router.get("/follow")
+def follow_report():
+    """📈 Follow: every fresh breakout bought blindly: totals, by screen, every position (one book, screen tags)."""
+    from backend.engine import follow
+    return follow.report()
+
+
+@router.post("/follow/rebuild")
+def follow_rebuild():
+    """Rebuild the book from the saved daily candles (background; the page shows the progress)."""
+    from backend.engine import follow
+    st = S()
+    return follow.start_rebuild(st.config, uni.resolve_universe(st.config.ingest)["stocks"])
+
+
+@router.put("/follow/settings")
+def follow_settings(req: dict):
+    """₹ per position (new entries from now; Rebuild to apply it to the whole history)."""
+    from backend.engine import follow
+    try:
+        return {"per_position": follow.set_per_position(float(req.get("per_position")))}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "per_position must be a number")
 
 
 @router.get("/flow/journey")

@@ -2051,6 +2051,16 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **📈 Follow (Research › Screens)**: what if every fresh breakout on the screens were bought blindly? One
+  simulated book (`screen_follow`): the first day a stock is a fresh breakout on any screen → bought at the next
+  session's open with ₹ per position (setting `follow.per_position`, default ₹1,00,000, nothing skipped); sold at
+  the next open after the run ends as the stage board defines it (close under the played_out_ma line or
+  played_out_drop under the pivot); delivery charges both ways. One stock is one position at a time, tagged with
+  every screen that flagged it (BASES / VCP / CUP / FLAG). Tiles (net, open P&L, closed · won, avg win / loss, peak
+  money in use, drawdown), a by-screen table, filters (screen / status / result) with a total line, CSV. ↻ Rebuild
+  backfills 12 months from the saved daily candles, causal (each breakout judged on the candles up to its day);
+  after that the evening scan steps it (`follow.update` after `run_scan`). API `GET /api/follow`,
+  `POST /api/follow/rebuild`, `PUT /api/follow/settings`. Read-only: never orders.
 - **Intraday backtest ~5× faster, lighter page**: the Intraday filters box computes each indicator only when a
   stock gets that far (RVOL drops most stocks first); in the replay RSI and VWAP are continued from the candle
   before (the same numbers, tested against the full computation) and the warm-up days are resampled once; positions

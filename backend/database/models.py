@@ -329,6 +329,9 @@ CREATE TABLE IF NOT EXISTS flow_signals (day TEXT NOT NULL, symbol TEXT NOT NULL
 
 -- Trend Breakout backtest (backend/engine/trend_breakout.py): the latest run (summary, splits, years, robustness,
 -- curves, trades) as one JSON document.
+CREATE TABLE IF NOT EXISTS screen_follow (
+    symbol TEXT NOT NULL, breakout_date TEXT NOT NULL, status TEXT NOT NULL, payload TEXT NOT NULL,
+    PRIMARY KEY (symbol, breakout_date));
 CREATE TABLE IF NOT EXISTS breakout_runs (
     id INTEGER PRIMARY KEY,
     updated_at TEXT NOT NULL,
