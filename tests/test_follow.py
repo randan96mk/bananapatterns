@@ -86,3 +86,9 @@ def test_report_paths_follow_each_held_session(monkeypatch):
     assert round(path[0][1], 2) == p["entry"] and rep["rows"][0]["charges_in"] > 0
     assert len(path) == c.index(next(x for x in c if x["date"] == p["exit_date"])) - c.index(next(x for x in c if x["date"] == p["entry_date"])) + 1
     assert path[1][2] > p["entry"] and rep["nifty"] == []
+
+
+def test_a_split_is_marked_and_left_out():
+    from backend.engine.follow import _corp_action
+    assert _corp_action([["d1", 10, 100.0], ["d2", 99, 98.0], ["d3", 98, 33.0], ["d4", 33, 34.0]]) == "d3"   # 1:3 split
+    assert _corp_action([["d1", 10, 100.0], ["d2", 99, 70.0], ["d3", 70, 72.0]]) is None                   # a −30% day is a move

@@ -16,7 +16,8 @@ const STATUS_F = [['all', 'All'], ['open', 'Open'], ['closed', 'Closed']];
 const RESULT_F = [['all', 'All'], ['profit', 'Profit'], ['loss', 'Loss']];
 const MAX_F = [['0', 'All'], ['3', '3'], ['5', '5'], ['10', '10']];
 const CAP_F = [['0', 'All'], ['500000', '5 L'], ['1000000', '10 L'], ['2000000', '20 L']];
-const STOP_F = [['5', '5%'], ['6', '6%'], ['7', '7%'], ['8', '8%']];
+const STOP_F = [['1', '1%'], ['2', '2%'], ['3', '3%'], ['4', '4%'], ['5', '5%'], ['6', '6%'], ['7', '7%'], ['8', '8%']];
+const BASIS_F = [['entry', 'under entry'], ['pivot', 'under pivot']];
 const TIME_F = [['0', 'Off'], ['5', '5'], ['6', '6'], ['7', '7'], ['8', '8'], ['9', '9'], ['10', '10']];
 const Seg = ({ opts, v, set }) => <span className="seg">{opts.map(([k, l]) => <button key={k} className={v === k ? 'active' : ''} onClick={() => set(k)}>{l}</button>)}</span>;
 const live = (p) => p.status !== 'closed';
@@ -30,36 +31,39 @@ const charges = (value, sell) => { const exch = value * 0.00297 / 100, sebi = va
 // The position's exits re-run on its daily path under a stop of stopPct under the pivot and a time stop of timeN
 // sessions (sold at the next open if not in profit by then). Both can only sell earlier than the stored exit, so the
 // stored path (entry day .. exit day) holds every day needed. pl: [[date, P&L]] day by day for the growth chart.
-function applyRules(p, stopPct, timeN) {
+function applyRules(p, stopPct, basis, timeN) {
   const path = p.path || [];
   if (!path.length || !p.qty) return { ...p, pl: [] };
-  const stop = Math.round(p.pivot * (1 - stopPct / 100) * 100) / 100, cin = p.charges_in || 0, q = p.qty, e = p.entry;
+  const cin = p.charges_in || 0, q = p.qty, e = p.entry;
+  const stop = Math.round((basis === 'entry' ? e : p.pivot) * (1 - stopPct / 100) * 100) / 100;
   const last = path.length - 1, closedOrig = p.status === 'closed';
   const mark = (c) => Math.round(((c - e) * q - cin - charges(c * q, true)) * 100) / 100;
   let exitIdx = closedOrig ? last : -1, reason = closedOrig ? p.reason : p.status === 'closing' ? p.reason : null, closing = p.status === 'closing';
-  for (let i = 0; i < path.length; i += 1) {
-    if (closedOrig && i >= last - 1) break;                       // the stored exit fires on the day before the exit day
+  let trig = closedOrig && last > 0 ? last - 1 : closing ? last : -1;      // the day whose close fired the exit
+  for (let i = 0; i < (closedOrig ? last : path.length); i += 1) {        // a closed one: never the exit day itself
     const c = path[i][2];
-    const why = c <= stop ? `fell ${stopPct}% below the pivot` : timeN && i >= timeN && c <= e ? `not in profit after ${timeN} sessions` : null;
-    if (why) { reason = why; if (i < last) exitIdx = i + 1; else { exitIdx = -1; closing = true; } break; }
+    const why = c <= stop ? `fell ${stopPct}% below the ${basis}` : timeN && i >= timeN && c <= e ? `not in profit after ${timeN} sessions` : null;
+    if (why) { reason = why; trig = i; if (i < last) exitIdx = i + 1; else { exitIdx = -1; closing = true; } break; }
   }
+  const trigger = trig >= 0 ? { date: path[trig][0], close: path[trig][2], gap: exitIdx >= 0 ? Math.round((path[exitIdx][1] / path[trig][2] - 1) * 1000) / 10 : null } : null;
   if (exitIdx >= 0) {
     const exit = path[exitIdx][1], gross = (exit - e) * q, ch = cin + charges(exit * q, true);
     const pl = path.slice(0, exitIdx).map(([d, , c]) => [d, mark(c)]).concat([[path[exitIdx][0], Math.round((gross - ch) * 100) / 100]]);
-    return { ...p, stop, status: 'closed', reason, exit_date: path[exitIdx][0], exit: Math.round(exit * 100) / 100, days: exitIdx,
+    return { ...p, stop, status: 'closed', reason, trigger, exit_date: path[exitIdx][0], exit: Math.round(exit * 100) / 100, days: exitIdx,
       gross: Math.round(gross * 100) / 100, net: Math.round((gross - ch) * 100) / 100, pct: Math.round(gross / p.value * 10000) / 100, pl };
   }
   const c = path[last][2];
-  return { ...p, stop, status: closing ? 'closing' : p.status, reason: closing ? reason : null, exit_date: null, exit: null, days: last,
+  return { ...p, stop, status: closing ? 'closing' : p.status, reason: closing ? reason : null, trigger: closing ? trigger : null, exit_date: null, exit: null, days: last,
     net: mark(c), pct: Math.round((c - e) / e * 10000) / 100, last: c, pl: path.map(([d, , x]) => [d, mark(x)]) };
 }
+const Why = ({ p }) => <>{p.reason}{p.trigger && <span className="muted"> · {day(p.trigger.date)} close {n2(p.trigger.close)}{p.trigger.gap != null ? `, next open ${p.trigger.gap > 0 ? '+' : ''}${p.trigger.gap}%` : ''}</span>}</>;
 
 // At most N open at once: the breakouts are taken in entry order, one that finds no free slot is skipped.
 // …and / or a fixed capital: a breakout is taken only if the money already in open positions plus this trade's
 // value (qty × entry) fits in it; a sale gives its money back for later breakouts (closed profit / loss does not
 // change the capital). skipped: 'slot' | 'cash' | false.
 function capped(rows, n, capital) {
-  const ordered = rows.filter((p) => p.qty > 0 || live(p));
+  const ordered = rows.filter((p) => (p.qty > 0 || live(p)) && !p.corp_action);
   if (!n && !capital) return ordered.map((p) => ({ ...p, skipped: false }));
   const open = [];                                                   // [exit date, value] of the positions taken
   return [...ordered].sort((a, b) => (a.entry_date || a.signal_date).localeCompare(b.entry_date || b.signal_date)).map((p) => {
@@ -155,6 +159,7 @@ export default function FollowPage() {
   const [capital, setCapital] = useState('0');
   const [capBox, setCapBox] = useState('');
   const [stopPct, setStopPct] = useState('8');
+  const [basis, setBasis] = useState('entry');
   const [timeN, setTimeN] = useState('0');
   const [per, setPer] = useState('');
   const [max, setMax] = useState(100);
@@ -165,8 +170,9 @@ export default function FollowPage() {
     const id = setInterval(load, 2000);
     return () => clearInterval(id);
   }, [d?.status?.state]);
-  const base = useMemo(() => (d ? capped(d.rows.filter((p) => screenOk(p, scr)).map((p) => applyRules(p, +stopPct, +timeN)), +maxOpen, +capital) : []),
-    [d, scr, maxOpen, capital, stopPct, timeN]);
+  const base = useMemo(() => (d ? capped(d.rows.filter((p) => screenOk(p, scr)).map((p) => applyRules(p, +stopPct, basis, +timeN)), +maxOpen, +capital) : []),
+    [d, scr, maxOpen, capital, stopPct, basis, timeN]);
+  const corp = useMemo(() => (d ? d.rows.filter((p) => p.corp_action && screenOk(p, scr)) : []), [d, scr]);
   const taken = useMemo(() => base.filter((p) => !p.skipped), [base]);
   const rows = useMemo(() => base.filter((p) => !p.skipped || (st === 'all' && res === 'all'))
     .filter((p) => st === 'all' || (st === 'open' ? live(p) : !live(p)))
@@ -187,7 +193,7 @@ export default function FollowPage() {
   const nOpen = shownTaken.filter(live).length, nClosed = shownTaken.length - nOpen, nWon = shownTaken.filter((p) => !live(p) && p.net > 0).length;
   const running = d.status.state === 'running';
   const act = (p) => p.then(load).catch((e) => setErr(e.message));
-  const scope = `${SCREEN_F.find(([k]) => k === scr)[1]}${+maxOpen ? ` · max ${maxOpen} open` : ''}${+capital ? ` · capital ${inr(+capital)}` : ''} · stop ${stopPct}%${+timeN ? ` · time stop ${timeN}` : ''}`;
+  const scope = `${SCREEN_F.find(([k]) => k === scr)[1]}${+maxOpen ? ` · max ${maxOpen} open` : ''}${+capital ? ` · capital ${inr(+capital)}` : ''} · stop ${stopPct}% ${basis === 'entry' ? 'under entry' : 'under pivot'}${+timeN ? ` · time stop ${timeN}` : ''}`;
   const nSlot = base.filter((p) => p.skipped === 'slot').length, nCash = base.filter((p) => p.skipped === 'cash').length;
   const inUse = taken.filter((p) => live(p) && p.qty).reduce((a, p) => a + p.value, 0);
   const Tile = ({ v, l, k }) => <div className="k"><div className={`v ${k || ''}`}>{v}</div><div className="l">{l}</div></div>;
@@ -196,7 +202,7 @@ export default function FollowPage() {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <b>📈 Every fresh breakout bought with {inr(d.per_position)}{+maxOpen ? `, at most ${maxOpen} open at once` : ''}{+capital ? `, within ${inr(+capital)} of capital` : ''}{!+maxOpen && !+capital ? ', nothing skipped' : ''}</b>
         <span className="chip small">Buy: next day's open after the breakout day</span>
-        <span className="chip small">Sell: a close under the {d.rows[0]?.ma || 50}-day line, or {stopPct}% under the pivot{+timeN ? `, or not in profit after ${timeN} sessions` : ''} → next open</span>
+        <span className="chip small">Sell: a close under the {d.rows[0]?.ma || 50}-day line, or {stopPct}% under the {basis}{+timeN ? `, or not in profit after ${timeN} sessions` : ''} → next open</span>
         <span className="chip small">Delivery charges included</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }} className="small">₹ a position
           <input className="input" style={{ width: 100, textAlign: 'right' }} inputMode="numeric" value={per} onChange={(e) => setPer(e.target.value.replace(/[^0-9]/g, ''))} />
@@ -215,10 +221,11 @@ export default function FollowPage() {
         <span className="muted small">Capital</span><Seg opts={CAP_F} v={CAP_F.some(([k]) => k === capital) ? capital : 'custom'} set={(k) => { setCapital(k); setCapBox(''); }} />
         <input className="input small" style={{ width: 96, textAlign: 'right' }} inputMode="numeric" placeholder="custom ₹" value={capBox}
           onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setCapBox(v); setCapital(+v >= 10000 ? v : '0'); }} />
-        <span className="muted small">Stop under the pivot</span><Seg opts={STOP_F} v={stopPct} set={setStopPct} />
+        <span className="muted small">Stop</span><Seg opts={STOP_F} v={stopPct} set={setStopPct} /><Seg opts={BASIS_F} v={basis} set={setBasis} />
         <span className="muted small">Time stop (sessions)</span><Seg opts={TIME_F} v={timeN} set={setTimeN} /></div>
       <div className="muted small" style={{ marginTop: 4 }}>Every number below is for <b>{scope}</b>. "VCP + Flag" = flagged by either (a stock is still one position: a second screen adds its tag, never a second trade) · "VCP + Bases" = by both · "Bases only" = by no other screen.
-        With a max or a capital, breakouts are taken in entry order; one with no free slot, or whose value does not fit in the capital beside the money already in open positions, is skipped (greyed, out of every number). A sale gives its money back; closed profit / loss does not change the capital. The stop and the time stop re-run every position's exits on its daily closes (sold at the next open); the 50-day-line exit always stays.</div>
+        With a max or a capital, breakouts are taken in entry order; one with no free slot, or whose value does not fit in the capital beside the money already in open positions, is skipped (greyed, out of every number). A sale gives its money back; closed profit / loss does not change the capital. The stop (under your entry price, or under the pivot) and the time stop re-run every position's exits on its daily closes (sold at the next open); the 50-day-line exit and the stored 8%-under-pivot exit always stay.
+        {corp.length > 0 && <> <b>{corp.length} position{corp.length > 1 ? 's' : ''} left out</b> (a split / bonus moved the price 40%+ in a day; the daily candles are not adjusted): {corp.map((p) => p.symbol).join(', ')}.</>}</div>
       <div className="summary" style={{ marginTop: 10 }}>
         <Tile v={inr(t.net)} k={cls(t.net)} l={`net profit / loss · ${t.n} breakouts${skipped ? ` · ${skipped} skipped (${[nSlot && `${nSlot} no slot`, nCash && `${nCash} no cash`].filter(Boolean).join(', ')})` : ''}`} />
         <Tile v={inr(t.open_net)} k={cls(t.open_net)} l={`open P&L · ${t.open} open now`} />
@@ -253,7 +260,7 @@ export default function FollowPage() {
             <tbody>{rows.slice(0, max).map((p) => <tr key={p.symbol + p.breakout_date} style={p.skipped ? { opacity: 0.45 } : {}}><td><b>{p.symbol}</b></td><td><Tags s={p.screens} /></td><td>{day(p.breakout_date)}</td><td>{day(p.entry_date)}</td>
               <td className="num">{n2(p.entry)}</td><td className="num">{p.qty || '—'}</td><td className="num">{inr(p.value)}</td><td className="num">{n2(p.pivot)}</td><td className="num">{n2(p.stop)}</td>
               <td>{day(p.exit_date)}</td><td className="num">{n2(p.exit ?? p.last)}</td><td className={`num ${cls(p.net)}`}><b>{inr(p.net)}</b></td><td className={`num ${cls(p.pct)}`}>{pc(p.pct)}</td>
-              <td className="num">{p.days} d</td><td>{p.skipped ? `skipped · ${p.skipped === 'cash' ? 'no cash left in the capital' : 'no free slot'}` : live(p) ? <span className="up">● {p.status === 'pending' ? 'buys at the next open' : p.status === 'closing' ? `sells at the next open · ${p.reason}` : 'open'}</span> : `closed · ${p.reason || ''}`}</td></tr>)}</tbody>
+              <td className="num">{p.days} d</td><td>{p.skipped ? `skipped · ${p.skipped === 'cash' ? 'no cash left in the capital' : 'no free slot'}` : live(p) ? <span className="up">● {p.status === 'pending' ? 'buys at the next open' : p.status === 'closing' ? <>sells at the next open · <Why p={p} /></> : 'open'}</span> : <>closed · <Why p={p} /></>}</td></tr>)}</tbody>
             <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={6}>Total · {shownTaken.length} taken{rows.length - shownTaken.length ? ` · ${rows.length - shownTaken.length} skipped` : ''}</td><td className="num">{inr(sumShown((p) => p.value))}</td><td colSpan={4} /><td className={`num ${cls(sumShown((p) => p.net))}`}>{inr(sumShown((p) => p.net))}</td>
               <td className={`num ${cls(sumShown((p) => p.net))}`}>{sumShown((p) => p.value) ? pc(sumShown((p) => p.net) / sumShown((p) => p.value) * 100) : '—'}</td><td className="num">{shownTaken.length ? Math.round(sumShown((p) => p.days) / shownTaken.length) : 0} d avg</td><td>{nOpen} open · {nClosed} closed · {nWon} won</td></tr></tfoot></table></div>}
       {rows.length > max && <button className="linkbtn small" onClick={() => setMax(rows.length)}>show all {rows.length}</button>}
