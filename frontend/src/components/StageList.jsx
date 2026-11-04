@@ -26,10 +26,6 @@ const VCP_COLS = [['Score', (r) => r.score?.toFixed(0)], ['Pullbacks %', pullbac
   ['Dry-up', (r) => x2(r.vcp?.dryup)], ['U/D', (r) => x2(r.vcp?.ud_ratio)], ['Stop', (r) => rs(r.vcp?.stop)]];
 
 const pctv = (v) => (v == null ? '' : `${v.toFixed(1)}%`);
-const CUP_COLS = [['Score', (r) => r.score?.toFixed(0)], ['Cup', (r) => r.cup && `${pctv(r.cup.cup.depth_pct)} · ${r.cup.cup.weeks}w`],
-  ['Handle', (r) => r.cup && `${pctv(r.cup.handle.depth_pct)} · ${r.cup.handle.bars}d`],
-  ['Handle vol', (r) => x2(r.cup?.handle.volume_x)], ['Prior rise', (r) => r.cup && pctv(r.cup.prior_advance_pct)],
-  ['Stop', (r) => rs(r.cup?.stop)]];
 const FLAG_COLS = [['Score', (r) => r.score?.toFixed(0)],
   ['Pole', (r) => r.flag && `+${r.flag.pole.gain_pct.toFixed(0)}% · ${r.flag.pole.bars}d`],
   ['Flag', (r) => r.flag && `${pctv(r.flag.flag.depth_pct)} · ${r.flag.flag.bars}d`],
@@ -54,7 +50,7 @@ function Results({ view, ...props }) {
 
 function Table({ screen, stage, selected, onSelect, shown }) {
   const isVcp = screen === 'vcp';
-  const extra = { vcp: VCP_COLS, cup: CUP_COLS, flag: FLAG_COLS }[screen] || [];
+  const extra = { vcp: VCP_COLS, flag: FLAG_COLS }[screen] || [];
   const cols = [...COLS[stage], ...extra];
   return (
     <div className="tablewrap">
@@ -66,7 +62,6 @@ function Table({ screen, stage, selected, onSelect, shown }) {
           <tr key={r.symbol} className={r.symbol === selected ? 'sel' : ''} onClick={() => onSelect(r.symbol)}>
             <td>{r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>}<b>{r.symbol}</b>
               {screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
-              {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
               {screen === 'bases' && r.flag_tag && <span className="tag ok">Flag</span>}
               <ResultsTag r={r.results} />
               <NewsTag n={r.news} />
@@ -85,7 +80,7 @@ function Table({ screen, stage, selected, onSelect, shown }) {
 }
 
 // Phone: the selected stage's first names as one-line rows under the stage cards; "Show all" opens StageList.
-const stopOf = (r) => r.vcp?.stop ?? r.cup?.stop ?? r.flag?.stop;
+const stopOf = (r) => r.vcp?.stop ?? r.flag?.stop;
 const PEEK = {   // [main figure, small line] per stage
   forming: (r) => [`${rs(r.pivot)} pivot`, [r.dist_to_pivot_pct != null && `${r.dist_to_pivot_pct.toFixed(1)}% away`,
     stopOf(r) != null && `stop ${rs(stopOf(r))}`].filter(Boolean).join(' · ')],
@@ -101,7 +96,7 @@ export function StagePeek({ screen, stage, asOf, onSelect, count, onAll }) {
   const [rows, setRows] = useState(null);
   useEffect(() => { setRows(null); api.screenResults(screen, stage).then((d) => setRows(d.rows)).catch(() => setRows([])); },
     [screen, stage, asOf]);
-  const shaped = ['vcp', 'cup', 'flag'].includes(screen);
+  const shaped = ['vcp', 'flag'].includes(screen);
   return (
     <div className="panel peek">
       <div className="row"><b>{TITLES[stage]} · {count}</b>

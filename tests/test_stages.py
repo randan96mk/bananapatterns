@@ -2,7 +2,7 @@
 
 import json
 
-from backend.config import BaseConfig, ScreenConfig
+from backend.config import BaseConfig, ScreenConfig, VcpConfig
 from backend.database.models import get_db, upsert_candles
 from backend.engine.bases import detect_bases
 from backend.engine.scan import change_line, run_scan
@@ -110,3 +110,17 @@ def test_run_scan_stores_results_and_changes():
         payloads = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM scan_results WHERE screen = 'bases'")]
     assert {p["symbol"] for p in payloads} == set(stages)          # rows carry their symbol
     assert any(c["symbol"] == "FRESH" and c["kind"] == "breakout" for c in changes)
+
+
+def forming_series():
+    """A base still forming (the Bases screen's forming stage): used by the news / filings / holders tests."""
+    return build([UP, BASE])
+
+
+def scan_with(series: dict):
+    """Saves each symbol's candles (tokens 1, 2, …) and runs the scan with open dials."""
+    with get_db() as conn:
+        for tok, cs in enumerate(series.values(), start=1):
+            upsert_candles(conn, tok, cs)
+    syms = [{"symbol": s, "instrument_token": i} for i, s in enumerate(series, start=1)]
+    return run_scan(BCFG, ScreenConfig(trend_ma=0, min_turnover_cr=0), syms, vcp_cfg=VcpConfig(min_rs=0, min_trend_checks=0))

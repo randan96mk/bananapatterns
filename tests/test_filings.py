@@ -141,15 +141,15 @@ def test_filings_job_timing_and_failure():
 
 def test_api_filings_and_chips(monkeypatch):
     from fastapi.testclient import TestClient
-    from tests.test_cups import cup_series, scan_with
+    from tests.test_stages import forming_series, scan_with
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
-    scan_with({"CUPX": cup_series(breakout=False, handle_depth=0.04)})
+    scan_with({"CUPX": forming_series()})
     fl.store(fl.parse_nse([ann(1, "CUPX", "Bagging/Receiving of orders/contracts", "big order", stamp(2)),
                            ann(2, "CUPX", "Trading Window", "", stamp(1))]))
     from backend import main
     with TestClient(main.app) as tc:
-        row = tc.get("/api/screens/cup/results?stage=forming").json()["rows"][0]
+        row = tc.get("/api/screens/bases/results?stage=forming").json()["rows"][0]
         assert row["news"]["label"] == "Order win" and row["news"]["text"] == "big order"
         fs = tc.get("/api/filings?symbol=cupx").json()["filings"]
         assert [f["label"] for f in fs] == ["Order win"]                  # noise hidden

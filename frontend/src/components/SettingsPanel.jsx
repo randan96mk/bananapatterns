@@ -70,7 +70,7 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['vcp', 'cup', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
+const SECTIONS = ['vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
 
 // Generic editor for persisted config sections (bases, ingest; vcp next).
 export default function SettingsPanel() {

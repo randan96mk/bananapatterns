@@ -33,7 +33,6 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 10. [Stage board (Screens home)](#stage-board-screens-home)
 11. [RS rating and Trend Template](#rs-rating-and-trend-template)
 12. [VCP screen](#vcp-screen)
-13. [Cup & handle screen](#cup--handle-screen)
 14. [Index ticker bar](#index-ticker-bar)
 15. [Bull flag screen](#bull-flag-screen)
 16. [Results calendar](#results-calendar)
@@ -613,34 +612,6 @@ screen finds 7 forming (CUB, PAYTM, CRAFTSMAN, STARHEALTH, ATHERENERG, DLF, SOLA
 On every chart, **VCP check** shows the verdict, any failed rules ("last pullback 14.0% > 12%"), the pullback
 sequence, tightening, dry-up, U/D ratio and stop.
 
-## Cup & handle screen
-
-`backend/engine/cups.py` finds William O'Neil's cup with handle, looking only at past bars. Pick **Cup & handle** in
-the screen dropdown; it uses the same stage cards, feed, grid, alerts, decision charts, A/B tiers, daily plan and
-position guard as VCP. Every rule is in **Settings → cup**:
-
-| Part | Default rule |
-|---|---|
-| Prior uptrend | ≥ 30% rise into the left lip (from the low of the 130 sessions before it) |
-| Cup | 7–65 weeks lip to lip, 12–33% deep, nothing above the rim, right lip within −10% / +5% of the left |
-| U-shape | ≥ 5 sessions within 5% of the bottom **and** ≥ 25% of closes in the cup's bottom third (rejects spike / V bottoms) |
-| Handle | 1–5 weeks, 2–12% deep, low in the cup's upper half, volume ≤ 1.0× the 50-day average |
-| Pivot / stop | pivot = the handle's intraday high; stop = handle low − 1%, never more than 8% under the pivot |
-| Screen | Forming = in the handle within 5% of the pivot; RS ≥ 70 and Trend Template ≥ 5/8, as for VCP |
-
-Score (0–100): handle tightness 30, handle volume dry-up 20, U-shape 15, cup depth 15, RS 20. The decision chart and
-the grid cards draw the cup as a smooth green **U** from lip to lip (each side's roundness fitted to the stock's lows,
-so a fast drop and a long flat bottom draw a wide, flat U) and the handle as a yellow curve back up to the pivot, with
-**L** / **U** / **R** marks. On the cup screen a grid card reaches back to just before the left lip. The checklist
-shows cup depth and length, the U-shape, the handle and its volume. Cups appear on the Bases screen with a **C&H**
-tag. Only cups *with* a handle count (no cup-without-handle).
-
-**Alerts.** Cup & handle is on in **Alerts → screens** by default next to VCP (an existing saved setting gets it added
-once; untick it to turn it off). Cups get the same alerts as VCPs: breakout, near-pivot, intraday heads-up, the 3:15 PM
-close check, the daily plan and the position guard, with the cup's own stop (handle low − 1%) and a
-"Cup · handle · vol · stop" line. A name on several screens alerts once per kind, from the most specific screen
-(VCP, then Cup & handle, then Bases).
-
 ## Index ticker bar
 
 A strip under the top menu on every page: **Nifty 50 · Nifty 500 · Bank Nifty · India VIX · Sensex** with the
@@ -661,7 +632,7 @@ stored closes ("log in for live"). Charts hide the volume pane for indices (they
 
 `backend/engine/flags.py` finds bull flags and high-tight flags, looking only at past bars: a sharp **pole**, then a
 short, quiet **flag**. Pick **Bull flag** in the screen dropdown; it uses the same stage cards, feed, grid, alerts,
-decision charts, A/B tiers, daily plan, position guard and News tab as VCP and Cup & handle. Rules in
+decision charts, A/B tiers, daily plan, position guard and News tab as VCP. Rules in
 **Settings → flag**:
 
 | Part | Default rule |
@@ -677,7 +648,7 @@ Score (0–100): flag tightness 30, volume dry-up 20, pole strength 20, RS 20, f
 the pole as a glowing arrow from **P** to **T** and the flag as a shaded channel between two parallel lines, with
 pole and flag volume shaded underneath; grid cards draw the same in miniature. Flags are fast: the chart says to act
 within 1–3 sessions of the breakout. Bases cards get a **Flag** tag. Bull flag is an alert screen by default (saved
-settings get it once, after Cup & handle). Calibrated on the demo history: 107 flag breakouts across the Nifty 500 in
+settings get it once, after VCP). Calibrated on the demo history: 107 flag breakouts across the Nifty 500 in
 ~300 sessions (median pole +32% in 18 sessions, flag 8 sessions and 7% deep on 0.5× volume).
 
 ## Results calendar
@@ -755,7 +726,7 @@ the plan card; the stock window's **Filings & deals** list shows every deal and 
 
 **News tab.** The "What changed" box on the Screens page has three tabs: **Moves** (today's stage moves), **News** and
 **Results**. News lists the last `news_days` (3) of exchange news on the *board stocks*: every stock in the latest
-scan on any screen (VCP, Cup & handle, Bases) at any stage, plus held and watched stocks. 📊 results, 📦 orders /
+scan on any screen (VCP, Bull flag, Bases) at any stage, plus held and watched stocks. 📊 results, 📦 orders /
 🤝 deals, 🚩 red flags, 🏦 fund moves and other filings (ratings, management, exchange queries), newest first, with
 filter chips; a results filing and its press release show once; a red-flag filing shows once, as 🚩. Each line says
 why the stock is in scope ("VCP forming", "held" …) and links to the filing; clicking it opens the chart. Results lists
@@ -1149,7 +1120,7 @@ Interactive docs: http://localhost:8000/docs
 | POST | `/api/universe/refresh` | download Nifty 500 + Kite instruments; returns mapping summary |
 | GET | `/api/universe` | latest snapshot with per-symbol coverage, last close, change %, last error |
 | GET | `/api/stock/{symbol}/candles?limit=750` | daily candles (stocks or indices, e.g. `NIFTY 500`) |
-| GET | `/api/screens` | available screens (`vcp`, `cup`, `bases`) |
+| GET | `/api/screens` | available screens (`vcp`, `flag`, `bases`) |
 | GET | `/api/screens/{screen}/summary` | as-of date, counts per stage, number of changes, stale flag |
 | GET | `/api/screens/{screen}/sparks?stage=&bars=120` | last N candles + 50-day line per stock in a stage (grid view) |
 | GET | `/api/screens/{screen}/results?stage=` | stocks in `forming`, `fresh`, `fresh_low_volume`, `climbing` or `played_out` |
@@ -1317,7 +1288,7 @@ chart images stay dark.
 - A bottom tab bar (Screens · ⚡ Today · Alerts · More). More opens a sheet with Universe, Data, Settings, Logs and the
   theme.
 - The Kite bar shrinks to a status pill and Login, with the rest behind "⋯".
-- The Screens page is reordered for a phone: index ticker → screen pills (VCP · Cup · Flag · Bases) and ↻ rescan →
+- The Screens page is reordered for a phone: index ticker → screen pills (VCP · Flag · Bases) and ↻ rescan →
   the market on one line (status, breadth, 52-week highs / lows; tap for the signals) → the four stage cards as a
   compact 2×2 grid → the first 3 names in the selected stage right under them ("Show all" opens the full grid /
   table) → Moves / News / Results → the plan and the positions as one row per stock (stop still editable). It opens
@@ -2051,6 +2022,17 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **📈 Follow: growth chart, "try it as", drawdown details**: every number on the page follows two selectors,
+  Screens (All / VCP / Bases / Flag / VCP + Bases / Flag + Bases / Bases only / VCP only / Flag only) and Max open at
+  once (All / 3 / 5 / 10: breakouts taken in entry order, one with no free slot is skipped, greyed in the table).
+  A growth chart (the shown positions' P&L day by day, from each position's `path`) against the same peak money held
+  in NIFTY 50; a drawdown panel (worst fall, peak → low → back at the peak, sessions, longest losing streak, worst
+  trade, worst month); "net on the peak money" vs NIFTY over the same dates. `GET /api/follow` adds `path` per
+  position and `nifty`.
+- **Cup & handle screen removed**: `backend/engine/cups.py`, `CupConfig` / Settings → cup, the `cup` scan screen,
+  its stage classifier, grid / list columns, decision-chart drawing, alert lines, the C&H tag on Bases and the Follow
+  tag are gone; `cup` is dropped from saved Alerts → screens on start. Saved `scan_results` rows for the old screen
+  stay in the database (never read). VCP, Bull flag and Bases (all) remain.
 - **📈 Follow (Research › Screens)**: what if every fresh breakout on the screens were bought blindly? One
   simulated book (`screen_follow`): the first day a stock is a fresh breakout on any screen → bought at the next
   session's open with ₹ per position (setting `follow.per_position`, default ₹1,00,000, nothing skipped); sold at

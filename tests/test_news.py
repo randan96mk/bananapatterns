@@ -7,15 +7,14 @@ from backend.database.models import get_db, now_ist
 from backend.ingest import filings as fl
 from backend.ingest import holders as hd
 from backend.ingest import news as nw
-from tests.test_cups import cup_series, scan_with
+from tests.test_stages import forming_series, scan_with
 from tests.test_events import results_in
 from tests.test_filings import ann, stamp
 from tests.test_holders import BULK, SAST
 
 
 def board():
-    scan_with({"AAA": cup_series(breakout=False, handle_depth=0.04),          # cup screen + bases
-               "DDD": cup_series(breakout=False, handle_depth=0.04, handle_vol=1.6)})   # loud handle: bases only
+    scan_with({"AAA": forming_series(), "DDD": forming_series()})          # both: bases forming
     guard.sync({"HELD": {"qty": 1, "avg": 10.0}}, VcpConfig())
     with get_db() as conn:
         conn.execute("INSERT INTO watchlist (symbol, added_at) VALUES ('WATCH', ?)", (now_ist(),))
@@ -25,8 +24,8 @@ def test_scope_covers_every_screen_plus_held_and_watched():
     board()
     scope = nw.board_scope()
     assert scope["HELD"] == "held" and scope["WATCH"] == "watching"
-    assert scope["AAA"] == "C&H forming"                                  # the most specific screen wins
-    assert scope["DDD"].startswith("Base ")
+    assert scope["AAA"] == "VCP forming"                                  # the most specific screen wins
+    assert scope["DDD"].startswith("VCP ")
     assert "OUT" not in scope
 
 
@@ -67,5 +66,5 @@ def test_news_api(monkeypatch):
     from backend import main
     with TestClient(main.app) as tc:
         d = tc.get("/api/news").json()
-        assert d["items"][0]["symbol"] == "AAA" and d["items"][0]["why"] == "C&H forming" and d["scope"] == 4
+        assert d["items"][0]["symbol"] == "AAA" and d["items"][0]["why"] == "VCP forming" and d["scope"] == 4
         assert tc.get("/api/news?days=0").status_code == 422

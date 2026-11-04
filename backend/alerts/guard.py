@@ -43,15 +43,13 @@ def _setup(conn, symbol: str, as_of: Optional[str]) -> Optional[dict]:
 
 
 def _initial_stop(conn, symbol: str, avg: float, as_of: Optional[str], vcp_cfg: VcpConfig) -> tuple:
-    """(pivot, stop, where the stop came from): VCP stop, else cup stop (handle low), else flag stop (flag low),
+    """(pivot, stop, where the stop came from): VCP stop, else flag stop (flag low),
     else pivot - max_stop,
     else average - max_stop."""
     p = _setup(conn, symbol, as_of)
     pivot = p.get("pivot") if p else None
     if p and (p.get("vcp") or {}).get("stop"):
         return pivot, p["vcp"]["stop"], "setup (VCP stop)"
-    if p and (p.get("cup") or {}).get("stop"):
-        return pivot, p["cup"]["stop"], "setup (cup handle low)"
     if p and (p.get("flag") or {}).get("stop"):
         return pivot, p["flag"]["stop"], "setup (flag low)"
     if pivot:

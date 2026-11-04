@@ -8,7 +8,7 @@ import httpx
 from backend.alerts import guard
 from backend.alerts import plan as pl
 from backend.alerts.dispatch import Notifier, decision_for
-from backend.config import AlertsConfig, BaseConfig, VcpConfig
+from backend.config import AlertsConfig, VcpConfig
 from backend.database.models import get_db, now_ist, upsert_candles
 from backend.ingest import events
 from backend.ingest.events import refresh_from_nse as real_refresh     # bound before conftest blocks the network
@@ -92,12 +92,11 @@ def test_stock_alerts_carry_the_results_warning():
 
 
 def test_decision_chart_panel_shows_results():
-    from tests.test_cups import cup_series, CFG, BCFG
-    from backend.engine.cups import detect_cups
+    from tests.test_stages import BCFG, forming_series
     results_in("CUPX", 2)
-    cs = cup_series(breakout=False)
-    p = {"symbol": "CUPX", "cup": detect_cups(cs, CFG, BCFG)[0].shape, "rs": 90, "tt_passed": 8}
-    png, ctx = decision_for(cs, p, "forming", AlertsConfig(), BaseConfig(), VcpConfig(), force_image=True)
+    cs = forming_series()
+    p = {"symbol": "CUPX", "rs": 90, "tt_passed": 8}
+    png, ctx = decision_for(cs, p, "forming", AlertsConfig(), BCFG, VcpConfig(), force_image=True)
     assert ctx["results"].startswith("Results ") and "(in 2 sessions)" in ctx["results"] and png[:4] == b"\x89PNG"
 
 
@@ -143,15 +142,15 @@ def test_plan_items_flag_results(monkeypatch):
 
 def test_api_results_on_rows_positions_and_events(monkeypatch):
     from fastapi.testclient import TestClient
-    from tests.test_cups import cup_series, scan_with
+    from tests.test_stages import forming_series, scan_with
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
-    scan_with({"CUPX": cup_series(breakout=False, handle_depth=0.04)})
+    scan_with({"CUPX": forming_series()})
     results_in("CUPX", 3)
     guard.sync({"CUPX": {"qty": 1, "avg": 10.0}}, VcpConfig())
     from backend import main
     with TestClient(main.app) as tc:
-        row = tc.get("/api/screens/cup/results?stage=forming").json()["rows"][0]
+        row = tc.get("/api/screens/bases/results?stage=forming").json()["rows"][0]
         assert row["results"]["sessions"] == 3 and row["results"]["warn"] is True
         assert row["results"]["label"].endswith("(in 3 sessions)")
         assert tc.get("/api/positions").json()["positions"][0]["results"]["sessions"] == 3

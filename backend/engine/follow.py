@@ -1,5 +1,5 @@
 """📈 Follow: what if every fresh breakout on the Research screens were bought blindly? One simulated book, no
-screen accounts: a stock is one position at a time, tagged with every screen (bases / vcp / cup / flag) that
+screen accounts: a stock is one position at a time, tagged with every screen (bases / vcp / flag) that
 flagged it. Read-only, never orders.
 
   entry   the first day a stock is a *fresh* breakout on any screen (the scan's own test: a volume-confirmed close
@@ -23,19 +23,18 @@ import numpy as np
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
 from backend.engine.bases import detect_bases
-from backend.engine.cups import detect_cups
 from backend.engine.flags import detect_flags
 from backend.engine.indicators import sma
 from backend.engine.rs import rs_ratings, rs_score
-from backend.engine.stages import classify, classify_cup, classify_flag, classify_vcp
+from backend.engine.stages import classify, classify_flag, classify_vcp
 from backend.engine.trend_breakout import delivery_charges
 from backend.engine.trend_template import trend_template
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("follow")
 
-SCREENS = ("bases", "vcp", "cup", "flag")
-NAMES = {"bases": "Bases (all)", "vcp": "VCP", "cup": "Cup & handle", "flag": "Bull flag"}
+SCREENS = ("bases", "vcp", "flag")
+NAMES = {"bases": "Bases (all)", "vcp": "VCP", "flag": "Bull flag"}
 DEFAULT_PER_POSITION = 100000.0
 MONTHS = 12                                       # the backfill's reach
 LIVE = ("pending", "open", "closing")
@@ -143,9 +142,6 @@ def _fresh_screens(prefix: list, rs: Optional[int], config: AppConfig) -> list:
         out.append("bases")
     if classify_vcp(prefix, detect_bases(prefix, config.bases), rs, tt, config.screen, config.vcp)[0].stage == "fresh":
         out.append("vcp")
-    if classify_cup(prefix, detect_cups(prefix, config.cup, config.bases, config.vcp.max_stop), rs, tt, config.screen,
-                    config.cup)[0].stage == "fresh":
-        out.append("cup")
     if classify_flag(prefix, detect_flags(prefix, config.flag, config.bases), rs, tt, config.screen, config.flag)[0].stage == "fresh":
         out.append("flag")
     return out
@@ -155,9 +151,6 @@ def _signals(symbol: str, candles: list, start: str, rs_at, config: AppConfig) -
     """[(bar index, screens)] of the breakouts on or after `start` that were fresh on their own day."""
     idx = set()
     for b in detect_bases(candles, config.bases):
-        if b.breakout and b.breakout.date >= start:
-            idx.add(b.breakout.index)
-    for b in detect_cups(candles, config.cup, config.bases, config.vcp.max_stop):
         if b.breakout and b.breakout.date >= start:
             idx.add(b.breakout.index)
     for b in detect_flags(candles, config.flag, config.bases):
@@ -193,8 +186,7 @@ def _simulate(symbol: str, token: int, candles: list, signals: list, config: App
 
 
 def _pivot_at(prefix: list, config: AppConfig) -> Optional[float]:
-    for find in (lambda: detect_bases(prefix, config.bases), lambda: detect_cups(prefix, config.cup, config.bases, config.vcp.max_stop),
-                 lambda: detect_flags(prefix, config.flag, config.bases)):
+    for find in (lambda: detect_bases(prefix, config.bases), lambda: detect_flags(prefix, config.flag, config.bases)):
         last = next((b for b in reversed(find()) if b.breakout is not None), None)
         if last is not None and last.breakout.index == len(prefix) - 1:
             return last.pivot
@@ -335,13 +327,36 @@ def _drawdown(ps: list) -> float:
     return round(dd, 2)
 
 
-def report() -> dict:
+def _path(conn, p: dict, as_of: Optional[str]) -> list:
+    """[[date, P&L after the charges a sale would take]] for every session the position was held (the page sums
+    these over any filter for the growth chart and the drawdown)."""
+    if not p.get("entry_date"):
+        return []
+    end = p["exit_date"] or as_of or p["last_date"]
+    out = []
+    for c in get_candles(conn, p["token"], start=p["entry_date"]):
+        if c["date"] > end:
+            break
+        if c["date"] == p["exit_date"]:
+            out.append([c["date"], p["net"]])
+        else:
+            out.append([c["date"], round((c["close"] - p["entry"]) * p["qty"] - p["charges"] - delivery_charges(c["close"] * p["qty"], True), 2)])
+    return out
+
+
+def report(index_token: Optional[int] = None) -> dict:
+    """Everything the page shows; index_token: NIFTY 50's daily closes over the same dates for the growth chart."""
     with get_db() as conn:
         ps = _rows(conn)
         as_of, rebuilt = get_setting(conn, "follow.as_of"), get_setting(conn, "follow.rebuilt")
+        for p in ps:
+            p["path"] = _path(conn, p, as_of)
+        first = min((p["entry_date"] for p in ps if p.get("entry_date")), default=None)
+        nifty = [[c["date"], c["close"]] for c in get_candles(conn, index_token, start=first)
+                 if not as_of or c["date"] <= as_of] if index_token and first else []
     ps.sort(key=lambda p: (p["signal_date"], p["symbol"]), reverse=True)
     by_screen = {k: _agg([p for p in ps if k in p["screens"]]) for k in SCREENS}
     by_screen["vcp+bases"] = _agg([p for p in ps if "vcp" in p["screens"] and "bases" in p["screens"]])
     return {"status": status(), "per_position": per_position(), "as_of": as_of, "rebuilt": rebuilt, "months": MONTHS,
             "total": {**_agg(ps), "peak": _peak(ps), "drawdown": _drawdown(ps)}, "by_screen": by_screen,
-            "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps}
+            "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps, "nifty": nifty}

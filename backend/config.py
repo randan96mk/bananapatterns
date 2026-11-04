@@ -144,34 +144,6 @@ class TrendConfig:
 
 
 @dataclass
-class CupConfig:
-    """Cup with handle (O'Neil). Bars are trading sessions; depths are fractions."""
-    min_prior_advance: float = 0.30        # rise into the left lip ...
-    prior_lookback_bars: int = 130         # ... from the lowest low of this many bars before it
-    min_cup_bars: int = 35                 # 7 weeks, left lip to right lip
-    max_cup_bars: int = 325                # 65 weeks
-    min_depth: float = 0.12                # left lip to cup bottom
-    max_depth: float = 0.33
-    right_lip_within: float = 0.10         # right lip at least (1 - this) x the left lip ...
-    right_lip_above: float = 0.05          # ... and at most (1 + this) x it
-    u_low_band: float = 0.05               # U-shape: sessions with a low within this of the cup low ...
-    u_min_bars: int = 5                    # ... at least this many (a V bottom has one or two)
-    u_bottom_frac: float = 0.25            # ... and at least this share of closes in the cup's bottom third
-                                           #     (a straight-line V has ~0.33, a spike bottom ~0.1, a round U 0.4+)
-    handle_min_bars: int = 5               # 1 week
-    handle_max_bars: int = 25              # ~5 weeks
-    handle_min_depth: float = 0.02
-    handle_max_depth: float = 0.12
-    handle_upper_half: bool = True         # handle low above the cup's midpoint
-    handle_max_volume: float = 1.0         # handle volume / 50-day average before it (dry-up)
-    max_dist_to_pivot: float = 0.05        # Forming: close within this under the handle high
-    stop_buffer: float = 0.01              # stop = handle low - 1%, never more than vcp.max_stop under the pivot
-    min_rs: int = 70
-    min_trend_checks: int = 5
-    history_bars: int = 400                # how far back breakouts are looked for (stages need ~6 months)
-
-
-@dataclass
 class FlagConfig:
     """Bull flag / high-tight flag: a sharp pole, then a short, quiet pullback. Bars are trading sessions."""
     min_pole_gain: float = 0.20            # pole: low -> top at least +20% ...
@@ -231,7 +203,7 @@ class AlertsConfig:
     """Telegram alerts and the automatic jobs. The bot token lives in .env (TELEGRAM_BOT_TOKEN)."""
     enabled: bool = True
     chat_id: str = ""                      # found with "Detect chat ID" (or set TELEGRAM_CHAT_ID in .env)
-    screens: list = field(default_factory=lambda: ["vcp", "cup", "flag"])
+    screens: list = field(default_factory=lambda: ["vcp", "flag"])
     breakout: bool = True                  # fresh breakout (volume-confirmed)
     low_volume_breakout: bool = False
     below_pivot: bool = True
@@ -416,7 +388,7 @@ def check_alert_times(sec: "AlertsConfig") -> None:
 
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
-                      "vcp": VcpConfig, "cup": CupConfig, "flag": FlagConfig, "alerts": AlertsConfig,
+                      "vcp": VcpConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
                       "flow": FlowConfig}
@@ -430,7 +402,6 @@ class AppConfig:
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     trend: TrendConfig = field(default_factory=TrendConfig)
     vcp: VcpConfig = field(default_factory=VcpConfig)
-    cup: CupConfig = field(default_factory=CupConfig)
     flag: FlagConfig = field(default_factory=FlagConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
@@ -501,18 +472,13 @@ def load_config(config: AppConfig | None = None) -> AppConfig:
             for key, value in json.loads(raw).items():
                 if key in known:
                     setattr(sec, key, value)
-        # once: alert screens saved before the cup screen existed get it next to VCP
-        if not get_setting(conn, "migrated.alerts_cup"):
-            screens = config.alerts.screens
-            if "vcp" in screens and "cup" not in screens:
-                screens.insert(screens.index("vcp") + 1, "cup")
-                set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
-            set_setting(conn, "migrated.alerts_cup", "1")
-        if not get_setting(conn, "migrated.alerts_flag"):       # and the bull flag screen, after the cup
+        if "cup" in config.alerts.screens:                      # the Cup & handle screen was removed
+            config.alerts.screens = [x for x in config.alerts.screens if x != "cup"]
+            set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
+        if not get_setting(conn, "migrated.alerts_flag"):       # once: the bull flag screen, after VCP
             screens = config.alerts.screens
             if "vcp" in screens and "flag" not in screens:
-                at = screens.index("cup") + 1 if "cup" in screens else screens.index("vcp") + 1
-                screens.insert(at, "flag")
+                screens.insert(screens.index("vcp") + 1, "flag")
                 set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
             set_setting(conn, "migrated.alerts_flag", "1")
     return config

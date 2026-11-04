@@ -68,3 +68,20 @@ def test_daily_update_from_the_scan_opens_then_fills(monkeypatch):
     follow.update(cfg, c[-2]["date"], syms)                                                   # run twice: unchanged
     assert follow.report()["rows"][0]["entry_date"] == c[-2]["date"] and len(follow.report()["rows"]) == 1
     assert follow.set_per_position(50000) == 50000 and follow.per_position() == 50000
+
+
+def test_report_paths_follow_each_held_session(monkeypatch):
+    cfg = _config()
+    c = _series([("trend", 6, 0.06), ("bar", 1, 0.80), ("bar", 1, 1.01)])
+    with get_db() as conn:
+        conn.execute("DELETE FROM screen_follow")
+        upsert_candles(conn, 11, c)
+    sig = follow._signals("X", c, c[0]["date"], lambda d: {"X": 80}, cfg)
+    (p,) = follow._simulate("X", 11, c, sig, cfg, 100000)
+    with get_db() as conn:
+        follow._put(conn, p)
+    rep = follow.report()
+    path = rep["rows"][0]["path"]
+    assert path[0][0] == p["entry_date"] and path[-1] == [p["exit_date"], p["net"]]      # entry day .. exit day
+    assert len(path) == c.index(next(x for x in c if x["date"] == p["exit_date"])) - c.index(next(x for x in c if x["date"] == p["entry_date"])) + 1
+    assert path[1][1] > 0 and rep["nifty"] == []
