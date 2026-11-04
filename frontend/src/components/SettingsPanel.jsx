@@ -75,11 +75,11 @@ const SECTIONS = ['vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest']
 // Generic editor for persisted config sections (bases, ingest; vcp next).
 export default function SettingsPanel() {
   const [section, setSection] = useState(SECTIONS[0]);
-  const [changes, setChanges] = useState([]);
-  useEffect(() => { api.configChanges().then((x) => setChanges(x.changes || [])).catch(() => {}); }, [msg]);
   const [vals, setVals] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState('');
+  const [changes, setChanges] = useState([]);
+  useEffect(() => { api.configChanges().then((x) => setChanges(x.changes || [])).catch(() => {}); }, [msg]);
 
   useEffect(() => {
     setVals(null); setMsg('');
