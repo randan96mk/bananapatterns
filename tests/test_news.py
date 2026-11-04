@@ -25,7 +25,7 @@ def test_scope_covers_every_screen_plus_held_and_watched():
     scope = nw.board_scope()
     assert scope["HELD"] == "held" and scope["WATCH"] == "watching"
     assert scope["AAA"] == "VCP forming"                                  # the most specific screen wins
-    assert scope["DDD"].startswith("Base ")
+    assert scope["DDD"].startswith("VCP ")
     assert "OUT" not in scope
 
 
