@@ -904,7 +904,9 @@ def flow_strategy():
 def follow_report():
     """📈 Follow: every fresh breakout bought blindly: totals, by screen, every position (one book, screen tags)."""
     from backend.engine import follow
-    return follow.report()
+    st = S()
+    u = uni.resolve_universe(st.config.ingest)
+    return follow.report(next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None))
 
 
 @router.post("/follow/rebuild")

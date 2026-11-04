@@ -2022,6 +2022,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **📈 Follow: growth chart, "try it as", drawdown details**: every number on the page follows two selectors,
+  Screens (All / VCP / Bases / Flag / VCP + Bases / Flag + Bases / Bases only / VCP only / Flag only) and Max open at
+  once (All / 3 / 5 / 10: breakouts taken in entry order, one with no free slot is skipped, greyed in the table).
+  A growth chart (the shown positions' P&L day by day, from each position's `path`) against the same peak money held
+  in NIFTY 50; a drawdown panel (worst fall, peak → low → back at the peak, sessions, longest losing streak, worst
+  trade, worst month); "net on the peak money" vs NIFTY over the same dates. `GET /api/follow` adds `path` per
+  position and `nifty`.
 - **Cup & handle screen removed**: `backend/engine/cups.py`, `CupConfig` / Settings → cup, the `cup` scan screen,
   its stage classifier, grid / list columns, decision-chart drawing, alert lines, the C&H tag on Bases and the Follow
   tag are gone; `cup` is dropped from saved Alerts → screens on start. Saved `scan_results` rows for the old screen

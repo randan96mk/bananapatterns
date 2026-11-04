@@ -327,13 +327,36 @@ def _drawdown(ps: list) -> float:
     return round(dd, 2)
 
 
-def report() -> dict:
+def _path(conn, p: dict, as_of: Optional[str]) -> list:
+    """[[date, P&L after the charges a sale would take]] for every session the position was held (the page sums
+    these over any filter for the growth chart and the drawdown)."""
+    if not p.get("entry_date"):
+        return []
+    end = p["exit_date"] or as_of or p["last_date"]
+    out = []
+    for c in get_candles(conn, p["token"], start=p["entry_date"]):
+        if c["date"] > end:
+            break
+        if c["date"] == p["exit_date"]:
+            out.append([c["date"], p["net"]])
+        else:
+            out.append([c["date"], round((c["close"] - p["entry"]) * p["qty"] - p["charges"] - delivery_charges(c["close"] * p["qty"], True), 2)])
+    return out
+
+
+def report(index_token: Optional[int] = None) -> dict:
+    """Everything the page shows; index_token: NIFTY 50's daily closes over the same dates for the growth chart."""
     with get_db() as conn:
         ps = _rows(conn)
         as_of, rebuilt = get_setting(conn, "follow.as_of"), get_setting(conn, "follow.rebuilt")
+        for p in ps:
+            p["path"] = _path(conn, p, as_of)
+        first = min((p["entry_date"] for p in ps if p.get("entry_date")), default=None)
+        nifty = [[c["date"], c["close"]] for c in get_candles(conn, index_token, start=first)
+                 if not as_of or c["date"] <= as_of] if index_token and first else []
     ps.sort(key=lambda p: (p["signal_date"], p["symbol"]), reverse=True)
     by_screen = {k: _agg([p for p in ps if k in p["screens"]]) for k in SCREENS}
     by_screen["vcp+bases"] = _agg([p for p in ps if "vcp" in p["screens"] and "bases" in p["screens"]])
     return {"status": status(), "per_position": per_position(), "as_of": as_of, "rebuilt": rebuilt, "months": MONTHS,
             "total": {**_agg(ps), "peak": _peak(ps), "drawdown": _drawdown(ps)}, "by_screen": by_screen,
-            "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps}
+            "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps, "nifty": nifty}
