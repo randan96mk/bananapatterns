@@ -3,6 +3,7 @@ then managed on every closed 1-minute bar: stop, target, partial booking, traili
 A bar touching both the stop and the target counts as the stop (conservative). Long and short. Never orders."""
 
 import json
+from bisect import bisect_left, bisect_right
 from typing import Optional
 
 from backend.database.models import get_db, now_ist
@@ -171,19 +172,18 @@ def manage(day: str, bars_of, now_t: str) -> list[dict]:
 
 def advance(p: dict, day_bars: list, now_t: str) -> list:
     """One position over its closed 1-minute bars (t < now_t) not seen yet; returns the events. Also the backtest's."""
-    bars = [b for b in day_bars if b["t"] < now_t]
-    last, prev, out = p.get("last_t", ""), None, []
-    for b in bars:
-        if b["t"] <= last:
-            prev = b
-            continue
+    end = bisect_left(day_bars, now_t, key=lambda b: b["t"])            # the bars are in time order
+    last, out = p.get("last_t", ""), []
+    first = bisect_right(day_bars, last, 0, end, key=lambda b: b["t"])
+    prev = day_bars[first - 1] if first else None
+    for b in day_bars[first:end]:
         out += step(p, b, prev, p["plan"])
         p["last_t"] = b["t"]
         prev = b
         if p["status"] == "closed":
             break
-    if bars:
-        p["last_price"] = bars[-1]["c"]
+    if end:
+        p["last_price"] = day_bars[end - 1]["c"]
     return out
 
 

@@ -249,3 +249,50 @@ def test_five_minute_signals_fill_only_after_the_candle_closes(monkeypatch):
         assert (m(p["signal_t"]) + 1 - (9 * 60 + 15)) % 5 == 0                       # the candle's last minute
         assert m(p["entry_t"]) >= m(p["signal_t"]) + 1                               # filled after it, not inside it
     assert flow.candle_last_minute("09:25", 5) == "09:29" and flow.candle_last_minute("10:05", 1) == "10:05"
+
+
+def test_indicators_continued_candle_by_candle_equal_the_whole_list():
+    """The backtest continues RSI and VWAP from the candle before: the same numbers as over every bar."""
+    import random
+    from backend.intraday import indicators as ind
+    random.seed(3)
+    px, rows = 100.0, []
+    for k in range(120):
+        px *= 1 + random.gauss(0, 0.003)
+        rows.append({"t": f"{9 + (15 + k) // 60:02d}:{(15 + k) % 60:02d}", "o": px, "h": px * 1.001, "l": px * 0.999, "c": px,
+                     "v": random.randint(100, 900)})
+    closes = [b["c"] for b in rows]
+    st = sv = None
+    for k in range(0, 120, 7):                                      # fed in uneven slices, as candles close
+        r, st = ind.rsi_state(closes[k:k + 7], state=st)
+        v, sv = ind.vwap_state(rows[k:k + 7], sv)
+        full = ind.rsi(closes[:k + 7])
+        assert (r is None and full is None) or abs(r - full) < 1e-9
+        assert abs(v - ind.vwap(rows[:k + 7])) < 1e-9
+    assert ind.rsi(closes[:14]) is None and ind.rsi(closes[:15]) is not None
+
+
+def test_replay_indicators_match_the_live_context(monkeypatch):
+    """_Replay's cached RSI / VWAP / RVOL at each candle equal flow.Ctx's plain computation on the same bars."""
+    stocks, ds = data(monkeypatch)
+    it = {"symbol": stocks[0]["symbol"], "token": stocks[0]["instrument_token"]}
+    today, hist = session(), {it["token"]: session(fall=True)}
+    view, cache = bt._View({it["token"]: today}), {}
+    for t in ("09:30", "09:45", "10:10", "11:00", "15:29"):
+        view.t = t
+        rp = bt._Replay(ds[-1], 5, view, hist, {}, {}, None, "paper", t, book=[], signalled=set())
+        rp.cache = cache
+        plain = flow.Ctx(ds[-1], 5, view, hist, {}, {}, None, "paper", t)
+        for name in ("rsi_of", "vwap_of", "rvol_of"):
+            a, b = getattr(rp, name)(it), getattr(plain, name)(it)
+            assert (a is None and b is None) or abs(a - b) < 1e-9, (t, name, a, b)
+    assert rp.bars(it) == plain.bars(it)
+
+
+def test_report_entry_time_buckets_in_time_order_and_saved_periods(monkeypatch):
+    data(monkeypatch)
+    mk = lambda t, net: {"day": "2026-07-20", "entry_t": t, "net": net, "net_stress": net, "plain": net, "gross": net, "costs": 0,
+                         "side": "long", "reason": "stop", "r": 1}
+    rep = bt.report([mk("12:10", 1), mk("09:20", 2), mk("10:40", 3), mk("09:50", 4)], ["2026-07-20"], 100000, {})
+    assert list(rep["by_time"]) == ["9:15–9:35", "9:35–10:00", "10:30–12:00", "after 12:00"]
+    assert bt.saved() == {"periods": {}, "latest": None}

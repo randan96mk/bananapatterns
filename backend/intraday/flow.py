@@ -11,6 +11,7 @@ from typing import Optional
 
 from backend.config import IST, AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
+from backend.intraday import indicators as ind
 from backend.intraday import store
 from backend.intraday.candles import resample
 from backend.intraday.modules import REGISTRY, SKIPPABLE
@@ -113,6 +114,7 @@ class Ctx:
         self.notify, self.mode, self.t = notify, mode, t
         self.emitted: list[dict] = []
         self._market = None
+        self._market_extra: dict = {}
         self.cache: dict = {}                       # resampled saved history (the backtest shares it through a day)
 
     def sides(self):
@@ -125,7 +127,6 @@ class Ctx:
     def market(self) -> dict:
         """NIFTY 50 (price, VWAP, 20-EMA, % from the open), India VIX, breadth (% of stocks above their VWAP)."""
         if self._market is None:
-            from backend.intraday import indicators as ind
             m = {}
             nb = self.feed.day(NIFTY_TOKEN) if self.feed else []
             if nb:
@@ -137,18 +138,22 @@ class Ctx:
             vb = self.feed.day(VIX_TOKEN) if self.feed else []
             if vb:
                 m["vix"] = vb[-1]["c"]
-            if self.feed:
-                above = n = 0
-                for tok, bars in self.feed.bars.items():
-                    if tok in (NIFTY_TOKEN, VIX_TOKEN) or not bars:
-                        continue
-                    v = ind.vwap(bars)
-                    if v:
-                        n += 1
-                        above += bars[-1]["c"] > v
-                m["breadth"] = 100 * above / n if n else None
             self._market = m
         return self._market
+
+    def breadth(self):
+        """% of the stocks above their VWAP (every stock's bars: computed only when a box asks)."""
+        if "breadth" not in self._market_extra:
+            above = n = 0
+            for tok, bars in (self.feed.bars.items() if self.feed else ()):
+                if tok in (NIFTY_TOKEN, VIX_TOKEN) or not bars:
+                    continue
+                v = ind.vwap(bars)
+                if v:
+                    n += 1
+                    above += bars[-1]["c"] > v
+            self._market_extra["breadth"] = 100 * above / n if n else None
+        return self._market_extra["breadth"]
 
     def positions(self) -> dict:
         from backend.intraday import positions as pos
@@ -176,6 +181,16 @@ class Ctx:
     def last_price(self, it):
         b = self.today_bars(it)
         return b[-1]["c"] if b else None
+
+    # the indicators the boxes read, at the last closed candle (the backtest continues them candle by candle)
+    def vwap_of(self, it):
+        return ind.vwap(self.today_bars(it))
+
+    def rsi_of(self, it):
+        return ind.rsi([b["c"] for b in self.bars(it)])
+
+    def rvol_of(self, it):
+        return ind.rvol(self.bars(it))
 
     def signalled_today(self) -> set:
         with get_db() as conn:

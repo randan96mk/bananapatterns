@@ -10,26 +10,43 @@ def ema(values: list[float], n: int):
     return e
 
 
+def rsi_state(new_closes: list[float], n: int = 14, state: tuple | None = None) -> tuple:
+    """Wilder's RSI continued over `new_closes`, the closes after those `state` has seen: (value, state). The
+    state (closes seen, average gain, average loss, last close) lets the backtest add one candle at a time and get
+    the number rsi() gives over the whole list."""
+    seen, g, lo, prev = state or (0, 0.0, 0.0, None)
+    for c in new_closes:
+        if prev is not None:
+            d = c - prev
+            up, dn = (d, 0.0) if d > 0 else (0.0, -d)
+            if seen <= n:                               # the first n changes: a simple average
+                g, lo = g + up / n, lo + dn / n
+            else:
+                g, lo = (g * (n - 1) + up) / n, (lo * (n - 1) + dn) / n
+        prev, seen = c, seen + 1
+    val = None if seen <= n else 100.0 if lo == 0 else 100 - 100 / (1 + g / lo)
+    return val, (seen, g, lo, prev)
+
+
 def rsi(closes: list[float], n: int = 14):
-    """Wilder's RSI."""
-    if len(closes) <= n:
-        return None
-    gains = [max(closes[i] - closes[i - 1], 0) for i in range(1, len(closes))]
-    losses = [max(closes[i - 1] - closes[i], 0) for i in range(1, len(closes))]
-    g, lo = sum(gains[:n]) / n, sum(losses[:n]) / n
-    for i in range(n, len(gains)):
-        g, lo = (g * (n - 1) + gains[i]) / n, (lo * (n - 1) + losses[i]) / n
-    return 100.0 if lo == 0 else 100 - 100 / (1 + g / lo)
+    """Wilder's RSI at the last close."""
+    return rsi_state(closes, n)[0]
+
+
+def vwap_state(new_bars: list[dict], state: tuple | None = None) -> tuple:
+    """Session VWAP continued over the bars after those `state` (bars seen, Σ typical price × volume, Σ volume)
+    has seen: (value, state)."""
+    seen, pv, vol = state or (0, 0.0, 0.0)
+    for b in new_bars:
+        v = b["v"]
+        pv += (b["h"] + b["l"] + b["c"]) * v
+        vol += v
+    return (pv / 3 / vol if vol else None), (seen + len(new_bars), pv, vol)
 
 
 def vwap(today: list[dict]):
     """Session VWAP from today's bars (typical price × volume)."""
-    pv = vol = 0.0
-    for b in today:
-        v = b["v"]
-        pv += (b["h"] + b["l"] + b["c"]) * v
-        vol += v
-    return pv / 3 / vol if vol else None
+    return vwap_state(today)[0]
 
 
 def rvol(bars: list[dict], n: int = 20):

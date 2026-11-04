@@ -2046,6 +2046,14 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   backtests now record the signal at the candle's **last minute** (`flow.candle_last_minute`), so the earliest fill is
   the bar after the candle closes (10:10). The limit entry also waits from then. **Backtests from before this fix were
   too optimistic on 5- and 15-minute candles: re-run them.** 1-minute candles were not affected.
+- **Intraday backtest ~5× faster, lighter page**: the Intraday filters box computes each indicator only when a
+  stock gets that far (RVOL drops most stocks first); in the replay RSI and VWAP are continued from the candle
+  before (the same numbers, tested against the full computation) and the warm-up days are resampled once; positions
+  are advanced with a bisect. A synthetic 300-stock day went from 6.0 s to ~1 s. The page fetches only the shown
+  period's results (the saved periods come as a small list), a report keeps 300 trades (the CSV has all), the trades
+  table shows 100 with a "show 300" button. New: a **stressed net** tile, entry-time buckets 9:15–9:35 · 9:35–10:00 ·
+  10:00–10:30 · 10:30–12:00 · after 12:00 in time order. Removed the unused `/api/flow/backtest/status` endpoint
+  (the live connection carries progress). Saved candles, the fetch-once rule and retention are untouched.
 - **Tuned defaults from the 1-year EMA-cross backtest** (each a setting in its box):
   🎯 Setup "No signals from candles starting before" **09:35** (the 9:25 and 9:30 candles lost money);
   🌍 Market context "Longs also need NIFTY above its 20-EMA" **on** (longs made ~₹15 a trade, shorts ~₹120);

@@ -60,10 +60,12 @@ const COLS = [['Day', (t) => day(t.day)], ['Stock', (t) => <b>{t.symbol}</b>], [
 
 function Trades({ r, csv }) {
   const phone = useIsPhone();
-  const rows = r.rows.slice(0, 300);
+  const [max, setMax] = useState(100);
+  const rows = r.rows.slice(0, max);
   return <div className="panel"><b>📋 Trades</b> <span className="muted small">· {r.trades} · newest first{rows.length < r.trades ? ` · showing ${rows.length}, the CSV has all` : ''}
     {!phone && ' · scroll sideways for every column'}</span>
     {r.split_costs && <a className="btn" style={{ float: 'right' }} href={csv(r.setup, r.period)} download>⬇ CSV (all trades)</a>}
+    {r.rows.length > max && <button className="linkbtn small" style={{ marginLeft: 8 }} onClick={() => setMax(r.rows.length)}>show {r.rows.length}</button>}
     {phone ? <div className="pcards">{rows.map((t, i) => <details key={i} className="pcard"><summary className="t"><span><b>{t.symbol}</b> <span className="muted small">{day(t.day)} · {t.side}</span></span>
       <b className={cls(t.net)}>{inr(t.net)}</b></summary>
       <table className="grid small"><tbody>{COLS.slice(3).map(([h, f]) => <tr key={h}><td className="muted">{h}</td><td className="num">{f(t)}</td></tr>)}</tbody></table></details>)}</div>
@@ -94,6 +96,7 @@ function Report({ r, color, csv }) {
   return <>
     <div className="summary" style={{ marginBottom: 12 }}>
       <div className="k"><div className={`v ${cls(r.net)}`}>{inr(r.net)}</div><div className="l">net after costs on {inr(r.capital)} · {pct(r.return)}</div></div>
+      <div className="k"><div className={`v ${cls(r.stress.net)}`}>{inr(r.stress.net)}</div><div className="l">stressed net · +0.10% slippage a fill</div></div>
       <div className="k"><div className="v">{pct(r.cagr)}</div><div className="l">CAGR · stressed {pct(r.stress.cagr)} · NIFTY {pct(r.nifty)}</div></div>
       <div className="k"><div className="v down">{pct(-r.drawdown)}</div><div className="l">worst drawdown</div></div>
       <div className="k"><div className="v">{r.trades} · {r.win_rate ?? '—'}%</div><div className="l">trades · won</div></div>
@@ -150,11 +153,13 @@ export default function FlowBacktest() {
   const [costs, setCosts] = useState(() => { try { return { ...COSTS0, ...JSON.parse(localStorage.getItem('bt.costs') || '{}') }; } catch { return COSTS0; } });
   const qs = new URLSearchParams({ slip: costs.slip, gov: costs.gov, brk_pct: +costs.brk_pct || 0, brk_rs: +costs.brk_rs || 0,
     ...(+costs.capital >= 1000 ? { capital: +costs.capital } : {}) }).toString();
+  const want = useRef(period);                                             // the period the page shows (only its results are fetched)
+  want.current = period;
   const csv = (setup, per) => `/api/flow/backtest/csv?${qs}&${new URLSearchParams({ setup, period: per })}`;
   const was = useRef(null);
-  const load = () => api.flowBacktest(qs).then((x) => {                 // every period's results; filtered below
+  const load = () => api.flowBacktest(`${qs}&period=${want.current}`).then((x) => {   // this period's results only
     if (was.current === 'running' && x.status.state !== 'running' && x.status.period) setPeriod(x.status.period);   // a run ended: show it
-    if (was.current === null && x.results.length) setPeriod(x.results[0].period);   // opened: the latest run's period
+    if (was.current === null && !x.results.length && x.saved?.latest) setPeriod(x.saved.latest);   // opened: the latest run's period
     was.current = x.status.state;
     setErr('');
     setD(x);
@@ -164,7 +169,7 @@ export default function FlowBacktest() {
     try { localStorage.setItem('bt.costs', JSON.stringify(costs)); } catch { /* private mode */ }
     const id = setTimeout(load, 350);                        // as you type: the report is rebuilt for these costs
     return () => clearTimeout(id);
-  }, [qs]);
+  }, [qs, period]);
   const bst = useLive('backtest');                        // 📡 progress from the live connection
   useEffect(() => {
     if (!bst || !d) return;
@@ -175,7 +180,7 @@ export default function FlowBacktest() {
   const names = Object.keys(d.setups);
   const colors = Object.fromEntries(names.map((n, i) => [n, COLORS[i % COLORS.length]]));
   const results = d.results.filter((r) => sel.includes(r.setup) && r.period === period);
-  const other = [...new Set(d.results.filter((r) => sel.includes(r.setup) && r.period !== period).map((r) => r.period))];
+  const other = [...new Set(sel.flatMap((n) => d.saved?.periods?.[n] || []).filter((p) => p !== period))];
   const shown = focus && results.find((r) => r.setup === focus);
   const running = d.status.state === 'running';
   const act = (p) => p.then(load).catch((e) => setErr(e.message));
