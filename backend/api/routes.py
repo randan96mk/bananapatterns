@@ -835,15 +835,8 @@ def flow_backtest(period: Optional[str] = None, slip: bool = True, gov: bool = T
     brokerage % and / or ₹ per order, government charges on / off), and the running job's progress."""
     from backend.intraday import backtest as bt
     costs = _costs(slip, gov, brk_pct, brk_rs, capital)
-    return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.all_setups()},
-            "periods": list(bt.PERIODS), "results": bt.results(period, costs), "default_costs": bt.DEFAULT_COSTS}
-
-
-@router.get("/flow/backtest/status")
-def flow_backtest_status():
-    """The running backtest's progress only (cheap: polled every few seconds while it runs)."""
-    from backend.intraday import backtest as bt
-    return bt.status()
+    return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.all_setups()}, "periods": list(bt.PERIODS),
+            "results": bt.results(period, costs), "saved": bt.saved(), "default_costs": bt.DEFAULT_COSTS}
 
 
 @router.post("/flow/backtest/stop")

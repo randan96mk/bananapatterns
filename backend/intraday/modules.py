@@ -149,33 +149,36 @@ class IntradayFilters(Module):
     def run(self, ctx, items, cfg):
         out, drops = [], Counter()
         for it in items:
-            bars, today = ctx.bars(it), ctx.today_bars(it)
-            closes, px = [b["c"] for b in bars], it["price"]
-            v = ind.vwap(today) if cfg["vwap"] else None
-            r = ind.rsi(closes) if cfg["rsi_on"] else None
-            rv = ind.rvol(bars) if cfg["rvol_on"] else None
+            px, got = it["price"], {}
+
+            def val(name, f):                        # each indicator once, and only when a check needs it
+                if name not in got:
+                    got[name] = f()
+                return got[name]
+            closes = lambda: [b["c"] for b in ctx.bars(it)]
+            rv = val("rvol", lambda: ctx.rvol_of(it)) if cfg["rvol_on"] else None
             if cfg["rvol_on"] and (rv is None or rv < cfg["rvol_min"]):
                 drops["low volume"] += 1
                 continue
-            e9 = ind.ema(closes, 9) if cfg["ema_on"] else None
-            e21 = ind.ema(closes, 21) if cfg["ema_on"] else None
-            st = ind.supertrend_up(bars) if cfg["st_on"] else None
             ok, why = [], ""
             for side in it["sides"]:
                 lg = side == "long"
-                if cfg["vwap"] and (v is None or (px <= v if lg else px >= v)):
+                if cfg["vwap"] and ((v := val("vwap", lambda: ctx.vwap_of(it))) is None or (px <= v if lg else px >= v)):
                     why = why or "wrong side of VWAP"
-                elif cfg["rsi_on"] and (r is None or not ((cfg["rsi_min"] <= r <= cfg["rsi_max"]) if lg
-                                                          else (100 - cfg["rsi_max"] <= r <= 100 - cfg["rsi_min"]))):
+                elif cfg["rsi_on"] and ((r := val("rsi", lambda: ctx.rsi_of(it))) is None
+                                        or not ((cfg["rsi_min"] <= r <= cfg["rsi_max"]) if lg
+                                                else (100 - cfg["rsi_max"] <= r <= 100 - cfg["rsi_min"]))):
                     why = why or "RSI out of range"
-                elif cfg["ema_on"] and not (e9 and e21 and (e9 > e21 if lg else e9 < e21)):
+                elif cfg["ema_on"] and not ((e9 := val("e9", lambda: ind.ema(closes(), 9))) and (e21 := val("e21", lambda: ind.ema(closes(), 21)))
+                                            and (e9 > e21 if lg else e9 < e21)):
                     why = why or "EMA 9/21 against"
-                elif cfg["st_on"] and (st is None or st != lg):
+                elif cfg["st_on"] and ((st := val("st", lambda: ind.supertrend_up(ctx.bars(it)))) is None or st != lg):
                     why = why or "Supertrend against"
                 else:
                     ok.append(side)
             k = _keep(it, ok, drops, why or "filtered")
             if k:
+                v, r = got.get("vwap"), got.get("rsi")
                 out.append({**k, "vwap": round(v, 2) if v else None, "rsi": round(r, 1) if r else None,
                             "rvol": round(rv, 2) if rv else None})
         return out, drops
@@ -220,8 +223,7 @@ class MarketContext(Module):
             if m["nifty"] <= m["nifty_ema"]:
                 sides = [x for x in sides if x != "long"]
                 why = why or "long: NIFTY under its 20-EMA"
-        if cfg["breadth_on"] and m.get("breadth") is not None:
-            b = m["breadth"]
+        if cfg["breadth_on"] and (b := ctx.breadth()) is not None:
             sides = [x for x in sides if (b >= cfg["breadth_min"] if x == "long" else 100 - b >= cfg["breadth_min"])]
             why = why or "breadth against"
         out, drops = [], Counter()

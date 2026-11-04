@@ -17,6 +17,7 @@ from typing import Optional
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
 from backend.intraday import flow, store
+from backend.intraday import indicators as ind
 from backend.intraday import positions as pos
 from backend.intraday.candles import resample
 from backend.intraday.modules import REGISTRY
@@ -268,15 +269,44 @@ class _Replay(flow.Ctx):
             self.cache[key] = (len(today), done)
         return done
 
-    def bars(self, it):
+    def _hist(self, it) -> list:
+        """The warm-up days' n-minute bars (resampled once a day)."""
         k = (it["token"], self.interval)
         if k not in self.cache:
             self.cache[k] = resample(self.history.get(it["token"], []), self.interval)
-        return self.cache[k] + self._today(it)
+        return self.cache[k]
+
+    def bars(self, it):
+        return self._hist(it) + self._today(it)
 
     def last_closed(self, it):
         b = self._today(it)
         return b[-1] if b else None
+
+    # the indicators continued from the candle before (the day's cache keeps each one's state): the same numbers
+    # as over the whole list, without reading every bar again at every candle
+    def _new_bars(self, it, seen: int) -> list:
+        h, t = self._hist(it), self._today(it)
+        return t[seen - len(h):] if seen >= len(h) else h[seen:] + t
+
+    def rsi_of(self, it):
+        key = (it["token"], self.interval, "rsi")
+        st = self.cache.get(key)
+        val, st = ind.rsi_state([b["c"] for b in self._new_bars(it, st[0] if st else 0)], state=st)
+        self.cache[key] = st
+        return val
+
+    def vwap_of(self, it):
+        key = (it["token"], "vwap")
+        st = self.cache.get(key)
+        val, st = ind.vwap_state(self.today_bars(it)[st[0] if st else 0:], st)
+        self.cache[key] = st
+        return val
+
+    def rvol_of(self, it):
+        h, t = self._hist(it), self._today(it)
+        tail = t[-21:] if len(t) >= 21 else h[len(h) - 21 + len(t):] + t
+        return ind.rvol(tail)
 
     def emit(self, it: dict, telegram: bool = True) -> None:
         self.signalled.add(it["symbol"])
@@ -284,12 +314,17 @@ class _Replay(flow.Ctx):
 
 
 MINUTES = [f"{m // 60:02d}:{m % 60:02d}" for m in range(9 * 60 + 16, 15 * 60 + 32)]   # each 1-minute close
+TIME_BUCKETS = [("09:35", "9:15–9:35"), ("10:00", "9:35–10:00"), ("10:30", "10:00–10:30"), ("12:00", "10:30–12:00"),
+                ("99:99", "after 12:00")]
+SHOWN = 300                                  # trades kept in a report for the page (the CSV has every trade)
 
 
-def replay_day(day: str, bars: dict, history: dict, daily: dict, turnover: dict, stocks: list, cfgs: dict) -> list:
-    """One session through the flow at every candle close; positions managed every minute. Returns its positions."""
+def replay_day(day: str, bars: dict, history: dict, daily: dict, turnover: dict, stocks: list, cfgs: dict,
+               cache: Optional[dict] = None) -> list:
+    """One session through the flow at every candle close; positions managed every minute. Returns its positions.
+    cache: the warm-up days' bars already resampled, {(token, interval): bars} (else resampled here)."""
     tr = cfgs["trigger"]
-    view, book, signalled, cache = _View(bars), [], set(), {}
+    view, book, signalled, cache = _View(bars), [], set(), dict(cache or {})
     items = [{"symbol": s["symbol"], "token": s["instrument_token"]} for s in stocks if s["instrument_token"] in bars]
     for t in MINUTES:
         view.t = t
@@ -360,8 +395,15 @@ def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
         base_s = capital + sum(nets_s[:a])
         splits.append({"name": name, "from": days[a] if a < n else None, "to": days[b - 1] if b else None,
                        "net": round(sum(nets[a:b]) / base * 100, 2), "stress": round(sum(nets_s[a:b]) / base_s * 100, 2)})
-    bucket = lambda t: "9:15–10:30" if t < "10:30" else "10:30–12:00" if t < "12:00" else "after 12:00"
-    group = lambda key: {k: _agg([t for t in trades if key(t) == k]) for k in sorted({key(t) for t in trades})}
+    def bucket(t):
+        for end, name in TIME_BUCKETS:
+            if t < end:
+                return name
+        return TIME_BUCKETS[-1][1]
+
+    def group(key, order=None):
+        keys = [k for k in order if any(key(t) == k for t in trades)] if order else sorted({key(t) for t in trades})
+        return {k: _agg([t for t in trades if key(t) == k]) for k in keys}
     nf = [nifty.get(d) for d in days if nifty.get(d)]
     return {"from": days[0], "to": days[-1], "sessions": n, "capital": capital,
             **{k: main[k] for k in ("net", "return", "cagr", "drawdown")}, **_agg(trades),
@@ -372,11 +414,11 @@ def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
             "curve": {"dates": days, "net": main["curve"], "stress": stress["curve"], "plain": plain["curve"],
                       "nifty": [round(nifty[d] / nf[0] * capital, 2) if nifty.get(d) and nf else None for d in days]},
             "splits": splits, "ok_periods": all(s["net"] > 0 and s["stress"] > 0 for s in splits),
-            "by_side": group(lambda t: t["side"]), "by_time": group(lambda t: bucket(t["entry_t"])),
+            "by_side": group(lambda t: t["side"]), "by_time": group(lambda t: bucket(t["entry_t"]), [n for _, n in TIME_BUCKETS]),
             "by_month": group(lambda t: t["day"][:7]), "by_setup": group(lambda t: t.get("setup") or "—"),
             "exits": dict(Counter(t["reason"] for t in trades).most_common()),
             "rows": [{k: v for k, v in t.items() if k != "orders"}
-                     for t in sorted(trades, key=lambda t: (t["day"], t["entry_t"]), reverse=True)[:1500]]}
+                     for t in sorted(trades, key=lambda t: (t["day"], t["entry_t"]), reverse=True)[:SHOWN]]}
 
 
 def _trade(p: dict) -> dict:
@@ -462,20 +504,23 @@ def _replay(config: AppConfig, names: list[str], period: str, got: dict, stocks:
     daily = _Daily(stocks, (date.fromisoformat(days[0]) - timedelta(days=330)).isoformat())
     cfgs = {name: configs_of(name) for name in names}
     trades = {name: [] for name in names}
+    ivs = {c["trigger"]["interval"] for c in cfgs.values()}
+    rs = lambda d: {(tok, iv): resample(b, iv) for tok, b in d.items() for iv in ivs}   # a day resampled once
     prev: list[dict] = [_day_bars(d) for d in warm]
+    prev_rs = [rs(d) for d in prev]
+    keep = config.flow.warmup_days
     covered = 0
     for k, day in enumerate(days):
         _set(pct=40 + round(60 * k / len(days)), message=f"replaying {day} ({k + 1} of {len(days)} sessions)")
         bars = _day_bars(day)
-        if len([s for s in stocks if s["instrument_token"] in bars]) < len(stocks) // 2:
-            prev = (prev + [bars])[-config.flow.warmup_days:] if config.flow.warmup_days else []
-            continue                                    # under half the stocks saved: the day is left out
-        covered += 1
-        history = {tok: [b for d in prev for b in d.get(tok, [])] for tok in tokens}
-        dctx, turn = daily.at(day)
-        for name in names:
-            trades[name] += [_trade(p) for p in replay_day(day, bars, history, dctx, turn, stocks, cfgs[name])]
-        prev = (prev + [bars])[-config.flow.warmup_days:] if config.flow.warmup_days else []
+        if len([s for s in stocks if s["instrument_token"] in bars]) >= len(stocks) // 2:   # else: left out
+            covered += 1
+            history = {tok: [b for d in prev for b in d.get(tok, [])] for tok in tokens}
+            cache = {(tok, iv): [b for d in prev_rs for b in d.get((tok, iv), [])] for tok in tokens for iv in ivs}
+            dctx, turn = daily.at(day)
+            for name in names:
+                trades[name] += [_trade(p) for p in replay_day(day, bars, history, dctx, turn, stocks, cfgs[name], cache)]
+        prev, prev_rs = (prev + [bars])[-keep:] if keep else [], (prev_rs + [rs(bars)])[-keep:] if keep else []
     out = {}
     with get_db() as conn:
         for name in names:
@@ -602,6 +647,16 @@ def csv_rows(setup: str, period: str, costs: Optional[dict] = None) -> tuple[lis
 
 
 KEEP = ("setup", "period", "covered", "missing", "fetched", "settings", "ran_at")
+
+
+def saved() -> dict:
+    """{setup: [period, ...]} of the saved results, and the period of the latest run (cheap: no payloads read)."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT setup, period, created FROM flow_backtests ORDER BY created DESC").fetchall()
+    out: dict[str, list] = defaultdict(list)
+    for s, p, _ in rows:
+        out[s].append(p)
+    return {"periods": dict(out), "latest": rows[0][1] if rows else None}
 
 
 def results(period: Optional[str] = None, costs: Optional[dict] = None) -> list:
