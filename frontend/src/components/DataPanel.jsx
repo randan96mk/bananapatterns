@@ -1,3 +1,4 @@
+import HealthStrip from './HealthStrip';
 import React, { useEffect, useState } from 'react';
 import { stamp } from '../timefmt';
 import * as api from '../services/api';
