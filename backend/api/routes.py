@@ -907,6 +907,27 @@ def flow_strategy():
     from backend.intraday import strategy
     mode = S().config.flow.mode
     return {"text": strategy.text(mode), "mode": mode, "changes": strategy.changes()}
+@router.get("/stock/{symbol}/everywhere")
+def stock_everywhere(symbol: str):
+    """One stock across the app: its stage on each screen (latest scan), open positions and past trades in every
+    book, its Follow rows, the alerts sent about it."""
+    from backend.engine import overview
+    symbol = symbol.upper()
+    cfg = S().config
+    with get_db() as conn:
+        as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        screens = {r[0]: {"stage": r[1], **{k: v for k, v in json.loads(r[2]).items()
+                                            if k in ("pivot", "breakout_date", "dist_to_pivot_pct", "gain_from_pivot_pct", "rs", "score", "reason")}}
+                   for r in conn.execute("SELECT screen, stage, payload FROM scan_results WHERE as_of = ? AND symbol = ?", (as_of, symbol))}
+        follow = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM screen_follow WHERE symbol = ? ORDER BY breakout_date DESC", (symbol,))]
+        alerts = [dict(r) for r in conn.execute("SELECT sent_at, kind, text, ok FROM sent_alerts WHERE symbol = ? ORDER BY sent_at DESC LIMIT 20", (symbol,))]
+    return {"symbol": symbol, "as_of": as_of, "screens": screens,
+            "positions": [p for p in overview.positions(cfg) if p["symbol"] == symbol],
+            "trades": [t for t in overview.trades(cfg, 730) if t["symbol"] == symbol][:50],
+            "follow": [{k: p.get(k) for k in ("breakout_date", "screens", "status", "entry_date", "entry", "qty", "stop", "pivot", "exit_date", "exit", "net", "pct", "reason")} for p in follow],
+            "alerts": alerts}
+
+
 @router.get("/health")
 def health():
     """🩺 Data freshness and failures, one check per source (the strip on Home and the Data page)."""
@@ -1293,11 +1314,26 @@ def alerts_login_link():
 
 
 @router.get("/alerts/log")
-def alerts_log(limit: int = Query(100, le=500)):
+def alerts_log(limit: int = Query(100, le=500), kind: Optional[str] = None, symbol: Optional[str] = None,
+               q: Optional[str] = None, days: int = Query(0, ge=0, le=365), failed: bool = False):
+    """Every alert the app sent (all kinds: screens, intraday, guard, real orders, system), newest first, with
+    filters: kind, symbol, free text, the last N days, failed only."""
+    where, args = [], []
+    if kind:
+        where.append("kind = ?"); args.append(kind)
+    if symbol:
+        where.append("symbol = ?"); args.append(symbol.upper())
+    if q:
+        where.append("text LIKE ?"); args.append(f"%{q}%")
+    if days:
+        where.append("sent_at >= ?"); args.append((datetime.now(IST) - timedelta(days=days)).isoformat(timespec="seconds"))
+    if failed:
+        where.append("ok = 0")
+    sql = "SELECT key, sent_at, kind, symbol, text, ok, error FROM sent_alerts" + (" WHERE " + " AND ".join(where) if where else "")
     with get_db() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT key, sent_at, kind, symbol, text, ok, error FROM sent_alerts ORDER BY sent_at DESC LIMIT ?",
-            (limit,))]
+        rows = [dict(r) for r in conn.execute(sql + " ORDER BY sent_at DESC LIMIT ?", (*args, limit))]
+        kinds = [r[0] for r in conn.execute("SELECT DISTINCT kind FROM sent_alerts ORDER BY kind")]
+    return {"rows": rows, "kinds": kinds}
 
 
 @router.get("/jobs")

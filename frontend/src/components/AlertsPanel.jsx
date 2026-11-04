@@ -61,7 +61,7 @@ export default function AlertsPanel() {
   const load = useCallback(async () => {
     try {
       const [s, c, j, l] = await Promise.all([api.alertsStatus(), api.getConfig('alerts'), api.getJobs(), api.alertsLog()]);
-      setSt(s); setCfg(c); setJobs(j); setLog(l);
+      setSt(s); setCfg(c); setJobs(j); setLog(l.rows || l);
       api.kiteStatus().then(setKite).catch(() => {});
     } catch (e) { setMsg(e.message); }
   }, []);

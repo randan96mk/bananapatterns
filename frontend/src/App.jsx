@@ -8,6 +8,7 @@ import IndexTicker from './components/IndexTicker';
 import DataPanel from './components/DataPanel';
 import SettingsPanel from './components/SettingsPanel';
 import LogsPanel from './components/LogsPanel';
+import SentAlerts from './components/SentAlerts';
 import AlertsPanel from './components/AlertsPanel';
 import BreakoutPage from './components/BreakoutPage';
 import PaperPage from './components/PaperPage';
@@ -39,7 +40,7 @@ export const SECTIONS = [
   ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout']]],
   ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real (Tradetron)'], ['paper', 'Paper · swing']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe']]],
-  ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
+  ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
 const DOTS = ['breakout', 'paper', 'real'];
@@ -150,6 +151,7 @@ export default function App() {
           {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
           {tab === 'settings' && <SettingsPanel />}
           {tab === 'logs' && <LogsPanel />}
+          {tab === 'sent' && <SentAlerts onStock={setStock} />}
         </main>
       </div>
       {cmdk && <CommandPalette sections={SECTIONS} symbols={symbols} onClose={() => setCmdk(false)}
