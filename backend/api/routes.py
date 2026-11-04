@@ -889,6 +889,14 @@ def flow_live():
     return flow.live()
 
 
+@router.get("/flow/strategy")
+def flow_strategy():
+    """📜 The strategy running now in plain words (one text to copy), and the last changes to the boxes."""
+    from backend.intraday import strategy
+    mode = S().config.flow.mode
+    return {"text": strategy.text(mode), "mode": mode, "changes": strategy.changes()}
+
+
 @router.get("/flow/journey")
 def flow_journey():
     """🧭 The latest candle's run explained: each box's in → out and reasons, why (no) trade, the stocks closest to the

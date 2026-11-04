@@ -68,6 +68,7 @@ export const getBreakoutTrades = (variant, scenario, limit, offset) => req('GET'
 export const getAttention = () => req('GET', '/api/attention');
 export const getSchedule = () => req('GET', '/api/schedule');
 export const getFlow = () => req('GET', '/api/flow');
+export const flowStrategy = () => req('GET', '/api/flow/strategy');
 export const flowNode = (id, values) => req('PUT', `/api/flow/node/${id}`, values);
 export const flowMode = (mode) => req('POST', '/api/flow/mode', { mode });
 export const flowStop = () => req('POST', '/api/flow/stop');

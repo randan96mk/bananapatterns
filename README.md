@@ -2046,6 +2046,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   backtests now record the signal at the candle's **last minute** (`flow.candle_last_minute`), so the earliest fill is
   the bar after the candle closes (10:10). The limit entry also waits from then. **Backtests from before this fix were
   too optimistic on 5- and 15-minute candles: re-run them.** 1-minute candles were not affected.
+- **📜 Strategy tab (Intraday Flow)**: the strategy running now in plain words, one text to 📋 Copy or ⬇ save:
+  the boxes in run order, the entry / size / exit rules, every setting box by box, the mode. Written from the canvas
+  each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
+  change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
+  `GET /api/flow/strategy`.
 - **Intraday backtest ~5× faster, lighter page**: the Intraday filters box computes each indicator only when a
   stock gets that far (RVOL drops most stocks first); in the replay RSI and VWAP are continued from the candle
   before (the same numbers, tested against the full computation) and the warm-up days are resampled once; positions

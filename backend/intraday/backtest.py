@@ -137,6 +137,8 @@ def load_setup(name: str) -> None:
     nodes = configs_of(name) if name in PRESETS else setups()[name]["nodes"]
     with get_db() as conn:
         set_setting(conn, "flow.nodes", json.dumps(nodes))
+    from backend.intraday import strategy
+    strategy.record("Every box", [f"setup \"{name}\" loaded on the canvas"])
 
 
 def configs_of(name: str) -> dict:
