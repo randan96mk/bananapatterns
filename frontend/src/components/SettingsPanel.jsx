@@ -75,6 +75,8 @@ const SECTIONS = ['vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest']
 // Generic editor for persisted config sections (bases, ingest; vcp next).
 export default function SettingsPanel() {
   const [section, setSection] = useState(SECTIONS[0]);
+  const [changes, setChanges] = useState([]);
+  useEffect(() => { api.configChanges().then((x) => setChanges(x.changes || [])).catch(() => {}); }, [msg]);
   const [vals, setVals] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState('');
@@ -101,6 +103,9 @@ export default function SettingsPanel() {
           <button key={x} className={`btn ${x === section ? '' : 'ghost'}`} onClick={() => setSection(x)}>{x}</button>))}
         {section !== 'ingest' && <span className="muted">After saving, press Rescan on the Screens tab (charts update when reopened).</span>}
       </div>
+      {changes.length > 0 && <details className="fold"><summary>Recent changes ({changes.length})</summary>
+        <div className="v2list">{changes.slice(0, 30).map((c, i) => <div key={i} className="it"><span className="muted small" style={{ width: 120 }}>{new Date(c.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}</span>
+          <div style={{ flex: 1 }}><b>{c.section}</b> <span className="small">{c.what.join(' · ')}</span></div></div>)}</div></details>}
       <div className="hscroll"><table className="grid small settings">
         <tbody>
           {Object.entries(draft).map(([k, v]) => (

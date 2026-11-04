@@ -197,3 +197,20 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
     logger.info("Scan %s: %d scanned (%d stale), %s, changes %s", as_of, len(current), stale, counts, n_changes)
     return {"as_of": as_of, "counts": counts, "changes": n_changes, "scanned": len(current), "stale": stale,
             "market": health["status"]}
+
+
+def explain(symbol: str, token: int, bases_cfg: BaseConfig, screen_cfg: ScreenConfig, vcp_cfg=None, flag_cfg=None) -> dict:
+    """{screen: {stage, reason}} for one stock on the latest candles, with the latest scan's RS and trend count:
+    the stage it is in, or why it is on no card ("why not")."""
+    vcp_cfg, flag_cfg = vcp_cfg or VcpConfig(), flag_cfg or FlagConfig()
+    with get_db() as conn:
+        candles = get_candles(conn, token)
+        m = conn.execute("SELECT rs, tt_passed FROM stock_metrics WHERE symbol = ? ORDER BY as_of DESC LIMIT 1", (symbol,)).fetchone()
+    if len(candles) < 3:
+        return {}
+    rs, tt = (m[0], m[1]) if m else (None, 0)
+    bases = detect_bases(candles, bases_cfg)
+    out = {"bases": classify(candles, bases, screen_cfg),
+           "vcp": classify_vcp(candles, bases, rs, tt, screen_cfg, vcp_cfg)[0],
+           "flag": classify_flag(candles, detect_flags(candles, flag_cfg, bases_cfg), rs, tt, screen_cfg, flag_cfg)[0]}
+    return {k: {"stage": r.stage, "reason": r.reason, "pivot": r.pivot, "dist_to_pivot_pct": r.dist_to_pivot_pct} for k, r in out.items()}

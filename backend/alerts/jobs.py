@@ -322,6 +322,18 @@ class Scheduler:
             sent["real"] = self.run_real_evening()
         except Exception:
             logger.exception("Real trading evening update failed")
+        try:                                       # 📈 Follow: the blind book's buys and sells at the next open
+            from backend.engine import follow
+            line = follow.evening_line(as_of)
+            if line:
+                notifier.send(f"{as_of}|follow", "follow", line)
+        except Exception:
+            logger.exception("Follow evening line failed")
+        try:                                       # 💾 the nightly database backup
+            from backend.engine import backup
+            backup.run()
+        except Exception:
+            logger.exception("Backup failed")
         self._rerun_breakout()                     # the backtest to the latest day, in the background
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)

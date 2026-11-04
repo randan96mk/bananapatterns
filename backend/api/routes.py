@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from backend.timefmt import ampm_date
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
-from backend.database.models import get_candles, get_db, get_logs, get_runs, now_ist
+from backend.database.models import get_candles, get_db, get_logs, get_runs, get_setting, now_ist, set_setting
 from backend.engine.bases import detect_bases
 from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
@@ -71,6 +71,13 @@ class AppState:
             try:
                 snap = cd.run_sync(self.client, self.config.ingest, self.job, force_full=force_full, symbols=symbols)
                 if snap["status"] in ("ok", "partial"):
+                    try:                      # splits / bonuses in the fresh candles, before anything reads them
+                        from backend.ingest import corp_actions
+                        u = uni.resolve_universe(self.config.ingest)
+                        n = corp_actions.refresh([s["instrument_token"] for s in u["stocks"]])
+                        logger.info("Corporate actions on file: %d", n)
+                    except Exception:
+                        logger.exception("Corporate-action check failed")
                     self.scan()               # refresh the stage board on fresh data
             except Exception:
                 logger.exception("Sync worker crashed")
@@ -247,11 +254,20 @@ def get_config(section: str):
 def put_config(section: str, values: dict):
     if section not in PERSISTED_SECTIONS:
         raise HTTPException(404, f"Unknown section; have {list(PERSISTED_SECTIONS)}")
+    from dataclasses import asdict
+    before = asdict(S().config.section(section))
     try:
         out = S().config.update_section(section, values)
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, str(exc))
     save_config(S().config)
+    after = asdict(S().config.section(section))
+    what = [f"{k}: {before[k]} → {after[k]}" for k in after if before.get(k) != after[k]]
+    if what:                                       # the settings change log (System › Settings)
+        with get_db() as conn:
+            log = json.loads(get_setting(conn, "config.changes") or "[]")
+            log.insert(0, {"at": now_ist(), "section": section, "what": what})
+            set_setting(conn, "config.changes", json.dumps(log[:100]))
     if section == "ingest":
         S().client.hist_bucket.set_rate(S().config.ingest.hist_rate_per_sec)
     return out
@@ -900,6 +916,97 @@ def flow_strategy():
     from backend.intraday import strategy
     mode = S().config.flow.mode
     return {"text": strategy.text(mode), "mode": mode, "changes": strategy.changes()}
+@router.get("/stock/{symbol}/everywhere")
+def stock_everywhere(symbol: str):
+    """One stock across the app: its stage on each screen (latest scan), open positions and past trades in every
+    book, its Follow rows, the alerts sent about it."""
+    from backend.engine import overview
+    symbol = symbol.upper()
+    cfg = S().config
+    with get_db() as conn:
+        as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
+        screens = {r[0]: {"stage": r[1], **{k: v for k, v in json.loads(r[2]).items()
+                                            if k in ("pivot", "breakout_date", "dist_to_pivot_pct", "gain_from_pivot_pct", "rs", "score", "reason")}}
+                   for r in conn.execute("SELECT screen, stage, payload FROM scan_results WHERE as_of = ? AND symbol = ?", (as_of, symbol))}
+        follow = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM screen_follow WHERE symbol = ? ORDER BY breakout_date DESC", (symbol,))]
+        alerts = [dict(r) for r in conn.execute("SELECT sent_at, kind, text, ok FROM sent_alerts WHERE symbol = ? ORDER BY sent_at DESC LIMIT 20", (symbol,))]
+    try:                                            # "why not": the stage or the reason on each screen, live
+        from backend.engine.scan import explain
+        with get_db() as conn:
+            row, _ = _resolve_stock(conn, symbol)
+        for k, v in explain(symbol, row["instrument_token"], cfg.bases, cfg.screen, cfg.vcp, cfg.flag).items():
+            screens[k] = {**screens.get(k, {}), "live_stage": v["stage"], "why": v["reason"], **({"pivot": v["pivot"]} if v.get("pivot") and "pivot" not in screens.get(k, {}) else {})}
+    except HTTPException:
+        pass
+    return {"symbol": symbol, "as_of": as_of, "screens": screens,
+            "positions": [p for p in overview.positions(cfg) if p["symbol"] == symbol],
+            "trades": [t for t in overview.trades(cfg, 730) if t["symbol"] == symbol][:50],
+            "follow": [{k: p.get(k) for k in ("breakout_date", "screens", "status", "entry_date", "entry", "qty", "stop", "pivot", "exit_date", "exit", "net", "pct", "reason")} for p in follow],
+            "alerts": alerts}
+
+
+@router.get("/export/trades.csv")
+def export_trades(days: int = Query(3650, ge=1)):
+    """⬇ Every closed trade of every book (Real, Paper A / E+, Intraday) as one CSV."""
+    import csv
+    import io
+    from backend.engine import overview
+    rows = overview.trades(S().config, days)
+    cols = ["book", "account", "strategy", "symbol", "side", "qty", "opened", "closed", "entry", "exit", "gross", "costs", "net", "pct", "reason"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    w.writerows([[t.get(c) for c in cols] for t in rows])
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="trades_all_books.csv"'})
+
+
+@router.get("/config-changes")
+def config_changes():
+    """The last 100 settings changes: when, which section, what went from what to what."""
+    with get_db() as conn:
+        return {"changes": json.loads(get_setting(conn, "config.changes") or "[]")}
+
+
+@router.get("/backups")
+def backups_list():
+    from backend.engine import backup
+    return {"backups": backup.listing(), "keep": backup.KEEP, "folder": str(backup.folder())}
+
+
+@router.post("/backups/run")
+def backups_run():
+    from backend.engine import backup
+    return backup.run()
+
+
+@router.get("/real/reconcile")
+def real_reconcile(days: int = Query(30, ge=1, le=365)):
+    """💰 vs 📝: every paper fill of the real variant's account in the last `days` against the real order sent that
+    day (sent / failed / missing), with the price difference and the retries."""
+    from backend.engine import real
+    return real.reconcile(S().config, days)
+
+
+@router.get("/health")
+def health():
+    """🩺 Data freshness and failures, one check per source (the strip on Home and the Data page)."""
+    from backend.database.models import get_setting
+    from backend.engine import health as hl
+    st = S()
+    with get_db() as conn:
+        follow_as_of = get_setting(conn, "follow.as_of")
+    cs = hl.checks(st.config, st.token_valid(), follow_as_of)
+    return {"at": now_ist(), "checks": cs, "red": sum(not c["ok"] for c in cs), "amber": sum(c["warn"] and c["ok"] for c in cs)}
+
+
+@router.get("/corp-actions")
+def corp_actions_list():
+    """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""
+    from backend.ingest import corp_actions
+    syms = {s["instrument_token"]: s["symbol"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
+    return {"actions": corp_actions.listing(syms)}
+
+
 @router.get("/follow")
 def follow_report():
     """📈 Follow: every fresh breakout bought blindly: totals, by screen, every position (one book, screen tags)."""
@@ -1266,11 +1373,26 @@ def alerts_login_link():
 
 
 @router.get("/alerts/log")
-def alerts_log(limit: int = Query(100, le=500)):
+def alerts_log(limit: int = Query(100, le=500), kind: Optional[str] = None, symbol: Optional[str] = None,
+               q: Optional[str] = None, days: int = Query(0, ge=0, le=365), failed: bool = False):
+    """Every alert the app sent (all kinds: screens, intraday, guard, real orders, system), newest first, with
+    filters: kind, symbol, free text, the last N days, failed only."""
+    where, args = [], []
+    if kind:
+        where.append("kind = ?"); args.append(kind)
+    if symbol:
+        where.append("symbol = ?"); args.append(symbol.upper())
+    if q:
+        where.append("text LIKE ?"); args.append(f"%{q}%")
+    if days:
+        where.append("sent_at >= ?"); args.append((datetime.now(IST) - timedelta(days=days)).isoformat(timespec="seconds"))
+    if failed:
+        where.append("ok = 0")
+    sql = "SELECT key, sent_at, kind, symbol, text, ok, error FROM sent_alerts" + (" WHERE " + " AND ".join(where) if where else "")
     with get_db() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT key, sent_at, kind, symbol, text, ok, error FROM sent_alerts ORDER BY sent_at DESC LIMIT ?",
-            (limit,))]
+        rows = [dict(r) for r in conn.execute(sql + " ORDER BY sent_at DESC LIMIT ?", (*args, limit))]
+        kinds = [r[0] for r in conn.execute("SELECT DISTINCT kind FROM sent_alerts ORDER BY kind")]
+    return {"rows": rows, "kinds": kinds}
 
 
 @router.get("/jobs")

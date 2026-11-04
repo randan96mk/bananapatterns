@@ -2022,6 +2022,25 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **Site-wide batch (one PR)**:
+  **Splits / bonuses adjusted at the source** — `backend/ingest/corp_actions.py` finds a close that jumps 40 %+ on
+  in-line turnover after every candle sync (`corp_actions` table: date, ratio); `get_candles(adjusted=True)`, the
+  default, scales every earlier bar, so screens, backtests, Paper and Follow see a continuous series
+  (`GET /api/corp-actions`). **🩺 Health strip** on Home and System › Data (`GET /api/health`: Kite, daily candles,
+  scan, Nifty 500 list, filings, 1-minute candles, splits on file, errors in 24 h, disk, Follow book).
+  **Stock chart › Everywhere** — the stage on each screen with a live "why not" (`scan.explain`), open positions and
+  past trades in every book, Follow rows, alerts sent; click a row to draw its entry / stop
+  (`GET /api/stock/{symbol}/everywhere`). **📨 Sent alerts** page (System) over every alert the app sent, with search,
+  kind, days and failed-only filters (`GET /api/alerts/log` takes `kind, symbol, q, days, failed`).
+  **Follow**: NIFTY-above-50-day entry filter, a "where the result came from" tile row by exit, a Compare grid of every
+  stop × time stop (click a cell to set it), an evening Telegram line (buys / sells at the next open), a card on Home.
+  **Real › Order log › Paper vs Real** (`GET /api/real/reconcile`): each paper fill against the order sent that day
+  (sent / failed / missing, price difference, retries). **Settings › Recent changes** (`GET /api/config-changes`).
+  **💾 Backups** — a copy of the database after the evening job and from System › Data, the last 7 kept
+  (`backend/engine/backup.py`, `GET /api/backups`, `POST /api/backups/run`). **Intraday backtest › By quarter**
+  (walk-forward). **Portfolio › By month** heatmap of every book and **⬇ CSV of every trade of every book**
+  (`GET /api/export/trades.csv`). **Keyboard**: `g` then h / s / p / r / y (sections), f / b / o / c / a / d (pages),
+  `?` for the list.
 - **📈 Follow: stop from 1 %, under entry or under pivot, split guard, exit details**: the stop runs 1–8 % and is
   measured **under the entry price** (default) or under the pivot (a gap-up entry can sit 5–9 % over the pivot, so a
   pivot stop risks far more than it says). A position whose close jumps 40 %+ in a day (`follow.CORP_JUMP`: a split or

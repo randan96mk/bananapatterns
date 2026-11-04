@@ -141,3 +141,13 @@ def test_server_host_from_env(monkeypatch):
     assert ServerConfig().host == "127.0.0.1"                          # the Mac: this computer only
     monkeypatch.setenv("BP_HOST", "0.0.0.0")
     assert ServerConfig().host == "0.0.0.0"                            # Docker: reachable through the port map
+
+
+def test_health_everywhere_and_alert_log(api):
+    tc, _ = api
+    h = tc.get("/api/health").json()
+    assert h["checks"] and {"red", "amber"} <= set(h)
+    e = tc.get("/api/stock/tcs/everywhere").json()
+    assert e["symbol"] == "TCS" and {"screens", "positions", "trades", "follow", "alerts"} <= set(e)
+    log = tc.get("/api/alerts/log?days=7&q=x&failed=true").json()
+    assert log == {"rows": [], "kinds": []}

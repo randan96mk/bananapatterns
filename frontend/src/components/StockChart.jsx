@@ -1,3 +1,4 @@
+import StockEverywhere from './StockEverywhere';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, LineSeries, LineStyle,
@@ -40,7 +41,9 @@ function palette() {
 const PREVIEW_KINDS = [['auto', 'Auto (current stage)'], ['breakout', 'Breakout'], ['near_pivot', 'Near pivot'],
   ['forming', 'Forming'], ['below_pivot', 'Below pivot'], ['played_out', 'Played out'], ['climbing', 'Climbing']];
 
-export default function StockChart({ symbol, onClose, trade }) {
+export default function StockChart({ symbol, onClose, trade: tradeProp }) {
+  const [overlay, setOverlay] = useState(null);                 // a position clicked in Everywhere: its entry / stop
+  const trade = overlay || tradeProp;
   const box = useRef(null);
   const theme = useTheme();              // the chart is rebuilt in the new colours when it changes
   const phone = useIsPhone();            // phone: full-screen sheet, panels folded
@@ -184,6 +187,8 @@ export default function StockChart({ symbol, onClose, trade }) {
                onError={() => setErr('No alert chart for this stock/kind (no base to annotate, or matplotlib missing)')} />
         </div>)}
       <div ref={box} className="chart" />
+      <details className="fold" open={!phone}><summary>Everywhere in the app{overlay ? ' · entry / stop drawn' : ''}</summary>
+        <StockEverywhere symbol={symbol} onOverlay={setOverlay} /></details>
       <details className="fold" open={!phone}><summary>Filings &amp; deals (30 days)</summary>
         <FilingsList symbol={symbol} /></details>
       <details className="fold" open={!phone}><summary>Trend Template &amp; RS</summary><TrendPanel m={metrics} /></details>
