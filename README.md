@@ -2022,6 +2022,12 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **📈 Follow: stop from 1 %, under entry or under pivot, split guard, exit details**: the stop runs 1–8 % and is
+  measured **under the entry price** (default) or under the pivot (a gap-up entry can sit 5–9 % over the pivot, so a
+  pivot stop risks far more than it says). A position whose close jumps 40 %+ in a day (`follow.CORP_JUMP`: a split or
+  bonus; the daily candles are not adjusted) is marked `corp_action` and left out of every number, named above the
+  tiles. When a tighter rule fires on the same day as the stored exit, the row says the tighter rule. Each exited
+  row shows the day and close that fired it and the gap to the next open.
 - **📈 Follow: a fixed capital**: "try it as" Capital (All / 5 L / 10 L / 20 L / a custom ₹ box): a breakout is
   taken only if the money already in open positions plus its value (qty × entry) fits in the capital; a sale gives
   its money back; closed profit / loss does not change it. Works together with Max open at once. Skipped rows say

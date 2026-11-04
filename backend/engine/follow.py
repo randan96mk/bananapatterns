@@ -337,6 +337,18 @@ def _path(conn, p: dict, as_of: Optional[str]) -> list:
     return [[c["date"], c["open"], c["close"]] for c in get_candles(conn, p["token"], start=p["entry_date"]) if c["date"] <= end]
 
 
+CORP_JUMP = 0.4                                   # a close 40% away from the day before: a split / bonus, not a move
+
+
+def _corp_action(path: list) -> Optional[str]:
+    """The first day the close jumps CORP_JUMP from the day before (the daily candles are not adjusted for splits
+    and bonuses, so such a position is wrong and the page leaves it out), else None."""
+    for a, b in zip(path, path[1:]):
+        if a[2] and not (1 - CORP_JUMP) < b[2] / a[2] < (1 + CORP_JUMP):
+            return b[0]
+    return None
+
+
 def report(index_token: Optional[int] = None) -> dict:
     """Everything the page shows; index_token: NIFTY 50's daily closes over the same dates for the growth chart."""
     with get_db() as conn:
@@ -345,12 +357,14 @@ def report(index_token: Optional[int] = None) -> dict:
         for p in ps:
             p["path"] = _path(conn, p, as_of)
             p["charges_in"] = round(delivery_charges(p["value"], False), 2) if p.get("qty") else 0.0
+            p["corp_action"] = _corp_action(p["path"])
         first = min((p["entry_date"] for p in ps if p.get("entry_date")), default=None)
         nifty = [[c["date"], c["close"]] for c in get_candles(conn, index_token, start=first)
                  if not as_of or c["date"] <= as_of] if index_token and first else []
     ps.sort(key=lambda p: (p["signal_date"], p["symbol"]), reverse=True)
-    by_screen = {k: _agg([p for p in ps if k in p["screens"]]) for k in SCREENS}
-    by_screen["vcp+bases"] = _agg([p for p in ps if "vcp" in p["screens"] and "bases" in p["screens"]])
+    ok = [p for p in ps if not p.get("corp_action")]
+    by_screen = {k: _agg([p for p in ok if k in p["screens"]]) for k in SCREENS}
+    by_screen["vcp+bases"] = _agg([p for p in ok if "vcp" in p["screens"] and "bases" in p["screens"]])
     return {"status": status(), "per_position": per_position(), "as_of": as_of, "rebuilt": rebuilt, "months": MONTHS,
-            "total": {**_agg(ps), "peak": _peak(ps), "drawdown": _drawdown(ps)}, "by_screen": by_screen,
+            "total": {**_agg(ok), "peak": _peak(ok), "drawdown": _drawdown(ok)}, "by_screen": by_screen,
             "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps, "nifty": nifty}
