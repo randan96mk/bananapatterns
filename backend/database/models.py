@@ -316,6 +316,8 @@ CREATE TABLE IF NOT EXISTS real_equity (day TEXT PRIMARY KEY, equity REAL NOT NU
 
 -- ⚡ Intraday Flow (backend/intraday): 1-minute bars, one compressed row per stock per day (shrunk to 5-minute bars
 -- after the retention); every run (each node's in / out / drop reasons) and every signal.
+CREATE TABLE IF NOT EXISTS corp_actions (
+    instrument_token INTEGER NOT NULL, date TEXT NOT NULL, ratio REAL NOT NULL, PRIMARY KEY (instrument_token, date));
 CREATE TABLE IF NOT EXISTS candles_intraday (
     instrument_token INTEGER NOT NULL, day TEXT NOT NULL, interval INTEGER NOT NULL DEFAULT 1, bars BLOB NOT NULL,
     n INTEGER NOT NULL, source TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (instrument_token, day));
@@ -527,8 +529,10 @@ def delete_candles(conn, token: int) -> None:
     conn.execute("DELETE FROM candles_daily WHERE instrument_token = ?", (token,))
 
 
-def get_candles(conn, token: int, start: Optional[str] = None, limit: Optional[int] = None) -> list[dict]:
-    """Candles in ascending date order; `limit` keeps the most recent N."""
+def get_candles(conn, token: int, start: Optional[str] = None, limit: Optional[int] = None,
+                adjusted: bool = True) -> list[dict]:
+    """Candles in ascending date order; `limit` keeps the most recent N. adjusted: prices before each split / bonus
+    in `corp_actions` are scaled by its ratio (volume the other way), so a 1:2 split is not a 50% crash."""
     q, params = "SELECT date, open, high, low, close, volume FROM candles_daily WHERE instrument_token = ?", [token]
     if start:
         q += " AND date >= ?"
@@ -538,7 +542,21 @@ def get_candles(conn, token: int, start: Optional[str] = None, limit: Optional[i
         params.append(limit)
     else:
         q += " ORDER BY date"
-    return [dict(r) for r in conn.execute(q, params)]
+    rows = [dict(r) for r in conn.execute(q, params)]
+    if adjusted and rows:
+        acts = conn.execute("SELECT date, ratio FROM corp_actions WHERE instrument_token = ? AND date > ? ORDER BY date DESC",
+                            (token, rows[0]["date"])).fetchall()
+        if acts:
+            f, k = 1.0, 0
+            for r in reversed(rows):
+                while k < len(acts) and acts[k][0] > r["date"]:
+                    f *= acts[k][1]
+                    k += 1
+                if f != 1.0:
+                    for key in ("open", "high", "low", "close"):
+                        r[key] = round(r[key] * f, 2)
+                    r["volume"] = int(round(r["volume"] / f))
+    return rows
 
 
 def candle_stats(conn, token: int) -> dict:

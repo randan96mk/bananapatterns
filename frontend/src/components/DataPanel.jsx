@@ -67,7 +67,8 @@ export default function DataPanel({ hasToken, onDataChanged }) {
   const job = st?.job;
   const pct = job && job.total ? Math.round((100 * job.done) / job.total) : 0;
 
-  return (
+  return (<>
+    <HealthStrip full />
     <div className="panel">
       <h3>Data pipeline</h3>
       <div className="row">
@@ -134,5 +135,5 @@ export default function DataPanel({ hasToken, onDataChanged }) {
         </tbody>
       </table></div>
     </div>
-  );
+  </>);
 }

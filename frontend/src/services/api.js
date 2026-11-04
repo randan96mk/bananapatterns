@@ -70,6 +70,8 @@ export const getSchedule = () => req('GET', '/api/schedule');
 export const getFlow = () => req('GET', '/api/flow');
 export const flowStrategy = () => req('GET', '/api/flow/strategy');
 export const follow = () => req('GET', '/api/follow');
+export const health = () => req('GET', '/api/health');
+export const corpActions = () => req('GET', '/api/corp-actions');
 export const followRebuild = () => req('POST', '/api/follow/rebuild');
 export const followSettings = (per_position) => req('PUT', '/api/follow/settings', { per_position });
 export const flowNode = (id, values) => req('PUT', `/api/flow/node/${id}`, values);

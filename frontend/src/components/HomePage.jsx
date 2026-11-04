@@ -1,3 +1,4 @@
+import HealthStrip from './HealthStrip';
 import React from 'react';
 import { useLive } from '../services/live';
 import { useSchedule, left } from './StatusBar';
@@ -24,6 +25,7 @@ export default function HomePage({ onGo, onStock }) {
   const jobs = (sch?.jobs || []).filter((j) => !j.skip).slice(0, 5);
   const it = A.intraday || {};
   return <>
+    <HealthStrip onGo={onGo} />
     <div className="kpis">
       <Kpi label="Today · all accounts" value={signed(o.today)} cls={cls(o.today)}
         sub="intraday today · swing accounts: last session's change" />

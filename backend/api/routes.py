@@ -71,6 +71,13 @@ class AppState:
             try:
                 snap = cd.run_sync(self.client, self.config.ingest, self.job, force_full=force_full, symbols=symbols)
                 if snap["status"] in ("ok", "partial"):
+                    try:                      # splits / bonuses in the fresh candles, before anything reads them
+                        from backend.ingest import corp_actions
+                        u = uni.resolve_universe(self.config.ingest)
+                        n = corp_actions.refresh([s["instrument_token"] for s in u["stocks"]])
+                        logger.info("Corporate actions on file: %d", n)
+                    except Exception:
+                        logger.exception("Corporate-action check failed")
                     self.scan()               # refresh the stage board on fresh data
             except Exception:
                 logger.exception("Sync worker crashed")
@@ -900,6 +907,26 @@ def flow_strategy():
     from backend.intraday import strategy
     mode = S().config.flow.mode
     return {"text": strategy.text(mode), "mode": mode, "changes": strategy.changes()}
+@router.get("/health")
+def health():
+    """🩺 Data freshness and failures, one check per source (the strip on Home and the Data page)."""
+    from backend.database.models import get_setting
+    from backend.engine import health as hl
+    st = S()
+    with get_db() as conn:
+        follow_as_of = get_setting(conn, "follow.as_of")
+    cs = hl.checks(st.config, st.token_valid(), follow_as_of)
+    return {"at": now_ist(), "checks": cs, "red": sum(not c["ok"] for c in cs), "amber": sum(c["warn"] and c["ok"] for c in cs)}
+
+
+@router.get("/corp-actions")
+def corp_actions_list():
+    """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""
+    from backend.ingest import corp_actions
+    syms = {s["instrument_token"]: s["symbol"] for s in uni.resolve_universe(S().config.ingest)["stocks"]}
+    return {"actions": corp_actions.listing(syms)}
+
+
 @router.get("/follow")
 def follow_report():
     """📈 Follow: every fresh breakout bought blindly: totals, by screen, every position (one book, screen tags)."""
