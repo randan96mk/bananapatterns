@@ -82,6 +82,7 @@ def test_report_paths_follow_each_held_session(monkeypatch):
         follow._put(conn, p)
     rep = follow.report()
     path = rep["rows"][0]["path"]
-    assert path[0][0] == p["entry_date"] and path[-1] == [p["exit_date"], p["net"]]      # entry day .. exit day
+    assert path[0][0] == p["entry_date"] and path[-1][0] == p["exit_date"] and round(path[-1][1], 2) == p["exit"]   # entry .. exit day
+    assert round(path[0][1], 2) == p["entry"] and rep["rows"][0]["charges_in"] > 0
     assert len(path) == c.index(next(x for x in c if x["date"] == p["exit_date"])) - c.index(next(x for x in c if x["date"] == p["entry_date"])) + 1
-    assert path[1][1] > 0 and rep["nifty"] == []
+    assert path[1][2] > p["entry"] and rep["nifty"] == []

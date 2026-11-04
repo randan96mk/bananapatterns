@@ -328,20 +328,13 @@ def _drawdown(ps: list) -> float:
 
 
 def _path(conn, p: dict, as_of: Optional[str]) -> list:
-    """[[date, P&L after the charges a sale would take]] for every session the position was held (the page sums
-    these over any filter for the growth chart and the drawdown)."""
+    """[[date, open, close]] for every session from the entry day to the exit day (or today): the page re-runs the
+    exits on it (a tighter stop, a time stop: both can only sell earlier), sums P&L day by day for the growth chart
+    and the drawdown. charges_in: the buy's delivery charges, so the page can cost any exit."""
     if not p.get("entry_date"):
         return []
     end = p["exit_date"] or as_of or p["last_date"]
-    out = []
-    for c in get_candles(conn, p["token"], start=p["entry_date"]):
-        if c["date"] > end:
-            break
-        if c["date"] == p["exit_date"]:
-            out.append([c["date"], p["net"]])
-        else:
-            out.append([c["date"], round((c["close"] - p["entry"]) * p["qty"] - p["charges"] - delivery_charges(c["close"] * p["qty"], True), 2)])
-    return out
+    return [[c["date"], c["open"], c["close"]] for c in get_candles(conn, p["token"], start=p["entry_date"]) if c["date"] <= end]
 
 
 def report(index_token: Optional[int] = None) -> dict:
@@ -351,6 +344,7 @@ def report(index_token: Optional[int] = None) -> dict:
         as_of, rebuilt = get_setting(conn, "follow.as_of"), get_setting(conn, "follow.rebuilt")
         for p in ps:
             p["path"] = _path(conn, p, as_of)
+            p["charges_in"] = round(delivery_charges(p["value"], False), 2) if p.get("qty") else 0.0
         first = min((p["entry_date"] for p in ps if p.get("entry_date")), default=None)
         nifty = [[c["date"], c["close"]] for c in get_candles(conn, index_token, start=first)
                  if not as_of or c["date"] <= as_of] if index_token and first else []
