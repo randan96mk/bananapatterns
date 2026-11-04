@@ -359,8 +359,13 @@ def report(index_token: Optional[int] = None) -> dict:
             p["charges_in"] = round(delivery_charges(p["value"], False), 2) if p.get("qty") else 0.0
             p["corp_action"] = _corp_action(p["path"])
         first = min((p["entry_date"] for p in ps if p.get("entry_date")), default=None)
-        nifty = [[c["date"], c["close"]] for c in get_candles(conn, index_token, start=first)
-                 if not as_of or c["date"] <= as_of] if index_token and first else []
+        nifty = []
+        if index_token and first:
+            nc = [c for c in get_candles(conn, index_token) if not as_of or c["date"] <= as_of]
+            closes = [c["close"] for c in nc]
+            for i, c in enumerate(nc):                 # [date, close, 50-day line] from the first entry on
+                if c["date"] >= first:
+                    nifty.append([c["date"], c["close"], round(sum(closes[i - 49:i + 1]) / 50, 2) if i >= 49 else None])
     ps.sort(key=lambda p: (p["signal_date"], p["symbol"]), reverse=True)
     ok = [p for p in ps if not p.get("corp_action")]
     by_screen = {k: _agg([p for p in ok if k in p["screens"]]) for k in SCREENS}
@@ -368,3 +373,29 @@ def report(index_token: Optional[int] = None) -> dict:
     return {"status": status(), "per_position": per_position(), "as_of": as_of, "rebuilt": rebuilt, "months": MONTHS,
             "total": {**_agg(ok), "peak": _peak(ok), "drawdown": _drawdown(ok)}, "by_screen": by_screen,
             "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps, "nifty": nifty}
+
+
+def evening_line(as_of: str) -> Optional[str]:
+    """One Telegram line after the evening scan: the breakouts the book buys at the next open and the exits."""
+    with get_db() as conn:
+        ps = _rows(conn, live_only=True)
+    buys = sorted(p["symbol"] for p in ps if p["status"] == "pending" and p["signal_date"] == as_of)
+    sells = sorted(f"{p['symbol']} ({p['reason']})" for p in ps if p["status"] == "closing" and p["last_date"] == as_of)
+    if not buys and not sells:
+        return None
+    bits = []
+    if buys:
+        bits.append(f"buys at the next open: {', '.join(buys)}")
+    if sells:
+        bits.append(f"sells at the next open: {', '.join(sells)}")
+    return "📈 Follow (every breakout, blindly) · " + " · ".join(bits)
+
+
+def summary() -> dict:
+    """The blind book in one line for Home: net, open P&L, open count, as of (no paths: cheap)."""
+    with get_db() as conn:
+        ps = [p for p in _rows(conn) if p.get("qty")]
+        as_of = get_setting(conn, "follow.as_of")
+    a = _agg(ps)
+    return {"name": "Screens · Follow", "net": a["net"], "open_pnl": a["open_net"], "open": a["open"], "breakouts": a["breakouts"],
+            "win_rate": a["win_rate"], "as_of": as_of, "per_position": per_position()}

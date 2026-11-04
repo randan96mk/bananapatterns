@@ -114,6 +114,7 @@ function Report({ r, color, csv }) {
         {r.by_setup && <><b>By setup</b> <span className="muted small">· which entry setup(s) fired</span><Agg rows={r.by_setup} /></>}</div>
       <div className="panel"><b>By month</b> <span className="muted small">· net</span><div>{Object.entries(r.by_month).map(([m, a]) => (
         <span key={m} className={`chip ${cls(a.net)}`}>{m} {inr(a.net)}</span>))}</div>
+        {r.by_quarter && <><b>By quarter</b> <span className="muted small">· walk-forward: does the edge hold quarter after quarter?</span><Agg rows={r.by_quarter} /></>}
         <p className="small"><b>Exits</b> {Object.entries(r.exits).map(([k, n]) => `${EXIT[k] || k} ${n}`).join(' · ')}</p>
         <p className="muted small">{r.covered} of {r.sessions} sessions had saved 1-minute data{r.missing ? ` · ${r.missing} stock-days missing (log in to Kite and re-run to fetch them)` : ''} · ran {r.ran_at?.slice(0, 16).replace("T", " ")}</p></div>
     </div>

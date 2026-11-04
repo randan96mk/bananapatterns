@@ -171,6 +171,11 @@ def overview(config: AppConfig) -> dict:
                          "realised": st.get("realised"), "open_pnl": st.get("unrealised"), "trades": st.get("trades"),
                          "open": st.get("open"), "at_risk": st.get("at_risk"), "loss_limit": st.get("loss_limit"),
                          "capital": st.get("capital"), "mode": config.flow.mode}
+    try:                                                    # 📈 Follow: every breakout bought blindly (read-only)
+        from backend.engine import follow
+        accts["follow"] = follow.summary()
+    except Exception:
+        pass
     act = [{"at": o["at"], "account": o["account"], "text": f"{o['action']} {o['symbol']} {o['qty'] or ''} · {o['status']}"}
            for o in orders(config, 12)]
     with get_db() as conn:

@@ -10,6 +10,8 @@ export default function DataPanel({ hasToken, onDataChanged }) {
   const [evs, setEvs] = useState(null);
   const [fils, setFils] = useState(null);
   const [deals, setDeals] = useState(null);
+  const [bk, setBk] = useState(null);
+  useEffect(() => { api.backups().then(setBk).catch(() => {}); }, []);
   const loadEvents = () => {
     api.eventsStatus().then(setEvs).catch(() => setEvs(null));
     api.filingsStatus().then(setFils).catch(() => setFils(null));
@@ -69,6 +71,10 @@ export default function DataPanel({ hasToken, onDataChanged }) {
 
   return (<>
     <HealthStrip full />
+    <div className="panel"><h3>💾 Backups <span className="muted small">· a copy of the database every evening after the job, the last {bk?.keep || 7} kept · {bk?.folder}</span></h3>
+      <button className="btn" onClick={() => api.backupsRun().then(() => api.backups().then(setBk)).catch((e) => setMsg(e.message))}>Back up now</button>
+      {bk && (bk.backups.length ? <div className="v2list" style={{ marginTop: 6 }}>{bk.backups.map((b) => <div key={b.name} className="it"><span className="mono small">{b.name}</span><span className="muted small">{(b.bytes / 1e6).toFixed(1)} MB</span></div>)}</div> : <p className="muted small">None yet.</p>)}
+      <p className="muted small">To restore: stop the app, copy a backup over data/bananapatterns.db, start it again.</p></div>
     <div className="panel">
       <h3>Data pipeline</h3>
       <div className="row">

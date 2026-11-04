@@ -500,3 +500,37 @@ def due(now: datetime, config: AppConfig, done: set, trading: bool, last_stop: O
     if hm(rc.send_time) <= t < MARKET_CLOSE and (last_stop is None or (now - last_stop).total_seconds() >= rc.stop_check_min * 60):
         jobs.append("real_stops")
     return jobs
+
+
+def reconcile(config: AppConfig, days: int = 30) -> dict:
+    """Paper (the same variant) vs Real, day by day: each paper fill matched to the real order of that day and
+    action: sent (with the price difference and retries), failed, skipped or missing; real orders with no paper
+    fill are listed too."""
+    from datetime import date, timedelta
+    since = (date.today() - timedelta(days=days)).isoformat()
+    acct = config.real.variant
+    with get_db() as conn:
+        fills = [(r[0], json.loads(r[1])) for r in conn.execute(
+            "SELECT day, payload FROM paper_fills WHERE account = ? AND day >= ? ORDER BY id", (acct, since))]
+        orders = {(r["day"], r["symbol"], r["action"]): dict(r) for r in conn.execute(
+            "SELECT day, created_at, symbol, action, qty, reason, status, reply, price FROM real_orders WHERE day >= ?", (since,))}
+    rows, seen = [], set()
+    for day, f in fills:
+        key = (day, f["symbol"], f["action"])
+        o = orders.get(key)
+        seen.add(key)
+        diff = round((o["price"] - f["price"]) / f["price"] * 100, 2) if o and o.get("price") and f.get("price") else None
+        rows.append({"day": day, "symbol": f["symbol"], "action": f["action"], "paper_qty": f.get("qty"), "paper_price": f.get("price"),
+                     "why": f.get("why"), "real": o["status"] if o else "missing", "real_qty": o.get("qty") if o else None,
+                     "real_price": o.get("price") if o else None, "price_diff_pct": diff, "reply": (o or {}).get("reply"),
+                     "note": "the kill switch, the enable switch or the daily limit kept it" if not o else None})
+    for key, o in orders.items():
+        if key not in seen:
+            rows.append({"day": key[0], "symbol": key[1], "action": key[2], "paper_qty": None, "paper_price": None, "why": o.get("reason"),
+                         "real": o["status"], "real_qty": o.get("qty"), "real_price": o.get("price"), "price_diff_pct": None,
+                         "reply": o.get("reply"), "note": "real only: no paper fill that day"})
+    rows.sort(key=lambda r: (r["day"], r["symbol"]), reverse=True)
+    n = {k: sum(r["real"] == k for r in rows) for k in ("sent", "failed", "skipped", "missing")}
+    diffs = [r["price_diff_pct"] for r in rows if r["price_diff_pct"] is not None]
+    return {"since": since, "account": acct, "rows": rows, "counts": n,
+            "avg_price_diff_pct": round(sum(diffs) / len(diffs), 2) if diffs else None}

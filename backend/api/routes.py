@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from backend.timefmt import ampm_date
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
-from backend.database.models import get_candles, get_db, get_logs, get_runs, now_ist
+from backend.database.models import get_candles, get_db, get_logs, get_runs, get_setting, now_ist, set_setting
 from backend.engine.bases import detect_bases
 from backend.engine.scan import run_scan
 from backend.ingest import candles as cd
@@ -254,11 +254,20 @@ def get_config(section: str):
 def put_config(section: str, values: dict):
     if section not in PERSISTED_SECTIONS:
         raise HTTPException(404, f"Unknown section; have {list(PERSISTED_SECTIONS)}")
+    from dataclasses import asdict
+    before = asdict(S().config.section(section))
     try:
         out = S().config.update_section(section, values)
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, str(exc))
     save_config(S().config)
+    after = asdict(S().config.section(section))
+    what = [f"{k}: {before[k]} → {after[k]}" for k in after if before.get(k) != after[k]]
+    if what:                                       # the settings change log (System › Settings)
+        with get_db() as conn:
+            log = json.loads(get_setting(conn, "config.changes") or "[]")
+            log.insert(0, {"at": now_ist(), "section": section, "what": what})
+            set_setting(conn, "config.changes", json.dumps(log[:100]))
     if section == "ingest":
         S().client.hist_bucket.set_rate(S().config.ingest.hist_rate_per_sec)
     return out
@@ -921,11 +930,61 @@ def stock_everywhere(symbol: str):
                    for r in conn.execute("SELECT screen, stage, payload FROM scan_results WHERE as_of = ? AND symbol = ?", (as_of, symbol))}
         follow = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM screen_follow WHERE symbol = ? ORDER BY breakout_date DESC", (symbol,))]
         alerts = [dict(r) for r in conn.execute("SELECT sent_at, kind, text, ok FROM sent_alerts WHERE symbol = ? ORDER BY sent_at DESC LIMIT 20", (symbol,))]
+    try:                                            # "why not": the stage or the reason on each screen, live
+        from backend.engine.scan import explain
+        with get_db() as conn:
+            row, _ = _resolve_stock(conn, symbol)
+        for k, v in explain(symbol, row["instrument_token"], cfg.bases, cfg.screen, cfg.vcp, cfg.flag).items():
+            screens[k] = {**screens.get(k, {}), "live_stage": v["stage"], "why": v["reason"], **({"pivot": v["pivot"]} if v.get("pivot") and "pivot" not in screens.get(k, {}) else {})}
+    except HTTPException:
+        pass
     return {"symbol": symbol, "as_of": as_of, "screens": screens,
             "positions": [p for p in overview.positions(cfg) if p["symbol"] == symbol],
             "trades": [t for t in overview.trades(cfg, 730) if t["symbol"] == symbol][:50],
             "follow": [{k: p.get(k) for k in ("breakout_date", "screens", "status", "entry_date", "entry", "qty", "stop", "pivot", "exit_date", "exit", "net", "pct", "reason")} for p in follow],
             "alerts": alerts}
+
+
+@router.get("/export/trades.csv")
+def export_trades(days: int = Query(3650, ge=1)):
+    """⬇ Every closed trade of every book (Real, Paper A / E+, Intraday) as one CSV."""
+    import csv
+    import io
+    from backend.engine import overview
+    rows = overview.trades(S().config, days)
+    cols = ["book", "account", "strategy", "symbol", "side", "qty", "opened", "closed", "entry", "exit", "gross", "costs", "net", "pct", "reason"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    w.writerows([[t.get(c) for c in cols] for t in rows])
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="trades_all_books.csv"'})
+
+
+@router.get("/config-changes")
+def config_changes():
+    """The last 100 settings changes: when, which section, what went from what to what."""
+    with get_db() as conn:
+        return {"changes": json.loads(get_setting(conn, "config.changes") or "[]")}
+
+
+@router.get("/backups")
+def backups_list():
+    from backend.engine import backup
+    return {"backups": backup.listing(), "keep": backup.KEEP, "folder": str(backup.folder())}
+
+
+@router.post("/backups/run")
+def backups_run():
+    from backend.engine import backup
+    return backup.run()
+
+
+@router.get("/real/reconcile")
+def real_reconcile(days: int = Query(30, ge=1, le=365)):
+    """💰 vs 📝: every paper fill of the real variant's account in the last `days` against the real order sent that
+    day (sent / failed / missing), with the price difference and the retries."""
+    from backend.engine import real
+    return real.reconcile(S().config, days)
 
 
 @router.get("/health")

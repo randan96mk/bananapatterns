@@ -417,7 +417,8 @@ def report(trades: list, days: list, capital: float, nifty: dict) -> dict:
                       "nifty": [round(nifty[d] / nf[0] * capital, 2) if nifty.get(d) and nf else None for d in days]},
             "splits": splits, "ok_periods": all(s["net"] > 0 and s["stress"] > 0 for s in splits),
             "by_side": group(lambda t: t["side"]), "by_time": group(lambda t: bucket(t["entry_t"]), [n for _, n in TIME_BUCKETS]),
-            "by_month": group(lambda t: t["day"][:7]), "by_setup": group(lambda t: t.get("setup") or "—"),
+            "by_month": group(lambda t: t["day"][:7]),
+            "by_quarter": group(lambda t: f"{t['day'][:4]} Q{(int(t['day'][5:7]) - 1) // 3 + 1}"), "by_setup": group(lambda t: t.get("setup") or "—"),
             "exits": dict(Counter(t["reason"] for t in trades).most_common()),
             "rows": [{k: v for k, v in t.items() if k != "orders"}
                      for t in sorted(trades, key=lambda t: (t["day"], t["entry_t"]), reverse=True)[:SHOWN]]}

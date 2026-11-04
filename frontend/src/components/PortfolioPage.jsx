@@ -69,6 +69,13 @@ export default function PortfolioPage({ onStock }) {
           {!phone && <><td className="num">{p.stop ?? '—'}</td><td>{p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—'}</td>
             <td className="muted small">{p.opened}</td></>}</tr>)}</tbody></table></div>}</div>}
 
+    {tab === 'trades' && (() => { const m = {}; const books = [...new Set(trades.map((t) => t.book))];
+      trades.forEach((t) => { const k = t.closed.slice(0, 7); m[k] = m[k] || {}; m[k][t.book] = (m[k][t.book] || 0) + (t.net || 0); });
+      const months = Object.keys(m).sort().reverse();
+      return months.length > 0 && <div className="v2card"><h3>By month <span className="r">net after costs · every book</span>
+        <a className="btn" style={{ float: 'right' }} href="/api/export/trades.csv" download>⬇ CSV · every trade, every book</a></h3>
+        <div className="tablewrap"><table className="grid small"><thead><tr><th>Month</th>{books.map((b) => <th key={b} className="num">{names[b] || b}</th>)}<th className="num">All</th></tr></thead>
+          <tbody>{months.map((k) => { const tot = books.reduce((a, b) => a + (m[k][b] || 0), 0); return <tr key={k}><td>{k}</td>{books.map((b) => <td key={b} className={`num ${cls(m[k][b])}`} style={m[k][b] ? { background: m[k][b] > 0 ? 'rgba(38,166,154,.12)' : 'rgba(239,83,80,.12)' } : {}}>{m[k][b] != null ? inr(m[k][b]) : '—'}</td>)}<td className={`num ${cls(tot)}`}><b>{inr(tot)}</b></td></tr>; })}</tbody></table></div></div>; })()}
     {tab === 'trades' && <div className="v2card"><h3>Trade history <span className="r">{trades.length} · last year · newest first
       <button className="btn" style={{ marginLeft: 8 }} onClick={() => csv(trades)}>⬇ CSV</button></span></h3>
       <div className="tablewrap"><table className="grid"><thead><tr><th>Closed</th><th>Stock</th><th>Account</th><th className="num">Qty</th><th className="num">Entry</th>

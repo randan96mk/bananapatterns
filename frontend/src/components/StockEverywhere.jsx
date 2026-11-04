@@ -18,7 +18,7 @@ export default function StockEverywhere({ symbol, onOverlay }) {
     <div style={{ flex: 1 }}><b>{label}</b> <span className="muted small">{extra}</span></div>
     <b className={cls(p.net)}>{inr(p.net)}</b></div>;
   return <div className="small">
-    <div><b>Screens {d.as_of ? `· ${day(d.as_of)}` : ''}:</b> {scr.length ? scr.map(([k, s]) => `${NAMES[k] || k} ${s.stage}${s.pivot ? ` (pivot ${s.pivot})` : ''}`).join(' · ') : 'on no screen in the latest scan'}</div>
+    <div><b>Screens:</b> {scr.length ? scr.map(([k, s]) => <span key={k} style={{ marginRight: 10 }}><b>{NAMES[k] || k}</b> {s.live_stage || s.stage || <span className="muted">not on a card</span>}{s.pivot ? ` · pivot ${s.pivot}` : ''}{!s.live_stage && s.why ? <span className="muted"> · why not: {s.why}</span> : ''}</span>) : 'no data'}</div>
     {d.positions.length > 0 && <><div style={{ marginTop: 6 }}><b>Open now</b> <span className="muted">· click to draw entry / stop</span></div>
       <div className="v2list">{d.positions.map((p) => row(p.account, p, `${p.side} ${p.qty} @ ${p.entry} · stop ${p.stop ?? '—'} · since ${p.opened}`))}</div></>}
     {d.follow.length > 0 && <><div style={{ marginTop: 6 }}><b>Follow</b> <span className="muted">· every breakout bought blindly</span></div>

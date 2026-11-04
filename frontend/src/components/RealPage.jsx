@@ -19,6 +19,19 @@ const cls = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down');
 const day = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
 
 // The 💰 Real trading tab: the Trend Breakout orders sent to Tradetron by webhook (BUY / EXIT), tracked like paper.
+function Reconcile() {
+  const [r, setR] = useState(null);
+  useEffect(() => { api.realReconcile(30).then(setR).catch(() => setR({ rows: [] })); }, []);
+  if (!r) return null;
+  const c = r.counts || {};
+  return <div className="panel"><h3>Paper vs Real <span className="muted small">· the same variant, last 30 days · every paper fill against the order sent that day</span></h3>
+    <p className="small">{c.sent || 0} sent · {c.failed || 0} failed · {c.missing || 0} missing (not sent) · {c.skipped || 0} skipped{r.avg_price_diff_pct != null ? ` · real price vs paper ${r.avg_price_diff_pct > 0 ? '+' : ''}${r.avg_price_diff_pct}% on average` : ''}</p>
+    {!r.rows.length ? <p className="muted small">Nothing to compare yet.</p> : <div className="tablewrap"><table className="grid small"><thead><tr><th>Day</th><th>Order</th><th className="num">Paper</th><th className="num">Real</th><th className="num">Price diff</th><th>Status</th><th>Note</th></tr></thead>
+      <tbody>{r.rows.map((x, i) => <tr key={i}><td>{x.day}</td><td><b className={x.action === 'BUY' ? 'up' : 'down'}>{x.action}</b> <b>{x.symbol}</b></td><td className="num">{x.paper_qty ?? '—'} @ {x.paper_price ?? '—'}</td><td className="num">{x.real_qty ?? '—'} @ {x.real_price ?? '—'}</td>
+        <td className="num">{x.price_diff_pct != null ? `${x.price_diff_pct > 0 ? '+' : ''}${x.price_diff_pct}%` : '—'}</td><td className={x.real === 'sent' ? 'up' : x.real === 'missing' || x.real === 'failed' ? 'down' : 'muted'}>{x.real}</td><td className="muted small">{x.note || x.reply || x.why}</td></tr>)}</tbody></table></div>}
+  </div>;
+}
+
 export default function RealPage() {
   const phone = useIsPhone();
   const [d, setD] = useState(null);
@@ -187,6 +200,7 @@ export default function RealPage() {
       </>}
 
       {sub === 'trades' && !d.started && <p className="muted panel">No trades yet: real trading starts at the next evening run.</p>}
+      {sub === 'log' && <Reconcile />}
       {sub === 'log' && <div className="panel"><h3>Order log <span className="muted small">· every webhook to Tradetron, never deleted (the token is never shown)</span></h3>
         {!d.log?.length ? <p className="muted">Nothing sent yet.</p> : (
           <div className="tablewrap"><table className="grid"><thead><tr><th>Time</th><th>Order</th><th>Why</th><th>Tradetron reply</th><th>Status</th></tr></thead>

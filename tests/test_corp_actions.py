@@ -41,3 +41,24 @@ def test_health_checks_cover_every_source():
     keys = [c["key"] for c in cs]
     assert keys[:3] == ["kite", "candles", "scan"] and "errors" in keys and "corp" in keys
     assert cs[0]["ok"] is False and all({"name", "ok", "warn", "state", "detail"} <= set(c) for c in cs)
+
+
+def test_backup_reconcile_and_evening_line(monkeypatch, tmp_path):
+    import json
+    from backend.config import AppConfig
+    from backend.engine import backup, follow, real
+    out = backup.run()
+    assert out["name"].startswith("bananapatterns-") and backup.listing()[0]["name"] == out["name"]
+    cfg = AppConfig()
+    with get_db() as conn:
+        conn.execute("INSERT INTO paper_fills (account, day, payload) VALUES (?, ?, ?)",
+                     (cfg.real.variant, "2026-11-03", json.dumps({"symbol": "X", "action": "BUY", "qty": 10, "price": 100.0, "why": "breakout"})))
+        conn.execute("INSERT INTO paper_fills (account, day, payload) VALUES (?, ?, ?)",
+                     (cfg.real.variant, "2026-11-03", json.dumps({"symbol": "Y", "action": "BUY", "qty": 5, "price": 50.0, "why": "breakout"})))
+        conn.execute("INSERT INTO real_orders (key, day, created_at, symbol, action, qty, reason, status, price) VALUES (?,?,?,?,?,?,?,?,?)",
+                     ("2026-11-03|X|BUY", "2026-11-03", "2026-11-03T09:16:00", "X", "BUY", 10, "breakout", "sent", 101.0))
+    r = real.reconcile(cfg, 9999)
+    by = {x["symbol"]: x for x in r["rows"]}
+    assert by["X"]["real"] == "sent" and by["X"]["price_diff_pct"] == 1.0 and by["Y"]["real"] == "missing"
+    assert r["counts"]["sent"] == 1 and r["counts"]["missing"] == 1
+    assert follow.evening_line("2026-11-03") is None

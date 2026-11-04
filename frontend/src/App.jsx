@@ -61,6 +61,7 @@ export default function App() {
   const [backendErr, setBackendErr] = useState('');
   const [showKite, setShowKite] = useState(false);
   const [cmdk, setCmdk] = useState(false);
+  const [help, setHelp] = useState(false);
   const [more, setMore] = useState(false);
   const phone = useIsPhone();
   const sched = useLive('schedule');                       // 📡 the live connection (also feeds the status bar)
@@ -77,9 +78,19 @@ export default function App() {
   useEffect(() => {
     const on = () => setTab(fromHash());
     window.addEventListener('popstate', on);
+    let g = 0;                                            // "g" then a letter: jump to a section (like GitHub / Gmail)
+    const typing = (e) => /input|textarea|select/i.test(e.target.tagName) || e.target.isContentEditable;
     const key = (e) => {
-      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !/input|textarea|select/i.test(e.target.tagName))) {
-        e.preventDefault(); setCmdk(true);
+      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !typing(e))) {
+        e.preventDefault(); setCmdk(true); return;
+      }
+      if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === '?') { setHelp((h) => !h); return; }
+      if (e.key === 'Escape') { setHelp(false); return; }
+      if (e.key === 'g') { g = Date.now(); return; }
+      if (Date.now() - g < 1500) {
+        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', f: 'flow', b: 'breakout', o: 'follow', c: 'screens', a: 'alerts', d: 'data' }[e.key];
+        if (to) { go(to); g = 0; }
       }
     };
     window.addEventListener('keydown', key);
@@ -154,6 +165,12 @@ export default function App() {
           {tab === 'sent' && <SentAlerts onStock={setStock} />}
         </main>
       </div>
+      {help && <div className="drawer" style={{ maxWidth: 360 }} aria-label="Keyboard shortcuts" onClick={() => setHelp(false)}>
+        <b style={{ fontSize: 16 }}>⌨️ Keyboard</b>
+        <table className="grid small" style={{ marginTop: 8 }}><tbody>
+          {[['⌘K or /', 'search a stock or a page'], ['g then h', 'Home'], ['g then s', 'Strategies'], ['g then p', 'Portfolio'], ['g then r', 'Research'], ['g then y', 'System'],
+            ['g then f / b', 'Intraday Flow / Trend Breakout'], ['g then o / c', 'Follow / Screens'], ['g then a / d', 'Alerts / Data'], ['?', 'this list'], ['Esc', 'close']]
+            .map(([k, l]) => <tr key={k}><td><kbd>{k}</kbd></td><td className="muted">{l}</td></tr>)}</tbody></table></div>}
       {cmdk && <CommandPalette sections={SECTIONS} symbols={symbols} onClose={() => setCmdk(false)}
         onPage={(p) => { go(p); setCmdk(false); }} onStock={(s) => { setStock(s); setCmdk(false); }} />}
       {phone && <>

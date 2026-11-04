@@ -37,6 +37,8 @@ export default function HomePage({ onGo, onStock }) {
         sub={<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{signed(A.paper_E.day_pnl)}</span> last session · {A.paper_E.positions} open</>} />}
       <Kpi label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} cls={cls(it.day_pnl)}
         sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)} · loss limit ${inr(Math.max(0, -(it.realised || 0)))}/${inr(it.loss_limit)}`} />
+      {A.follow && A.follow.breakouts > 0 && <Kpi label="Screens · Follow (blind)" value={signed(A.follow.net)} cls={cls(A.follow.net)}
+        sub={`${A.follow.open} open · ${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}% · ${inr(A.follow.per_position)} each`} />}
     </div>
     <div className="v2grid">
       <div className="v2card"><h3>Open positions <span className="achip">{o.positions.length}</span>
