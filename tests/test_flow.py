@@ -543,3 +543,23 @@ def test_tuned_defaults_first_candle_stricter_longs_max_stop():
     assert out[0]["sides"] == ["long"]
     out, _ = ctx_box.run(C({**under, "nifty_ema": 98}), both, cfg)
     assert out[0]["sides"] == ["long"]
+
+
+
+def test_strategy_text_is_complete_and_changes_are_logged(monkeypatch):
+    """📜 Strategy: the text names the order, the rules, every setting and the mode; a box change is logged."""
+    from backend.intraday import strategy
+    setup(monkeypatch)
+    loose()
+    flow.reset_nodes()
+    flow.set_node("filters", {"rvol_min": 3.5, "vwap": False})
+    tx = strategy.text("signals")
+    for want in ("HOW IT RUNS", "Trigger", "all must pass", "ENTRY", "SIZE", "EXIT", "EVERY SETTING", "RVOL ≥ = 3.5",
+                 "Long above / short below VWAP = off", "Signals: each signal is tracked"):
+        assert want in tx, want
+    log = strategy.changes()
+    assert log[0]["box"] == "Intraday filters" and "Long above / short below VWAP: on → off" in log[0]["what"]
+    assert "RVOL ≥: 2.0 → 3.5" in log[0]["what"]
+    assert log[1]["box"] == "Every box" and log[1]["what"] == ["back to the default settings"]
+    flow.set_node("filters", {"rvol_min": 3.5})                                # nothing changed: nothing logged
+    assert len(strategy.changes()) == len(log)

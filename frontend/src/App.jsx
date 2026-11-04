@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import KiteBar from './components/KiteBar';
 import UniverseTable from './components/UniverseTable';
 import ScreensHome from './components/ScreensHome';
+import FollowPage from './components/FollowPage';
 import StockChart from './components/StockChart';
 import IndexTicker from './components/IndexTicker';
 import DataPanel from './components/DataPanel';
@@ -37,7 +38,7 @@ export const SECTIONS = [
   ['home', 'Home', [['home', 'Overview']]],
   ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout']]],
   ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real (Tradetron)'], ['paper', 'Paper · swing']]],
-  ['research', 'Research', [['screens', 'Screens'], ['plan', "Today's plan"], ['universe', 'Universe']]],
+  ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe']]],
   ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
@@ -140,6 +141,7 @@ export default function App() {
           {tab === 'breakout' && <BreakoutPage />}
           {tab === 'real' && <RealPage />}
           {tab === 'paper' && <PaperPage />}
+          {tab === 'follow' && <FollowPage />}
           {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
           {tab === 'universe' && <>
             {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}

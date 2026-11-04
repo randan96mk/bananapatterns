@@ -78,6 +78,8 @@ def reset_nodes() -> None:
     """Every box back to its default settings (the canvas's own changes are cleared)."""
     with get_db() as conn:
         set_setting(conn, "flow.nodes", "{}")
+    from backend.intraday import strategy
+    strategy.record("Every box", ["back to the default settings"])
 
 
 def reset_layout() -> None:
@@ -90,11 +92,15 @@ def set_node(nid: str, values: dict) -> dict:
     if nid not in kinds:
         raise KeyError(nid)
     allowed = REGISTRY[kinds[nid]].defaults()
+    before = node_configs()[nid]
     with get_db() as conn:
         saved = json.loads(get_setting(conn, "flow.nodes") or "{}")
         saved[nid] = {**saved.get(nid, {}), **{k: v for k, v in values.items() if k in allowed}}
         set_setting(conn, "flow.nodes", json.dumps(saved))
-    return node_configs()[nid]
+    after = node_configs()[nid]
+    from backend.intraday import strategy
+    strategy.record(REGISTRY[kinds[nid]].title, strategy.diff(kinds[nid], before, after))
+    return after
 
 
 def candle_last_minute(start: str, interval: int) -> str:
