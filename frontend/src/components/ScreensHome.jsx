@@ -11,7 +11,7 @@ const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
 
 // The stage board: four cards, what-changed feed, and a drill-down list per stage.
 export default function ScreensHome({ hasData }) {
-  const [screen, setScreen] = useState('vcp');
+  const [screen, setScreen] = useState('bases');
   const [summary, setSummary] = useState(null);
   const [feed, setFeed] = useState(null);
   const [stage, setStage] = useState('fresh');
