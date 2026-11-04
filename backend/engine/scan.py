@@ -9,15 +9,14 @@ import json
 from datetime import date, timedelta
 from typing import Optional
 
-from backend.config import BaseConfig, CupConfig, FlagConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
+from backend.config import BaseConfig, FlagConfig, MarketConfig, ScreenConfig, TrendConfig, VcpConfig
 from backend.database.models import get_candles, get_db, now_ist
 from backend.engine.bases import detect_bases
 from backend.engine import market
-from backend.engine.cups import cup_score, detect_cups
 from backend.engine.rs import industry_ranks, rs_ratings, rs_score
 from backend.engine.scoring import vcp_score
 from backend.engine.flags import detect_flags, flag_score
-from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_cup, classify_flag, classify_vcp
+from backend.engine.stages import CARD_STAGES, StageResult, classify, classify_flag, classify_vcp
 from backend.engine.trend_template import trend_template
 from backend.logging_config.logger import setup_logger
 
@@ -59,7 +58,7 @@ def change_line(symbol: str, y: Optional[StageResult], t: StageResult) -> Option
     return None
 
 
-SCREENS = ("bases", "vcp", "cup", "flag")
+SCREENS = ("bases", "vcp", "flag")
 
 
 def _results_days(conn) -> dict[str, list[str]]:
@@ -81,7 +80,7 @@ def _post_results(days, shape: dict) -> bool:
 def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict],
              trend_cfg: Optional[TrendConfig] = None, vcp_cfg: Optional[VcpConfig] = None,
              market_cfg: Optional[MarketConfig] = None, index_token: Optional[int] = None,
-             cup_cfg: Optional[CupConfig] = None, flag_cfg: Optional[FlagConfig] = None) -> dict:
+             flag_cfg: Optional[FlagConfig] = None) -> dict:
     """symbols: [{symbol, instrument_token, company?, industry?}], e.g. resolve_universe(...)["stocks"].
 
     Produces both screens: "bases" (every base) and "vcp" (bases that pass the VCP rules).
@@ -91,7 +90,6 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
     trend_cfg = trend_cfg or TrendConfig()
     vcp_cfg = vcp_cfg or VcpConfig()
     market_cfg = market_cfg or MarketConfig()
-    cup_cfg = cup_cfg or CupConfig()
     flag_cfg = flag_cfg or FlagConfig()
     with get_db() as conn:
         series = {s["symbol"]: get_candles(conn, s["instrument_token"]) for s in symbols}
@@ -143,24 +141,10 @@ def run_scan(bases_cfg: BaseConfig, screen_cfg: ScreenConfig, symbols: list[dict
         if line:
             changes["vcp"].append((s, line[0], line[1], vt))
 
-        cups_today = detect_cups(candles, cup_cfg, bases_cfg, vcp_cfg.max_stop)
-        cups_yday = detect_cups(prev, cup_cfg, bases_cfg, vcp_cfg.max_stop)
-        ct, shape = classify_cup(candles, cups_today, ratings[sym], tt["passed"], screen_cfg, cup_cfg)
-        cy, _ = classify_cup(prev, cups_yday, ratings[sym], tt["passed"], screen_cfg, cup_cfg)
-        cextra = {k: v for k, v in extra.items() if k not in ("vcp_tag", "cup_tag")}
-        if shape is not None:
-            cextra["cup"] = shape
-            cextra["score"] = cup_score(shape, ratings[sym], cup_cfg)
-            extra["cup_tag"] = ct.stage is not None   # shown as a "C&H" tag on the Bases screen
-        rows["cup"].append((s, ct, cextra))
-        line = change_line(sym, cy, ct)
-        if line:
-            changes["cup"].append((s, line[0], line[1], ct))
-
         flags_today, flags_yday = detect_flags(candles, flag_cfg, bases_cfg), detect_flags(prev, flag_cfg, bases_cfg)
         ft, fshape = classify_flag(candles, flags_today, ratings[sym], tt["passed"], screen_cfg, flag_cfg)
         fy, _ = classify_flag(prev, flags_yday, ratings[sym], tt["passed"], screen_cfg, flag_cfg)
-        fextra = {k: v for k, v in extra.items() if k not in ("vcp_tag", "cup_tag", "flag_tag")}
+        fextra = {k: v for k, v in extra.items() if k not in ("vcp_tag", "flag_tag")}
         if fshape is not None:
             fshape["post_results"] = _post_results(results_days.get(sym, ()), fshape)
             fextra["flag"] = fshape

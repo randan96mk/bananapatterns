@@ -29,40 +29,6 @@ function MiniChart({ s, r }) {
          aria-label={`${r.symbol} last ${n} sessions`}>
       <defs><marker id="mc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5"
                     orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className="mc-arrowhead" /></marker></defs>
-      {r.cup && (() => {                                     // cup: a smooth U from lip to lip, then the handle
-        const L = idx(r.cup.left_lip.date), B = idx(r.cup.bottom.date), R = idx(r.cup.right_lip.date);
-        const he = idx(r.cup.handle.end);
-        const bot = r.cup.bottom.low, pt = (i, v) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`;
-        const fit = (a, lip) => {                          // the roundness (1.7..4) that best follows the lows
-          let best = 2, err = Infinity;
-          for (let q = 1.7; q <= 4; q += 0.1) {
-            let e = 0;
-            for (let i = Math.min(a, B); i <= Math.max(a, B); i++) e += (bot + (lip - bot) * (Math.abs(i - B) / Math.abs(a - B)) ** q - s.l[i]) ** 2;
-            if (e < err) { err = e; best = q; }
-          }
-          return best;
-        };
-        const side = (a, lip, from) => {                   // from: the lip end (true) or the bottom end
-          const q = Math.abs(a - B) < 3 ? 2 : fit(a, lip), out = [];
-          for (let k = 0; k <= 40; k++) { const u = from ? 1 - k / 40 : k / 40; out.push(pt(B + (a - B) * u, bot + (lip - bot) * u ** q)); }
-          return out;
-        };
-        let handle = null;
-        if (R >= 0 && he > R) {
-          let m = R + 1;
-          for (let i = R + 1; i <= he; i++) if (s.l[i] < s.l[m]) m = i;
-          const hl = r.cup.handle.low, lip = r.cup.right_lip.high, out = [];
-          for (let k = 0; k <= 20; k++) { const a = k / 20; out.push(pt(R + (m - R) * a, lip - (lip - hl) * Math.sin(a * Math.PI / 2))); }
-          for (let k = 1; k <= 20; k++) { const a = k / 20; out.push(pt(m + (he - m) * a, hl + (r.pivot - hl) * (1 - Math.cos(a * Math.PI / 2)))); }
-          handle = out.join(' ');
-        }
-        if (B < 0 || R < 0) return null;
-        const cup = [...(L >= 0 ? side(L, r.cup.left_lip.high, true) : []), ...side(R, r.cup.right_lip.high, false)].join(' ');
-        return (<>
-          <polyline className="mc-cup-glow" points={cup} /><polyline className="mc-cup" points={cup} />
-          {handle && <><polyline className="mc-handle-glow" points={handle} /><polyline className="mc-handle" points={handle} /></>}
-        </>);
-      })()}
       {r.flag && (() => {                                    // flag: P -> T pole arrow, then the flag channel
         const pl = r.flag.pole, fl = r.flag.flag;
         const P = idx(pl.start), T = idx(pl.top);
@@ -78,7 +44,7 @@ function MiniChart({ s, r }) {
           </>}
         </>);
       })()}
-      {!r.cup && !r.flag && b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (
+      {!r.flag && b0 >= 0 && b1 >= b0 && r.base_low != null && r.pivot != null && (
         <rect x={b0 * step} y={y(r.pivot)} width={(b1 - b0 + 1) * step} height={y(r.base_low) - y(r.pivot)}
               className="mc-box" />)}
       {r.pivot != null && <line x1={b0 >= 0 ? b0 * step : 0} x2={W} y1={y(r.pivot)} y2={y(r.pivot)} className="mc-pivot" />}
@@ -107,7 +73,7 @@ function MiniChart({ s, r }) {
 
 // The stage-specific lines under the chart.
 function Facts({ r, stage, isVcp }) {
-  const cup = r.cup, flag = r.flag;
+  const flag = r.flag;
   const pulls = (r.vcp?.contractions || []).map((c) => Math.round(c.depth_pct)).join('→');
   const lines = {
     forming: [`${r.dist_to_pivot_pct?.toFixed(1)}% under ${rs(r.pivot)}`, `Depth ${r.depth_pct?.toFixed(1)}%`],
@@ -124,14 +90,11 @@ function Facts({ r, stage, isVcp }) {
       {(lines[st] || []).map((l) => <div key={l}>{l}</div>)}
       <div className="muted">
         {[r.rs != null && `RS ${r.rs}`, r.tt_of && `Trend ${r.tt_passed}/${r.tt_of}`,
-          (isVcp || cup || flag) && r.score != null && `Score ${r.score.toFixed(0)}`].filter(Boolean).join(' · ')}
+          (isVcp || flag) && r.score != null && `Score ${r.score.toFixed(0)}`].filter(Boolean).join(' · ')}
       </div>
       {isVcp && (pulls || r.vcp?.dryup != null) && (
         <div className="muted">{[pulls && `Pullbacks ${pulls}`, r.vcp?.dryup != null && `Dry-up ${x2(r.vcp.dryup)}`,
           r.vcp?.stop && `Stop ${rs(r.vcp.stop)}`].filter(Boolean).join(' · ')}</div>)}
-      {cup && (
-        <div className="muted">{`Cup ${cup.cup.depth_pct.toFixed(0)}% · ${cup.cup.weeks}w · handle ${cup.handle.depth_pct.toFixed(1)}%`
-          + `${cup.handle.volume_x != null ? ` · vol ${x2(cup.handle.volume_x)}` : ''} · stop ${rs(cup.stop)}`}</div>)}
       {flag && (
         <div className="muted">{`Pole +${flag.pole.gain_pct.toFixed(0)}% · ${flag.pole.bars}d · flag −${flag.flag.depth_pct.toFixed(1)}%`
           + ` · ${flag.flag.bars}d${flag.flag.volume_x != null ? ` · vol ${x2(flag.flag.volume_x)}` : ''} · stop ${rs(flag.stop)}`}</div>)}
@@ -157,7 +120,6 @@ export default function StageGrid({ screen, stage, asOf, rows, selected, onSelec
               {r.tier && <span className={`tier t-${r.tier}`} title={r.tier === 'A' ? 'A setup: alerts at once'
                 : 'B setup: digest only'}>{r.tier}</span>}
               <b>{r.symbol}</b>{screen === 'bases' && r.vcp_tag && <span className="tag ok">VCP</span>}
-              {screen === 'bases' && r.cup_tag && <span className="tag ok">C&amp;H</span>}
               {screen === 'bases' && r.flag_tag && <span className="tag ok">Flag</span>}
               {r.flag?.htf && <span className="tag ok" title="High-tight flag: pole +90% within 8 weeks">HTF</span>}
               {r.flag?.tight && !r.flag?.htf && <span className="tag" title="Gave back 25% of the pole or less">tight</span>}

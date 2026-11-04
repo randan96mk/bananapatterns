@@ -1,5 +1,5 @@
 """📈 Follow: what if every fresh breakout on the Research screens were bought blindly? One simulated book, no
-screen accounts: a stock is one position at a time, tagged with every screen (bases / vcp / cup / flag) that
+screen accounts: a stock is one position at a time, tagged with every screen (bases / vcp / flag) that
 flagged it. Read-only, never orders.
 
   entry   the first day a stock is a *fresh* breakout on any screen (the scan's own test: a volume-confirmed close
@@ -23,19 +23,18 @@ import numpy as np
 from backend.config import AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
 from backend.engine.bases import detect_bases
-from backend.engine.cups import detect_cups
 from backend.engine.flags import detect_flags
 from backend.engine.indicators import sma
 from backend.engine.rs import rs_ratings, rs_score
-from backend.engine.stages import classify, classify_cup, classify_flag, classify_vcp
+from backend.engine.stages import classify, classify_flag, classify_vcp
 from backend.engine.trend_breakout import delivery_charges
 from backend.engine.trend_template import trend_template
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("follow")
 
-SCREENS = ("bases", "vcp", "cup", "flag")
-NAMES = {"bases": "Bases (all)", "vcp": "VCP", "cup": "Cup & handle", "flag": "Bull flag"}
+SCREENS = ("bases", "vcp", "flag")
+NAMES = {"bases": "Bases (all)", "vcp": "VCP", "flag": "Bull flag"}
 DEFAULT_PER_POSITION = 100000.0
 MONTHS = 12                                       # the backfill's reach
 LIVE = ("pending", "open", "closing")
@@ -143,9 +142,6 @@ def _fresh_screens(prefix: list, rs: Optional[int], config: AppConfig) -> list:
         out.append("bases")
     if classify_vcp(prefix, detect_bases(prefix, config.bases), rs, tt, config.screen, config.vcp)[0].stage == "fresh":
         out.append("vcp")
-    if classify_cup(prefix, detect_cups(prefix, config.cup, config.bases, config.vcp.max_stop), rs, tt, config.screen,
-                    config.cup)[0].stage == "fresh":
-        out.append("cup")
     if classify_flag(prefix, detect_flags(prefix, config.flag, config.bases), rs, tt, config.screen, config.flag)[0].stage == "fresh":
         out.append("flag")
     return out
@@ -155,9 +151,6 @@ def _signals(symbol: str, candles: list, start: str, rs_at, config: AppConfig) -
     """[(bar index, screens)] of the breakouts on or after `start` that were fresh on their own day."""
     idx = set()
     for b in detect_bases(candles, config.bases):
-        if b.breakout and b.breakout.date >= start:
-            idx.add(b.breakout.index)
-    for b in detect_cups(candles, config.cup, config.bases, config.vcp.max_stop):
         if b.breakout and b.breakout.date >= start:
             idx.add(b.breakout.index)
     for b in detect_flags(candles, config.flag, config.bases):
@@ -193,8 +186,7 @@ def _simulate(symbol: str, token: int, candles: list, signals: list, config: App
 
 
 def _pivot_at(prefix: list, config: AppConfig) -> Optional[float]:
-    for find in (lambda: detect_bases(prefix, config.bases), lambda: detect_cups(prefix, config.cup, config.bases, config.vcp.max_stop),
-                 lambda: detect_flags(prefix, config.flag, config.bases)):
+    for find in (lambda: detect_bases(prefix, config.bases), lambda: detect_flags(prefix, config.flag, config.bases)):
         last = next((b for b in reversed(find()) if b.breakout is not None), None)
         if last is not None and last.breakout.index == len(prefix) - 1:
             return last.pivot

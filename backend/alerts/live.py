@@ -222,7 +222,7 @@ class LiveBoard:
             p = json.loads(r["payload"])
             if r["symbol"] in setups or (p.get("dist_to_pivot_pct") or 99) > cfg.today_near_pct:
                 continue
-            stop = ((p.get("vcp") or {}).get("stop") or (p.get("cup") or {}).get("stop") or (p.get("flag") or {}).get("stop")
+            stop = ((p.get("vcp") or {}).get("stop") or (p.get("flag") or {}).get("stop")
                     or round(p["pivot"] * (1 - st.config.vcp.max_stop), 2))
             setups[r["symbol"]] = {"symbol": r["symbol"], "pivot": p["pivot"], "stop": stop, "tier": p.get("tier"),
                                    "results": p.get("results"), "source": "near"}

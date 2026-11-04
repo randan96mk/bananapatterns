@@ -89,7 +89,7 @@ class AppState:
             u = uni.resolve_universe(self.config.ingest)
             index = next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None)
             out = run_scan(self.config.bases, self.config.screen, u["stocks"], self.config.trend, self.config.vcp,
-                           self.config.market, index, self.config.cup, self.config.flag)
+                           self.config.market, index, self.config.flag)
             if out.get("as_of"):
                 try:                                    # 📈 Follow steps after the scan; never fails the scan
                     from backend.engine import follow
@@ -371,7 +371,7 @@ def stock_bases(symbol: str, since: Optional[str] = None):
 @router.get("/stock/{symbol}/alert-chart.png")
 def stock_alert_chart(symbol: str, kind: str = Query("auto")):
     """The annotated decision chart a Telegram alert of `kind` would carry for this stock.
-    auto = the kind matching the stock's stage in the latest scan (VCP screen first, then Cup & handle, then Bases)."""
+    auto = the kind matching the stock's stage in the latest scan (VCP screen first, then Bull flag, then Bases)."""
     from backend.alerts.dispatch import charts_available
     from backend.alerts.preview import alert_chart
     if not charts_available():
@@ -425,7 +425,6 @@ def ingest_status():
 
 SCREENS = {"bases": "Bases: every base the engine finds",
            "vcp": "VCP: bases with shrinking pullbacks, drying volume, RS >= 70 and an uptrend",
-           "cup": "Cup & handle: U-shaped 12-33% cups of 7-65 weeks with a tight, quiet handle in the upper half",
            "flag": "Bull flag: a 20%+ pole in 6 weeks, then a 1-5 week flag giving back <= 38% on drying volume"}
 STAGE_SORT = {
     "forming": lambda p: (p["dist_to_pivot_pct"] or 0),
@@ -520,7 +519,7 @@ def filings_refresh():
 @router.get("/news")
 def news(days: Optional[int] = Query(None, ge=1, le=30)):
     """The News tab: filings, red flags, fund moves and upcoming results for the board stocks (every stock on the
-    VCP, Cup & handle and Bases screens, plus held / watched)."""
+    VCP, Bull flag and Bases screens, plus held / watched)."""
     from backend.ingest import news as nw
     return nw.board_news(S().config.alerts, days)
 
@@ -595,7 +594,7 @@ def screens_results(screen: str, stage: str = Query(...)):
         p["results"] = results.get(p["symbol"])
         p["news"] = news.get(p["symbol"])
         p["flags"] = flags.get(p["symbol"])
-    if screen in ("vcp", "cup", "flag"):
+    if screen in ("vcp", "flag"):
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
         items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
@@ -605,7 +604,7 @@ def screens_results(screen: str, stage: str = Query(...)):
 @router.get("/screens/{screen}/sparks")
 def screens_sparks(screen: str, stage: str = Query(...), bars: int = Query(120, ge=20, le=400)):
     """Last `bars` daily candles (+ 50-day line) for every stock in a stage, for the grid view's mini charts.
-    On the cup / flag screens a card reaches back to just before the cup's left lip / the flag's pole (at most
+    On the flag screen a card reaches back to just before the flag's pole (at most
     400 sessions)."""
     _check_screen(screen)
     if stage not in STAGE_SORT:
@@ -621,8 +620,7 @@ def screens_sparks(screen: str, stage: str = Query(...), bars: int = Query(120, 
             if sym not in tokens:
                 continue
             p = json.loads(row["payload"])
-            lip = (((p.get("cup") or {}).get("left_lip") or {}).get("date")
-                   or ((p.get("flag") or {}).get("pole") or {}).get("start"))
+            lip = ((p.get("flag") or {}).get("pole") or {}).get("start")
             cs = get_candles(conn, tokens[sym], limit=(400 if lip else bars) + 49)
             closes = [c["close"] for c in cs]
             ma = [round(sum(closes[i - 49:i + 1]) / 50, 2) if i >= 49 else None for i in range(len(cs))]

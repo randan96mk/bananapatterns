@@ -167,14 +167,14 @@ def test_plan_bonus_and_lines(monkeypatch):
 
 def test_api(monkeypatch):
     from fastapi.testclient import TestClient
-    from tests.test_cups import cup_series, scan_with
+    from tests.test_stages import forming_series, scan_with
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
-    scan_with({"DDD": cup_series(breakout=False, handle_depth=0.04)})
+    scan_with({"DDD": forming_series()})
     seed()
     from backend import main
     with TestClient(main.app) as tc:
-        row = tc.get("/api/screens/cup/results?stage=forming").json()["rows"][0]
+        row = tc.get("/api/screens/bases/results?stage=forming").json()["rows"][0]
         assert row["flags"]["red"][0]["label"] == "Promoter sold 2.4%" and row["tier"] == "B"
         d = tc.get("/api/deals?symbol=ddd").json()
         assert d["deals"][0]["source"] == "sast" and d["signals"]["red"]

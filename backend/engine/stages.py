@@ -185,7 +185,7 @@ def classify_vcp(candles: list[dict], bases: list[Base], rs: Optional[int], tren
 
 def _classify_shaped(candles: list[dict], found: list[Base], rs: Optional[int], trend_passed: int,
                      screen_cfg: ScreenConfig, pcfg, what: str) -> tuple[StageResult, Optional[dict]]:
-    """Stages for a shaped pattern (cup, flag): forming within pcfg.max_dist_to_pivot of its pivot,
+    """Stages for a shaped pattern (flag): forming within pcfg.max_dist_to_pivot of its pivot,
     no minimum length, and the pattern's RS / Trend Template minimums. Returns (result, shape or None)."""
     from dataclasses import replace
 
@@ -202,14 +202,6 @@ def _classify_shaped(candles: list[dict], found: list[Base], rs: Optional[int], 
     if fails:
         res.stage, res.reason = None, f"{what}, but " + "; ".join(fails)
     return res, pat.shape
-
-
-def classify_cup(candles: list[dict], cups: list[Base], rs: Optional[int], trend_passed: int,
-                 screen_cfg: ScreenConfig, cup_cfg) -> tuple[StageResult, Optional[dict]]:
-    """Stage on the Cup & handle screen (cups from engine/cups.py). Forming = in the handle within
-    cup_cfg.max_dist_to_pivot of the handle high; RS and Trend Template minimums as for VCP.
-    Returns (result, cup shape dict or None)."""
-    return _classify_shaped(candles, cups, rs, trend_passed, screen_cfg, cup_cfg, "cup with handle")
 
 
 def classify_flag(candles: list[dict], flags: list[Base], rs: Optional[int], trend_passed: int,

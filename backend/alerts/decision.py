@@ -48,21 +48,20 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                      rs: Optional[int] = None, tt_passed: int = 0, tt_of: int = 8,
                      bases_cfg: BaseConfig, vcp_cfg: VcpConfig, alerts_cfg: AlertsConfig,
                      ended: Optional[dict] = None, live: Optional[dict] = None,
-                     size_factor: float = 1.0, size_note: str = "", cup: Optional[dict] = None,
+                     size_factor: float = 1.0, size_note: str = "",
                      flag: Optional[dict] = None) -> Optional[dict]:
     """Everything the decision chart and message need, or None if there is no base.
 
     live: intraday {ltp, open, high, low, volume} for today's still-forming candle; for close_check also
           {pace, range, verdict} from backend.alerts.intraday.close_verdict.
     ended: played out {date, reason, gain_pct, peak_pct}.
-    cup: the Cup & handle screen's shape (engine/cups.py); the chart then shows that cup, not a box base.
     flag: the Bull flag screen's shape (engine/flags.py); the chart shows the pole and the flag channel.
     """
-    if cup or flag:
-        base = _cup_base(candles, cup, kind, bases_cfg) if cup else _flag_base(candles, flag, kind, bases_cfg)
+    if flag:
+        base = _flag_base(candles, flag, kind, bases_cfg)
         if base is None:
             return None
-        v = SimpleNamespace(stop=(cup or flag)["stop"], contractions=[], qualifies=True, shrinking=None, dryup=None,
+        v = SimpleNamespace(stop=flag["stop"], contractions=[], qualifies=True, shrinking=None, dryup=None,
                             tightening=None)
     else:
         bases = detect_bases(candles, bases_cfg)
@@ -87,14 +86,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
 
     checks = [(tt_passed >= vcp_cfg.min_trend_checks, f"Trend template {tt_passed}/{tt_of}"),
               (rs is not None and rs >= vcp_cfg.min_rs, f"RS rating {rs if rs is not None else 'n/a'}")]
-    if cup:
-        h, cp = cup["handle"], cup["cup"]
-        checks += [(True, f"Cup {cp['depth_pct']:.0f}% deep, {cp['weeks']}w, after a {cup['prior_advance_pct']:.0f}% rise"),
-                   (cp["u_bars"] >= 5, f"U-shaped bottom · {(cp.get('u_frac') or 0) * 100:.0f}% of time near low"),
-                   (True, f"Handle {h['depth_pct']:.1f}% deep, {h['bars']} sessions, upper half"),
-                   ((h["volume_x"] if h["volume_x"] is not None else 9) <= 1.0,
-                    f"Handle volume dried up {h['volume_x'] or 0:.2f}×")]
-    elif flag:
+    if flag:
         p_, f_ = flag["pole"], flag["flag"]
         checks += [(True, f"Pole +{p_['gain_pct']:.0f}% in {p_['bars']} sessions"
                           + (f" on {p_['volume_x']:.1f}× volume" if p_.get("volume_x") is not None else "")),
@@ -111,7 +103,7 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                                                     f"(≤ {vcp_cfg.max_dryup:g})"),
               ((v.tightening or 9) <= vcp_cfg.max_tightening,
                f"Range tightening {v.tightening if v.tightening is not None else 0:.2f}× (≤ {vcp_cfg.max_tightening:g})")]
-    pattern = ("cup & handle" if cup else ("high-tight flag" if flag.get("htf") else "bull flag") if flag
+    pattern = (("high-tight flag" if flag.get("htf") else "bull flag") if flag
                else ("VCP ✓" if v.qualifies else "not a VCP"))
     bo = base.breakout
     if bo is not None and kind in BREAKOUT_KINDS:
@@ -167,12 +159,12 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
                      f"Wait for the {ampm(alerts_cfg.job_time)} confirmation or a better day.",
                      f"Counts only on a close above {_rs(pivot)}."]
     else:                                                         # forming / near_pivot
-        verdict = ("Cup & handle forming ✓" if cup else f"{pattern.capitalize()} forming ✓" if flag
+        verdict = (f"{pattern.capitalize()} forming ✓" if flag
                    else "VCP forming ✓" if v.qualifies else "Base forming (not a VCP)")
         vcolor = UP if v.qualifies else ACC
-        fail_at = (cup["handle"]["low"] if cup else flag["flag"]["low"] if flag
+        fail_at = (flag["flag"]["low"] if flag
                    else (v.contractions[-1]["low"] if v.contractions else stop))
-        where = "handle low" if cup else "flag low" if flag else "last pullback low"
+        where = "flag low" if flag else "last pullback low"
         watch = [f"Trigger: a CLOSE above {_rs(pivot)} on ≥ 1.5× volume.",
                  f"Setup fails on a close below {_rs(fail_at)} ({where}).",
                  f"Now {abs(ext):.1f}% under the pivot." + (" Flags are fast: act within 1–3 sessions." if flag else "")]
@@ -185,27 +177,12 @@ def decision_context(candles: list[dict], kind: str, *, symbol: str, company: st
             qty = floor(alerts_cfg.capital * alerts_cfg.risk_pct * size_factor / per_share)
             size = {"qty": qty, "entry": entry, "risk_rs": qty * per_share, "value": qty * entry, "note": size_note}
 
-    return {"symbol": symbol, "company": company, "industry": industry, "kind": kind, "base": base, "vcp": v, "cup": cup,
-            "flag": flag,
+    return {"symbol": symbol, "company": company, "industry": industry, "kind": kind, "base": base, "vcp": v, "flag": flag,
             "pivot": pivot, "stop": stop, "zone_top": zone_top, "close": close, "ext_pct": ext,
             "risk_pct": (close - stop) / close * 100, "ma50": ma50, "checks": checks, "verdict": verdict,
             "verdict_color": vcolor, "watch": watch, "size": size, "ended": ended, "live": live,
             "check_time": ampm(alerts_cfg.close_check_time),
             "date": candles[-1]["date"]}
-
-
-def _cup_base(candles: list[dict], cup: dict, kind: str, bases_cfg: BaseConfig) -> Optional[Base]:
-    """Rebuild the scan's cup as a Base on these candles (plus its breakout for breakout kinds)."""
-    idx = {c["date"]: i for i, c in enumerate(candles)}
-    L, t = idx.get(cup["left_lip"]["date"]), idx.get(cup["handle"]["end"])
-    if L is None or t is None:
-        return None
-    pivot, low = cup["right_lip"]["high"], cup["bottom"]["low"]
-    base = Base(number=1, status="forming", start_date=candles[L]["date"], end_date=candles[t]["date"],
-                start_index=L, end_index=t, bars=t - L + 1, weeks=cup["cup"]["weeks"], pivot=pivot,
-                pivot_date=cup["right_lip"]["date"], low=low, low_date=cup["bottom"]["date"],
-                depth_pct=cup["cup"]["depth_pct"], vol_dryup=cup["handle"]["volume_x"], kind="cup", shape=cup)
-    return _with_breakout(base, candles, kind, bases_cfg)
 
 
 def _flag_base(candles: list[dict], flag: dict, kind: str, bases_cfg: BaseConfig) -> Optional[Base]:
@@ -282,35 +259,6 @@ def _place(ax, taken: list, text: str, xy: tuple, offsets: list, **kw):
     return ann
 
 
-def _cup_curve(L, B, R, lip_l, bottom, lip_r, lows=None, k=60):
-    """A smooth U from the left lip down to the bottom and up to the right lip (L may be off-chart: None).
-    Each side is bottom + (lip - bottom) * u^p, with p (1.7..4, so always round) fitted to that side's lows so
-    the curve hugs the price: a fast drop then a long flat bottom gives a high p, a steady slide a low one."""
-    def fit(a, b, lip):
-        if lows is None or abs(b - a) < 3:
-            return 2.0
-        i = np.arange(min(a, b), max(a, b) + 1)
-        u = np.abs(i - B) / abs(b - a)
-        ps = np.linspace(1.7, 4, 24)
-        err = [np.mean((bottom + (lip - bottom) * u ** q - lows[i]) ** 2) for q in ps]
-        return float(ps[int(np.argmin(err))])
-    xs, ys = [], []
-    if L is not None and B > L:
-        u = np.linspace(1, 0, k)
-        xs += list(B - (B - L) * u); ys += list(bottom + (lip_l - bottom) * u ** fit(L, B, lip_l))
-    u = np.linspace(0, 1, k)
-    xs += list(B + (R - B) * u); ys += list(bottom + (lip_r - bottom) * u ** fit(R, B, lip_r))
-    return np.array(xs), np.array(ys)
-
-
-def _handle_curve(R, M, E, lip, low, pivot, k=30):
-    """The handle: a gentle drift from the right lip down to its low, then back up to the pivot."""
-    a = np.linspace(0, 1, k)
-    xs = list(R + (M - R) * a) + list(M + (E - M) * a)
-    ys = list(lip - (lip - low) * np.sin(a * np.pi / 2)) + list(low + (pivot - low) * (1 - np.cos(a * np.pi / 2)))
-    return np.array(xs), np.array(ys)
-
-
 def _draw_flag(ax, flag: dict, idx: dict, marks: list) -> list:
     """The pole as a glowing arrow from P (its low) to T (its top), the flag as a shaded channel between two
     parallel lines. Badges go into `marks`; returns the pole / flag labels as (text, xy, offsets, style) for
@@ -354,9 +302,7 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
         raise RuntimeError("matplotlib is not installed: run .venv/bin/pip install -r requirements.txt")
     plt, Rectangle = charts.plt, charts.Rectangle
     live = ctx.get("live")
-    if ctx.get("cup"):                                            # show the whole cup, left lip included
-        bars = min(330, max(bars, len(candles) - ctx["base"].start_index + 15))
-    elif ctx.get("flag"):                                         # the pole and some of the trend before it
+    if ctx.get("flag"):                                         # the pole and some of the trend before it
         bars = min(330, max(bars, len(candles) - ctx["base"].start_index + 40))
     data = list(candles)
     if live:                                                      # today's still-forming candle
@@ -391,10 +337,10 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     axp.set_facecolor(BG)
     axp.axis("off")
 
-    cup, flag = ctx.get("cup"), ctx.get("flag")
+    flag = ctx.get("flag")
     x0 = idx.get(base.start_date, 0 if base.start_date < view[0]["date"] else None)
     x1 = idx.get(base.end_date)
-    if x0 is not None and x1 is not None and not cup and not flag:
+    if x0 is not None and x1 is not None and not flag:
         ax.add_patch(Rectangle((x0 - .5, base.low), x1 - x0 + 1, pivot - base.low, fc=UP, alpha=.08, ec=UP, ls=":", lw=1))
     ax.axhspan(pivot, ctx["zone_top"], color=UP, alpha=.13, lw=0)
     ax.text(n * 0.62, ctx["zone_top"], "buy zone", color=UP, fontsize=9, ha="center", va="bottom")
@@ -409,7 +355,7 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
     ax.vlines(x, lo, h, color=np.where(up, UP, DOWN), lw=.9)
     ax.bar(x, np.abs(cl - o) + 1e-9, bottom=np.minimum(o, cl), color=np.where(up, UP, DOWN), width=.68)
 
-    ax.legend(loc="lower left" if cup else "upper left", fontsize=9, facecolor=PANEL, edgecolor=GRID, labelcolor=TEXT)
+    ax.legend(loc="upper left", fontsize=9, facecolor=PANEL, edgecolor=GRID, labelcolor=TEXT)
     marks, mark = [], 2
     for k in v.contractions:
         if k["high_date"] in idx and k["low_date"] in idx:
@@ -419,30 +365,6 @@ def render_decision_chart(candles: list[dict], ctx: dict, bars: int = 110) -> by
                                  va="top", fontweight="bold"))
             marks.append(_badge(ax, b_, k["low"], mark, ACC, dy=-26))
             mark += 1
-    if cup:                                                         # L / U / R, the cup curve and the handle
-        pts = [(cup["left_lip"]["date"], cup["left_lip"]["high"], "L", UP, 16),
-               (cup["bottom"]["date"], cup["bottom"]["low"], "U", BLUE, -18),
-               (cup["right_lip"]["date"], cup["right_lip"]["high"], "R", UP, 16)]
-        L_, B_, R_ = (idx.get(cup[k]["date"]) for k in ("left_lip", "bottom", "right_lip"))
-        he = idx.get(cup["handle"]["end"])
-        if B_ is not None and R_ is not None:
-            cx, cy = _cup_curve(L_, B_, R_, cup["left_lip"]["high"], cup["bottom"]["low"], cup["right_lip"]["high"], lo)
-            ax.plot(cx, cy, color=UP, lw=7, alpha=.16, solid_capstyle="round", zorder=4)
-            ax.plot(cx, cy, color=UP, lw=2.2, alpha=.95, solid_capstyle="round", zorder=5)
-            marks.append(ax.text(((L_ if L_ is not None else 0) + R_) / 2,
-                                 cup["bottom"]["low"] + (cup["right_lip"]["high"] - cup["bottom"]["low"]) * .45,
-                                 f"cup −{cup['cup']['depth_pct']:.0f}% · {cup['cup']['weeks']}w", color=UP, fontsize=9,
-                                 ha="center", va="center", fontweight="bold"))
-        for d, y, lab, col, dy in pts:
-            if d in idx:
-                marks.append(_badge(ax, idx[d], y, lab, col, dy=dy))
-        if R_ is not None and he is not None and he > R_:
-            m_ = R_ + 1 + int(np.argmin(lo[R_ + 1:he + 1]))
-            hx, hy = _handle_curve(R_, m_, he, cup["right_lip"]["high"], cup["handle"]["low"], pivot)
-            ax.plot(hx, hy, color=ACC, lw=6, alpha=.18, solid_capstyle="round", zorder=4)
-            ax.plot(hx, hy, color=ACC, lw=2.2, solid_capstyle="round", zorder=5)
-            marks.append(ax.text(m_, cup["handle"]["low"], f"handle −{cup['handle']['depth_pct']:.0f}%",
-                                 color=ACC, fontsize=9, ha="center", va="top", fontweight="bold"))
     flag_labels = _draw_flag(ax, flag, idx, marks) if flag else []  # P -> T pole arrow and the flag channel
     ax.set_xlim(-1.5, n + 0.5)
     ax.set_ylim(*ax.get_ylim())                                     # freeze limits so boxes can be measured

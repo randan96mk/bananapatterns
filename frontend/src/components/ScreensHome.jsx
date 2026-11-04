@@ -61,7 +61,7 @@ export default function ScreensHome({ hasData }) {
     ['climbing', 'Climbing', 'broke out earlier — the breakout is holding', 'breakout holding'],
     ['played_out', 'Played out', 'ended recently: below the 50-day line or 8% under the pivot', 'below 50d / −8%'],
   ];
-  const SCREENS = [['vcp', 'VCP', 'VCP'], ['cup', 'Cup & handle', 'Cup'], ['flag', 'Bull flag', 'Flag'],
+  const SCREENS = [['vcp', 'VCP', 'VCP'], ['flag', 'Bull flag', 'Flag'],
     ['bases', 'Bases (all)', 'Bases']];
   const rows = feed?.rows || [];
   const headline = `${c.fresh || 0} fresh breakout${c.fresh === 1 ? '' : 's'}`;
@@ -114,7 +114,7 @@ export default function ScreensHome({ hasData }) {
       </div>
       {tab === 'news' && <>
         <div className="muted small">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board
-          stocks (VCP, Cup &amp; handle, Bull flag, Bases) + held / watched</div>
+          stocks (VCP, Bull flag, Bases) + held / watched</div>
         <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : (phone ? 4 : 8)} />
         {(news?.items.length || 0) > (phone ? 4 : 8) && <button className="linkbtn"
           onClick={() => setFullFeed(!fullFeed)}>
@@ -178,8 +178,6 @@ export default function ScreensHome({ hasData }) {
             <h2>{headline} in the last {n} sessions.</h2>
             <p className="muted">{{
             vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.',
-            cup: 'Cups with a handle: U-shaped 12–33% cups of 7–65 weeks after a 30%+ rise, with a tight, quiet handle in '
-              + 'the upper half — tap a stage to see the names.',
             flag: 'Bull flags: a 20%+ pole in up to 6 weeks on volume, then a 1–5 week flag that gives back at most 38% '
               + 'on drying volume (HTF = +90% pole) — tap a stage to see the names.',
           }[screen] || 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>

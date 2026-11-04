@@ -427,7 +427,7 @@ class Scheduler:
                 f"SELECT symbol, payload FROM scan_results WHERE as_of = ? AND stage = 'forming' AND screen IN "
                 f"({','.join('?' * len(cfg.screens))}) ORDER BY {msg.SCREEN_ORDER_SQL.format(col='screen')}",
                 (as_of, *cfg.screens)).fetchall()
-        cands = {}                                         # a name on several screens: VCP, else cup, else flag
+        cands = {}                                         # a name on several screens: VCP, else flag
         for r in rows:
             if r["symbol"] in stocks and r["symbol"] not in cands:
                 cands[r["symbol"]] = json.loads(r["payload"])
@@ -534,7 +534,7 @@ class Scheduler:
     # --- entry checklist and live guard (market hours) ---
 
     def _entry_stop(self, p: dict) -> float:
-        """The setup's stop (VCP / cup / flag), else pivot - max_stop: the same rule the guard starts from."""
+        """The setup's stop (VCP / flag), else pivot - max_stop: the same rule the guard starts from."""
         return msg.setup_stop(p) or round(p["pivot"] * (1 - self.state.config.vcp.max_stop), 2)
 
     def _checklist(self, it: dict, pace: Optional[float], now: datetime, index_pct: Optional[float]) -> dict:

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from backend.config import AlertsConfig, BaseConfig, CupConfig, FlagConfig, ScreenConfig, VcpConfig
+from backend.config import AlertsConfig, BaseConfig, FlagConfig, ScreenConfig, VcpConfig
 from backend.database.models import get_db, upsert_candles
 from backend.engine.flags import detect_flags, flag_score
 from backend.engine.scan import run_scan
@@ -108,7 +108,7 @@ def scan_with(series: dict, results: dict | None = None):
                          "VALUES (?, ?, 'results', 'Financial Results', '', 'x')", (sym, d))
     syms = [{"symbol": s, "instrument_token": i} for i, s in enumerate(series, start=1)]
     return run_scan(BaseConfig(reset_ma=0), ScreenConfig(trend_ma=0, min_turnover_cr=0), syms,
-                    vcp_cfg=VcpConfig(min_rs=0, min_trend_checks=0), cup_cfg=CupConfig(min_rs=0, min_trend_checks=0),
+                    vcp_cfg=VcpConfig(min_rs=0, min_trend_checks=0),
                     flag_cfg=FlagConfig(min_rs=0, min_trend_checks=0))
 
 

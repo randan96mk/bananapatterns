@@ -4,12 +4,12 @@ import { useIsPhone } from '../useMedia';
 import { inr, cls } from '../fmt';
 
 // 📈 Follow: every fresh breakout on the Research screens bought blindly with ₹X: totals, by screen, every position.
-const TAG = { bases: ['BASES', '#26a69a'], vcp: ['VCP', '#c58af9'], cup: ['CUP', '#f5c518'], flag: ['FLAG', '#ff8a65'] };
+const TAG = { bases: ['BASES', '#26a69a'], vcp: ['VCP', '#c58af9'], flag: ['FLAG', '#ff8a65'] };
 const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '—');
 const n2 = (v) => (v == null ? '—' : (+v).toLocaleString('en-IN', { maximumFractionDigits: 2 }));
 const pc = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${(+v).toFixed(1)}%`);
 const Tags = ({ s }) => s.map((k) => <span key={k} className="chip small" style={{ color: TAG[k]?.[1], borderColor: TAG[k]?.[1], marginRight: 3 }}>{TAG[k]?.[0] || k}</span>);
-const SCREEN_F = [['all', 'All'], ['vcp', 'VCP'], ['bases', 'Bases'], ['cup', 'Cup'], ['flag', 'Flag'], ['vcp+bases', 'VCP + Bases']];
+const SCREEN_F = [['all', 'All'], ['vcp', 'VCP'], ['bases', 'Bases'], ['flag', 'Flag'], ['vcp+bases', 'VCP + Bases']];
 const STATUS_F = [['all', 'All'], ['open', 'Open'], ['closed', 'Closed']];
 const RESULT_F = [['all', 'All'], ['profit', 'Profit'], ['loss', 'Loss']];
 const Seg = ({ opts, v, set }) => <span className="seg">{opts.map(([k, l]) => <button key={k} className={v === k ? 'active' : ''} onClick={() => set(k)}>{l}</button>)}</span>;
