@@ -15,6 +15,7 @@ const SCREEN_F = [['all', 'All'], ['vcp', 'VCP'], ['bases', 'Bases'], ['flag', '
 const STATUS_F = [['all', 'All'], ['open', 'Open'], ['closed', 'Closed']];
 const RESULT_F = [['all', 'All'], ['profit', 'Profit'], ['loss', 'Loss']];
 const MAX_F = [['0', 'All'], ['3', '3'], ['5', '5'], ['10', '10']];
+const CAP_F = [['0', 'All'], ['500000', '5 L'], ['1000000', '10 L'], ['2000000', '20 L']];
 const STOP_F = [['5', '5%'], ['6', '6%'], ['7', '7%'], ['8', '8%']];
 const TIME_F = [['0', 'Off'], ['5', '5'], ['6', '6'], ['7', '7'], ['8', '8'], ['9', '9'], ['10', '10']];
 const Seg = ({ opts, v, set }) => <span className="seg">{opts.map(([k, l]) => <button key={k} className={v === k ? 'active' : ''} onClick={() => set(k)}>{l}</button>)}</span>;
@@ -54,15 +55,19 @@ function applyRules(p, stopPct, timeN) {
 }
 
 // At most N open at once: the breakouts are taken in entry order, one that finds no free slot is skipped.
-function capped(rows, n) {
+// …and / or a fixed capital: a breakout is taken only if the money already in open positions plus this trade's
+// value (qty × entry) fits in it; a sale gives its money back for later breakouts (closed profit / loss does not
+// change the capital). skipped: 'slot' | 'cash' | false.
+function capped(rows, n, capital) {
   const ordered = rows.filter((p) => p.qty > 0 || live(p));
-  if (!n) return ordered.map((p) => ({ ...p, skipped: false }));
-  const open = [];
+  if (!n && !capital) return ordered.map((p) => ({ ...p, skipped: false }));
+  const open = [];                                                   // [exit date, value] of the positions taken
   return [...ordered].sort((a, b) => (a.entry_date || a.signal_date).localeCompare(b.entry_date || b.signal_date)).map((p) => {
     const at = p.entry_date || p.signal_date;
-    for (let i = open.length - 1; i >= 0; i -= 1) if (open[i] <= at) open.splice(i, 1);   // exits before this entry free a slot
-    if (open.length >= n) return { ...p, skipped: true };
-    open.push(p.exit_date || '9999');
+    for (let i = open.length - 1; i >= 0; i -= 1) if (open[i][0] <= at) open.splice(i, 1);   // exits before this entry free their money
+    if (n && open.length >= n) return { ...p, skipped: 'slot' };
+    if (capital && open.reduce((a, [, v]) => a + v, 0) + p.value > capital) return { ...p, skipped: 'cash' };
+    open.push([p.exit_date || '9999', p.value]);
     return { ...p, skipped: false };
   }).sort((a, b) => b.signal_date.localeCompare(a.signal_date));
 }
@@ -115,7 +120,7 @@ function Chart({ cv, nifty, peakValue }) {
 function csv(rows) {
   const cols = ['stock', 'screens', 'breakout', 'bought', 'entry', 'qty', 'value', 'pivot', 'stop', 'sold', 'exit_or_now', 'profit_loss', 'pct', 'days', 'status', 'why'];
   const lines = rows.map((p) => [p.symbol, p.screens.join('+'), p.breakout_date, p.entry_date || '', p.entry ?? '', p.qty, p.value, p.pivot, p.stop,
-    p.exit_date || '', p.exit ?? p.last ?? '', p.net, p.pct ?? '', p.days, p.skipped ? 'skipped' : p.status, p.skipped ? 'no free slot' : p.reason || ''].join(','));
+    p.exit_date || '', p.exit ?? p.last ?? '', p.net, p.pct ?? '', p.days, p.skipped ? 'skipped' : p.status, p.skipped === 'cash' ? 'no cash' : p.skipped ? 'no free slot' : p.reason || ''].join(','));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([[cols.join(','), ...lines].join('\n')], { type: 'text/csv' }));
   a.download = `follow_${new Date().toISOString().slice(0, 10)}.csv`;
@@ -147,6 +152,8 @@ export default function FollowPage() {
   const [st, setSt] = useState('all');
   const [res, setRes] = useState('all');
   const [maxOpen, setMaxOpen] = useState('0');
+  const [capital, setCapital] = useState('0');
+  const [capBox, setCapBox] = useState('');
   const [stopPct, setStopPct] = useState('8');
   const [timeN, setTimeN] = useState('0');
   const [per, setPer] = useState('');
@@ -158,8 +165,8 @@ export default function FollowPage() {
     const id = setInterval(load, 2000);
     return () => clearInterval(id);
   }, [d?.status?.state]);
-  const base = useMemo(() => (d ? capped(d.rows.filter((p) => screenOk(p, scr)).map((p) => applyRules(p, +stopPct, +timeN)), +maxOpen) : []),
-    [d, scr, maxOpen, stopPct, timeN]);
+  const base = useMemo(() => (d ? capped(d.rows.filter((p) => screenOk(p, scr)).map((p) => applyRules(p, +stopPct, +timeN)), +maxOpen, +capital) : []),
+    [d, scr, maxOpen, capital, stopPct, timeN]);
   const taken = useMemo(() => base.filter((p) => !p.skipped), [base]);
   const rows = useMemo(() => base.filter((p) => !p.skipped || (st === 'all' && res === 'all'))
     .filter((p) => st === 'all' || (st === 'open' ? live(p) : !live(p)))
@@ -180,12 +187,14 @@ export default function FollowPage() {
   const nOpen = shownTaken.filter(live).length, nClosed = shownTaken.length - nOpen, nWon = shownTaken.filter((p) => !live(p) && p.net > 0).length;
   const running = d.status.state === 'running';
   const act = (p) => p.then(load).catch((e) => setErr(e.message));
-  const scope = `${SCREEN_F.find(([k]) => k === scr)[1]}${+maxOpen ? ` · max ${maxOpen} open` : ''} · stop ${stopPct}%${+timeN ? ` · time stop ${timeN}` : ''}`;
+  const scope = `${SCREEN_F.find(([k]) => k === scr)[1]}${+maxOpen ? ` · max ${maxOpen} open` : ''}${+capital ? ` · capital ${inr(+capital)}` : ''} · stop ${stopPct}%${+timeN ? ` · time stop ${timeN}` : ''}`;
+  const nSlot = base.filter((p) => p.skipped === 'slot').length, nCash = base.filter((p) => p.skipped === 'cash').length;
+  const inUse = taken.filter((p) => live(p) && p.qty).reduce((a, p) => a + p.value, 0);
   const Tile = ({ v, l, k }) => <div className="k"><div className={`v ${k || ''}`}>{v}</div><div className="l">{l}</div></div>;
   return <>
     <div className="panel">
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <b>📈 Every fresh breakout bought with {inr(d.per_position)}{+maxOpen ? `, at most ${maxOpen} open at once` : ', nothing skipped'}</b>
+        <b>📈 Every fresh breakout bought with {inr(d.per_position)}{+maxOpen ? `, at most ${maxOpen} open at once` : ''}{+capital ? `, within ${inr(+capital)} of capital` : ''}{!+maxOpen && !+capital ? ', nothing skipped' : ''}</b>
         <span className="chip small">Buy: next day's open after the breakout day</span>
         <span className="chip small">Sell: a close under the {d.rows[0]?.ma || 50}-day line, or {stopPct}% under the pivot{+timeN ? `, or not in profit after ${timeN} sessions` : ''} → next open</span>
         <span className="chip small">Delivery charges included</span>
@@ -203,16 +212,19 @@ export default function FollowPage() {
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}><b>Try it as</b>
         <span className="muted small">Screens</span><Seg opts={SCREEN_F} v={scr} set={setScr} />
         <span className="muted small">Max open at once</span><Seg opts={MAX_F} v={maxOpen} set={setMaxOpen} />
+        <span className="muted small">Capital</span><Seg opts={CAP_F} v={CAP_F.some(([k]) => k === capital) ? capital : 'custom'} set={(k) => { setCapital(k); setCapBox(''); }} />
+        <input className="input small" style={{ width: 96, textAlign: 'right' }} inputMode="numeric" placeholder="custom ₹" value={capBox}
+          onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setCapBox(v); setCapital(+v >= 10000 ? v : '0'); }} />
         <span className="muted small">Stop under the pivot</span><Seg opts={STOP_F} v={stopPct} set={setStopPct} />
         <span className="muted small">Time stop (sessions)</span><Seg opts={TIME_F} v={timeN} set={setTimeN} /></div>
       <div className="muted small" style={{ marginTop: 4 }}>Every number below is for <b>{scope}</b>. "VCP + Flag" = flagged by either (a stock is still one position: a second screen adds its tag, never a second trade) · "VCP + Bases" = by both · "Bases only" = by no other screen.
-        With a max, breakouts are taken in entry order; one with no free slot is skipped (greyed, out of every number). The stop and the time stop re-run every position's exits on its daily closes (sold at the next open); the 50-day-line exit always stays.</div>
+        With a max or a capital, breakouts are taken in entry order; one with no free slot, or whose value does not fit in the capital beside the money already in open positions, is skipped (greyed, out of every number). A sale gives its money back; closed profit / loss does not change the capital. The stop and the time stop re-run every position's exits on its daily closes (sold at the next open); the 50-day-line exit always stays.</div>
       <div className="summary" style={{ marginTop: 10 }}>
-        <Tile v={inr(t.net)} k={cls(t.net)} l={`net profit / loss · ${t.n} breakouts${skipped ? ` · ${skipped} skipped` : ''}`} />
+        <Tile v={inr(t.net)} k={cls(t.net)} l={`net profit / loss · ${t.n} breakouts${skipped ? ` · ${skipped} skipped (${[nSlot && `${nSlot} no slot`, nCash && `${nCash} no cash`].filter(Boolean).join(', ')})` : ''}`} />
         <Tile v={inr(t.open_net)} k={cls(t.open_net)} l={`open P&L · ${t.open} open now`} />
         <Tile v={`${t.closed} · ${t.win_rate ?? '—'}%`} l="closed · won" />
         <Tile v={`${pc(t.avg_win)} / ${pc(t.avg_loss)}`} l="avg win / avg loss" />
-        <Tile v={inr(peak.value)} l={`peak money in use · ${peak.positions} positions${peak.date ? ` on ${day(peak.date)}` : ''}`} />
+        <Tile v={inr(peak.value)} l={`peak money in use · ${peak.positions} positions${peak.date ? ` on ${day(peak.date)}` : ''}${+capital ? ` · now ${inr(inUse)} of ${inr(+capital)}` : ''}`} />
         <Tile v={peak.value ? pc(t.net / peak.value * 100) : '—'} k={cls(t.net)} l={`net on the peak money · NIFTY 50 ${pc(niftyPct)} over the same dates`} />
       </div>
     </div>
@@ -241,7 +253,7 @@ export default function FollowPage() {
             <tbody>{rows.slice(0, max).map((p) => <tr key={p.symbol + p.breakout_date} style={p.skipped ? { opacity: 0.45 } : {}}><td><b>{p.symbol}</b></td><td><Tags s={p.screens} /></td><td>{day(p.breakout_date)}</td><td>{day(p.entry_date)}</td>
               <td className="num">{n2(p.entry)}</td><td className="num">{p.qty || '—'}</td><td className="num">{inr(p.value)}</td><td className="num">{n2(p.pivot)}</td><td className="num">{n2(p.stop)}</td>
               <td>{day(p.exit_date)}</td><td className="num">{n2(p.exit ?? p.last)}</td><td className={`num ${cls(p.net)}`}><b>{inr(p.net)}</b></td><td className={`num ${cls(p.pct)}`}>{pc(p.pct)}</td>
-              <td className="num">{p.days} d</td><td>{p.skipped ? 'skipped · no free slot' : live(p) ? <span className="up">● {p.status === 'pending' ? 'buys at the next open' : p.status === 'closing' ? `sells at the next open · ${p.reason}` : 'open'}</span> : `closed · ${p.reason || ''}`}</td></tr>)}</tbody>
+              <td className="num">{p.days} d</td><td>{p.skipped ? `skipped · ${p.skipped === 'cash' ? 'no cash left in the capital' : 'no free slot'}` : live(p) ? <span className="up">● {p.status === 'pending' ? 'buys at the next open' : p.status === 'closing' ? `sells at the next open · ${p.reason}` : 'open'}</span> : `closed · ${p.reason || ''}`}</td></tr>)}</tbody>
             <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={6}>Total · {shownTaken.length} taken{rows.length - shownTaken.length ? ` · ${rows.length - shownTaken.length} skipped` : ''}</td><td className="num">{inr(sumShown((p) => p.value))}</td><td colSpan={4} /><td className={`num ${cls(sumShown((p) => p.net))}`}>{inr(sumShown((p) => p.net))}</td>
               <td className={`num ${cls(sumShown((p) => p.net))}`}>{sumShown((p) => p.value) ? pc(sumShown((p) => p.net) / sumShown((p) => p.value) * 100) : '—'}</td><td className="num">{shownTaken.length ? Math.round(sumShown((p) => p.days) / shownTaken.length) : 0} d avg</td><td>{nOpen} open · {nClosed} closed · {nWon} won</td></tr></tfoot></table></div>}
       {rows.length > max && <button className="linkbtn small" onClick={() => setMax(rows.length)}>show all {rows.length}</button>}

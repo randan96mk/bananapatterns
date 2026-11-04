@@ -2022,6 +2022,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **📈 Follow: a fixed capital**: "try it as" Capital (All / 5 L / 10 L / 20 L / a custom ₹ box): a breakout is
+  taken only if the money already in open positions plus its value (qty × entry) fits in the capital; a sale gives
+  its money back; closed profit / loss does not change it. Works together with Max open at once. Skipped rows say
+  "no cash left in the capital" or "no free slot"; the peak-money tile shows "now ₹x of ₹capital".
 - **📈 Follow: stop %, time stop, VCP + Flag**: two more "try it as" selectors, Stop under the pivot (5 / 6 / 7 /
   8 %) and Time stop (off / 5–10 sessions: sold at the next open if not in profit by then). The page re-runs every
   position's exits on its daily path (`path` = [[date, open, close]] from the entry day to the stored exit day;
