@@ -62,3 +62,20 @@ def test_backup_reconcile_and_evening_line(monkeypatch, tmp_path):
     assert by["X"]["real"] == "sent" and by["X"]["price_diff_pct"] == 1.0 and by["Y"]["real"] == "missing"
     assert r["counts"]["sent"] == 1 and r["counts"]["missing"] == 1
     assert follow.evening_line("2026-11-03") is None
+
+
+def test_swing_positions_marked_live_in_market_hours(monkeypatch):
+    from datetime import datetime
+    from backend.config import IST
+    from backend.engine import overview
+    rows = [{"book": "real", "symbol": "X", "entry": 100.0, "qty": 10, "stop": 95.0, "now": 100.0, "pnl": 0.0, "pct": 0.0},
+            {"book": "intraday", "symbol": "Y", "entry": 50.0, "qty": 1, "now": 50.0}]
+    monkeypatch.setattr(overview, "market_open", lambda now=None: True)
+    overview._mark_live(rows, lambda keys: {"NSE:X": {"last_price": 110.0}})
+    assert rows[0]["live"] and rows[0]["now"] == 110.0 and 80 < rows[0]["pnl"] < 100 and rows[0]["stop_dist"] > 0   # 100 gross − sell charges
+    assert "live" not in rows[1]
+    monkeypatch.setattr(overview, "market_open", lambda now=None: False)
+    r2 = [{"book": "real", "symbol": "X", "entry": 100.0, "qty": 10, "stop": 95.0, "now": 100.0}]
+    overview._mark_live(r2, lambda keys: {"NSE:X": {"last_price": 110.0}})
+    assert "live" not in r2[0]                                                  # closed market: the stored mark
+    assert overview.market_open(datetime(2026, 11, 4, 10, 0, tzinfo=IST)) and not overview.market_open(datetime(2026, 11, 4, 16, 0, tzinfo=IST))
