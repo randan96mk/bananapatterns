@@ -19,7 +19,7 @@ const stopBar = (l) => (l?.stop_dist_pct == null ? null : (
        style={{ width: `${Math.max(4, Math.min(100, (l.stop_dist_pct / 15) * 100))}%` }} /></span>));
 const RULES = { stop: '🛑 stop', ma50: '📉 50-day', profit: '💰 profit zone', extended: '🎈 extended', failed: '⚠️ failed' };
 
-// Positions the guard follows (from Kite holdings, read-only), with an editable stop.
+// Positions you added with ✅ I bought (never Kite holdings), with an editable stop.
 export default function PositionsCard({ onSelect }) {
   const [rows, setRows] = useState(null);
   const [msg, setMsg] = useState('');
@@ -34,7 +34,7 @@ export default function PositionsCard({ onSelect }) {
     <div className="panel">
       <div className="row"><b>📒 Positions{phone ? ` · ${rows.length}` : ' the guard follows'}</b>
         <span className={`muted small ${phone ? 'right' : ''}`}>{rows.some((p) => p.live) ? 'live · checked every 5 min'
-          : phone ? 'checked after the evening scan' : 'from Kite holdings (read-only) · checked after the evening scan'}</span>
+          : phone ? 'checked after the evening scan' : 'added with ✅ I bought · checked after the evening scan'}</span>
         <span className="msg">{msg}</span></div>
       {phone ? (
         <div className="posrows">{rows.map((p) => {

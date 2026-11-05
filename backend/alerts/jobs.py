@@ -124,7 +124,6 @@ class Scheduler:
         self.last_intraday: Optional[datetime] = None
         self.last_login_check: Optional[datetime] = None
         self.last_filings: Optional[datetime] = None
-        self.last_holdings: Optional[datetime] = None          # live guard: last Kite holdings re-read
         self.not_before: dict[str, datetime] = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -305,8 +304,7 @@ class Scheduler:
             notifier.hold = self.hold
             sent = dispatch_scan(as_of, st.config.alerts, st.config.bases, notifier, self._tokens(),
                                  st.config.screen.fresh_sessions, vcp_cfg=st.config.vcp)
-            if st.config.alerts.kite_holdings_guard:
-                sent["guard"] = self.run_guard(as_of)
+            sent["guard"] = self.run_guard(as_of)      # the positions you added with "I bought" (never Kite holdings)
         finally:
             self.hold = None
             notifier.hold = None
@@ -411,17 +409,17 @@ class Scheduler:
             return None
 
     def run_guard(self, as_of: Optional[str] = None) -> dict:
-        """Sync your Kite holdings (read-only) and check the sell rules. Never raises."""
+        """The sell rules on the positions you added yourself ("I bought"). Kite holdings are never read. Never raises."""
         st = self.state
         try:
             if as_of is None:
                 with get_db() as conn:
                     as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
-            changes = guard.sync(guard.kite_holdings(st.client), st.config.vcp)
+            if not guard.positions():
+                return {"positions": 0}
             mc, _ = self._market()
-            res = guard.run(as_of, self._tokens(), st.config.alerts, self.notifier(),
-                            lambda h: decorate(h, "guard", None, mc))
-            return dict(res, **changes)
+            return guard.run(as_of, self._tokens(), st.config.alerts, self.notifier(),
+                             lambda h: decorate(h, "guard", None, mc))
         except Exception as exc:
             logger.exception("Position guard failed")
             return {"error": str(exc)}
@@ -489,7 +487,7 @@ class Scheduler:
         res = self._forming_quotes()
         if res["status"] != "ok":
             out = {k: v for k, v in res.items() if k != "items"}
-            if res["status"] != "no_login" and cfg.live_guard and cfg.kite_holdings_guard:
+            if res["status"] != "no_login" and cfg.live_guard:
                 out["guard"] = self._live_guard(now)        # positions are watched even with no Forming names
             return out
         notifier, sent, failed, held = self.notifier(), 0, 0, 0
@@ -539,7 +537,7 @@ class Scheduler:
                                          decorate(msg.failed_alert(p, ltp, it["live"]["high"], stop), "failed", None,
                                                   mc), sym):
                     failed += 1
-        guarded = self._live_guard(now, res.get("index_today")) if cfg.live_guard and cfg.kite_holdings_guard else {}
+        guarded = self._live_guard(now, res.get("index_today")) if cfg.live_guard else {}
         return {"status": "ok", "checked": res["checked"], "sent": sent, "failed": failed, "held": held,
                 "upgraded": upgraded, "guard": guarded}
 
@@ -582,35 +580,17 @@ class Scheduler:
         out["_index"] = q.get(index_key) or {}
         return out
 
-    def _sync_holdings(self, now: datetime) -> int:
-        """Re-read Kite holdings every holdings_refresh_min; announce positions bought since the last read."""
-        cfg = self.state.config.alerts
-        if self.last_holdings and now - self.last_holdings < timedelta(minutes=cfg.holdings_refresh_min):
-            return 0
-        self.last_holdings = now
-        try:
-            changes = guard.sync(guard.kite_holdings(self.state.client), self.state.config.vcp)
-        except Exception as exc:
-            logger.warning("Live guard: holdings re-read failed: %s", exc)
-            return 0
-        added = [p for p in guard.positions() if p["symbol"] in changes["added"]]
-        if not added:
-            return 0
-        key = f"{now.date()}|guard-new|{'+'.join(sorted(changes['added']))}"
-        return int(self.notifier().send(key, "guard", msg.new_positions_alert(added)))
-
     def _live_guard(self, now: datetime, index_pct: Optional[float] = None) -> dict:
         """Positions under their stop or under heavy selling: one alert per stock per day, with buttons."""
         cfg, today = self.state.config.alerts, now.date().isoformat()
-        new = self._sync_holdings(now)
         positions = guard.positions()
         if not positions:
-            return {"positions": 0, "new": new}
+            return {"positions": 0}
         try:
             quotes = self._position_quotes(positions)
         except Exception as exc:
             logger.warning("Live guard quote failed: %s", exc)
-            return {"positions": len(positions), "error": str(exc)[:200], "new": new}
+            return {"positions": len(positions), "error": str(exc)[:200]}
         idx = lv.day_pct(quotes.get("_index") or {}) if index_pct is None else index_pct
         notifier, sent = self.notifier(), 0
         with get_db() as conn:
@@ -632,13 +612,13 @@ class Scheduler:
                         if rule == "under_stop" else msg.heavy_selling_alert(pos, ltp, dp, pace, idx, r))
                 if notifier.send(f"{today}|live-{rule}|{sym}", "guard", html, sym, buttons=buttons):
                     sent += 1
-        return {"positions": len(positions), "sent": sent, "new": new}
+        return {"positions": len(positions), "sent": sent}
 
     def _gap_positions(self, now: datetime) -> dict:
         """09:10: positions that open under their stop (a gap the stop can't protect against)."""
         cfg, today = self.state.config.alerts, now.date().isoformat()
         positions = [p for p in guard.positions() if p.get("stop")]
-        if not (cfg.live_guard and cfg.kite_holdings_guard and positions):
+        if not (cfg.live_guard and positions):
             return {"positions": 0}
         quotes = self._position_quotes(positions)
         broken, ok = [], 0
@@ -660,7 +640,7 @@ class Scheduler:
     def _close_positions(self, now: datetime) -> dict:
         """15:15: positions that were under the stop or sold off heavily today: still under -> exit; back above -> ✅."""
         cfg, today = self.state.config.alerts, now.date().isoformat()
-        if not (cfg.live_guard and cfg.kite_holdings_guard):
+        if not cfg.live_guard:
             return {}
         with get_db() as conn:
             day_flags = itd.flags(conn, today)

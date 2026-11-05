@@ -178,12 +178,10 @@ def test_run_scan_and_api(monkeypatch):
         assert x["normal"]["net"] == pytest.approx(x["normal"]["gross"] - x["normal"]["costs"], abs=0.02)
         assert 0 <= x["allowed_pct"] <= 100
     sc = tb.run_scan(cfg, FakeKite())
-    assert sc["market_on"] and sc["holdings_read"] and sc["filters"]["A"]["state"] == "ON"
+    assert sc["market_on"] and "holdings" not in sc and sc["filters"]["A"]["state"] == "ON"   # Kite holdings never read
     assert sc["filters"]["E"]["state"] == "FULL"
-    acts = {h["symbol"]: h["action"] for h in sc["holdings"]}
-    assert acts == {"STEADY": "SELL at open", "OTHER": "SELL at open"}                # 8% under the average price
     from backend.alerts import messages as msg
-    assert "signals only, no orders" in msg.breakout_scan(sc) and "STEADY" in msg.breakout_scan(sc)
+    assert "signals only, no orders" in msg.breakout_scan(sc) and "SELL at open" not in msg.breakout_scan(sc)
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
     from backend import main

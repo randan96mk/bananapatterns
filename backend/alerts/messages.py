@@ -241,7 +241,7 @@ def heavy_selling_alert(pos: dict, ltp: float, day_pct: float, pace: float, inde
 
 def new_positions_alert(rows: list[dict]) -> str:
     """🆕 positions picked up from Kite during market hours."""
-    lines = ["🆕 <b>Now following</b> (new in your Kite holdings)"]
+    lines = ["🆕 <b>Now following</b>"]
     for p in rows:
         lines.append(f"<b>{escape(p['symbol'])}</b> {p['qty']} sh @ {rs(p['avg_price'])} · stop {rs(p['stop'])} "
                      f"({escape(p['stop_source'])}" + (f", risk {(1 - p['stop'] / p['avg_price']) * 100:.1f}%"
@@ -541,7 +541,7 @@ def _rup(v: float) -> str:
 
 
 def breakout_lines(res: dict, limit: int = 10) -> list[str]:
-    """The scan as report lines: the market filter, the buys at the next open, the holdings HOLD / SELL at open."""
+    """The scan as report lines: the market filter and the buys at the next open."""
     lines = ["📈 <b>Trend Breakout</b> · signals only, no orders"]
     fs = res.get("filters") or {}
     if fs:
@@ -565,16 +565,6 @@ def breakout_lines(res: dict, limit: int = 10) -> list[str]:
                                                  else "not bought (filter off)") for k, f in fs.items()))
     else:
         lines.append("No breakouts today.")
-    held = res.get("holdings") or []
-    sells = [h for h in held if h["action"] != "HOLD"]
-    if sells:
-        lines += [f"🔴 <b>{escape(h['symbol'])}</b> SELL at open · {escape(h['why'])}" for h in sells]
-    if held:
-        keep = [h for h in held if h["action"] == "HOLD"]
-        if keep:
-            lines.append("🟢 HOLD: " + " · ".join(escape(h["symbol"]) for h in keep))
-    elif not res.get("holdings_read"):
-        lines.append("<i>Holdings not checked (log in to Kite).</i>")
     return lines
 
 

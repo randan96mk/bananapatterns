@@ -535,7 +535,7 @@ def saved(config: Optional[AppConfig] = None) -> Optional[dict]:
 
 # --- the evening scan -----------------------------------------------------------------------------------
 
-def scan(config: AppConfig, holdings: Optional[list] = None) -> dict:
+def scan(config: AppConfig) -> dict:
     """After the close: the market filter, the day's breakout buys (ranked, sized at capital / max_pos) and, for
     each Kite holding, HOLD or SELL at open (close under SMA(exit_sma), or sell_pct under the average price)."""
     p = config.breakout
@@ -570,44 +570,16 @@ def scan(config: AppConfig, holdings: Optional[list] = None) -> dict:
                      "stop_pct": round((1 - stop / close) * 100, 2), "qty": qty, "value": round(qty * close, 2),
                      "risk": round(qty * (close - stop), 2),
                      "ret126": round((val(s, s["at"][i], "ret126") or 0) * 100, 1), "turnover_rank": r, "for": who})
-    by_ts = {ts: sym for sym, ts in data["tradingsymbol"].items()}
-    held = []
-    for h in holdings or []:
-        qty = (h.get("quantity") or 0) + (h.get("t1_quantity") or 0)
-        if qty <= 0:
-            continue
-        ts = h.get("tradingsymbol", "")
-        sym = by_ts.get(ts, ts)
-        avg = h.get("average_price") or 0
-        s = S.get(sym)
-        j = s["at"].get(i) if s else None
-        close = s["rows"][j]["close"] if j is not None else (h.get("close_price") or h.get("last_price") or 0)
-        ma = val(s, j, f"sma{p.exit_sma}") if j is not None else None
-        why = []
-        if ma and close < ma:
-            why.append(f"close under SMA{p.exit_sma}")
-        if avg and close <= avg * (1 - p.sell_pct / 100):
-            why.append(f"{(1 - close / avg) * 100:.1f}% under the average price")
-        held.append({"symbol": ts, "qty": qty, "avg": round(avg, 2), "close": round(close, 2),
-                     "sma": round(ma, 2) if ma else None, "action": "SELL at open" if why else "HOLD",
-                     "why": ", ".join(why) or ("trend intact" if ma else f"not in the Nifty 500 data: SMA{p.exit_sma} unknown")})
     m50 = sma(closes, 50)[i]
     return {"as_of": cal[i], "market_on": market_on, "nifty": round(c, 2), "nifty_sma200": round(m, 2) if m else None,
             "nifty_sma50": round(m50, 2) if m50 else None, "filters": fstate,
-            "buys": buys, "holdings": held, "computed_at": now_ist()}
+            "buys": buys, "computed_at": now_ist()}
 
 
 def run_scan(config: AppConfig, client=None) -> dict:
-    """The evening scan with the Kite holdings (read-only) when logged in; saved for the tab and the report."""
-    holdings = None
-    if client is not None and getattr(client, "has_token", False):
-        try:
-            holdings = client.holdings()
-        except Exception as exc:
-            logger.warning("Kite holdings for the Trend Breakout scan: %s", exc)
-    res = scan(config, holdings)
+    """The evening scan (signals only; Kite holdings are never read); saved for the tab and the report."""
+    res = scan(config)
     if "error" not in res:
-        res["holdings_read"] = holdings is not None
         with get_db() as conn:
             set_setting(conn, "breakout.scan", json.dumps(res))
     return res
