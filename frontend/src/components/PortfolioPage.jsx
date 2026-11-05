@@ -60,7 +60,7 @@ export default function PortfolioPage({ onStock }) {
 
     {tab === 'positions' && <div className="v2card">{!pos.length ? <p className="muted">No open positions.</p>
       : <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Account</th>{!phone && <th>Strategy</th>}<th className="num">Qty</th>
-        <th className="num">Entry</th><th className="num">Now{positions.some((p) => p.live) ? <span className="up small" title="last traded price, market hours"> ●</span> : <span className="muted small" title="last close; live in market hours"> ·</span>}</th><th className="num">Value</th><th className="num">P&amp;L</th><th className="num">%</th>
+        <th className="num">Entry</th><th className="num">Now{pos.some((p) => p.live) ? <span className="up small" title="last traded price, market hours"> ●</span> : <span className="muted small" title="last close; live in market hours"> ·</span>}</th><th className="num">Value</th><th className="num">P&amp;L</th><th className="num">%</th>
         {!phone && <><th className="num">Stop</th><th>Distance</th><th>Opened</th></>}</tr></thead>
         <tbody>{pos.map((p) => <tr key={p.book + p.symbol} style={{ cursor: 'pointer' }} onClick={() => onStock(p.symbol)}>
           <td><b>{p.symbol}</b> <span className={`small ${p.side === 'short' ? 'down' : 'up'}`}>{p.side}</span></td><td><Acct book={p.book} name={p.account} /></td>
