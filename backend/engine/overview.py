@@ -27,9 +27,38 @@ def _stop_dist(now, stop, side="long"):
     return round(((now - stop) if side == "long" else (stop - now)) / now * 100, 2)
 
 
+def market_open(now: Optional[datetime] = None) -> bool:
+    from datetime import time
+    from backend.ingest import holidays
+    now = now or datetime.now(IST)
+    return holidays.is_trading_day(now.date()) and time(9, 15) <= now.time() <= time(15, 30)
+
+
+def _mark_live(rows: list, quote) -> None:
+    """In market hours the swing rows (Real, Paper) are marked at the last traded price from one Kite quote call
+    (the stored price is the previous close, refreshed by the stop watch only every few minutes); each marked row
+    gets live=True."""
+    from backend.engine import trend_breakout as tb
+    swing = [r for r in rows if r["book"] != "intraday"]
+    if not swing or quote is None or not market_open():
+        return
+    try:
+        q = quote([f"NSE:{r['symbol']}" for r in swing]) or {}
+    except Exception:
+        return
+    for r in swing:
+        ltp = (q.get(f"NSE:{r['symbol']}") or {}).get("last_price")
+        if not ltp or not r.get("entry"):
+            continue
+        gross = (ltp - r["entry"]) * r["qty"]
+        net = gross - tb.delivery_charges(ltp * r["qty"], True)
+        r.update(now=round(ltp, 2), pnl=round(net, 2), pct=_pct(net, r["entry"] * r["qty"]), stop_dist=_stop_dist(ltp, r.get("stop")), live=True)
+
+
 def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optional[dict] = None,
-              live: Optional[dict] = None) -> list:
-    """Every open position, P&L after the costs an exit would take."""
+              live: Optional[dict] = None, quote=None) -> list:
+    """Every open position, P&L after the costs an exit would take. quote: a Kite quote function (keys -> quotes) to
+    mark the swing rows live in market hours."""
     from backend.engine import paper, real
     from backend.intraday import flow
     from backend.intraday import positions as ipos
@@ -59,6 +88,7 @@ def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optiona
                     "side": p["side"], "qty": p["open_qty"], "entry": p["entry"], "now": r.get("now"), "pnl": r.get("pnl"),
                     "pct": r.get("pct"), "stop": r.get("stop"), "stop_dist": _stop_dist(r.get("now"), r.get("stop"), p["side"]),
                     "opened": f"{today} {p.get('entry_t', '')}".strip()})
+    _mark_live(out, quote)
     return sorted(out, key=lambda x: (x["book"] != "intraday", x["opened"]), reverse=False)
 
 
@@ -145,7 +175,7 @@ def orders(config: AppConfig, limit: int = 200) -> list:
     return sorted(out, key=lambda o: o["at"] or "", reverse=True)[:limit]
 
 
-def overview(config: AppConfig) -> dict:
+def overview(config: AppConfig, quote=None) -> dict:
     """Home: each account's figures, today's P&L across them, every open position, the latest activity."""
     from backend.engine import paper, real
     from backend.intraday import flow
@@ -186,12 +216,12 @@ def overview(config: AppConfig) -> dict:
     act.sort(key=lambda x: x["at"] or "", reverse=True)
     return {"at": datetime.now(IST).isoformat(timespec="seconds"), "accounts": accts,
             "today": round(sum(a.get("day_pnl") or 0 for a in accts.values()), 2),
-            "positions": positions(config, real_s, paper_s, live), "activity": act[:10],
+            "positions": positions(config, real_s, paper_s, live, quote), "activity": act[:10],
             "feed": live.get("feed")}
 
 
-def portfolio(config: AppConfig, days: int = 365) -> dict:
+def portfolio(config: AppConfig, days: int = 365, quote=None) -> dict:
     """Portfolio: positions, trades, orders, the daily P&L and the curves of every account (filtered on the page)."""
     cv = curves(config)
-    return {"positions": positions(config), "trades": trades(config, days), "orders": orders(config),
+    return {"positions": positions(config, quote=quote), "trades": trades(config, days), "orders": orders(config),
             "daily": daily_pnl(cv), "curves": cv, "names": NAMES}

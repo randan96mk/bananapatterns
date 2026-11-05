@@ -2022,6 +2022,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **Kite holdings are never read, anywhere**: the holdings guard (`kite_holdings_guard`, `holdings_refresh_min`,
+  `guard.kite_holdings`, the market-hours holdings re-read and "Now following" alert) and the Trend Breakout evening
+  scan's HOLD / SELL-at-open block on your holdings are gone; the report lists only the market filter and the buys.
+  What remains of the guard follows only positions you add yourself with ✅ I bought. Kite stays for login and
+  market data.
 - **Site-wide batch (one PR)**:
   **Splits / bonuses adjusted at the source** — `backend/ingest/corp_actions.py` finds a close that jumps 40 %+ on
   in-line turnover after every candle sync (`corp_actions` table: date, ratio); `get_candles(adjusted=True)`, the

@@ -110,7 +110,6 @@ def setup(monkeypatch, names=("S1",), **cfg):
     tokens, piv = forming_db(list(names))
     fake, st, client = FakeTG(), FakeState(), Live()
     st.client = client
-    st.config.alerts.kite_holdings_guard = True              # these tests cover the (now opt-in) Kite holdings guard
     for k, v in cfg.items():
         setattr(st.config.alerts, k, v)
     monkeypatch.setattr("backend.alerts.jobs.uni.resolve_universe",
@@ -121,8 +120,7 @@ def setup(monkeypatch, names=("S1",), **cfg):
 
 
 def hold(client, sym, qty=10, avg=100.0):
-    client.hold.append({"tradingsymbol": sym, "quantity": qty, "average_price": avg})
-    guard.sync(guard.kite_holdings(client), VcpConfig())
+    guard.sync({**{p["symbol"]: {"qty": p["qty"], "avg": p["avg_price"]} for p in guard.positions()}, sym: {"qty": qty, "avg": avg}}, VcpConfig())
     return next(p for p in guard.positions() if p["symbol"] == sym)
 
 
@@ -164,22 +162,6 @@ def test_heavy_selling_and_quiet_today(monkeypatch):
     sch.run_intraday(now)
     heavy = [h for _, h in fake.sent if "heavy selling" in h]
     assert len(heavy) == 1 and "<b>S1</b>" in heavy[0] and "2.5× normal volume" in heavy[0]   # S2 is quiet today
-
-
-def test_holdings_reread_announces_new_buys(monkeypatch):
-    sch, client, fake, tokens, piv = setup(monkeypatch, ["S1"])
-    now = ist(*DAY, 10, 0)
-    sch.run_intraday(now)
-    assert client.holdings_calls == 1 and not any("Now following" in h for _, h in fake.sent)
-    client.hold.append({"tradingsymbol": "S1", "quantity": 24, "average_price": piv["S1"] * 1.01})
-    sch.run_intraday(now + timedelta(minutes=5))
-    assert client.holdings_calls == 1                                     # every 30 minutes, not every tick
-    sch.run_intraday(now + timedelta(minutes=30))
-    new = [h for _, h in fake.sent if "Now following" in h]
-    assert client.holdings_calls == 2 and len(new) == 1 and "<b>S1</b> 24 sh" in new[0]
-    sch.last_holdings = None
-    sch.run_intraday(now + timedelta(minutes=35))
-    assert sum("Now following" in h for _, h in fake.sent) == 1
 
 
 def test_opening_and_close_position_checks(monkeypatch):

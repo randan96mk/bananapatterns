@@ -261,9 +261,6 @@ class AlertsConfig:
     gap_check_time: str = "09:10"          # after the 09:00-09:08 pre-open session sets the open
     coiled_volume: float = 0.5             # coiled: last day's volume <= this x 50-day average ...
     coiled_within_pct: float = 3.0         # ... within this % under the pivot, on an NR7 or inside day
-    # Kite holdings guard (read-only): sell-rule alerts on your Kite holdings. Off: the app follows only its own
-    # accounts (Real via Tradetron, paper); renamed from position_guard so an older saved "on" does not carry over.
-    kite_holdings_guard: bool = False
     alert_buttons: bool = True             # Watch / Mute / Chart / I bought under stock alerts
     mute_days: int = 30
     profit_zone_pct: float = 20.0          # gain from your average: consider selling part
@@ -273,7 +270,6 @@ class AlertsConfig:
     live_guard: bool = True
     live_drop_pct: float = 4.0             # heavy selling: down this % or more today ...
     live_drop_volume: float = 2.0          # ... on this x normal volume for the time of day (still above the stop)
-    holdings_refresh_min: int = 30         # re-read Kite holdings in market hours, so today's buys are guarded
     hard_stop: bool = False                # under-stop alert says "exit now" (else: unconfirmed until the close)
     # Entry checklist on intraday heads-ups and the 15:15 check, and the Today page
     entry_checklist: bool = True           # zone / VWAP / volume pace / vs Nifty 500 / opening range -> verdict

@@ -20,16 +20,6 @@ class Kite:
         return {"net": self._n, "day": []}
 
 
-def test_kite_holdings_merges_cnc_buys():
-    k = Kite([{"tradingsymbol": "AAA", "quantity": 10, "t1_quantity": 5, "average_price": 100},
-              {"tradingsymbol": "ZERO", "quantity": 0, "t1_quantity": 0, "average_price": 1},
-              {"tradingsymbol": "HFCL-BE", "quantity": 3, "average_price": 80}],
-             [{"tradingsymbol": "BBB", "product": "CNC", "quantity": 7, "average_price": 50},
-              {"tradingsymbol": "CCC", "product": "MIS", "quantity": 4, "average_price": 9}])
-    assert guard.kite_holdings(k) == {"AAA": {"qty": 15, "avg": 100.0}, "HFCL": {"qty": 3, "avg": 80.0},
-                                      "BBB": {"qty": 7, "avg": 50.0}}
-
-
 def test_sync_matches_setup_stop_and_drops_sold():
     as_of, tokens = scanned_db()
     r = guard.sync({"NEAR": {"qty": 10, "avg": 150.0}, "NOSETUP": {"qty": 5, "avg": 200.0}}, VcpConfig())

@@ -48,7 +48,7 @@ export default function HomePage({ onGo, onStock }) {
             <div><b>{p.symbol}</b><div className="muted small"><Acct book={p.book} name={p.account} /> {p.qty} @ {p.entry}</div></div>
             <div style={{ marginLeft: 'auto', textAlign: 'right' }}><b className={cls(p.pnl)}>{signed(p.pnl)}</b><div className="muted small">{p.now} · {pct(p.pct)}</div></div></div>)}</div>
           : <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Account</th><th>Side</th><th className="num">Qty</th>
-            <th className="num">Entry</th><th className="num">Now</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop</th></tr></thead>
+            <th className="num">Entry</th><th className="num">Now{o.positions.some((p) => p.live) ? <span className="up small" title="last traded price"> ●</span> : ""}</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop</th></tr></thead>
             <tbody>{o.positions.map((p) => <tr key={p.book + p.symbol} style={{ cursor: 'pointer' }} onClick={() => onStock(p.symbol)}>
               <td><b>{p.symbol}</b></td><td><Acct book={p.book} name={p.account} /></td><td className={p.side === 'short' ? 'down' : 'up'}>{p.side}</td>
               <td className="num">{p.qty}</td><td className="num">{p.entry}</td><td className="num">{p.now ?? '—'}</td>

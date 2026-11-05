@@ -23,19 +23,6 @@ from backend.logging_config.logger import setup_logger
 logger = setup_logger("guard")
 
 
-def kite_holdings(client) -> dict[str, dict]:
-    """{symbol: {qty, avg}} from holdings plus today's CNC buys (net positions)."""
-    out: dict[str, dict] = {}
-    for h in client.holdings() or []:
-        qty = (h.get("quantity") or 0) + (h.get("t1_quantity") or 0)
-        if qty > 0:
-            out[h["tradingsymbol"]] = {"qty": qty, "avg": float(h.get("average_price") or 0)}
-    for p in (client.positions() or {}).get("net", []):
-        if p.get("product") == "CNC" and (p.get("quantity") or 0) > 0 and p["tradingsymbol"] not in out:
-            out[p["tradingsymbol"]] = {"qty": p["quantity"], "avg": float(p.get("average_price") or 0)}
-    return {k.removesuffix("-BE"): v for k, v in out.items()}
-
-
 def _setup(conn, symbol: str, as_of: Optional[str]) -> Optional[dict]:
     row = conn.execute("SELECT payload FROM scan_results WHERE as_of = ? AND symbol = ? ORDER BY "
                        + SCREEN_ORDER_SQL.format(col="screen") + " LIMIT 1", (as_of, symbol)).fetchone() if as_of else None
@@ -58,7 +45,7 @@ def _initial_stop(conn, symbol: str, avg: float, as_of: Optional[str], vcp_cfg: 
 
 
 def sync(held: dict[str, dict], vcp_cfg: VcpConfig) -> dict:
-    """Update the followed positions from Kite. Returns {added: [...], closed: [...]}"""
+    """Set the followed positions (manual "I bought" entries; Kite holdings are never read). Returns {added, closed}."""
     added, closed, now = [], [], now_ist()
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]

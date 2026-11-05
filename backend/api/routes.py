@@ -1439,14 +1439,16 @@ def logs(level: Optional[str] = None, limit: int = Query(200, le=1000)):
 def overview_view():
     """🏠 Home: every account's figures, today's P&L across them, every open position, the latest activity."""
     from backend.engine import overview as ov
-    return ov.overview(S().config)
+    st = S()
+    return ov.overview(st.config, st.live.quotes if st.client.has_token else None)
 
 
 @router.get("/portfolio")
 def portfolio_view(days: int = 365):
     """💼 Portfolio: positions, trades, orders, daily P&L and curves of every account (the app's own; no broker holdings)."""
     from backend.engine import overview as ov
-    return ov.portfolio(S().config, max(1, min(days, 3650)))
+    st = S()
+    return ov.portfolio(st.config, max(1, min(days, 3650)), st.live.quotes if st.client.has_token else None)
 
 
 # --- 📡 one live connection: the page subscribes to topics; each is sent when it changes ---------------------
