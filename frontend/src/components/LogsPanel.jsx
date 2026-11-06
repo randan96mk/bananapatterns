@@ -33,9 +33,9 @@ export default function LogsPanel() {
       <Chip title="The INFO log is on disk, not in the database">full INFO log: <b>logs/bananapatterns.log</b></Chip>
     </Head>
     <Cards n={4}>
-      <Card label="Today" value={todayN} num={todayN} sub={`lines today · of ${logs.length} loaded`} fact={level ? `${level} only` : 'warnings + errors'} />
-      <Card label="Warnings" value={warnN} num={warnN} k={warnN ? 'warn' : ''} sub="in the loaded lines" fact={sources.length ? `${sources.length} modules` : '—'} />
-      <Card label="Errors" value={errN} num={errN} k={errN ? 'down' : ''} sub="in the loaded lines" fact={errN ? 'see the last error →' : 'none'} />
+      <Card unit="n" label="Today" value={todayN} num={todayN} sub={`lines today · of ${logs.length} loaded`} fact={level ? `${level} only` : 'warnings + errors'} />
+      <Card unit="n" label="Warnings" value={warnN} num={warnN} k={warnN ? 'warn' : ''} sub="in the loaded lines" fact={sources.length ? `${sources.length} modules` : '—'} />
+      <Card unit="n" label="Errors" value={errN} num={errN} k={errN ? 'down' : ''} sub="in the loaded lines" fact={errN ? 'see the last error →' : 'none'} />
       <Card label="Last error" value={lastErr ? clock(lastErr.timestamp) : '—'} sub={lastErr ? `${lastErr.source} · ${lastErr.message}` : 'no error on record'} fact={lastErr ? stamp(lastErr.timestamp) : ''} />
     </Cards>
     <Panel title="Lines" meta={shown.length} right={src || q ? `filtered from ${logs.length}` : null}>

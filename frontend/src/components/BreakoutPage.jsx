@@ -180,14 +180,14 @@ export default function BreakoutPage() {
         <div className="muted small">⚠️ Universe is today's Nifty 500 list (survivorship bias): real results will be somewhat lower.
           {' '}E's out-of-sample gain comes mostly from 2026. Past results don't guarantee future returns.</div></div>
       {V.E && <Cards n={5}>
-        <Card label={<>CAGR · A<Tip text="Yearly growth of the account after all charges and slippage, over the whole test." /></>} value={pct(V.A?.[scen].cagr)} num={V.A?.[scen].cagr} k={cls(V.A?.[scen].cagr)}
+        <Card unit="%" label={<>CAGR · A<Tip text="Yearly growth of the account after all charges and slippage, over the whole test." /></>} value={pct(V.A?.[scen].cagr)} num={V.A?.[scen].cagr} k={cls(V.A?.[scen].cagr)}
           sub={`${lakh(R.capital)} → ${lakh(R.capital + (V.A?.[scen].net || 0))} · ${scenTxt}`} spark={V.A?.curve?.[scen]} fact={<><Bar pct={V.A?.[scen].drawdown} bad /> max DD {pct(-V.A?.[scen].drawdown, 0)}</>} />
-        <Card label="CAGR · E+" value={pct(E.cagr)} num={E.cagr} k={cls(E.cagr)} sub={`${lakh(R.capital)} → ${lakh(R.capital + E.net)} · ${scenTxt}`} spark={V.E.curve?.[scen]}
+        <Card unit="%" label="CAGR · E+" value={pct(E.cagr)} num={E.cagr} k={cls(E.cagr)} sub={`${lakh(R.capital)} → ${lakh(R.capital + E.net)} · ${scenTxt}`} spark={V.E.curve?.[scen]}
           fact={<><Bar pct={E.drawdown} bad /> max DD {pct(-E.drawdown, 0)}</>} />
-        <Card label="NIFTY 50" value={pct(r.nifty.cagr)} num={r.nifty.cagr} k={cls(r.nifty.cagr)} sub="same period · buy and hold" spark={r.curve?.nifty} fact={<><Bar pct={r.nifty.drawdown} bad /> max DD {pct(-r.nifty.drawdown, 0)}</>} />
-        <Card label={<>E+ trades · won<Tip text="Profit on the starting capital: the price moves (before costs) minus charges and slippage." /></>} value={`${E.trades} · ${E.win_rate.toFixed(0)}%`} num={E.trades}
+        <Card unit="%" label="NIFTY 50" value={pct(r.nifty.cagr)} num={r.nifty.cagr} k={cls(r.nifty.cagr)} sub="same period · buy and hold" spark={r.curve?.nifty} fact={<><Bar pct={r.nifty.drawdown} bad /> max DD {pct(-r.nifty.drawdown, 0)}</>} />
+        <Card unit="n" label={<>E+ trades · won<Tip text="Profit on the starting capital: the price moves (before costs) minus charges and slippage." /></>} value={`${E.trades} · ${E.win_rate.toFixed(0)}%`} num={E.trades}
           sub={<><span className={cls(E.net)}>{signedInr(E.net)}</span> net · {inr(E.gross)} − {inr(E.costs)}</>} fact={`profit factor ${E.profit_factor ?? '—'} · ${E.avg_hold.toFixed(0)} days held`} />
-        <Card label={<>E+ out-of-sample<Tip text="Each setting moved one step (14; E+ adds 4 for the late trail: from +50% / +150%, trail 20% / 30%); how many still pass every period (stressed too) and beat NIFTY 50." /></>}
+        <Card unit="n" label={<>E+ out-of-sample<Tip text="Each setting moved one step (14; E+ adds 4 for the late trail: from +50% / +150%, trail 20% / 30%); how many still pass every period (stressed too) and beat NIFTY 50." /></>}
           value={pct(oos?.net)} num={oos?.net} k={cls(oos?.net)} sub={`${oos?.name || 'OOS'} · stressed ${pct(oos?.stress)}`}
           fact={<><Bar pct={V.E.robust.length ? (100 * V.E.robust_pass) / V.E.robust.length : 0} ok /> robust {V.E.robust_pass} of {V.E.robust.length}</>} />
       </Cards>}

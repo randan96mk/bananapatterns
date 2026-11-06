@@ -307,16 +307,16 @@ export default function FollowPage() {
     <Cards n={6}>
       <Card label="Net · this setting" value={inr(t.net)} num={t.net} k={cls(t.net)} sub={`${t.n} taken · ${t.open} open · ${t.closed} closed`} spark={cv.map(([, v]) => v)}
         fact={<>vs blind <Bar pct={blind ? 100 * t.net / blind : 0} ok={t.net >= blind} /> <b>{inr(blind)}</b></>} />
-      {cagr != null ? <Card label="CAGR · vs NIFTY" value={pc(cagr * 100)} num={cagr} k={cls(cagr)} sub={`NIFTY 50 ${pc(niftyPct)} · same dates`} fact={<>on <b>{inr(peak.value)}</b> peak money · net {pc(peak.value ? t.net / peak.value * 100 : null)}</>} />
-        : <Card label="Net on the peak money" value={peak.value ? pc(t.net / peak.value * 100) : '—'} num={peak.value ? t.net / peak.value : 0} k={cls(t.net)} sub={`NIFTY 50 ${pc(niftyPct)} over the same dates`} fact={<>peak <b>{inr(peak.value)}</b> · {peak.positions} positions{peak.date ? ` on ${day(peak.date)}` : ''}</>} />}
-      <Card label="Win rate · payoff" value={`${t.win_rate ?? '—'}% · ${payoff != null ? payoff.toFixed(1) : '—'}`} num={t.win_rate} sub={`avg win ${pc(t.avg_win)} · avg loss ${pc(t.avg_loss)}`}
+      {cagr != null ? <Card unit="%" label="CAGR · vs NIFTY" value={pc(cagr * 100)} num={cagr} k={cls(cagr)} sub={`NIFTY 50 ${pc(niftyPct)} · same dates`} fact={<>on <b>{inr(peak.value)}</b> peak money · net {pc(peak.value ? t.net / peak.value * 100 : null)}</>} />
+        : <Card unit="%" label="Net on the peak money" value={peak.value ? pc(t.net / peak.value * 100) : '—'} num={peak.value ? t.net / peak.value : 0} k={cls(t.net)} sub={`NIFTY 50 ${pc(niftyPct)} over the same dates`} fact={<>peak <b>{inr(peak.value)}</b> · {peak.positions} positions{peak.date ? ` on ${day(peak.date)}` : ''}</>} />}
+      <Card unit="n" label="Win rate · payoff" value={`${t.win_rate ?? '—'}% · ${payoff != null ? payoff.toFixed(1) : '—'}`} num={t.win_rate} sub={`avg win ${pc(t.avg_win)} · avg loss ${pc(t.avg_loss)}`}
         fact={<>expectancy <b>{pc(expect)}</b> a trade</>} />
       <Card label="Max drawdown" value={inr(-dd.value)} num={-dd.value} k={dd.value ? 'down' : ''} spark={ddSeries.length > 1 ? ddSeries : undefined}
         sub={dd.from ? `${day(dd.from)} → ${day(dd.to)} · ${dd.sessions} sessions` : 'no fall yet'}
         fact={<>now <b className={ddNow < 0 ? 'down' : 'up'}>{inr(ddNow)}</b> from the high{dd.recovered ? ` · back at the peak ${day(dd.recovered)}` : dd.to ? ' · not back yet' : ''}</>} />
-      <Card label="Pending · open" value={`${nPending} · ${t.open}`} num={t.open} sub={`buy next open · open P&L ${inr(t.open_net)}`}
+      <Card unit="n" label="Pending · open" value={`${nPending} · ${t.open}`} num={t.open} sub={`buy next open · open P&L ${inr(t.open_net)}`}
         fact={<><b>{nClosing}</b> selling · in use <b>{inr(inUse)}</b>{+capital ? ` of ${inr(+capital)}` : ''}</>} />
-      <Card label="Skipped" value={skipped} num={skipped} k={skipped ? 'warn' : ''} sub={`${nSlot} no slot · ${nCash} no cash · ${nMkt} market filter`} fact={<>left out <b>{corp.length}</b> corp action{corp.length === 1 ? '' : 's'}</>} />
+      <Card unit="n" label="Skipped" value={skipped} num={skipped} k={skipped ? 'warn' : ''} sub={`${nSlot} no slot · ${nCash} no cash · ${nMkt} market filter`} fact={<>left out <b>{corp.length}</b> corp action{corp.length === 1 ? '' : 's'}</>} />
     </Cards>
     <div className="two">
       <div style={col}>

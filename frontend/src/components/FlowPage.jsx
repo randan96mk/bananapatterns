@@ -178,7 +178,7 @@ export default function FlowPage() {
         <Card label="Today · after costs" value={signed(today)} num={today} k={cls(today)} live={feedLive}
           sub={<>realised <span className={cls(stats.realised)}>{signed(stats.realised)}</span> · open <span className={cls(stats.unrealised)}>{signed(stats.unrealised)}</span></>}
           fact={`mode ${d.mode}`} />
-        <Card label="Paper trades" value={stats.trades} num={stats.trades} sub={`${stats.won} won · ${stats.open} open · ${stats.closed ?? 0} closed`} fact={d.mode === 'paper' ? 'simulated, no orders' : d.mode === 'signals' ? 'signals tracked like paper' : 'mode off: nothing tracked'} />
+        <Card unit="n" label="Paper trades" value={stats.trades} num={stats.trades} sub={`${stats.won} won · ${stats.open} open · ${stats.closed ?? 0} closed`} fact={d.mode === 'paper' ? 'simulated, no orders' : d.mode === 'signals' ? 'signals tracked like paper' : 'mode off: nothing tracked'} />
         <Card label="At risk now" value={inr(stats.at_risk)} num={stats.at_risk} k="down" sub="to the stops, open positions" fact={`capital ${inr(stats.capital)}`} />
         <Card label="Daily loss used" value={inr(used)} num={used} k={used > 0 ? 'down' : ''} sub={`of ${inr(stats.loss_limit)} limit`}
           fact={<><Bar pct={stats.loss_limit ? (used / stats.loss_limit) * 100 : 0} bad={used >= stats.loss_limit} /> {stats.loss_limit ? Math.round((used / stats.loss_limit) * 100) : 0}% used</>} />
@@ -195,9 +195,9 @@ export default function FlowPage() {
         ? <Panel title="📒 Journal" right="closed paper trades, last 30 days, after costs"><p className="muted small rempty">No closed paper trades yet.</p></Panel> : <>
           <Cards n={4}>
             <Card label="Journal · net after costs" value={signed(jr.total.net)} num={jr.total.net} k={cls(jr.total.net)} sub={`${signed(jr.total.gross)} before − ${inr(jr.total.costs)} costs`} fact="last 30 days" />
-            <Card label="Won" value={`${jr.total.win_rate}%`} num={jr.total.win_rate} sub={`${jr.total.trades} trades`} />
-            <Card label="Average R" value={`${jr.total.avg_r ?? '—'}R`} num={jr.total.avg_r} sub="per closed trade" />
-            <Card label="Profit factor" value={jr.total.profit_factor ?? '—'} num={jr.total.profit_factor} sub="gross wins ÷ gross losses" />
+            <Card unit="%" label="Won" value={`${jr.total.win_rate}%`} num={jr.total.win_rate} sub={`${jr.total.trades} trades`} />
+            <Card unit="n" label="Average R" value={`${jr.total.avg_r ?? '—'}R`} num={jr.total.avg_r} sub="per closed trade" />
+            <Card unit="n" label="Profit factor" value={jr.total.profit_factor ?? '—'} num={jr.total.profit_factor} sub="gross wins ÷ gross losses" />
           </Cards>
           <div className="cols c2">
             <Panel title="By side"><FixedTable cols={AGG_COLS} rows={aggRows('side')} empty="Nothing yet." /></Panel>

@@ -124,7 +124,7 @@ export default function ScreensHome({ hasData }) {
       {summary && !summary.as_of && <div className="rbanner">No scan yet. {hasData ? <>Press <b>Rescan</b>.</> : <>Load data first: <b>Data → Refresh universe → Sync candles</b>.</>}</div>}
       {summary && <Cards n={6}>
         {CARDS.map(([id, title, sub, fact]) => (
-          <Card key={id} label={`${stage === id ? '▸ ' : ''}${title}`} value={c[id] ?? 0} num={c[id] ?? 0} k={stage === id ? 'up' : ''} sub={sub} fact={fact} onClick={() => pickStage(id)} />))}
+          <Card unit="n" key={id} label={`${stage === id ? '▸ ' : ''}${title}`} value={c[id] ?? 0} num={c[id] ?? 0} k={stage === id ? 'up' : ''} sub={sub} fact={fact} onClick={() => pickStage(id)} />))}
         <Card label="Market filter" value={mLabel} k={mCls === 'ok' ? 'up' : mCls === 'bad' ? 'down' : mCls === 'w' ? 'warn' : ''}
           sub={h ? `breadth ${br.above_50_pct ?? '–'}% · dist ${h.dist_days ?? '–'} · working ${bo.working ?? 0}/${bo.total ?? 0}` : 'no market health yet'}
           fact={h ? <><Bar pct={br.above_50_pct} ok={br.above_50_pct >= (mkt.config?.breadth_up ?? 50)} bad={br.above_50_pct < (mkt.config?.breadth_correction ?? 35)} /> {br.above_50_pct ?? '–'}% above 50 d</> : 'Data → Sync candles'} />

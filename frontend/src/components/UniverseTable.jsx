@@ -72,11 +72,11 @@ export default function UniverseTable({ data, selected, onSelect }) {
         {data.excluded?.length > 0 && <Chip title={data.excluded.join(', ')}>excluded (series): {data.excluded.join(', ')}</Chip>}
       </Head>
       <Cards n={4}>
-        <Card label="Stocks" value={rows.length - indices} num={rows.length} sub={`${indices} ind${indices === 1 ? 'ex' : 'ices'} · snapshot ${data.snapshot_date || '—'}`} fact={<><b>{view.length}</b> shown with these filters</>} />
-        <Card label="With data" value={`${Math.round(100 * withData / rows.length)}%`} num={withData} k={withData === rows.length ? 'up' : 'warn'} sub={`${withData} of ${rows.length} synced`}
+        <Card unit="n" label="Stocks" value={rows.length - indices} num={rows.length} sub={`${indices} ind${indices === 1 ? 'ex' : 'ices'} · snapshot ${data.snapshot_date || '—'}`} fact={<><b>{view.length}</b> shown with these filters</>} />
+        <Card unit="n" label="With data" value={`${Math.round(100 * withData / rows.length)}%`} num={withData} k={withData === rows.length ? 'up' : 'warn'} sub={`${withData} of ${rows.length} synced`}
           fact={<><Bar pct={100 * withData / rows.length} ok={withData === rows.length} /> {rows.length - withData} waiting</>} />
         <Card label="Latest bar" value={lastDate || '—'} sub={short ? `${short} with under a year of bars` : 'a year of bars everywhere'} fact="Data → Sync candles" />
-        <Card label="Errors" value={failed} num={failed} k={failed ? 'down' : 'up'} sub={`${data.unmatched.length} unmatched · ${data.excluded?.length || 0} excluded`} fact={failed ? 'hover a row for the error' : 'last sync clean'} />
+        <Card unit="n" label="Errors" value={failed} num={failed} k={failed ? 'down' : 'up'} sub={`${data.unmatched.length} unmatched · ${data.excluded?.length || 0} excluded`} fact={failed ? 'hover a row for the error' : 'last sync clean'} />
       </Cards>
       <Panel title="Stocks" meta={view.length} right={<span>click a header to sort · click a row for the chart</span>}>
         <FixedTable cols={cols} rows={list} empty="Nothing matches these filters." />

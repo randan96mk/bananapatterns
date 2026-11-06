@@ -124,9 +124,9 @@ export default function PaperPage() {
       <Card label={`Last session · ${last === 'E' ? 'E+' : last || '—'}`} value={signed(lastSession(last))} num={lastSession(last)} k={cls(lastSession(last))}
         sub={`${keys.filter((k) => k !== last).map((k) => `${k} ${signed(lastSession(k))}`).join(' · ')}${keys.length > 1 ? ' · ' : ''}${day(a0.as_of)}`} spark={dailyAll.slice(-30)}
         fact={dailyAll.length ? P(<>best day <b className="up">{signed(Math.max(...dailyAll))}</b> · worst <b className="down">{signed(Math.min(...dailyAll))}</b></>, `best ${signed(Math.max(...dailyAll))} · worst ${signed(Math.min(...dailyAll))}`) : 'after the first session'} />
-      <Card label="Trades closed" value={allTrades.length} num={allTrades.length} sub={`won ${wonN} · lost ${allTrades.length - wonN} · ${allTrades.length ? Math.round(1000 * wonN / allTrades.length) / 10 : 0}%`}
+      <Card unit="n" label="Trades closed" value={allTrades.length} num={allTrades.length} sub={`won ${wonN} · lost ${allTrades.length - wonN} · ${allTrades.length ? Math.round(1000 * wonN / allTrades.length) / 10 : 0}%`}
         fact={P(<>avg win <b className="up">{pct(avg(allTrades.filter((t) => t.net > 0)))}</b> · avg loss <b className="down">{pct(avg(allTrades.filter((t) => t.net <= 0)))}</b>{keys.map((k) => <span key={k}> · {k} PF {accts[k].profit_factor ?? '—'} · DD {pct(-accts[k].drawdown)}</span>)}</>, `avg win ${pct(avg(allTrades.filter((t) => t.net > 0)))} · loss ${pct(avg(allTrades.filter((t) => t.net <= 0)))}`)} />
-      <Card label="Orders for the next open" value={nOrders} num={nOrders} sub={`${keys.map((k) => `${k} buys ${buysOf(k).length}`).join(' · ')} · at the 9:15 AM open`}
+      <Card unit="n" label="Orders for the next open" value={nOrders} num={nOrders} sub={`${keys.map((k) => `${k} buys ${buysOf(k).length}`).join(' · ')} · at the 9:15 AM open`}
         fact={P(<><Bar pct={slotsAll ? 100 * slotsUsed / slotsAll : 0} />slots {slotsUsed} of {slotsAll}{skippedN ? <> · <b>{skippedN}</b> skipped</> : ''}</>, `slots ${slotsUsed} of ${slotsAll}${skippedN ? ` · ${skippedN} skipped` : ''}`)} />
     </Cards>
     {how && <HowItWorks r={rules} paper open />}

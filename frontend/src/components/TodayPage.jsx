@@ -81,13 +81,13 @@ export default function TodayPage() {
       {d.error && <div className="rbanner bad">Live prices failed: {d.error}</div>}
       {err && <div className="rbanner bad">{err}</div>}
       <Cards n={4}>
-        <Card label="Buys in the plan" value={inPlan} num={inPlan} k={inPlan ? 'up' : ''} sub={`${near} more near the pivot · ${valid} valid right now`} live={liveNow}
+        <Card unit="n" label="Buys in the plan" value={inPlan} num={inPlan} k={inPlan ? 'up' : ''} sub={`${near} more near the pivot · ${valid} valid right now`} live={liveNow}
           fact={d.live ? <><b>{d.setups.length}</b> names watched live</> : 'live checks need a Kite login'} />
         <Card label="Capital" value={d.capital_set ? (sized.length ? inr(value) : 'set') : 'not set'} num={value} k={d.capital_set ? '' : 'warn'}
           sub={sizeNote || (d.capital_set ? 'full size for new buys' : 'no quantity until it is set')} fact={d.capital_set ? <>in <b>{sized.length}</b> sized buys</> : 'Alerts → Size → Capital'} />
         <Card label="Worst case if stops hit" value={sized.length ? inr(-risk) : '—'} num={-risk} k={risk ? 'down' : ''} sub={`${sized.length} sized setup${sized.length === 1 ? '' : 's'} · qty × (price − stop)`}
           fact={value ? <><b>{pct(-100 * risk / value)}</b> of the money in</> : 'sizes appear once a setup is valid'} />
-        <Card label="Results this week" value={withResults.length} num={withResults.length} k={withResults.length ? 'warn' : ''}
+        <Card unit="n" label="Results this week" value={withResults.length} num={withResults.length} k={withResults.length ? 'warn' : ''}
           sub={withResults.length ? withResults.map((s) => s.symbol).join(' · ') : 'no board meeting near'} fact={withResults.length ? 'gap risk · size down?' : 'a results gap can jump the stop'} />
       </Cards>
       {d.setups.length === 0 && <div className="rbanner">No plan names or Forming names near their pivot.</div>}

@@ -15,13 +15,13 @@ export function Spark({ values, color = 'var(--ok)', h = 22, w = 300 }) {
 }
 
 // label · value (beats when `num` changes) · sub-line · fact (bottom-left) | sparkline (bottom-right corner)
-export function Card({ label, value, num, sub, k, spark, stale, live, fact, onClick }) {
+export function Card({ label, value, num, sub, k, spark, stale, live, fact, onClick, unit = '₹' }) {   // unit: '₹' | 'n' | '%'
   const beat = useBeat(num);
   const trend = spark && spark.length > 1 ? (spark[spark.length - 1] >= spark[0] ? 'var(--ok)' : 'var(--bad)') : 'var(--muted)';
   return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''} ${onClick ? 'click' : ''}`} onClick={onClick}>
     <div className="l">{label}{live && <span className="livedot" title="live" />}{stale && <span className="warn"> · stale</span>}</div>
     <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span></div>
-    {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{signed(beat.delta)}</span>}
+    {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{unit === '₹' ? signed(beat.delta) : `${beat.delta > 0 ? '+' : '−'}${Math.abs(+beat.delta.toFixed(2))}${unit === '%' ? '%' : ''}`}</span>}
     <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>
     <div className="bl">{fact}</div>{spark ? <Spark values={spark} color={trend} /> : <span />}</div>;
 }

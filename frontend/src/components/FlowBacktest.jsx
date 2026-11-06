@@ -91,12 +91,12 @@ function Report({ r, color, csv }) {
     <Cards n={4}>
       <Card label="Net after costs" value={inr(r.net)} num={r.net} k={cls(r.net)} sub={`on ${inr(r.capital)} · ${pct(r.return)}`} spark={r.curve?.net} fact={`${day(r.from)} – ${day(r.to)}`} />
       <Card label="Stressed net" value={inr(r.stress.net)} num={r.stress.net} k={cls(r.stress.net)} sub="+0.10% slippage a fill" fact={`stressed CAGR ${pct(r.stress.cagr)}`} />
-      <Card label="CAGR" value={pct(r.cagr)} num={r.cagr} k={cls(r.cagr)} sub={`NIFTY ${pct(r.nifty)} · same period`} fact={`${r.covered} of ${r.sessions} sessions covered`} />
-      <Card label="Worst drawdown" value={pct(-r.drawdown)} num={r.drawdown} k="down" sub="peak to trough, after costs" />
-      <Card label="Trades · won" value={`${r.trades} · ${r.win_rate ?? '—'}%`} num={r.trades} sub={`${r.sessions ? (r.trades / r.sessions).toFixed(1) : '—'} a session`} />
-      <Card label="Profit factor" value={r.profit_factor ?? '—'} num={r.profit_factor} sub={`average ${r.avg_r ?? '—'} R`} />
+      <Card unit="%" label="CAGR" value={pct(r.cagr)} num={r.cagr} k={cls(r.cagr)} sub={`NIFTY ${pct(r.nifty)} · same period`} fact={`${r.covered} of ${r.sessions} sessions covered`} />
+      <Card unit="%" label="Worst drawdown" value={pct(-r.drawdown)} num={r.drawdown} k="down" sub="peak to trough, after costs" />
+      <Card unit="n" label="Trades · won" value={`${r.trades} · ${r.win_rate ?? '—'}%`} num={r.trades} sub={`${r.sessions ? (r.trades / r.sessions).toFixed(1) : '—'} a session`} />
+      <Card unit="n" label="Profit factor" value={r.profit_factor ?? '—'} num={r.profit_factor} sub={`average ${r.avg_r ?? '—'} R`} />
       <Card label="Costs" value={inr(r.costs)} num={r.costs} k="down" sub={`${inr(r.trades ? r.costs / r.trades : 0)} a trade`} fact={r.charges?.share != null ? <><Bar pct={r.charges.share} bad={r.charges.share > 50} /> {r.charges.share.toFixed(0)}% of plain profit</> : null} />
-      <Card label="Dev · val · out-of-sample" value={`${r.splits.filter((s) => s.net > 0).length} of ${r.splits.length} +`} num={r.splits[0]?.net} k={okAll ? 'up' : 'down'}
+      <Card unit="n" label="Dev · val · out-of-sample" value={`${r.splits.filter((s) => s.net > 0).length} of ${r.splits.length} +`} num={r.splits[0]?.net} k={okAll ? 'up' : 'down'}
         sub={r.splits.map((s) => pct(s.net, 0)).join(' / ')} fact={okAll ? '✅ all periods positive' : '❌ not every period positive'} />
     </Cards>
     <div className="two">
