@@ -935,8 +935,8 @@ replaced the ORB + VWAP intraday backtest (2 years: 986 trades, net −₹82.9k 
 |---|---|
 | Data | NIFTY 50 sessions over `test_years` (6) + `warmup_years` (1.2) to the latest candle; the first `warmup_sessions` (260) only warm up the indicators. Today's Nifty 500 list (survivorship bias) |
 | Decided | on a day's close, filled at the **next day's open** (no look-ahead) |
-| Market filter | no new buys unless NIFTY 50 closes over its 200-day SMA (`regime`); positions keep their exits |
-| Universe | each day the `top` (200) by 20-day average turnover, close ≥ ₹`min_price` (100) |
+| Market filter | the **half filter** (`regime`, `regime_mode` = `half`): all 10 slots while NIFTY 50 closes over its 200-day SMA, 5 while it is over its 50-day but not its 200-day, no new buys under the 50-day; positions keep their exits |
+| Universe | each day the `top` (300) by 20-day average turnover, close ≥ ₹`min_price` (100) |
 | Entry | close > SMA50 > SMA150 > SMA200; SMA200 over its value 20 sessions earlier; close ≥ 0.75 × 52-week high and ≥ 1.30 × 52-week low; close > the previous `hi_window` (20)-day high; volume ≥ `vol_mult` (1.5) × the 50-day average; not held |
 | Ranking | more signals than free slots: the highest 6-month return first |
 | Size | up to `max_pos` (10), equal weight: qty = ⌊min(equity / 10, cash) / (fill × 1.0012)⌋, skipped under 1 share |
@@ -963,22 +963,24 @@ or **SELL at open** on a close under SMA50 or `sell_pct` (8%) under its average 
 is a "📈 Trend Breakout" section of the 7 PM evening report; otherwise its own silent message. Every line says
 "signals only, no orders".
 
-**Two variants side by side.** **A · 200-day filter, top 200** is the rule set above. **E · half filter, top 300**
-picks from the **300** most traded stocks (`breakout.top_e`; A keeps `breakout.top` = 200): one shared universe
-function (`liquid(day, top)`), each variant passing its own top (`tb.rules(config, key)`); its robustness universe
-neighbours are 150 / 450 (A's 100 / 300). A stock that later drops out of the universe is never sold for that. A run
-made with another universe is flagged stale on the tab (and re-runs every evening). The scan tags each breakout
-"A+E" (turnover rank ≤ 200) or "E only" (201–300); paper notes the change date in E's log; real orders show the
-strategy, universe and turnover rank. Stocks without enough daily candles are logged by name and listed on the tab.
-`./docker.sh verify-e300` prints a read-only check: a sample day's universes and ranks 201–300, the A / E backtest
-next to the expected numbers, and dry runs of the paper and real evening plans. **E · half filter** differs only in the
-market filter (`regime_mode` = `half`, from swing.py `filter_day`): all `max_pos` (10) slots while NIFTY 50 closes over
-its 200-day SMA, `max_pos // 2` (5) while it is over its 50-day but not its 200-day SMA, no new buys below the 50-day;
-size stays equity / 10 and the filter never sells. On the same candles both give identical trades to swing.py (all
-30 runs each: defaults + 14 neighbours at both slippages). The tab shows A │ E │ NIFTY 50 for the results, the curve
-(normal / stressed), the three periods, years, robustness ("N of 14 pass" each), exits and skipped signals, and the
-trades (A / E chips); the evening scan shows both filters (A ON / OFF, E FULL / HALF / OFF). A "How it works" box
-explains the rules in plain words from the live settings.
+**One variant: E+ · half filter, top 300, late trail** (since 2026-11-06; the old **A · 200-day filter, top 200**
+was removed and its paper history deleted on upgrade, see the development log). The rules above with the half market
+filter (`regime_mode` = `half`, from swing.py `filter_day`): all `max_pos` (10) slots while NIFTY 50 closes over its
+200-day SMA, `max_pos // 2` (5) while it is over its 50-day but not its 200-day SMA, no new buys below the 50-day;
+size stays equity / 10 and the filter never sells. The universe is the **300** most traded stocks (`breakout.top`; one
+universe function `liquid(day, top)`), its robustness neighbours 150 / 450. A stock that later drops out of the
+universe is never sold for that. A run made with another universe or trail setting is flagged stale on the tab (and
+re-runs every evening). The late trail (`late_at` 100%, `late_pct` 25%): once a position's best close is +100% over
+the entry, the stop follows 25% under the best close, only ever raised. Real orders show the universe and turnover
+rank; paper notes a universe change in its log. Stocks without enough daily candles are logged by name and listed on
+the tab. `./docker.sh verify-e300` and `./docker.sh verify-eplus` print read-only checks: a sample day's universe and
+ranks 201–300, the E / E+ backtest next to the expected numbers, the trail's trades and dry runs of the paper and
+real evening plans. On the same candles the engine gives identical trades to swing.py (defaults + 14 neighbours at
+both slippages; 18 neighbours with the trail). The tab shows E+ │ NIFTY 50 for the results, the curve (normal /
+stressed), the three periods, years, robustness ("N of 18 pass"), exits and skipped signals, and the trades; the
+evening scan shows the filter (FULL / HALF / OFF). A "How it works" box explains the rules in plain words from the
+live settings. The saved run keeps the shape `run.variants.E` and the scan `filters.E`, so the API did not change
+shape.
 
 **Blinking signals** (`GET /api/attention`): a dot on the 📈 and 📝 tab names and a strip at the top of each tab —
 ⚠️ something to fix (no Kite login, no scan, paper drifting from the backtest), 🔴 a holding to SELL at open or a paper
@@ -998,9 +1000,9 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
 
 - **Token**: `TRADETRON_TOKEN` in `.env` only (never in git, the logs, the order log or the screen).
 - **Evening** (after the scan): the account is marked at the close (morning fills corrected to the day's open from
-  the daily candle) and tomorrow's orders are planned with `real.variant` (**E** by default; the A / E switch on the
-  tab changes only NEW buys): EXIT on a close under SMA50; BUY the ranked breakouts into the free slots under that
-  variant's filter at account value ÷ 10, within `max_order_pct` (15%) of the account value and `max_buys_per_day` (5).
+  the daily candle) and tomorrow's orders are planned with the E+ rules (`real.variant` is `E`, the only value since A
+  was removed): EXIT on a close under SMA50; BUY the ranked breakouts into the free slots under the half filter at
+  account value ÷ 10, within `max_order_pct` (15%) of the account value and `max_buys_per_day` (5).
 - **`send_time`–`send_until`** (9:16–9:30 AM): EXITs, then BUYs, **each sent once** (one key per day, stock and
   action); a failure is logged and alerted, never retried.
 - **Stops**: no stop-loss orders. Every `stop_check_min` (5) minutes in market hours the app reads live prices and
@@ -1020,16 +1022,17 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   own fills are not visible; prices are the ones seen when sending, corrected to the day's open in the evening.
 - **Telegram**: always loud and labelled **💰 REAL**: tomorrow's orders (evening), orders sent (morning), stop hit ·
   exit sent, failures and "stops not watched". The 🔴 dot on the tab and a strip at its top flag what needs a look.
-- API: `GET /api/real`, `POST /api/real/settings` `{enabled, variant}`, `POST /api/real/kill?on=`, `POST /api/real/reset`.
+- API: `GET /api/real`, `POST /api/real/settings` `{enabled, variant}` (`variant` only accepts `E`), `POST /api/real/kill?on=`,
+  `POST /api/real/reset`.
 
 ### 📝 Paper trading (simulated: never orders)
 
-`backend/engine/paper.py` and the **📝 Paper trading** tab. Two virtual accounts, **A** and **E** (`paper.variants`),
-start the same day with `paper.capital` each and follow their rules forward, one session at a time, exactly as the
-backtest (tests check the same fills, trades and account over the same days for both). An account enabled later is
-started on the same day and replayed from the stored candles. Each keeps its own positions, cash, trade log and curve;
-the tab shows them side by side (filter state, before / after costs, realised / unrealised, won, profit factor, max
-drawdown, positions with stop and SMA50, tomorrow's orders with quantity, stop and ₹ at risk). Re-running the evening
+`backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
+a saved config still listing `"A"` is read as E only), starts with `paper.capital` and follows the rules forward, one
+session at a time, exactly as the backtest (tests check the same fills, trades and account over the same days). It
+keeps its own positions, cash, trade log and curve; the tab shows the filter state, before / after costs, realised /
+unrealised, won, profit factor, max drawdown, positions with stop and SMA50, tomorrow's orders with quantity, stop and
+₹ at risk. (Paper A, the second account until 2026-11-06, was deleted on upgrade.) Re-running the evening
 job on a day already processed changes nothing. Nothing is ever sent to Kite.
 
 - **Capital**: the `paper.capital` setting (default ₹2,00,000), or the amount typed next to Start. Everything follows
@@ -2131,3 +2134,33 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   trailing, time stop and square-off, every minute, with Telegram alerts headed "⚡ SIGNAL TRACK (not traded)", the
   daily loss limit and a day summary. Positions are marked `kind: signal` (Paper mode: `paper`); Home and Portfolio
   show them as "Intraday · signals (tracked)". Mode Off: nothing is traded or tracked.
+
+### 2026-11-06: Trend Breakout A removed: E+ is the only swing variant; Paper A history deleted on upgrade
+- **Trend Breakout A removed: E+ is the only swing variant; Paper A history deleted on upgrade.** The owner trades
+  E+ everywhere, so the side-by-side A (200-day filter, top 200, no trail) is gone from the engine, the backtest, the
+  scan, paper, real, Home / Portfolio, the Telegram texts and the tools. `tb.MODES` is `{"E": "half"}`; `tb.rules(config)`
+  is the settings with the half filter; `variant_name("A", …)` no longer exists.
+- **Settings**: `breakout.top` (300) is the one universe, `late_at` (100) / `late_pct` (25) the one late trail,
+  `regime_mode` defaults to `half`; `top_e`, `late_at_e`, `late_pct_e` are gone. A saved config from before is read
+  once: its `top_e` / `late_at_e` / `late_pct_e` become `top` / `late_at` / `late_pct` (E's own values win over A's),
+  `paper.variants` keeps only `E` (unknown entries are ignored, an empty list means `E`), `real.variant` is forced to
+  `E`; the section is saved again without the old keys. `PUT /api/config/breakout` rejects `top_e` as an unknown key.
+- **One-time migration on start** (`models._migrate_drop_paper_a`, idempotent, printed to the log when it did
+  something): `account = 'A'` rows are deleted from `paper_state`, `paper_trades`, `paper_fills` and `paper_equity`,
+  and the `A` variant is dropped from the saved `breakout_runs` payload. E's rows, the candles and every other table
+  are untouched; a second start finds nothing to do. A single-account paper state from before Oct 2026 (it ran A's
+  rules) is dropped the same way: paper trading then shows "not started".
+- **API shapes**: `GET /api/breakout` → `run.variants` is `{"E": …}` only, `rules` has `top` / `late_at` / `late_pct`
+  (no `top_e`), `scan.filters` is `{"E": …}` and `scan.buys[]` lost the `for` tag; `GET /api/breakout/trades` defaults
+  to `variant=E` (`A` is read as `E`, anything else 422). `GET /api/paper` → `variants: ["E"]`, `accounts: {"E": …}`.
+  `GET /api/overview` → `accounts` has `real`, `paper_E`, `intraday`, `follow` (no `paper_A`); `facts` likewise;
+  `/api/portfolio` `names` / `curves` / `daily` without `paper_A`. `GET /api/real` → `variant: "E"`, `tops: {"E": 300}`;
+  `POST /api/real/settings` with any `variant` but `E` is 422.
+- **Telegram**: the evening report has one 🟣 E+ paper block (the 🔵 A block is gone); breakout lines carry no
+  "A+E" / "E only" tag; the "market filter changed" attention and alert follow E's FULL / HALF / OFF only.
+- **Real**: the E+ late trail now applies to every open real position (there is no other variant); the E check on a
+  position's `variant` tag is gone. `verify_eplus` / `verify_e300` print E / E+ only (the top-200 ranks are still
+  marked as "not in the old top 200").
+- Tests: `tests/test_paper.py` covers the migration (A rows deleted, E rows and candles kept, second run silent) and a
+  saved config still listing `["A", "E"]` / `top_e` / `real.variant = "A"`; the rule tests pin swing.py's plain rules
+  (`regime_mode="sma200"`, top 200, no trail) explicitly, since those are no longer the defaults.

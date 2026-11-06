@@ -2,9 +2,9 @@
 
     ./docker.sh verify-eplus
 
-1. the backtest of A, E (no late trail) and E+ next to the expected numbers (Sep 2020 -> Oct 2026, your data);
+1. the backtest of E (no late trail) and E+ next to the expected numbers (Sep 2020 -> Oct 2026, your data);
 2. the trades the late trail closed: entry, best close, stop, exit;
-3. every open E position in paper and real: entry, best close (backfilled from the stored candles), stop, trail;
+3. every open position in paper and real: entry, best close (backfilled from the stored candles), stop, trail;
 4. a dry run of tonight: the stops the late trail would raise for the next session."""
 
 import sys
@@ -16,8 +16,6 @@ from backend.engine import paper, real
 from backend.engine import trend_breakout as tb
 
 EXPECTED = {
-    "A": {"cagr": 16.5, "stress_cagr": 14.7, "drawdown": 27, "trades": 388, "win_rate": 30, "profit_factor": 1.62,
-          "splits": "+76.8 / +16.9 / +24.0", "stress": "+71 / +13 / +21", "robust": "6/14", "trail": 0},
     "E": {"cagr": 19.4, "stress_cagr": 17.1, "drawdown": 28, "trades": 413, "win_rate": 31, "profit_factor": 1.69,
           "splits": "+68.3 / +16.4 / +52.0", "stress": "+59 / +13 / +47", "robust": "10/14", "trail": 0,
           "avg": "7,430 / -2,015", "best": 440},
@@ -45,10 +43,10 @@ def main() -> None:
     nifty_cagr = tb.perf(nifty, config.breakout.capital, n)[1]
     print(f"\n1) Backtest {cal[first]} -> {cal[-1]} · NIFTY 50 CAGR {nifty_cagr:.1f}% (this takes several minutes)")
     pe_plus = tb.rules(config, "E")
-    runs = {"A": tb.rules(config, "A"), "E": replace(pe_plus, late_at=0.0), "E+": pe_plus}
+    runs = {"E": replace(pe_plus, late_at=0.0), "E+": pe_plus}
     out = {}
     for name, p in runs.items():
-        v = tb._variant(data, p, "A" if name == "A" else "E", first, nifty, nifty_cagr)
+        v = tb._variant(data, p, "E", first, nifty, nifty_cagr)
         out[name] = v
         s, st, e = v["normal"], v["stress"], EXPECTED[name]
         print(f"\n   {v['name']}")
@@ -77,14 +75,14 @@ def main() -> None:
     if not tr:
         print("   none")
 
-    print("\n3) Open E positions now, and 4) tonight's dry run (nothing saved, nothing sent)")
+    print("\n3) Open positions now, and 4) tonight's dry run (nothing saved, nothing sent)")
     day = cal[-1]
-    for label, st, only_e in (("paper E", (paper._states() or {}).get("E"), False), ("real", real._state(), True)):
+    for label, st in (("paper E", (paper._states() or {}).get("E")), ("real", real._state())):
         if not st:
             print(f"   {label}: not started")
             continue
-        pos = {s: x for s, x in st["positions"].items() if not only_e or x.get("variant") == "E"}
-        print(f"   {label}: {len(pos)} open E position(s) · E+ since {st.get('eplus_since') or 'not yet (first evening after the update)'}")
+        pos = st["positions"]
+        print(f"   {label}: {len(pos)} open position(s) · E+ since {st.get('eplus_since') or 'not yet (first evening after the update)'}")
         for sym, x in sorted(pos.items()):
             best = max(paper.best_since(data["S"], sym, x["d"], day) or x["px"], x.get("best") or x["px"])
             want = tb.late_stop(x["px"], best, pe_plus)

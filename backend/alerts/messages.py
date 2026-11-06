@@ -523,7 +523,7 @@ FILTER_ICON = {"ON": "✅", "FULL": "✅", "HALF": "🟡", "OFF": "⛔"}
 
 
 def filter_line(fs: dict) -> str:
-    """"A ⛔ OFF · E 🟡 HALF (5 slots)", with "(changed today)" when it flipped at today's close."""
+    """"E · top 300 🟡 HALF (5 slots)", with "(was FULL)" when it flipped at today's close."""
     out = []
     for k, f in fs.items():
         top = f" · top {f['top']}" if f.get("top") else ""
@@ -553,10 +553,8 @@ def breakout_lines(res: dict, limit: int = 10) -> list[str]:
     if buys:
         lines.append(f"Breakouts today, ranked ({len(buys)}):")
         for n, b in enumerate(buys[:limit], 1):
-            tag = ("A+E" if b.get("for") == ["A", "E"] else f"{'+'.join(b['for'])} only") if b.get("for") else ""
             lines.append(f"{n} <b>{escape(b['symbol'])}</b> {_rup(b['close'])} · stop {_rup(b['stop'])} "
-                         f"({b['stop_pct']:.1f}%) · {b['qty']} sh {_rup(b['value'])} · risk {_rup(b['risk'])}"
-                         + (f" · <i>{tag}</i>" if tag else ""))
+                         f"({b['stop_pct']:.1f}%) · {b['qty']} sh {_rup(b['value'])} · risk {_rup(b['risk'])}")
         if len(buys) > limit:
             lines.append(f"+{len(buys) - limit} more on the Trend Breakout tab")
         if fs:
@@ -585,7 +583,7 @@ def _signed(v: float) -> str:
 
 def _paper_account(key: str, r: dict) -> list[str]:
     a = r["account"]
-    lines = [f"{'🔵' if key == 'A' else '🟣'} <b>{escape(r['name'])}</b> · {_rup(a['value'])} · {a['positions']} open",
+    lines = [f"🟣 <b>{escape(r['name'])}</b> · {_rup(a['value'])} · {a['positions']} open",
              f"before costs {_signed(a['gross'])} · costs ₹{a['costs']:,.0f} · after <b>{_signed(a['net'])} "
              f"({a['return']:+.1f}%)</b>"]
     for f in r["fills"]:
@@ -614,8 +612,8 @@ def _paper_account(key: str, r: dict) -> list[str]:
 
 
 def paper_lines(rep: dict) -> list[str]:
-    """Both paper accounts (A and E) side by side: the filter, today's fills, tomorrow's orders, before / after costs.
-    Every block is labelled PAPER TRADING."""
+    """The paper account (E+): the filter, today's fills, tomorrow's orders, before / after costs. Every block is
+    labelled PAPER TRADING."""
     d = datetime.fromisoformat(rep["as_of"])
     lines = [f"{PAPER} · {d.day} {d:%b} · <i>simulated, no real orders</i>"]
     if rep.get("filters"):
@@ -696,7 +694,7 @@ def real_nologin(at: str) -> str:
 
 
 def tb_name(variant: str, top: Optional[int] = None) -> str:
-    base = {"A": "A · 200-day filter", "E": "E+ · half filter"}.get(variant, variant)
+    base = {"E": "E+ · half filter"}.get(variant, variant)
     if variant == "E" and top:
         return f"{base}, top {top}, late trail"
     return f"{base}, top {top}" if top else base

@@ -487,13 +487,13 @@ body.modal-open { overflow: hidden; }
 }
 .alertstyle select { margin-left: 8px; }
 
-/* A / E variants, the market filter badge, "How it works", the blinking attention signals */
-.vA { color: #0a6ad0; } .vE { color: #7a3fd0; }
-.orbcurve .varA { fill: none; stroke: #0a6ad0; stroke-width: 2.2; } .orbcurve .varE { fill: none; stroke: #7a3fd0; stroke-width: 2.2; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .vA { color: #6aa8f0; } :root:not([data-theme="light"]) .vE { color: #b18cf0; }
-  :root:not([data-theme="light"]) .orbcurve .varA { stroke: #6aa8f0; } :root:not([data-theme="light"]) .orbcurve .varE { stroke: #b18cf0; } }
-:root[data-theme="dark"] .vA { color: #6aa8f0; } :root[data-theme="dark"] .vE { color: #b18cf0; }
-:root[data-theme="dark"] .orbcurve .varA { stroke: #6aa8f0; } :root[data-theme="dark"] .orbcurve .varE { stroke: #b18cf0; }
+/* The E+ variant colour, the market filter badge, "How it works", the blinking attention signals */
+.vE { color: #7a3fd0; }
+.orbcurve .varE { fill: none; stroke: #7a3fd0; stroke-width: 2.2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .vE { color: #b18cf0; }
+  :root:not([data-theme="light"]) .orbcurve .varE { stroke: #b18cf0; } }
+:root[data-theme="dark"] .vE { color: #b18cf0; }
+:root[data-theme="dark"] .orbcurve .varE { stroke: #b18cf0; }
 .filterbadge { display: inline-block; margin-right: 12px; }
 .caveat { margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: rgba(208, 138, 0, .1); color: var(--text); }
 .howitworks summary { cursor: pointer; } .howitworks ol { margin: 8px 0 4px 18px; padding: 0; line-height: 1.5; }

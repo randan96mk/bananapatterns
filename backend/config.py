@@ -295,33 +295,32 @@ class AlertsConfig:
 
 @dataclass
 class BreakoutConfig:
-    """Trend Breakout (swing, long only, delivery) on the Nifty 500 from daily candles: the trend template and a
-    breakout over the 20-day high on 1.5x volume, a fixed stop, out on a close under the 50-day average. Ported
-    from randan96mk/Backtest swing.py (the "breakout" strategy, baseline settings). Backtest and evening scan only:
-    never orders. (Replaced the ORB + VWAP in Oct 2026: its saved settings are dropped.)"""
+    """Trend Breakout E+ (swing, long only, delivery) on the Nifty 500 from daily candles: the trend template and a
+    breakout over the 20-day high on 1.5x volume, a fixed stop, the late trail, out on a close under the 50-day
+    average; new buys under the half market filter. Ported from randan96mk/Backtest swing.py (the "breakout"
+    strategy). Backtest and evening scan only: never orders. (Replaced the ORB + VWAP in Oct 2026: its saved settings
+    are dropped. Variant A, the 200-day filter on the top 200, was removed in Nov 2026: a saved config's `top_e`,
+    `late_at_e` and `late_pct_e` are read into `top`, `late_at` and `late_pct` once.)"""
     test_years: float = 6.0                # sessions tested (after warm-up), ending at the latest NIFTY 50 candle
     warmup_years: float = 1.2              # history loaded before them (the first warmup_sessions are warm-up)
     warmup_sessions: int = 260
     capital: float = 200_000.0
     max_pos: int = 10                      # equal weight: equity / max_pos
-    top: int = 200                         # universe of A: the most traded N (20-day average turnover)
-    top_e: int = 300                       # universe of E (half filter): the most traded N
+    top: int = 300                         # universe: the most traded N (20-day average turnover)
     min_price: float = 100.0
     vol_mult: float = 1.5                  # volume vs the 50-day average
     stop_pct: float = 8.0                  # stop = max(close - atr_mult x ATR(14), close x (1 - stop_pct %))
     atr_mult: float = 2.0
     hi_window: int = 20                    # breakout over the previous N-day high (10, 20 or 55)
     exit_sma: int = 50                     # out at the next open after a close under this average (20 or 50)
-    regime: bool = True                    # new buys only while NIFTY 50 closes over its 200-day average
+    regime: bool = True                    # market filter on: new buys only while NIFTY 50 allows them (see regime_mode)
     slippage_pct: float = 0.10             # each fill
     stress_slippage_pct: float = 0.25
     sell_pct: float = 8.0                  # evening scan: a holding this far under its average price is a sell
-    late_at: float = 0.0                   # late trailing stop: active once the best close is late_at % over the
+    late_at: float = 100.0                 # E+ late trailing stop: active once the best close is late_at % over the
     late_pct: float = 25.0                 # entry; stop = best close x (1 - late_pct %), only ever raised (0 = off)
-    late_at_e: float = 100.0               # E+ (Nov 2026): E's late trail, +100% / 25% under the best close (X2);
-    late_pct_e: float = 25.0               # A has none
-    regime_mode: str = "sma200"            # market filter: sma200 (A) or half (E: 10 slots over the 200-day SMA,
-                                           # 5 over the 50-day, none under it); the tab and paper run both
+    regime_mode: str = "half"              # market filter: half (E+: 10 slots over the 200-day SMA, 5 over the 50-day,
+                                           # none under it); sma200 (all or nothing) stays available to the engine only
 
 
 @dataclass
@@ -329,7 +328,8 @@ class PaperConfig:
     """Paper trading of the Trend Breakout rules (simulated, never orders). The capital is used when paper trading
     starts (or restarts after a reset); sizes, quantities and cash follow from it and from the account's value."""
     capital: float = 200_000.0             # per account
-    variants: list = field(default_factory=lambda: ["A", "E"])   # A: 200-day filter, E: half filter
+    variants: list = field(default_factory=lambda: ["E"])        # E+ is the only variant (A removed Nov 2026);
+                                                                 # unknown entries in a saved config are ignored
 
 
 @dataclass
@@ -337,7 +337,7 @@ class RealConfig:
     """💰 Real trading: the Trend Breakout orders sent to Tradetron by webhook (BUY / EXIT), tracked like paper
     trading. Prices come from Kite (read-only); no order ever goes to Kite."""
     enabled: bool = True                   # send orders (the kill switch on the tab overrides it)
-    variant: str = "E"                     # strategy for NEW buys: A (200-day filter) or E (half filter)
+    variant: str = "E"                     # strategy for NEW buys: E (E+, the only variant since Nov 2026)
     capital: float = 200_000.0             # set on the tab; a later change counts as money added / withdrawn
     preview_time: str = "09:00"            # a Telegram line listing the day's orders before they go ("" = off)
     send_time: str = "09:16"               # the day's orders (EXITs, then BUYs) go out from here...
@@ -382,6 +382,10 @@ def check_alert_times(sec: "AlertsConfig") -> None:
         if parse(t) < (6, 0):
             raise ValueError(f"login time {t} is before 06:00: a session from then dies at 06:00")
 
+
+VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
+# Keys of a saved section from before A was removed (E's own settings): read into the field they became, once.
+LEGACY_KEYS = {"breakout": {"top_e": "top", "late_at_e": "late_at", "late_pct_e": "late_pct"}}
 
 # Sections persisted to the DB and editable at runtime.
 PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": ScreenConfig, "trend": TrendConfig,
@@ -466,9 +470,21 @@ def load_config(config: AppConfig | None = None) -> AppConfig:
                 continue
             sec = config.section(name)
             known = {f.name for f in fields(sec)}
-            for key, value in json.loads(raw).items():
+            saved = json.loads(raw)
+            for key, value in saved.items():
                 if key in known:
                     setattr(sec, key, value)
+            legacy = {k: v for k, v in LEGACY_KEYS.get(name, {}).items() if k in saved}
+            if legacy:                                      # E's own keys from before A was removed: now the only ones
+                for old_key, new_key in legacy.items():
+                    setattr(sec, new_key, saved[old_key])
+                set_setting(conn, f"config.{name}", json.dumps(asdict(sec)))
+        if [v for v in config.paper.variants if v not in VARIANTS] or not config.paper.variants:
+            config.paper.variants = [v for v in config.paper.variants if v in VARIANTS] or list(VARIANTS)
+            set_setting(conn, "config.paper", json.dumps(asdict(config.paper)))
+        if config.real.variant not in VARIANTS:
+            config.real.variant = VARIANTS[0]
+            set_setting(conn, "config.real", json.dumps(asdict(config.real)))
         if "cup" in config.alerts.screens:                      # the Cup & handle screen was removed
             config.alerts.screens = [x for x in config.alerts.screens if x != "cup"]
             set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))

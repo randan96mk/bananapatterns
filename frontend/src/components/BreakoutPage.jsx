@@ -5,7 +5,7 @@ import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
 import { Tip } from './ui';
-import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg, Tag } from './ui2';
+import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg } from './ui2';
 import { signed as signedInr, inr, pct, cls, lakh } from '../fmt';
 
 const SCEN = [['normal', 'Normal slippage'], ['stress', 'Stressed slippage']];
@@ -15,6 +15,7 @@ const STATE = { ON: ['✅', 'up'], FULL: ['✅', 'up'], HALF: ['🟡', 'warn'], 
 const PAGE = 100;
 const SUBS = [['results', 'Results'], ['robust', 'Robustness'], ['scan', "Tonight's scan"], ['trades', 'Trades'], ['how', 'How it works']];
 
+const nm = (k) => (k === 'E' ? 'E+' : k);
 const rs = (v) => (v == null ? '—' : `₹${v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const day = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '');
 
@@ -22,7 +23,7 @@ export function FilterBadge({ k, f }) {
   if (!f) return null;
   const [icon, c] = STATE[f.state] || ['', ''];
   return (
-    <span className="filterbadge"><b className={`v${k}`}>{k}</b> <b className={c}>{icon} {f.state}</b>
+    <span className="filterbadge"><b className={`v${k}`}>{nm(k)}</b> <b className={c}>{icon} {f.state}</b>
       {f.state === 'HALF' && <span className="muted small"> ({f.slots} slots)</span>}
       {f.changed && <span className="muted small"> · was {f.prev}</span>}</span>);
 }
@@ -36,7 +37,7 @@ const ROW = (n) => ({ display: 'grid', gridTemplateColumns: `minmax(0, 1fr) repe
 const Share = ({ pct: p, c }) => <span style={{ display: 'inline-block', width: 70, height: 4, borderRadius: 2, background: 'var(--hover)', overflow: 'hidden', verticalAlign: 'middle', flex: 'none' }}>
   <i style={{ display: 'block', height: '100%', width: `${Math.max(0, Math.min(100, p || 0))}%`, background: c }} /></span>;
 
-// Account value (₹): A (blue), E (purple), NIFTY 50 with the same capital (dashed).
+// Account value (₹): E+ (purple), NIFTY 50 with the same capital (dashed).
 function Curve({ dates, lines, nifty, capital }) {
   if (!dates?.length) return <p className="muted small rempty">No curve yet.</p>;
   const W = 560, H = 200, L = 46, T = 14, B = 24;
@@ -53,7 +54,7 @@ function Curve({ dates, lines, nifty, capital }) {
   const years = [];
   dates.forEach((d, i) => { if (i === 0 || d.slice(0, 4) !== dates[i - 1].slice(0, 4)) years.push([i, d]); });
   return (
-    <svg className="orbcurve" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Account value, A and E vs NIFTY 50">
+    <svg className="orbcurve" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Account value, E+ vs NIFTY 50">
       {ticks.map((v) => <g key={v}><line x1={L} x2={W - 8} y1={y(v)} y2={y(v)} className="grid" />
         <text x={L - 6} y={y(v) + 3} textAnchor="end">{lakh(v)}</text></g>)}
       {years.map(([i, d]) => <text key={d} x={x(i)} y={H - 6} textAnchor="middle">{d.slice(0, 4)}</text>)}
@@ -63,10 +64,9 @@ function Curve({ dates, lines, nifty, capital }) {
   );
 }
 
-// The 📈 Trend Breakout tab: A (200-day filter) and E (half filter) side by side; the evening scan. Signals only.
+// The 📈 Trend Breakout tab: the E+ variant (half filter, late trail) vs NIFTY 50; the evening scan. Signals only.
 export default function BreakoutPage() {
   const [scen, setScen] = useState('normal');
-  const [tv, setTv] = useState('A');
   const [d, setD] = useState(null);
   const [trades, setTrades] = useState({ total: 0, rows: [] });
   const [err, setErr] = useState('');
@@ -77,7 +77,7 @@ export default function BreakoutPage() {
   useEffect(() => {
     let alive = true, timer;
     setLoading(true);
-    const load = () => Promise.all([api.getBreakout(), api.getBreakoutTrades(tv, scen, PAGE, 0)])
+    const load = () => Promise.all([api.getBreakout(), api.getBreakoutTrades('E', scen, PAGE, 0)])
       .then(([s, t]) => {
         if (!alive) return;
         setD(s); setTrades(t); setErr(''); setLoading(false);
@@ -86,9 +86,9 @@ export default function BreakoutPage() {
       .catch((e) => { if (alive) { setErr(e.message); setLoading(false); } });
     load();
     return () => { alive = false; clearTimeout(timer); };
-  }, [scen, tv, tick]);
+  }, [scen, tick]);
 
-  const more = () => api.getBreakoutTrades(tv, scen, PAGE, trades.rows.length)
+  const more = () => api.getBreakoutTrades('E', scen, PAGE, trades.rows.length)
     .then((t) => setTrades({ total: t.total, rows: [...trades.rows, ...t.rows] })).catch((e) => setErr(e.message));
   const run = () => api.runBreakout().then(() => setTick((x) => x + 1)).catch((e) => setErr(e.message));
 
@@ -103,10 +103,10 @@ export default function BreakoutPage() {
     return (
       <div className="rd">
         <AttentionStrip tab="breakout" />
-        <Head title="📈 Trend Breakout · A vs E" right={runBtn}>{prog.message && !running && <Chip>{prog.message}</Chip>}</Head>
+        <Head title="📈 Trend Breakout · E+" right={runBtn}>{prog.message && !running && <Chip>{prog.message}</Chip>}</Head>
         {err && <div className="rbanner warn">{err}</div>}
-        <Panel title="Not run yet"><div className="rbody">A 6-year swing backtest of two variants side by side (A: 200-day market filter, E: half filter), from the stored daily candles
-          (no 5-minute data, no Kite requests), plus the evening scan. Run it once to see both.</div></Panel>
+        <Panel title="Not run yet"><div className="rbody">A 6-year swing backtest of E+ (half market filter, top {R.top}, late trail) against NIFTY 50, from the stored daily candles
+          (no 5-minute data, no Kite requests), plus the evening scan. Run it once to see it.</div></Panel>
         <Panel><HowItWorks r={R} open /></Panel>
       </div>);
   }
@@ -141,18 +141,17 @@ export default function BreakoutPage() {
   const splits = V[keys[0]].splits;
   const splitCols = [{ h: '' }, ...splits.map((x) => ({ h: x.name, key: x.name, w: 185, n: true }))];
   const splitRows = keys.flatMap((k) => [
-    { key: k, cells: [<><b className={`v${k}`}>{k}</b> after costs</>, ...V[k].splits.map((x) => <b className={cls(x.net)}>{pct(x.net)}</b>)] },
+    { key: k, cells: [<><b className={`v${k}`}>{nm(k)}</b> after costs</>, ...V[k].splits.map((x) => <b className={cls(x.net)}>{pct(x.net)}</b>)] },
     { key: `${k}b`, cls: 'dim', cells: ['before · costs · stressed', ...V[k].splits.map((x) => <small>{pct(x.gross)} · {pct(-x.costs)} · {pct(x.stress)}</small>)] }])
     .concat([{ key: 'nifty', cells: ['NIFTY 50', ...splits.map((x) => <span className="muted">{pct(x.nifty)}</span>)] }]);
-  const yearCols = [{ h: 'Year' }, ...keys.map((k) => ({ h: k, key: k, w: 100, n: true })), { h: 'NIFTY 50', w: 100, n: true }];
+  const yearCols = [{ h: 'Year' }, ...keys.map((k) => ({ h: nm(k), key: k, w: 100, n: true })), { h: 'NIFTY 50', w: 100, n: true }];
   const yearRows = V[keys[0]].years.map((y, i) => ({ key: y.year, cells: [y.year, ...keys.map((k) => <span className={cls(V[k].years[i].net)}>{pct(V[k].years[i].net)}</span>), <span className={cls(y.nifty)}>{pct(y.nifty)}</span>] }));
-  const robCols = [{ h: 'Changed' }, ...keys.flatMap((k) => [{ h: `${k} trades`, key: `${k}t`, w: 80, n: true, lo: true }, { h: `${k} CAGR`, key: `${k}c`, w: 90, n: true },
-    { h: `${k} Dev / Val / OOS`, key: `${k}s`, w: 160, n: true, lo: true }, { h: k, key: `${k}o`, w: 50 }])];
+  const robCols = [{ h: 'Changed' }, ...keys.flatMap((k) => [{ h: 'Trades', key: `${k}t`, w: 80, n: true, lo: true }, { h: 'CAGR', key: `${k}c`, w: 90, n: true },
+    { h: 'Dev / Val / OOS', key: `${k}s`, w: 160, n: true, lo: true }, { h: 'Pass', key: `${k}o`, w: 50 }])];
   const robRows = V[keys[0]].robust.map((x, i) => ({ key: x.label, cells: [x.label, ...keys.flatMap((k) => { const y = V[k].robust[i]; return [y.trades,
     <span className={cls(y.cagr)}>{pct(y.cagr)}</span>, y.periods.map((v) => pct(v, 0)).join(' / '), y.ok ? '✅' : '❌']; })] }));
-  const scanCols = [{ h: 'Breakout (next open)' }, { h: '#', w: 40, n: true, lo: true }, { h: 'For', w: 110 }, { h: 'Close', w: 100, n: true }, { h: 'Stop', w: 130, n: true }, { h: 'Qty · value', w: 130, n: true }, { h: '₹ at risk', w: 100, n: true }];
-  const scanRows = (sc?.buys || []).map((b, k) => ({ key: b.symbol, cells: [<><b>{b.symbol}</b> <small>6M {pct(b.ret126, 0)}</small></>, k + 1,
-    b.for ? <Tag c={b.for.length > 1 ? 'ok' : 'a'}>{b.for.length > 1 ? 'A+E' : `${b.for[0]} only`}{b.turnover_rank ? ` · #${b.turnover_rank}` : ''}</Tag> : '',
+  const scanCols = [{ h: 'Breakout (next open)' }, { h: '#', w: 40, n: true, lo: true }, { h: 'Close', w: 100, n: true }, { h: 'Stop', w: 130, n: true }, { h: 'Qty · value', w: 130, n: true }, { h: '₹ at risk', w: 100, n: true }];
+  const scanRows = (sc?.buys || []).map((b, k) => ({ key: b.symbol, cells: [<><b>{b.symbol}</b> <small>6M {pct(b.ret126, 0)}{b.turnover_rank ? ` · turnover #${b.turnover_rank}` : ''}</small></>, k + 1,
     rs(b.close), <>{rs(b.stop)} <small>{b.stop_pct.toFixed(1)}%</small></>, `${b.qty} · ${inr(b.value)}`, <span className="down">{inr(b.risk)}</span>] }));
   const trCols = [{ h: 'Stock' }, { h: 'Entry', w: 150 }, { h: 'Exit', w: 150 }, { h: 'Days', w: 60, n: true, lo: true }, { h: 'Before costs', w: 115, n: true, lo: true },
     { h: 'Costs', w: 90, n: true, lo: true }, { h: 'After costs', w: 110, n: true }, { h: 'Exit reason', w: 150 }];
@@ -163,7 +162,7 @@ export default function BreakoutPage() {
   return (
     <div className={`rd ${loading ? 'busy' : ''}`}>
       <AttentionStrip tab="breakout" />
-      <Head title="📈 Trend Breakout · A vs E" right={runBtn}>
+      <Head title="📈 Trend Breakout · E+" right={runBtn}>
         <Seg opts={SCEN} v={scen} set={setScen} small />
         <Chip>{scen === 'stress' ? R.stress_slippage_pct : R.slippage_pct}% a fill</Chip>
         <Chip title={`${day(r.from)} → ${day(r.to)} · ${r.sessions} sessions · ${r.stocks} stocks`}>{day(r.from)} → {day(r.to)} · <b>{r.sessions}</b> sessions · <b>{r.stocks}</b> stocks</Chip>
@@ -171,18 +170,16 @@ export default function BreakoutPage() {
       </Head>
       {err && <div className="rbanner warn">{err}</div>}
       {V.E?.updated_note && <div className="rbanner">ℹ️ E+ · {V.E.updated_note}.</div>}
-      {r.stale?.length > 0 && <div className="rbanner warn">⚠️ {r.stale.join(' and ')}'s rules changed since this run (universe or late trail): its numbers are out of date.
+      {r.stale?.length > 0 && <div className="rbanner warn">⚠️ {r.stale.map(nm).join(' and ')}'s rules changed since this run (universe or late trail): its numbers are out of date.
         {' '}{running ? 'Re-running…' : <button type="button" className="btn primary small" onClick={run}>Re-run now</button>} (it also re-runs tonight).</div>}
       {r.missing?.length > 0 && <div className="rbanner">⚠️ {r.missing.length} Nifty 500 stock(s) without enough daily candles (left out, see the log):
         {' '}{r.missing.slice(0, 20).join(', ')}{r.missing.length > 20 ? ' …' : ''}</div>}
-      <div className="rbanner"><b>{keys.map((k) => `${V[k].verdict ? '✅' : '❌'} ${k}`).join(' · ')}</b>
+      <div className="rbanner"><b>{keys.map((k) => `${V[k].verdict ? '✅' : '❌'} ${nm(k)}`).join(' · ')}</b>
         <span className="muted"> · ✅ = profitable after costs in all three periods (stressed too) and beats NIFTY 50</span>
         <div className="muted small">⚠️ Universe is today's Nifty 500 list (survivorship bias): real results will be somewhat lower.
-          {' '}E's out-of-sample gain comes mostly from 2026. Past results don't guarantee future returns.</div></div>
-      {V.E && <Cards n={5}>
-        <Card unit="%" label={<>CAGR · A<Tip text="Yearly growth of the account after all charges and slippage, over the whole test." /></>} value={pct(V.A?.[scen].cagr)} num={V.A?.[scen].cagr} k={cls(V.A?.[scen].cagr)}
-          sub={`${lakh(R.capital)} → ${lakh(R.capital + (V.A?.[scen].net || 0))} · ${scenTxt}`} spark={V.A?.curve?.[scen]} fact={<><Bar pct={V.A?.[scen].drawdown} bad /> max DD {pct(-V.A?.[scen].drawdown, 0)}</>} />
-        <Card unit="%" label="CAGR · E+" value={pct(E.cagr)} num={E.cagr} k={cls(E.cagr)} sub={`${lakh(R.capital)} → ${lakh(R.capital + E.net)} · ${scenTxt}`} spark={V.E.curve?.[scen]}
+          {' '}E+'s out-of-sample gain comes mostly from 2026. Past results don't guarantee future returns.</div></div>
+      {V.E && <Cards n={4}>
+        <Card unit="%" label={<>CAGR · E+<Tip text="Yearly growth of the account after all charges and slippage, over the whole test." /></>} value={pct(E.cagr)} num={E.cagr} k={cls(E.cagr)} sub={`${lakh(R.capital)} → ${lakh(R.capital + E.net)} · ${scenTxt}`} spark={V.E.curve?.[scen]}
           fact={<><Bar pct={E.drawdown} bad /> max DD {pct(-E.drawdown, 0)}</>} />
         <Card unit="%" label="NIFTY 50" value={pct(r.nifty.cagr)} num={r.nifty.cagr} k={cls(r.nifty.cagr)} sub="same period · buy and hold" spark={r.curve?.nifty} fact={<><Bar pct={r.nifty.drawdown} bad /> max DD {pct(-r.nifty.drawdown, 0)}</>} />
         <Card unit="n" label={<>E+ trades · won<Tip text="Profit on the starting capital: the price moves (before costs) minus charges and slippage." /></>} value={`${E.trades} · ${E.win_rate.toFixed(0)}%`} num={E.trades}
@@ -195,7 +192,7 @@ export default function BreakoutPage() {
 
       {sub === 'results' && <div className="two">
         <div className="rd">
-          <Panel title={`${lakh(R.capital)} on each`} right={<>{keys.map((k) => <span key={k} className={`v${k}`}><b>━ {k} {pct(S(k).cagr)}</b></span>)}<span>╍ NIFTY 50 {pct(r.nifty.cagr)} (CAGR)</span></>}>
+          <Panel title={`${lakh(R.capital)} to start`} right={<>{keys.map((k) => <span key={k} className={`v${k}`}><b>━ {nm(k)} {pct(S(k).cagr)}</b></span>)}<span>╍ NIFTY 50 {pct(r.nifty.cagr)} (CAGR)</span></>}>
             <div className="rbody"><Curve dates={r.curve.dates} nifty={r.curve.nifty} capital={R.capital} lines={keys.map((k) => ({ k, vals: V[k].curve[scen] }))} /></div></Panel>
           <Panel title="Results" right={`${scenTxt} slippage`}><FixedTable cols={resCols} rows={resRows} /></Panel>
           <Panel title="Development · validation · out-of-sample" right="first 50% / next 25% / last 25% of the sessions">
@@ -204,10 +201,10 @@ export default function BreakoutPage() {
           <Panel title="Year by year" right="after costs"><FixedTable cols={yearCols} rows={yearRows} /></Panel>
         </div>
         <div className="rd">
-          <Panel title="How trades ended" right={keys.map((k) => <b key={k} className={`v${k}`}>{k}</b>)}>
+          <Panel title="How trades ended" right={keys.map((k) => <b key={k} className={`v${k}`}>{nm(k)}</b>)}>
             {Object.keys(EXIT).map((e) => <div key={e} className="ract" style={ROW(keys.length)}><div className="t"><div style={ONE}>{EXIT[e]}</div></div>
               {keys.map((k) => <span key={k} className="mono" style={{ ...SLOT, display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
-                <Share pct={share(k, S(k).exits?.[e] ?? 0)} c={k === 'A' ? '#6aa8f0' : '#b18cf0'} /><b style={{ width: 34, flex: 'none', textAlign: 'right', overflow: 'hidden' }}>{S(k).exits?.[e] ?? 0}</b></span>)}</div>)}
+                <Share pct={share(k, S(k).exits?.[e] ?? 0)} c="#b18cf0" /><b style={{ width: 34, flex: 'none', textAlign: 'right', overflow: 'hidden' }}>{S(k).exits?.[e] ?? 0}</b></span>)}</div>)}
             <div className="rnote">Signals not taken</div>
             {Object.keys(SKIP).map((e) => <div key={e} className="ract" style={ROW(keys.length)}><div className="t"><div className="muted" style={ONE}>⛔ {SKIP[e]}</div></div>
               {keys.map((k) => <span key={k} className="mono" style={{ ...SLOT, display: 'inline-block', textAlign: 'right' }}>{S(k).skipped?.[e] ?? 0}</span>)}</div>)}
@@ -216,7 +213,7 @@ export default function BreakoutPage() {
         </div>
       </div>}
 
-      {sub === 'robust' && <Panel title="Robustness" right={<>one setting changed at a time · {keys.map((k) => <span key={k} className={`v${k}`}>{k}: {V[k].robust_pass} of {V[k].robust.length} pass</span>)}</>}>
+      {sub === 'robust' && <Panel title="Robustness" right={<>one setting changed at a time · {keys.map((k) => <span key={k} className={`v${k}`}>{nm(k)}: {V[k].robust_pass} of {V[k].robust.length} pass</span>)}</>}>
         <div className="rnote">✅ = profitable after costs in all three periods, stressed too, and beats NIFTY 50. Under 75% passing means a modest,
           lumpy edge: expect real results to vary.</div>
         <FixedTable cols={robCols} rows={robRows} /></Panel>}
@@ -227,13 +224,13 @@ export default function BreakoutPage() {
             <span className="muted"> · NIFTY 50 {sc.nifty?.toLocaleString('en-IN')} · 50-day {sc.nifty_sma50?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
               {' '}· 200-day {sc.nifty_sma200?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span></div>
           <FixedTable cols={scanCols} rows={scanRows} empty="No breakouts today." />
-          {sc.buys?.length > 0 && <div className="rnote">{Object.entries(sc.filters || {}).map(([k, f]) => `${k}: ${f.state === 'OFF' ? 'not bought (filter off)'
+          {sc.buys?.length > 0 && <div className="rnote">{Object.entries(sc.filters || {}).map(([k, f]) => `${nm(k)}: ${f.state === 'OFF' ? 'not bought (filter off)'
             : f.state === 'HALF' ? `buy only while under ${f.slots} positions` : 'buy at the next open'}`).join(' · ')}</div>}
         </>}
       </Panel>}
 
       {sub === 'trades' && <Panel title="Trades" meta={trades.total} right={<><span>newest first · {scenTxt} slippage</span>
-        <Seg small opts={[['A', `A · 200-day filter, top ${R.top}`], ['E', `E+ · half filter, top ${R.top_e}, late trail`]]} v={tv} set={setTv} /></>}>
+        <Chip><b className="vE">E+</b> · half filter, top {R.top}, late trail</Chip></>}>
         <FixedTable cols={trCols} rows={trRows} empty="No trades." />
         {trades.total > trades.rows.length && (
           <div className="rnote"><button type="button" className="btn ghost small" onClick={more}>Show {Math.min(PAGE, trades.total - trades.rows.length)} more</button>

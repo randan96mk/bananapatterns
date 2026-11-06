@@ -20,7 +20,7 @@ const at12 = (s) => {
 };
 const hm = (s) => (s ? new Date(s).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
 const dayName = (s) => (s ? new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
-const BOOK = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
+const BOOK = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday' };
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
 
@@ -69,7 +69,7 @@ function PositionsMap({ positions, onStock }) {
   rows.forEach((p) => { lane.push(p); sum += p.value; if ((sum >= total / nRows || lane.length >= Math.ceil(rows.length / nRows)) && lanes.length < nRows - 1) { lanes.push(lane); lane = []; sum = 0; } });
   if (lane.length) lanes.push(lane);
   const shade = (x) => { const a = Math.min(1, Math.abs(x || 0) / 6); return x >= 0 ? `color-mix(in srgb, var(--ok) ${25 + 65 * a}%, var(--panel))` : `color-mix(in srgb, var(--bad) ${25 + 65 * a}%, var(--panel))`; };
-  const short = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
+  const short = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday' };
   return <div className="hmap">{lanes.map((ps, i) => <div key={i} className="lane" style={{ flex: `${ps.reduce((a, p) => a + p.value, 0)} 1 0%` }}>
     {ps.map((p) => <div key={p.book + p.symbol} className="tile" style={{ flex: `${p.value} 1 0%`, background: shade(p.pct) }} title={`${p.symbol} · ${p.account} · ${inr(p.value)} · ${pct(p.pct)}`} onClick={() => onStock(p.symbol)}>
       <b>{p.symbol}</b><small>{pct(p.pct)}</small><em>{short[p.book] || p.book}</em></div>)}</div>)}</div>;
@@ -126,7 +126,7 @@ export default function HomePage({ onGo, onStock }) {
   const hm24 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '');
   const factPaper = (f) => f && <>vs NIFTY <b className={cls(f.vs_nifty)}>{f.vs_nifty != null ? `${f.vs_nifty > 0 ? '+' : ''}${f.vs_nifty} pts` : '—'}</b>{f.filter ? <> · filter <b className={/ON|FULL/.test(f.filter) ? 'up' : 'muted'}>{f.filter}</b></> : null}</>;
   const jobs = (sch?.jobs || []).filter((j) => !j.skip);
-  const groups = ['real', 'paper_A', 'paper_E', 'intraday'].map((b) => [b, o.positions.filter((p) => p.book === b)]).filter(([, ps]) => ps.length);
+  const groups = ['real', 'paper_E', 'intraday'].map((b) => [b, o.positions.filter((p) => p.book === b)]).filter(([, ps]) => ps.length);
   const net = o.positions.reduce((a, p) => a + (p.pnl || 0), 0);
   const liveNow = o.positions.some((p) => p.live) || o.feed === 'live';
   return <>
@@ -138,7 +138,6 @@ export default function HomePage({ onGo, onStock }) {
       {A.real && <Card label={<>Real <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
         sub={<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>} spark={A.real.spark} stale={stale}
         fact={F.real && <><b>{inr(F.real.in_use)}</b> in use · {F.real.slots} of {F.real.max_pos} slots<Bar pct={F.real.capital ? 100 * F.real.in_use / F.real.capital : 0} /></>} />}
-      {A.paper_A && <Card label="Paper A · swing" value={pct(A.paper_A.return)} num={A.paper_A.value} k={cls(A.paper_A.return)} sub={<>{inr(A.paper_A.value)} · <span className={cls(A.paper_A.day_pnl)}>{signed(A.paper_A.day_pnl)}</span> last session · {A.paper_A.positions} open</>} spark={A.paper_A.spark} fact={factPaper(F.paper_A)} />}
       {A.paper_E && <Card label="Paper E+ · swing" value={pct(A.paper_E.return)} num={A.paper_E.value} k={cls(A.paper_E.return)} sub={<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{signed(A.paper_E.day_pnl)}</span> last session · {A.paper_E.positions} open</>} spark={A.paper_E.spark} fact={factPaper(F.paper_E)} />}
       <Card label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} num={it.day_pnl} k={cls(it.day_pnl)} sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)}`} spark={it.spark} stale={stale} live={o.feed === 'live'}
         fact={F.intraday && <>loss limit <b>{inr(F.intraday.loss_used)}</b> / {inr(F.intraday.loss_limit)}{F.intraday.per_day ? <> · signals <b>{F.intraday.signals}</b> of {F.intraday.per_day}</> : null}<Bar pct={F.intraday.loss_limit ? 100 * F.intraday.loss_used / F.intraday.loss_limit : 0} bad /></>} />

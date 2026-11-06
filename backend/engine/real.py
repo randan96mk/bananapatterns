@@ -1,11 +1,11 @@
 """💰 Real trading: the Trend Breakout orders sent to Tradetron by webhook and tracked like paper trading.
 
   evening (after the scan)  the account is marked at the day's close (the morning fills corrected to the day's open
-                            from the daily candle), then tomorrow's orders are planned with the selected variant
-                            (config.real.variant, E by default; it affects NEW buys only): EXIT a position that closed
-                            under SMA(exit_sma); BUY the ranked breakouts into the free slots under that variant's
-                            filter, sized at account value / max_pos (whole shares), within max_order_pct of the value and
-                            max_buys_per_day.
+                            from the daily candle), then tomorrow's orders are planned with the E+ rules
+                            (config.real.variant is "E", the only variant since A was removed in Nov 2026): EXIT a
+                            position that closed under SMA(exit_sma); BUY the ranked breakouts into the free slots under
+                            the half filter, sized at account value / max_pos (whole shares), within max_order_pct of the
+                            value and max_buys_per_day.
   send_time .. send_until   EXITs, then BUYs, each sent once (one key per day, stock and action); a failure is not
                             retried, it raises a loud alert.
   market hours, every       live prices (Kite quote, read-only); a position trading at or under its stop gets an
@@ -137,16 +137,14 @@ def evening(config: AppConfig, data: Optional[dict] = None) -> dict:
 
 
 def late_trail(st: dict, data: dict, day: str, p) -> list:
-    """E+: each position bought under E gets its best close (the highest stored daily close since its entry day,
-    so a missed evening or the first evening after the update backfills it) and the late trail from it. The new
-    stop is watched from the next session by watch_stops, like any stop. Never lowered; A's positions untouched."""
+    """E+: each position gets its best close (the highest stored daily close since its entry day, so a missed
+    evening or the first evening after the update backfills it) and the late trail from it. The new stop is watched
+    from the next session by watch_stops, like any stop. Never lowered."""
     from backend.engine.paper import best_since
     raised = []
     if not p.late_at:
         return raised
     for sym, pos in st["positions"].items():
-        if pos.get("variant") != "E":
-            continue
         best = best_since(data["S"], sym, pos["d"], day)
         pos["best"] = max(pos.get("best") or pos["px"], best or pos["px"])
         if tb.raise_late(pos, pos["best"], p) is not None:
@@ -155,7 +153,7 @@ def late_trail(st: dict, data: dict, day: str, p) -> list:
     if not st.get("eplus_since"):
         st["eplus_since"] = day
         st.setdefault("notes", []).append({"day": day, "text": f"strategy updated to E+ on {day}: late trail "
-                                           f"({p.late_pct:g}% under the highest close once +{p.late_at:g}%) on E positions"})
+                                           f"({p.late_pct:g}% under the highest close once +{p.late_at:g}%)"})
     return raised
 
 
@@ -459,7 +457,7 @@ def summary(config: AppConfig) -> dict:
     pe = tb.rules(config, "E")
     for sym, x in sorted(st["positions"].items(), key=lambda kv: kv[1]["d"], reverse=True):
         last = x.get("live") or x["last"]
-        active = bool(x.get("variant") == "E" and pe.late_at and x.get("best") and x["best"] >= x["px"] * (1 + pe.late_at / 100))
+        active = bool(pe.late_at and x.get("best") and x["best"] >= x["px"] * (1 + pe.late_at / 100))
         want = tb.late_stop(x["px"], x["best"], pe) if active else None
         if want and x["stop"] < want - 0.01:              # a check only: warns, never trades
             checks.append(f"{sym}: stop {x['stop']:.2f} is under its E+ trail {want:.2f} (best close {x['best']:.2f})")

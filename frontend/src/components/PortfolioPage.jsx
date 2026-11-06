@@ -10,8 +10,8 @@ import { Head, Chip, Seg, Cards, Card, Bar, Panel, FixedTable, KV, LineChart, Ba
 // 💼 Portfolio: every account in one place (the app's own: Real, swing paper, intraday paper, Follow), filtered
 // by book: open positions, daily P&L, the month heatmap, trade history (CSV), orders, the curves, risk.
 const VIEWS = [['open', 'Open'], ['daily', 'Daily P&L'], ['month', 'By month'], ['trades', 'Trade history'], ['orders', 'Orders'], ['curves', 'Curves']];
-const COLORS = { real: 'var(--ok)', paper_A: '#6c8cff', paper_E: '#b39dff', intraday: '#f2b84b' };
-const BOOK = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
+const COLORS = { real: 'var(--ok)', paper_E: '#b39dff', intraday: '#f2b84b' };
+const BOOK = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday' };
 const dayName = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }) : '');
 const hm24 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '');
 const daysHeld = (p) => (p.book === 'intraday' || !p.opened ? '—' : Math.max(0, Math.round((Date.now() - new Date(`${p.opened.slice(0, 10)}T00:00:00+05:30`)) / 86400000)));
@@ -70,7 +70,6 @@ export default function PortfolioPage({ onStock }) {
     A.real && <Card key="real" label={<>Real <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
       sub={P(<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>, `${signed(A.real.day_pnl)} last session · ${A.real.positions} open · ${pct(A.real.return)}`)} spark={A.real.spark} stale={stale}
       fact={F.real && P(<><Bar pct={F.real.capital ? 100 * F.real.in_use / F.real.capital : 0} /><b>{inr(F.real.in_use)}</b> in use · {F.real.slots} of {F.real.max_pos} slots</>, `${inr(F.real.in_use)} in use · ${F.real.slots} of ${F.real.max_pos}`)} />,
-    A.paper_A && <Card key="pA" label="Paper A · swing" value={pct(A.paper_A.return)} num={A.paper_A.value} k={cls(A.paper_A.return)} sub={P(<>{inr(A.paper_A.value)} · <span className={cls(A.paper_A.day_pnl)}>{signed(A.paper_A.day_pnl)}</span> last session · {A.paper_A.positions} open</>, `${inr(A.paper_A.value)} · ${signed(A.paper_A.day_pnl)} · ${A.paper_A.positions} open`)} spark={A.paper_A.spark} fact={factPaper(F.paper_A)} />,
     A.paper_E && <Card key="pE" label="Paper E+ · swing" value={pct(A.paper_E.return)} num={A.paper_E.value} k={cls(A.paper_E.return)} sub={P(<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{signed(A.paper_E.day_pnl)}</span> last session · {A.paper_E.positions} open</>, `${inr(A.paper_E.value)} · ${signed(A.paper_E.day_pnl)} · ${A.paper_E.positions} open`)} spark={A.paper_E.spark} fact={factPaper(F.paper_E)} />,
     o && <Card key="it" label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} num={it.day_pnl} k={cls(it.day_pnl)} sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)}`} spark={it.spark} stale={stale} live={o.feed === 'live'}
       fact={F.intraday && P(<><Bar pct={F.intraday.loss_limit ? 100 * F.intraday.loss_used / F.intraday.loss_limit : 0} bad />loss limit <b>{inr(F.intraday.loss_used)}</b> / {inr(F.intraday.loss_limit)}{F.intraday.per_day ? <> · signals <b>{F.intraday.signals}</b> of {F.intraday.per_day}</> : null}</>, `loss ${inr(F.intraday.loss_used)} / ${inr(F.intraday.loss_limit)}${F.intraday.per_day ? ` · signals ${F.intraday.signals} of ${F.intraday.per_day}` : ''}`)} />,
@@ -79,7 +78,7 @@ export default function PortfolioPage({ onStock }) {
   ].filter(Boolean);
 
   // open positions, grouped by book
-  const groups = ['real', 'paper_A', 'paper_E', 'intraday'].map((b) => [b, pos.filter((p) => p.book === b)]).filter(([, ps]) => ps.length);
+  const groups = ['real', 'paper_E', 'intraday'].map((b) => [b, pos.filter((p) => p.book === b)]).filter(([, ps]) => ps.length);
   const posRows = groups.flatMap(([b, ps]) => [
     `${BOOK[b] || names[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}${b === 'intraday' ? ' · out by 3:15 PM' : ` · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use`}`,
     ...ps.map((p) => ({ key: p.book + p.symbol, onClick: () => onStock(p.symbol), title: `${p.side} · opened ${p.opened} · value ${inr((p.now || p.entry) * p.qty)}`,

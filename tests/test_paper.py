@@ -67,34 +67,50 @@ def check_account(c, data, s, key):
     return sm
 
 
-def test_both_accounts_match_the_backtest_over_the_same_days(monkeypatch):
+def test_the_account_matches_the_backtest_over_the_same_days(monkeypatch):
     store(monkeypatch)
     c = cfg()
     data = tb.load(c)
     s = len(data["cal"]) - 200
-    assert paper.start(c, at=data["cal"][s])["accounts"] == ["A", "E"]
+    assert paper.start(c, at=data["cal"][s])["accounts"] == ["E"]                     # E+ is the only account
     res = paper.process(c, data)
     assert res["status"] == "ok" and res["sessions"] == 199
-    a, e = check_account(c, data, s, "A"), check_account(c, data, s, "E")
-    assert a["closed"] >= 5 and e["closed"] >= 5
-    t = a["trades"][0]
+    e = check_account(c, data, s, "E")
+    assert e["closed"] >= 5 and e["name"] == "E+ · half filter, top 300, late trail"
+    assert set(paper.summary(c)["accounts"]) == {"E"} and paper.summary(c)["variants"] == ["E"]
+    t = e["trades"][0]
     assert t["costs"] == pytest.approx(t["charges"] + t["slippage"], abs=0.02)
     assert paper.process(c, data)["sessions"] == 0                                    # the same day again: nothing
 
 
-def test_a_late_account_starts_on_the_same_day(monkeypatch):
+def test_a_config_still_listing_variant_a_gives_e_only(monkeypatch):
+    """A config file (or saved section) from before A was removed: ["A", "E"] means E only; "A" alone means E."""
+    from backend.config import load_config
+    from backend.database.models import get_setting, set_setting
     store(monkeypatch)
     c = cfg()
+    c.paper.variants = ["A", "E"]
+    assert paper.variants(c) == ["E"]
     c.paper.variants = ["A"]
-    data = tb.load(c)
-    s = len(data["cal"]) - 150
-    paper.start(c, at=data["cal"][s])
-    paper.process(c, data)
-    c.paper.variants = ["A", "E"]                                                       # E added later: replayed
-    paper.process(c, data)
-    sm = paper.summary(c)["accounts"]
-    assert sm["E"]["start_date"] == sm["A"]["start_date"] == data["cal"][s]
-    check_account(c, data, s, "E")
+    assert paper.variants(c) == ["E"]
+    c.paper.variants = []
+    assert paper.variants(c) == ["E"]
+    with get_db() as conn:                                # the saved sections of an older install
+        set_setting(conn, "config.paper", json.dumps({"capital": 250000.0, "variants": ["A", "E"]}))
+        set_setting(conn, "config.breakout", json.dumps({"top": 200, "top_e": 320, "late_at": 0.0, "late_at_e": 90.0,
+                                                          "late_pct": 25.0, "late_pct_e": 22.0, "regime_mode": "sma200"}))
+        set_setting(conn, "config.real", json.dumps({"variant": "A", "capital": 300000.0}))
+    loaded = load_config()
+    assert loaded.paper.variants == ["E"] and loaded.paper.capital == 250000.0
+    assert (loaded.breakout.top, loaded.breakout.late_at, loaded.breakout.late_pct) == (320, 90.0, 22.0)   # E's own values win
+    assert loaded.real.variant == "E" and loaded.real.capital == 300000.0
+    with get_db() as conn:                                # saved again without the old keys
+        b = json.loads(get_setting(conn, "config.breakout"))
+        assert "top_e" not in b and b["top"] == 320 and json.loads(get_setting(conn, "config.paper"))["variants"] == ["E"]
+        assert json.loads(get_setting(conn, "config.real"))["variant"] == "E"
+    data = tb.load(loaded)
+    assert paper.start(loaded, at=data["cal"][-50])["accounts"] == ["E"]
+    assert set(paper.summary(loaded)["accounts"]) == {"E"} and paper.summary(loaded)["accounts"]["E"]["top"] == 320
 
 
 def test_capital_drives_the_quantities(monkeypatch):
@@ -108,7 +124,7 @@ def test_capital_drives_the_quantities(monkeypatch):
         paper.process(c, data)
         with get_db() as conn:
             import json
-            f = json.loads(conn.execute("SELECT payload FROM paper_fills WHERE account = 'A' ORDER BY id LIMIT 1").fetchone()[0])
+            f = json.loads(conn.execute("SELECT payload FROM paper_fills WHERE account = 'E' ORDER BY id LIMIT 1").fetchone()[0])
         qty[cap] = (f["symbol"], f["value"])
     assert qty[4_000_000.0][0] == qty[1_000_000.0][0]
     qty = {k: v[1] for k, v in qty.items()}
@@ -125,7 +141,8 @@ def test_messages_say_paper_trading(monkeypatch):
     rep = paper.process(c, data)["report"]
     text = msg.paper_report(rep)
     assert text.startswith("📝 <b>PAPER TRADING</b>") and "simulated, no real orders" in text
-    assert "before costs" in text and "A · 200-day filter" in text and "E+ · half filter" in text and "Filter:" in text
+    assert "before costs" in text and "E+ · half filter" in text and "Filter:" in text and "🟣" in text
+    assert "200-day filter" not in text and "🔵" not in text and text.count("PAPER TRADING") == 1
     html, _ = report.build(rep["as_of"], [], paper=rep)
     assert "PAPER TRADING" in html
 
@@ -142,14 +159,52 @@ def test_start_reset_and_api(monkeypatch):
         r = tc.post("/api/paper/start", json={"capital": 300000}).json()
         assert r["status"] == "ok"
         d = tc.get("/api/paper").json()
-        assert d["started"] and set(d["accounts"]) == {"A", "E"}
+        assert d["started"] and set(d["accounts"]) == {"E"} and d["variants"] == ["E"]
         assert all(a["account"]["capital"] == 300000 and a["account"]["value"] == 300000 for a in d["accounts"].values())
         assert tc.post("/api/paper/start", json={}).status_code == 409
         assert tc.post("/api/paper/reset").json()["status"] == "ok" and tc.get("/api/paper").json()["started"] is False
 
 
-def test_an_account_from_before_the_variants_still_works(tmp_path, monkeypatch):
-    """A paper account started before A / E (no name, single-account tables) becomes A, and E joins on its day."""
+def test_upgrade_deletes_paper_a_and_keeps_e(monkeypatch, capsys):
+    """The one-time migration: Paper A's rows go from every paper table and the A variant from the saved backtest
+    run; E's rows, the candles and everything else stay; a second start finds nothing to do."""
+    from backend.database.models import init_db
+    store(monkeypatch)
+    c = cfg()
+    data = tb.load(c)
+    paper.start(c, at=data["cal"][-60])
+    paper.process(c, data)
+    tables = ("paper_state", "paper_trades", "paper_fills", "paper_equity")
+    with get_db() as conn:                                # an A account next to E, as before the upgrade
+        for t in tables:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({t})") if r[1] != "id"]
+            names = ", ".join(cols)
+            picks = ", ".join("'A'" if col == "account" else col for col in cols)
+            conn.execute(f"INSERT INTO {t} ({names}) SELECT {picks} FROM {t} WHERE account = 'E'")
+        conn.execute("INSERT INTO breakout_runs (id, updated_at, payload) VALUES (1, 'x', ?)",
+                     (json.dumps({"variants": {"A": {"top": 200}, "E": {"top": 300}}, "stale": ["A"], "sessions": 5}),))
+        before = {t: conn.execute(f"SELECT COUNT(*) FROM {t} WHERE account = 'E'").fetchone()[0] for t in tables}
+        assert all(conn.execute(f"SELECT COUNT(*) FROM {t} WHERE account = 'A'").fetchone()[0] == before[t] > 0 for t in tables)
+        candles = conn.execute("SELECT COUNT(*) FROM candles_daily").fetchone()[0]
+    init_db()
+    out = capsys.readouterr().out
+    assert "Trend Breakout A removed" in out and "paper_trades" in out and "saved backtest run" in out
+    with get_db() as conn:
+        assert all(conn.execute(f"SELECT COUNT(*) FROM {t} WHERE account = 'A'").fetchone()[0] == 0 for t in tables)
+        assert {t: conn.execute(f"SELECT COUNT(*) FROM {t} WHERE account = 'E'").fetchone()[0] for t in tables} == before
+        run = json.loads(conn.execute("SELECT payload FROM breakout_runs WHERE id = 1").fetchone()[0])
+        assert run == {"variants": {"E": {"top": 300}}, "sessions": 5}
+        assert conn.execute("SELECT COUNT(*) FROM candles_daily").fetchone()[0] == candles
+    assert set(paper.summary(c)["accounts"]) == {"E"} and paper.summary(c)["accounts"]["E"]["closed"] == before["paper_trades"]
+    init_db()                                             # again: nothing to do, nothing said
+    assert "Trend Breakout A removed" not in capsys.readouterr().out
+    from backend.engine import attention
+    assert attention.signals(c, False)["paper"] is not None
+
+
+def test_an_account_from_before_the_variants_is_dropped(tmp_path, monkeypatch):
+    """A paper account started before the variants (no name, single-account tables) was A's rules: it becomes A
+    and is then deleted by the upgrade, so paper trading is not started; E starts afresh."""
     from backend.database.models import init_db
     store(monkeypatch)
     c = cfg()
@@ -157,7 +212,7 @@ def test_an_account_from_before_the_variants_still_works(tmp_path, monkeypatch):
     s = len(data["cal"]) - 100
     paper.start(c, at=data["cal"][s])
     with get_db() as conn:                                # roll the tables back to the single-account layout
-        st = json.loads(conn.execute("SELECT payload FROM paper_state WHERE account = 'A'").fetchone()[0])
+        st = json.loads(conn.execute("SELECT payload FROM paper_state WHERE account = 'E'").fetchone()[0])
         for key in ("name", "variant", "filter"):
             st.pop(key, None)
         conn.execute("DELETE FROM paper_state")
@@ -168,12 +223,11 @@ def test_an_account_from_before_the_variants_still_works(tmp_path, monkeypatch):
         conn.execute("CREATE TABLE paper_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL)")
         conn.execute("INSERT INTO paper_equity VALUES (?, 200000, 200000, 1)", (data["cal"][s],))
     init_db()
-    assert paper.summary(c)["accounts"]["A"]["name"] == "A · 200-day filter, top 200"
-    assert paper.process(c, data)["status"] == "ok"
-    sm = paper.summary(c)["accounts"]
-    assert set(sm) == {"A", "E"} and sm["E"]["start_date"] == sm["A"]["start_date"]
-    from backend.engine import attention
-    assert attention.signals(c, False)["paper"] is not None
+    assert paper.summary(c)["started"] is False and paper.process(c, data)["status"] == "not_started"
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM paper_equity").fetchone()[0] == 0
+    assert paper.start(c, at=data["cal"][s])["accounts"] == ["E"]
+    assert set(paper.summary(c)["accounts"]) == {"E"}
 
 
 def test_a_universe_change_is_noted_and_keeps_the_positions(monkeypatch):
@@ -184,11 +238,10 @@ def test_a_universe_change_is_noted_and_keeps_the_positions(monkeypatch):
     short = {**data, "cal": data["cal"][:-30], "index_close": data["index_close"][:-30],
              "index_ok": data["index_ok"][:-30], "filters": {k: v[:-30] for k, v in data["filters"].items()}}
     paper.process(c, short)
-    c.breakout.top_e = 250
+    c.breakout.top = 250
     paper.process(c, data)
     e = paper.summary(c)["accounts"]["E"]
     assert e["top"] == 250 and "top 300 → top 250" in e["notes"][0]["text"] and "top 250" in e["name"]
-    assert paper.summary(c)["accounts"]["A"]["top"] == 200 and not paper.summary(c)["accounts"]["A"]["notes"]
 
 
 def test_verify_tool_runs_read_only(monkeypatch, capsys):

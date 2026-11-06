@@ -46,9 +46,10 @@ def test_overview_unifies_the_accounts(monkeypatch):
     o = ov.overview(c)
     sm = paper.summary(c)["accounts"]
     n_pos = sum(len(a["positions"]) for a in sm.values())
-    assert len(o["positions"]) == n_pos and {p["book"] for p in o["positions"]} <= {"paper_A", "paper_E"}
-    assert set(o["accounts"]) >= {"paper_A", "paper_E", "intraday"} and o["accounts"]["paper_E"]["name"] == "Paper E+"
+    assert len(o["positions"]) == n_pos and {p["book"] for p in o["positions"]} <= {"paper_E"}
+    assert set(o["accounts"]) >= {"paper_E", "intraday"} and o["accounts"]["paper_E"]["name"] == "Paper E+"
+    assert "paper_A" not in o["accounts"] and "paper_A" not in ov.NAMES and "A" not in ov.STRATEGY
     p = ov.portfolio(c, days=3650)
     assert len(p["trades"]) == sum(a["closed"] for a in sm.values()) and p["trades"][0]["closed"] >= p["trades"][-1]["closed"]
-    assert set(p["curves"]) >= {"paper_A", "paper_E"} and len(p["daily"]["paper_A"]) == len(p["curves"]["paper_A"]) - 1
+    assert set(p["curves"]) >= {"paper_E"} and "paper_A" not in p["curves"] and len(p["daily"]["paper_E"]) == len(p["curves"]["paper_E"]) - 1
     assert all(t["account"] and t["symbol"] and t["net"] is not None for t in p["trades"]) and p["orders"]

@@ -1,4 +1,4 @@
-"""E+ (E with the late trail, Nov 2026): the rule, no look-ahead, A and E (trail off) unchanged, paper and real."""
+"""E+ (E with the late trail, Nov 2026): the rule, no look-ahead, E (trail off) unchanged, paper and real."""
 
 import copy
 import importlib.util
@@ -52,7 +52,9 @@ def sim(c, data, p):
 
 def test_the_rule():
     p = tb.rules(cfg(), "E")
-    assert (p.late_at, p.late_pct) == (100.0, 25.0) and tb.rules(cfg(), "A").late_at == 0
+    assert (p.late_at, p.late_pct) == (100.0, 25.0)
+    with pytest.raises(KeyError):
+        tb.rules(cfg(), "A")                                                       # A was removed (Nov 2026)
     assert tb.late_stop(100, 199.9, p) is None                                   # under +100%: nothing
     assert tb.late_stop(100, 210, p) == pytest.approx(0.75 * 210)                # 2.1x: 25% under the best close
     pos = {"px": 100.0, "stop": 92.0, "best": 100.0}
@@ -61,24 +63,24 @@ def test_the_rule():
     assert tb.raise_late(pos, 180, p) is None and pos["stop"] == pytest.approx(157.5)   # never lowered
     assert pos["best"] == 210
     assert tb.variant_name("E", 300) == "E+ · half filter, top 300, late trail"
-    assert tb.variant_name("A", 200) == "A · 200-day filter, top 200"
 
 
-def test_a_and_e_without_the_trail_match_the_old_code(monkeypatch):
-    """The code before E+ (origin/main, kept as a fixture) on the same data: A and E (trail off) give the same trades."""
+def test_e_without_the_trail_matches_the_old_code(monkeypatch):
+    """The code before E+ (origin/main, kept as a fixture) on the same data: E (trail off) gives the same trades."""
     c, data = setup(monkeypatch)
     old_src = pathlib.Path(__file__).parent / "fixtures" / "trend_breakout_before_eplus.py"
     spec = importlib.util.spec_from_file_location("old_tb", old_src)
     old = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(old)
-    for key in ("A", "E"):
+    for key in ("E",):
         po = old.rules(c, key)
         eq0, _, t0, _ = old.simulate(data["cal"], data["S"], data["index_ok"], po, po.slippage_pct,
                                      c.breakout.warmup_sessions, filters=data["filters"])
         eq1, _, t1, _ = sim(c, data, replace(tb.rules(c, key), late_at=0.0))
         strip = lambda ts: [{k: v for k, v in t.items() if k != "best"} for t in ts]
         assert strip(t1) == t0 and eq1 == eq0
-    assert sim(c, data, tb.rules(c, "A"))[2] == sim(c, data, replace(tb.rules(c, "A"), late_pct=5.0))[2]   # A: no trail
+    off = replace(tb.rules(c, "E"), late_at=0.0)
+    assert sim(c, data, off)[2] == sim(c, data, replace(off, late_pct=5.0))[2]        # trail off: late_pct is unused
 
 
 def test_trail_exit_uses_only_closes_before_the_exit_day(monkeypatch):
@@ -99,9 +101,9 @@ def test_trail_exit_uses_only_closes_before_the_exit_day(monkeypatch):
     assert st["exits"]["trail"] >= 1 and st["best_trade_pct"] > 0 and st["avg_win"] > 0 > st["avg_loss"]
 
 
-def test_eighteen_neighbours_for_e_plus_fourteen_for_a():
+def test_eighteen_neighbours_for_e_plus_fourteen_without_the_trail():
     c = cfg()
-    assert len(tb.neighbours(tb.rules(c, "A"))) == 14
+    assert len(tb.neighbours(replace(tb.rules(c, "E"), late_at=0.0))) == 14
     nb = tb.neighbours(tb.rules(c, "E"))
     assert len(nb) == 18 and [l for l, _ in nb[-4:]] == ["trail from +50%", "trail from +150%", "trail 20%", "trail 30%"]
 
@@ -113,6 +115,7 @@ def test_saved_run_is_stale_until_rerun(monkeypatch):
         conn.execute("INSERT INTO breakout_runs (id, updated_at, payload) VALUES (1, 'x', ?)",
                      (json.dumps({"variants": {"A": {"top": 200}, "E": {"top": 300}}}),))
     assert tb.saved(c)["stale"] == ["E"]                                          # an old E run: never shown as E+
+    assert set(tb.saved(c)["variants"]) == {"E"}                                  # the A variant is never returned
 
 
 def _step_data(bars):
@@ -137,13 +140,13 @@ def test_paper_step_raises_once_never_lowers_then_exits_on_the_trail():
 
 def test_paper_migration_backfills_once_and_rerun_is_a_no_op(monkeypatch):
     c, data = setup(monkeypatch)
-    c.breakout.late_at_e = 0.0                                                     # the account before the update
+    c.breakout.late_at = 0.0                                                       # the account before the update
     s = len(data["cal"]) - 250
     paper.start(c, at=data["cal"][s])
     paper.process(c, data)
     before = paper._states()["E"]
     assert before["positions"] and not before.get("eplus_since")
-    c.breakout.late_at_e = 100.0                                                   # the update: E -> E+
+    c.breakout.late_at = 100.0                                                     # the update: E -> E+
     assert paper.process(c, data)["sessions"] == 0                                 # no day re-simulated
     st = paper._states()["E"]
     for sym, x in st["positions"].items():
@@ -155,18 +158,22 @@ def test_paper_migration_backfills_once_and_rerun_is_a_no_op(monkeypatch):
         return {**sm, "accounts": {k: {**a, "updated_at": None} for k, a in sm["accounts"].items()}}
     snap = same(paper.summary(c))
     paper.process(c, data)                                                          # again: nothing changes
-    assert same(paper.summary(c)) == snap and paper._states()["A"] == paper._states()["A"]
+    assert same(paper.summary(c)) == snap and set(paper._states()) == {"E"}
 
 
-def test_real_trail_only_for_e_positions_and_never_lowered(monkeypatch):
+def test_real_trail_for_every_position_and_never_lowered(monkeypatch):
+    """Every real position gets the E+ trail, one bought before the variants (an old "A" tag) included."""
     p = tb.rules(cfg(), "E")
     data = _step_data([{"open": 200, "high": 211, "low": 199, "close": 210}, {"open": 205, "high": 206, "low": 190, "close": 195}])
     st = {"positions": {"X": {"qty": 1, "px": 100.0, "d": "2026-11-02", "stop": 92.0, "last": 210, "variant": "E"},
-                        "Y": {"qty": 1, "px": 100.0, "d": "2026-11-02", "stop": 92.0, "last": 210, "variant": "A"}}}
+                        "Y": {"qty": 1, "px": 100.0, "d": "2026-11-02", "stop": 92.0, "last": 210, "variant": "A"},
+                        "Z": {"qty": 1, "px": 100.0, "d": "2026-11-02", "stop": 92.0, "last": 150}}}
     data["S"]["Y"] = data["S"]["X"]
+    data["S"]["Z"] = {"rows": [{**r, "close": 150} for r in data["S"]["X"]["rows"]], "at": data["S"]["X"]["at"]}
     r1 = real.late_trail(st, data, "2026-11-02", p)
-    assert [x["symbol"] for x in r1] == ["X"] and st["positions"]["X"]["stop"] == pytest.approx(157.5)
-    assert st["positions"]["Y"]["stop"] == 92.0 and "best" not in st["positions"]["Y"]           # A untouched
+    assert [x["symbol"] for x in r1] == ["X", "Y"]
+    assert st["positions"]["X"]["stop"] == st["positions"]["Y"]["stop"] == pytest.approx(157.5)
+    assert st["positions"]["Z"]["stop"] == 92.0 and st["positions"]["Z"]["best"] == 150              # under +100%: nothing yet
     assert real.late_trail(st, data, "2026-11-03", p) == [] and st["positions"]["X"]["stop"] == pytest.approx(157.5)
     assert len(st["notes"]) == 1
 

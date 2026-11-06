@@ -4,14 +4,16 @@ periods, evaluate, robust) with its baseline settings; keep the two identical. R
 
 Decided on a day's close, filled at the next day's open (no look-ahead):
   calendar   NIFTY 50's sessions; the first warmup_sessions only warm the indicators up.
-  market     no new buys unless NIFTY 50 closes over its 200-day average (positions keep their exits).
+  market     the half filter: all max_pos slots while NIFTY 50 closes over its 200-day average, half of them over
+             its 50-day but not its 200-day, no new buys under the 50-day (positions keep their exits).
   universe   each day, the `top` stocks by 20-day average turnover with close >= min_price.
   entry      close > SMA50 > SMA150 > SMA200, SMA200 over its value 20 sessions earlier, close >= 0.75 x the 52-week
              high and >= 1.3 x the 52-week low, close > the previous hi_window-day high, volume >= vol_mult x the
              50-day average, not held. More signals than free slots: the highest 6-month return first.
   size       at most max_pos positions, qty = floor(min(equity / max_pos, cash) / (fill x 1.0012)), whole shares.
-  stop       max(close - atr_mult x ATR14, close x (1 - stop_pct %)) at the signal, never moved; a day's low at or
-             under it exits at min(open, stop), from the entry day on.
+  stop       max(close - atr_mult x ATR14, close x (1 - stop_pct %)) at the signal; a day's low at or under it
+             exits at min(open, stop), from the entry day on. Late trail (E+): once the best close is late_at %
+             over the entry, the stop follows late_pct % under the best close, only ever raised.
   exit       a close under SMA(exit_sma): out at the next open. No target. The end of the test closes at the last close.
   costs      STT 0.1% both sides, NSE 0.00297%, SEBI Rs 10 a crore, GST 18% on those two, stamp 0.015% on buys,
              DP Rs 15.93 a sale; slippage a fill (normal and stressed).
@@ -34,7 +36,7 @@ INDEX = "NIFTY 50"
 SPLITS = ("Development", "Validation", "Out-of-sample")
 NEIGHBOURS = (("vol_mult", (1.3, 2.0)), ("stop_pct", (6.0, 10.0)), ("atr_mult", (1.5, 3.0)), ("hi_window", (10, 55)),
               ("exit_sma", (20,)), ("max_pos", (5, 15)), ("top", (0.5, 1.5)), ("regime", (False,)))
-# "top" moves relative to the variant's own universe: A (200) -> 100 / 300, E (300) -> 150 / 450
+# "top" moves relative to the universe: top 300 -> 150 / 450
 LATE_NEIGHBOURS = (("late_at", (50.0, 150.0)), ("late_pct", (20.0, 30.0)))   # E+ only: 14 + 4 = 18
 LABELS = {"late_at": "trail from +{:g}%", "late_pct": "trail {:g}%", "vol_mult": "volume ×{}", "stop_pct": "stop {:g}%", "atr_mult": "ATR ×{:g}", "hi_window": "breakout {} days",
           "exit_sma": "exit SMA {}", "max_pos": "max {} positions", "top": "universe top {}",
@@ -165,26 +167,25 @@ def decide(i, S, held, regime_on, p):
     return sells, (ranked if regime_on else []), len(ranked), len(pool)
 
 
-# --- market filters: A = NIFTY over its 200-day SMA; E ("half") = 10 slots over the 200-day, 5 over the 50-day ----
+# --- the market filter: E+ ("half") = 10 slots over the 200-day SMA, 5 over the 50-day, none under it ----------
+# (filter_day / slots also know "sma200", NIFTY over its 200-day SMA or nothing: the engine's all-or-nothing mode,
+# no longer a variant of the app since A was removed in Nov 2026.)
 
-MODES = {"A": "sma200", "E": "half"}
+MODES = {"E": "half"}                                     # the one variant: E+
 
 
-def rules(config, key: str):
-    """A variant's full rule set: the shared settings with its own market filter and universe (A: 200-day filter,
-    top `top`, no late trail; E+: half filter, top `top_e`, the late trail late_at_e / late_pct_e)."""
-    b = config.breakout
-    if key == "A":
-        return replace(b, regime_mode=MODES[key], top=b.top, late_at=0.0)
-    return replace(b, regime_mode=MODES[key], top=b.top_e, late_at=b.late_at_e, late_pct=b.late_pct_e)
+def rules(config, key: str = "E"):
+    """The variant's full rule set: the settings with the half market filter (E+: half filter, top `top`, the late
+    trail late_at / late_pct). `key` must be a MODES key (only "E" exists)."""
+    if key not in MODES:
+        raise KeyError(key)
+    return replace(config.breakout, regime_mode=MODES[key])
 
 
 EPLUS_SINCE = "2026-11-01"                               # E became E+ (the late trail) from this update
 
 
 def variant_name(key: str, top: int, late: bool = True) -> str:
-    if key == "A":
-        return f"A · 200-day filter, top {top}"
     return f"E+ · half filter, top {top}, late trail" if late else f"E · half filter, top {top}"
 
 
@@ -469,8 +470,8 @@ def _variant(data: dict, p, key: str, first: int, nifty: list, nifty_cagr: float
 
 
 def run(config: AppConfig) -> dict:
-    """Both variants (A: 200-day filter, E: half filter) at normal and stressed slippage, the splits, years,
-    robustness; saved for the tab. A is exactly the original rules."""
+    """E+ (half filter, late trail) at normal and stressed slippage, the splits, years, robustness; saved for the
+    tab under variants["E"] (the one variant since A was removed)."""
     if not _lock.acquire(blocking=False):
         return {"status": "busy"}
     try:
@@ -515,8 +516,9 @@ def run(config: AppConfig) -> dict:
 
 
 def saved(config: Optional[AppConfig] = None) -> Optional[dict]:
-    """The latest run (None before the first run, or for a run from before the A / E variants). With `config`,
-    "stale" lists the variants whose universe changed since that run (their numbers must not be trusted)."""
+    """The latest run (None before the first run, or for a run from before the variants). Only the variants that
+    exist (MODES) are returned. With `config`, "stale" lists the variants whose universe or late trail changed since
+    that run (their numbers must not be trusted)."""
     with get_db() as conn:
         r = conn.execute("SELECT updated_at, payload FROM breakout_runs WHERE id = 1").fetchone()
     if not r:
@@ -524,6 +526,7 @@ def saved(config: Optional[AppConfig] = None) -> Optional[dict]:
     payload = json.loads(r["payload"])
     if "variants" not in payload:
         return None
+    payload["variants"] = {k: v for k, v in payload["variants"].items() if k in MODES}
     if config is not None:
         def stale(k, v):                                 # universe or late trail changed: the numbers are not these rules'
             p = rules(config, k)
@@ -536,8 +539,8 @@ def saved(config: Optional[AppConfig] = None) -> Optional[dict]:
 # --- the evening scan -----------------------------------------------------------------------------------
 
 def scan(config: AppConfig) -> dict:
-    """After the close: the market filter, the day's breakout buys (ranked, sized at capital / max_pos) and, for
-    each Kite holding, HOLD or SELL at open (close under SMA(exit_sma), or sell_pct under the average price)."""
+    """After the close: the market filter (E+'s half filter: FULL / HALF / OFF), the day's breakout buys from E+'s
+    universe (ranked, sized at capital / max_pos). Kite holdings are never read."""
     p = config.breakout
     data = load(config)
     if "error" in data:
@@ -555,21 +558,19 @@ def scan(config: AppConfig) -> dict:
                        "state": filter_label(now, mode),
                        "prev": filter_label(before, mode), "changed": now != before,
                        "slots": p.max_pos if now >= 1 else p.max_pos // 2 if now > 0 else 0}
-    pa, pe = rules(config, "A"), rules(config, "E")
-    wide = pa if pa.top >= pe.top else pe                 # the larger universe; each breakout is tagged with who can buy it
+    pe = rules(config, "E")
     turn_rank = {sym: k + 1 for k, sym in enumerate(ranked_by_turnover(S, i, p.min_price))}
-    _, ranked, _, _ = decide(i, S, {}, True, wide)
+    _, ranked, _, _ = decide(i, S, {}, True, pe)
     buys = []
     for sym, stop in ranked:
         r = turn_rank.get(sym)
-        who = [k for k, q in (("A", pa), ("E", pe)) if r and r <= q.top]
         s = S[sym]
         close = s["rows"][s["at"][i]]["close"]
         qty = floor(p.capital / p.max_pos / close)
         buys.append({"symbol": sym, "close": round(close, 2), "stop": round(stop, 2),
                      "stop_pct": round((1 - stop / close) * 100, 2), "qty": qty, "value": round(qty * close, 2),
                      "risk": round(qty * (close - stop), 2),
-                     "ret126": round((val(s, s["at"][i], "ret126") or 0) * 100, 1), "turnover_rank": r, "for": who})
+                     "ret126": round((val(s, s["at"][i], "ret126") or 0) * 100, 1), "turnover_rank": r})
     m50 = sma(closes, 50)[i]
     return {"as_of": cal[i], "market_on": market_on, "nifty": round(c, 2), "nifty_sma200": round(m, 2) if m else None,
             "nifty_sma50": round(m50, 2) if m50 else None, "filters": fstate,
