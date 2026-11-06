@@ -92,3 +92,15 @@ def test_a_split_is_marked_and_left_out():
     from backend.engine.follow import _corp_action
     assert _corp_action([["d1", 10, 100.0], ["d2", 99, 98.0], ["d3", 98, 33.0], ["d4", 33, 34.0]]) == "d3"   # 1:3 split
     assert _corp_action([["d1", 10, 100.0], ["d2", 99, 70.0], ["d3", 70, 72.0]]) is None                   # a −30% day is a move
+
+
+def test_saved_try_it_as_defaults_round_trip(tmp_path, monkeypatch):
+    """The "Try it as" selection saved on the Follow page comes back in the report; unknown keys are dropped; {} clears."""
+    monkeypatch.setenv("BP_DB_PATH", str(tmp_path / "f.db"))
+    from backend.database import models
+    models.init_db()
+    assert follow.defaults() == {}
+    assert follow.set_defaults({"scr": "vcp", "maxOpen": 5, "stopPct": "5", "junk": 1}) == {"scr": "vcp", "maxOpen": "5", "stopPct": "5"}
+    assert follow.defaults() == {"scr": "vcp", "maxOpen": "5", "stopPct": "5"}
+    assert follow.report()["defaults"]["scr"] == "vcp"
+    assert follow.set_defaults({}) == {} and follow.defaults() == {}

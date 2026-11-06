@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { ampm } from '../timefmt';
+import { ampm, stamp } from '../timefmt';
+import { Head, Chip, Panel, Act } from './ui2';
 import * as api from '../services/api';
 
 const HELP = {
@@ -71,21 +72,29 @@ const HELP = {
 };
 
 const SECTIONS = ['vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
+const NAMES = { vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
 
-// Generic editor for persisted config sections (bases, ingest; vcp next).
+// Under 760 px the three columns stack (the same breakpoint redesign.css uses).
+function useNarrow() {
+  const [n, setN] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  useEffect(() => { const m = window.matchMedia('(max-width: 760px)'); const on = () => setN(m.matches); m.addEventListener('change', on); return () => m.removeEventListener('change', on); }, []);
+  return n;
+}
+
+// Generic editor for persisted config sections: a list of sections, the selected one's fields, the recent changes.
 export default function SettingsPanel() {
   const [section, setSection] = useState(SECTIONS[0]);
   const [vals, setVals] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState('');
   const [changes, setChanges] = useState([]);
+  const narrow = useNarrow();
   useEffect(() => { api.configChanges().then((x) => setChanges(x.changes || [])).catch(() => {}); }, [msg]);
 
   useEffect(() => {
     setVals(null); setMsg('');
     api.getConfig(section).then((v) => { setVals(v); setDraft(v); }).catch((e) => setMsg(e.message));
   }, [section]);
-  if (!vals) return <div className="panel">{msg || 'Loading…'}</div>;
 
   const save = async () => {
     const changed = {};
@@ -94,33 +103,36 @@ export default function SettingsPanel() {
     });
     try { const v = await api.putConfig(section, changed); setVals(v); setDraft(v); setMsg('Saved'); } catch (e) { setMsg(e.message); }
   };
+  const dirty = vals ? Object.keys(draft).some((k) => JSON.stringify(draft[k]) !== JSON.stringify(vals[k])) : false;
 
   return (
-    <div className="panel">
-      <div className="row">
-        <h3>Settings</h3>
-        {SECTIONS.map((x) => (
-          <button key={x} className={`btn ${x === section ? '' : 'ghost'}`} onClick={() => setSection(x)}>{x}</button>))}
-        {section !== 'ingest' && <span className="muted">After saving, press Rescan on the Screens tab (charts update when reopened).</span>}
+    <div className="rd">
+      <Head title="Settings" right={<><span className="msg">{msg}</span><button className="btn" disabled={!vals || !dirty} onClick={save}>Save</button></>}>
+        <Chip>{NAMES[section]} · <b>{vals ? Object.keys(vals).length : '…'}</b> fields</Chip>
+        {section !== 'ingest' && <Chip title="Charts update when reopened">after saving, press Rescan on the Screens tab</Chip>}
+      </Head>
+      <div className="two" style={narrow ? undefined : { gridTemplateColumns: '220px minmax(0, 1fr) 380px' }}>
+        <Panel title="Sections">
+          {SECTIONS.map((x) => <div key={x} style={x === section ? { background: 'var(--hover)', boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}>
+            <Act icon={x === section ? '›' : '·'} cls={x === section ? 'act' : ''} text={NAMES[x]} meta={x} onClick={() => setSection(x)} /></div>)}
+        </Panel>
+        <Panel title={NAMES[section]} meta={vals ? Object.keys(vals).length : null} right={dirty ? <span className="warn">unsaved changes</span> : 'saved to config'}>
+          {!vals ? <p className="muted small rempty">{msg || 'Loading…'}</p>
+            : <div className="rform">{Object.entries(draft).map(([k, v]) => (
+              <div key={k} className="fr">
+                <div><code>{k}</code><small>{HELP[k] || ''}{/^\d{1,2}:\d{2}$/.test(String(v)) && ` (= ${ampm(String(v))} IST)`}</small></div>
+                <div style={{ textAlign: 'right' }}>{Array.isArray(v)
+                  ? <textarea rows={Math.min(4, v.length || 1)} style={{ width: 220, maxWidth: '100%', fontSize: 11, textAlign: 'left' }} value={v.join('\n')}
+                      onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />
+                  : <input className="mono" value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</div>
+              </div>))}</div>}
+          <div className="rwrap"><button className="btn small" disabled={!vals || !dirty} onClick={save}>Save</button><span className="msg">{msg}</span></div>
+        </Panel>
+        <Panel title="Recent changes" meta={changes.length || null}>
+          {!changes.length && <p className="muted small rempty">No settings changed yet.</p>}
+          {changes.slice(0, 30).map((c, i) => <Act key={i} icon="⚙" text={<><b>{c.section}</b> · {c.what.join(' · ')}</>} meta={stamp(c.at)} />)}
+        </Panel>
       </div>
-      {changes.length > 0 && <details className="fold"><summary>Recent changes ({changes.length})</summary>
-        <div className="v2list">{changes.slice(0, 30).map((c, i) => <div key={i} className="it"><span className="muted small" style={{ width: 120 }}>{new Date(c.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}</span>
-          <div style={{ flex: 1 }}><b>{c.section}</b> <span className="small">{c.what.join(' · ')}</span></div></div>)}</div></details>}
-      <div className="hscroll"><table className="grid small settings">
-        <tbody>
-          {Object.entries(draft).map(([k, v]) => (
-            <tr key={k}>
-              <td><code>{k}</code></td>
-              <td>{Array.isArray(v)
-                ? <textarea rows={v.length || 1} value={v.join('\n')}
-                    onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />
-                : <input value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</td>
-              <td className="muted">{HELP[k] || ''}{/^\d{1,2}:\d{2}$/.test(String(v)) && ` (= ${ampm(String(v))} IST)`}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table></div>
-      <div className="row"><button className="btn" onClick={save}>Save</button><span className="msg">{msg}</span></div>
     </div>
   );
 }

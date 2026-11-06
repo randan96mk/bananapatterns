@@ -1,21 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import { useLive } from '../services/live';
-import { Spark } from './ui';
+import { Head, Chip, Panel, Tag, Spark, FixedTable } from './ui2';
 import { inr, pct, cls, signed } from '../fmt';
 
-// 🧠 Strategies: one card per strategy (today, backtest figures, the curve) and the saved intraday setups with their
+// 🧠 Strategies: one panel per strategy (today, backtest figures, the curve) and the saved intraday setups with their
 // latest backtest; "Open" goes to the strategy's own page (rules / canvas, backtest, live).
-function Card({ title, kind, chip, today, cagr, dd, open, curve, color, onOpen, note }) {
-  return <div className="v2card"><h3>{title} {chip && <span className="achip b">{chip}</span>}<span className="r">{kind}</span></h3>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 6 }}>
-      <div><div className="muted small">Today</div><b className={`mono ${cls(today)}`}>{today == null ? '—' : signed(today)}</b></div>
-      <div><div className="muted small">Backtest CAGR</div><b className="mono">{cagr == null ? '—' : pct(cagr)}</b></div>
-      <div><div className="muted small">Max drawdown</div><b className="mono down">{dd == null ? '—' : pct(-dd)}</b></div>
-      <div><div className="muted small">Open</div><b className="mono">{open ?? 0}</b></div></div>
-    <Spark values={curve} h={56} color={color} />
-    <div style={{ display: 'flex', alignItems: 'center', marginTop: 8 }}><span className="muted small">{note}</span>
-      <button className="btn" style={{ marginLeft: 'auto' }} onClick={onOpen}>Open →</button></div></div>;
+const SLOT = { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, padding: '10px 14px 4px' };
+const Slot = ({ l, v, k }) => <div style={{ minWidth: 0 }}><div className="muted" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.04em' }}>{l}</div>
+  <b className={`mono ${k || ''}`} style={{ display: 'block', fontSize: 16, overflow: 'hidden', textOverflow: 'ellipsis' }}>{v}</b></div>;
+
+function StratPanel({ title, kind, chip, on, today, cagr, dd, open, curve, color, onOpen, note }) {
+  return <Panel title={title} meta={kind} right={<><Tag c={on ? 'ok' : ''}>{chip}</Tag><button type="button" className="btn small" onClick={onOpen}>Open →</button></>}>
+    <div style={SLOT}>
+      <Slot l="Today" v={today == null ? '—' : signed(today)} k={cls(today)} />
+      <Slot l="Backtest CAGR" v={cagr == null ? '—' : pct(cagr)} />
+      <Slot l="Max drawdown" v={dd == null ? '—' : pct(-dd)} k="down" />
+      <Slot l="Open" v={open ?? 0} />
+    </div>
+    <div style={{ padding: '4px 14px 0', height: 44 }}>{curve?.length > 1 ? <Spark values={curve} h={36} w={300} color={color} /> : <span className="muted small">no curve yet</span>}</div>
+    <div className="rnote" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{note}</div>
+  </Panel>;
 }
 
 export default function StrategiesPage({ onGo }) {
@@ -32,26 +37,31 @@ export default function StrategiesPage({ onGo }) {
   const latest = (setup) => results.filter((r) => r.setup === setup).sort((a, b) => (b.ran_at || '').localeCompare(a.ran_at || ''))[0];
   const canvas = latest('On the canvas');
   const real = A.real?.variant;
-  return <>
-    <div className="cards2">
-      {V.E && <Card title={V.E.name || 'Trend Breakout E+'} kind="Swing · daily" chip={real === 'E' ? 'Real + Paper' : 'Paper'} today={(A.paper_E?.day_pnl || 0) + (real === 'E' ? A.real?.day_pnl || 0 : 0)}
+  const running = (V.E ? 1 : 0) + (V.A ? 1 : 0) + (flow && !flow.stopped && flow.mode !== 'off' ? 1 : 0);
+  const setups = Object.keys(bt?.setups || {});
+  const cols = [{ h: 'Setup' }, { h: 'Period', w: 70 }, { h: 'Trades', w: 70, n: true }, { h: 'Plain profit', w: 110, n: true, lo: true }, { h: 'Net after costs', w: 140, n: true },
+    { h: 'CAGR', w: 80, n: true }, { h: 'PF', w: 60, n: true, lo: true }, { h: 'Ran', w: 100, lo: true }];
+  const rows = setups.map((n) => { const r = latest(n); return { key: n, onClick: () => onGo('flow'), cells: [
+    <><b>{n}</b>{bt.setups[n]?.preset && <Tag>preset</Tag>}{!r && <small className="muted"> · not run yet</small>}</>,
+    r ? r.period : '', r ? r.trades : '', r ? <span className={cls(r.charges?.plain)}>{inr(r.charges?.plain)}</span> : '',
+    r ? <b className={cls(r.net)}>{signed(r.net)}</b> : '', r ? pct(r.cagr) : '', r ? r.profit_factor ?? '—' : '', r ? (r.ran_at || '').slice(0, 10) : ''] }; });
+  return <div className="rd">
+    <Head title="Strategies"><Chip>{running} running · {3 - running} paused</Chip>{flow?.template && <Chip>Intraday <b>{flow.template}</b></Chip>}</Head>
+    <div className="cols c2">
+      {V.E && <StratPanel title={`📈 ${V.E.name || 'Trend Breakout E+'}`} kind="swing · daily" chip={real === 'E' ? 'Real + Paper' : 'Paper'} on today={(A.paper_E?.day_pnl || 0) + (real === 'E' ? A.real?.day_pnl || 0 : 0)}
         cagr={V.E.normal?.cagr} dd={V.E.normal?.drawdown} open={openOf(real === 'E' ? ['paper_E', 'real'] : ['paper_E'])} curve={V.E.curve?.normal}
         color="var(--ok)" onOpen={() => onGo('breakout')} note={`${V.E.normal?.trades} trades · robust ${V.E.robust_pass}/${(V.E.robust || []).length}`} />}
-      {V.A && <Card title={V.A.name || 'Trend Breakout A'} kind="Swing · daily" chip={real === 'A' ? 'Real + Paper' : 'Paper'} today={(A.paper_A?.day_pnl || 0) + (real === 'A' ? A.real?.day_pnl || 0 : 0)}
+      {V.A && <StratPanel title={`📈 ${V.A.name || 'Trend Breakout A'}`} kind="swing · daily" chip={real === 'A' ? 'Real + Paper' : 'Paper'} on today={(A.paper_A?.day_pnl || 0) + (real === 'A' ? A.real?.day_pnl || 0 : 0)}
         cagr={V.A.normal?.cagr} dd={V.A.normal?.drawdown} open={openOf(real === 'A' ? ['paper_A', 'real'] : ['paper_A'])} curve={V.A.curve?.normal}
         color="#6c8cff" onOpen={() => onGo('breakout')} note={`${V.A.normal?.trades} trades · robust ${V.A.robust_pass}/${(V.A.robust || []).length}`} />}
-      <Card title={`Intraday Flow${flow?.template ? ` · ${flow.template}` : ''}`} kind="Intraday · paper" chip={flow?.stopped ? 'stopped' : flow?.mode}
+      {!V.E && !V.A && <Panel title="📈 Trend Breakout · A vs E" meta="swing · daily" right={<button type="button" className="btn small" onClick={() => onGo('breakout')}>Open →</button>}>
+        <p className="muted small rempty">Not backtested yet: open the page and run it once.</p></Panel>}
+      <StratPanel title={`⚡ Intraday Flow${flow?.template ? ` · ${flow.template}` : ''}`} kind="intraday · paper" chip={flow?.stopped ? 'stopped' : flow?.mode || '—'} on={flow && !flow.stopped && flow.mode !== 'off'}
         today={A.intraday?.day_pnl} cagr={canvas?.cagr} dd={canvas?.drawdown} open={openOf(['intraday'])} curve={canvas?.curve?.net}
         color="#f2b84b" onOpen={() => onGo('flow')} note={canvas ? `backtest ${canvas.period} · ${canvas.trades} trades · net ${inr(canvas.net)}` : 'not backtested yet'} />
     </div>
-    <div className="v2card"><h3>Saved intraday setups <span className="r">latest backtest of each · open the Backtest tab of Intraday Flow to run or compare</span></h3>
-      {!bt ? <p className="muted">Loading…</p> : <div className="tablewrap"><table className="grid"><thead><tr><th>Setup</th><th>Period</th><th className="num">Trades</th>
-        <th className="num">Plain profit</th><th className="num">Net after costs</th><th className="num">CAGR</th><th className="num">PF</th><th>Ran</th></tr></thead>
-        <tbody>{Object.keys(bt.setups || {}).map((n) => { const r = latest(n); return <tr key={n} style={{ cursor: 'pointer' }} onClick={() => onGo('flow')}>
-          <td><b>{n}</b>{bt.setups[n]?.preset && <span className="achip" style={{ marginLeft: 6 }}>preset</span>}</td>
-          {r ? <><td>{r.period}</td><td className="num">{r.trades}</td><td className={`num ${cls(r.charges?.plain)}`}>{inr(r.charges?.plain)}</td>
-            <td className={`num ${cls(r.net)}`}><b>{signed(r.net)}</b></td><td className="num">{pct(r.cagr)}</td><td className="num">{r.profit_factor ?? '—'}</td>
-            <td className="muted small">{(r.ran_at || '').slice(0, 10)}</td></> : <td colSpan={7} className="muted">not run yet</td>}</tr>; })}</tbody></table></div>}
-    </div>
-  </>;
+    <Panel title="📊 Saved intraday setups" meta={setups.length} right="latest backtest of each · open the Backtest tab of Intraday Flow to run or compare">
+      {!bt ? <p className="muted small rempty">Loading…</p> : <FixedTable cols={cols} rows={rows} empty="No setups saved yet." />}
+    </Panel>
+  </div>;
 }

@@ -1,119 +1,41 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import { stamp } from '../timefmt';
-import { useIsPhone } from '../useMedia';
+import { inr, rs, signed, pct, cls } from '../fmt';
 import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
-import { FilterBadge } from './BreakoutPage';
 import NextUp from './NextUp';
-import { StopMeter, SubTabs, Tip } from './ui';
+import { StopMeter } from './ui';
+import { useIsPhone } from '../useMedia';
+import { Head, Chip, Seg, Tag, Cards, Card, Bar, Panel, FixedTable, LineChart, Act } from './ui2';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
-// E+ late trail: the best close, and a tag once the trail is active (+100%) or has raised the stop
-const Trail = ({ x }) => (x.trail_active || x.trailed ? <div className="small up" title="E+ late trail: 25% under the highest close once +100%; only ever raised, from the next session">🪜 trail {x.trailed ? 'stop' : 'active'} · best {rs(x.best)}</div> : x.best ? <div className="muted small">best {rs(x.best)}</div> : null);
-const inr = (v) => (v == null ? '—' : `${v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
-const sgn = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
-const rs = (v) => (v == null ? '—' : `₹${v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-const pct = (v, d = 1) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(d)}%`);
-const cls = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down');
+const COLOR = { A: '#6c8cff', E: '#b39dff' };
+const NAME = { A: 'Paper A', E: 'Paper E+' };
 const day = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
-const lakh = (v) => `₹${(v / 1e5).toFixed(2).replace(/\.00$/, '')}L`;
+const COL = { gap: 12, gridTemplateColumns: 'minmax(0, 1fr)' };   // a column that never widens with its content
+const Meta = ({ children }) => <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{children}</span>;
+// E+ late trail: a small tag once the trail is active (+100%) or has raised the stop, else the best close
+const Trail = ({ x }) => (x.trail_active || x.trailed ? <Tag c="ok" title={`E+ late trail: 25% under the highest close once +100%; only ever raised, from the next session · best ${rs(x.best)}`}>🪜 trail {x.trailed ? 'stop' : 'active'}</Tag>
+  : x.best ? <Tag title="best close so far">best {rs(x.best)}</Tag> : null);
+const filterText = (f) => (f ? `${f.state}${f.state === 'HALF' ? ` (${f.slots} slots)` : ''}${f.changed ? ` · was ${f.prev}` : ''}` : '—');
 
-// Both accounts after costs, and NIFTY 50 with the same capital (dashed).
-function Curve({ accts, capital }) {
-  const keys = Object.keys(accts);
-  const c0 = accts[keys[0]].curve;
-  if (!c0?.dates?.length || c0.dates.length < 2) return <p className="muted">The curve starts after the first session.</p>;
-  const W = 1000, H = 170, L = 50, T = 12, B = 22;
-  const nifty = c0.nifty.filter((v) => v != null);
-  const all = [...keys.flatMap((k) => accts[k].curve.net), ...nifty, capital];
-  const lo = Math.min(...all), hi = Math.max(...all);
-  const n = c0.dates.length;
-  const x = (i) => L + ((W - L - 8) * i) / Math.max(1, n - 1);
-  const y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo || 1));
-  const line = (vals) => vals.map((v, i) => (v == null ? null : `${x(i).toFixed(1)},${y(v).toFixed(1)}`)).filter(Boolean).join(' ');
-  return (
-    <svg className="orbcurve" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Paper accounts vs NIFTY 50">
-      {[lo, (lo + hi) / 2, hi].map((v) => <g key={v}><line x1={L} x2={W - 8} y1={y(v)} y2={y(v)} className="grid" />
-        <text x={L - 6} y={y(v) + 3} textAnchor="end">{lakh(v)}</text></g>)}
-      <text x={L} y={H - 5}>{day(c0.dates[0])}</text><text x={W - 8} y={H - 5} textAnchor="end">{day(c0.dates[n - 1])}</text>
-      <polyline points={line(c0.nifty)} className="nifty" />
-      {keys.map((k) => <polyline key={k} points={line(accts[k].curve.net)} className={`var${k}`} />)}
-    </svg>
-  );
-}
+const POS_COLS = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 150, lo: true }, { h: 'SMA50', w: 86, n: true, lo: true }, { h: 'Last', w: 90, n: true },
+  { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
+const ORD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 58 }, { h: 'Side', w: 58 }, { h: 'Qty', w: 50, n: true }, { h: 'Stop', w: 80, n: true }, { h: 'Risk', w: 72, n: true, lo: true }];
+const TRD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 62 }, { h: 'Closed', w: 150, lo: true }, { h: 'Days', w: 56, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110, lo: true }];
 
-function Account({ k, a, maxPos, phone, view }) {
-  const A = a.account;
-  const cmp = a.compare || {};
-  const buys = a.orders.filter((o) => o.action === 'BUY');
-  const sells = a.orders.filter((o) => o.action === 'SELL');
-  const free = Math.max(0, (a.allowed ? a.cap : 0) - a.positions.length + sells.length);
-  return (
-    <div className="panel">
-      <h3><span className={`v${k}`}>{a.name}</span> <FilterBadge k={k} f={a.filter} /></h3>
-      <table className="orbvs"><tbody>
-        <tr><td>Account value</td><td className="num"><b>{inr(A.value)}</b> <span className="muted small">cash {inr(A.cash)}</span></td></tr>
-        <tr><td>Before costs · costs · after costs</td><td className="num">{sgn(A.gross)} · −{inr(A.costs)} · <b className={cls(A.net)}>{sgn(A.net)} ({pct(A.return)})</b></td></tr>
-        <tr><td className="muted">&nbsp;&nbsp;costs split</td><td className="num muted">charges {inr(A.charges)} · slippage {inr(A.slippage)}</td></tr>
-        <tr><td>Realised · unrealised</td><td className="num">{sgn(A.realised)} · {sgn(A.unrealised)}</td></tr>
-        <tr><td>Won · profit factor · max DD</td><td className="num">{a.won} of {a.closed} · {a.profit_factor ?? '—'} · <span className="down">{pct(-a.drawdown)}</span></td></tr>
-        <tr><td>Paper vs backtest (same days)</td><td className="num">{pct(A.return)} vs {pct(cmp.return)}</td></tr>
-      </tbody></table>
-
-      {view === 'overview' && <>
-      <h4>Open ({a.positions.length} of {a.allowed ? a.cap : maxPos}{a.filter?.state === 'HALF' ? ' · HALF' : ''})</h4>
-      {!a.positions.length ? <p className="muted small">None.</p> : phone ? (
-        <div className="pcards">{a.positions.map((x) => (
-          <div key={x.symbol} className="pcard"><div className="t"><span>{x.symbol} <span className="muted small">{x.qty} sh</span></span>
-            <span className={cls(x.net)}>{sgn(x.net)}</span></div>
-            <StopMeter last={x.last} stop={x.stop} wide /><Trail x={x} />
-            <details><summary>details</summary><div className="small">bought {day(x.in)} at {rs(x.buy)} · last {rs(x.last)} · stop {rs(x.stop)} ·
-              SMA50 {rs(x.sma)} · before costs {sgn(x.gross)} · costs {inr(x.costs)}</div></details>
-            {x.warning && <div className="warn small">⚠️ {x.warning}</div>}</div>))}</div>) : (
-        <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought</th><th className="num">Stop</th>
-          <th className="num">SMA50</th><th className="num">Last</th><th>Distance to stop</th><th className="num">After costs, if sold</th></tr></thead>
-          <tbody>{a.positions.map((x) => (
-            <tr key={x.symbol}><td><b>{x.symbol}</b> <span className="muted small">{x.qty} sh</span>{x.warning && <div className="warn small">⚠️ {x.warning}</div>}</td>
-              <td>{day(x.in)} · {rs(x.buy)}</td><td className="num">{rs(x.stop)}<Trail x={x} /></td><td className="num">{rs(x.sma)}</td>
-              <td className="num">{rs(x.last)}</td><td><StopMeter last={x.last} stop={x.stop} /></td>
-              <td className={`num ${cls(x.net)}`} title={`before costs ${sgn(x.gross)} · costs ${inr(x.costs)}`}><b>{sgn(x.net)}</b>
-                <div className="muted small">{sgn(x.gross)} − {inr(x.costs)}</div></td></tr>))}</tbody></table></div>)}
-
-      <h4>Orders for the next open <span className="muted small">· decided {day(a.decided)}</span></h4>
-      {!a.orders.length ? <p className="muted small">None.</p> : <ul className="orderlist">
-        {sells.map((o) => <li key={`s${o.symbol}`}><b className="down">SELL</b> <b>{o.symbol}</b> {o.qty} · <span className="muted">{o.why}</span></li>)}
-        {buys.slice(0, Math.max(free, 0)).map((o) => <li key={`b${o.symbol}`}><b className="up">BUY</b> <b>{o.symbol}</b> ~{o.qty_est} · stop {rs(o.stop)}
-          {' '}· risk {inr(o.risk_est)}</li>)}
-        {buys.length > free && <li className="muted small">{buys.length - free} more breakout(s): {free ? 'no further' : 'no'} free slot{a.allowed ? '' : ' (filter off)'}</li>}
-      </ul>}
-
-      {a.notes?.length > 0 && <p className="muted small">{a.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</p>}
-      </>}
-      {view === 'trades' && <>
-      <h4>Trade log</h4>
-      {!a.trades.length ? <p className="muted small">None yet.</p> : (
-        <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Bought · sold</th><th className="num">Days</th>
-          <th className="num">Before</th><th className="num">Costs</th><th className="num">After</th><th>Exit</th></tr></thead>
-          <tbody>{a.trades.map((t) => (
-            <tr key={t.symbol + t.in}><td><b>{t.symbol}</b></td><td>{day(t.in)} · {day(t.out)}</td><td className="num">{t.days}</td>
-              <td className={`num ${cls(t.gross)}`}>{sgn(t.gross)}</td><td className="num muted" title={`charges ${inr(t.charges)} + slippage ${inr(t.slippage)}`}>{inr(t.costs)}</td>
-              <td className={`num ${cls(t.net)}`}><b>{sgn(t.net)}</b></td><td>{EXIT[t.why] || t.why}</td></tr>))}
-            <tr><td colSpan={3} className="muted">Total</td><td className={`num ${cls(a.trade_totals.gross)}`}>{sgn(a.trade_totals.gross)}</td>
-              <td className="num muted">{inr(a.trade_totals.costs)}</td><td className={`num ${cls(a.trade_totals.net)}`}><b>{sgn(a.trade_totals.net)}</b></td><td /></tr></tbody></table></div>)}
-      </>}
-    </div>);
-}
-
-// The 📝 Paper trading tab: accounts A and E side by side, from the same start day. Simulated: no real orders.
+// 📝 Paper trading: accounts A and E+ side by side, from the same start day. Simulated: no real orders.
 export default function PaperPage() {
-  const phone = useIsPhone();
   const [d, setD] = useState(null);
   const [rules, setRules] = useState(null);
   const [err, setErr] = useState('');
   const [cap, setCap] = useState('');
   const [tick, setTick] = useState(0);
-  const [sub, setSub] = useState('overview');
+  const [show, setShow] = useState('both');
+  const [how, setHow] = useState(false);
+  const phone = useIsPhone();                              // a phone card is narrow: plain-text sub-lines and facts, no bars
+  const P = (rich, plain) => (phone ? plain : rich);
 
   useEffect(() => {
     api.getPaper().then((x) => { setD(x); setErr(''); if (!x.started) setCap(String(x.capital)); }).catch((e) => setErr(e.message));
@@ -126,51 +48,112 @@ export default function PaperPage() {
       api.resetPaper().then(() => setTick((t) => t + 1)).catch((e) => setErr(e.message));
     }
   };
-  const banner = (extra) => (
-    <div className="paperbanner"><span>📝 PAPER TRADING · simulated with the Trend Breakout rules · no real orders are placed</span>{extra}</div>);
-  if (!d) return <div className="panel">{err ? <span className="warn">{err}</span> : 'Loading…'}</div>;
+  if (!d) return <div className="rd"><Panel>{err ? <div className="rbanner bad">{err}</div> : <p className="muted small rempty">Loading…</p>}</Panel></div>;
   if (!d.started) {
-    return (
-      <>
-        {banner(null)}
-        <div className="panel"><h3>Start paper trading</h3>
-          <p>Two virtual accounts start the same day, <b className="vA">A · 200-day filter, top {rules?.top ?? 200}</b> and <b className="vE">E+ · half filter, top {rules?.top_e ?? 300}, late trail</b>, each with
+    return <div className="rd">
+      <Head title="Paper · swing"><Chip>simulated with the Trend Breakout rules · no real orders are placed</Chip></Head>
+      {err && <div className="rbanner bad">{err}</div>}
+      <div className="two">
+        <Panel title="Start paper trading">
+          <div className="rtg">Two virtual accounts start the same day, <b className="vA">A · 200-day filter, top {rules?.top ?? 200}</b> and <b className="vE">E+ · half filter, top {rules?.top_e ?? 300}, late trail</b>, each with
             {' '}this capital. Every evening the breakouts are "filled" at the next open from the daily candle, with the same size, stop, exit
-            {' '}and delivery costs as the backtest. Nothing is sent to Kite.</p>
-          <p>Capital per account <input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 130 }} />
-            {' '}<button className="btn primary" onClick={start} disabled={!(Number(cap) > 0)}>Start</button></p>
-          <p className="muted small">Position size = account value ÷ {d.max_pos}; quantities follow from the capital. The default is the paper capital setting.</p>
-          {err && <div className="warn small">{err}</div>}
-        </div>
-        <HowItWorks r={rules} paper />
-      </>);
+            {' '}and delivery costs as the backtest. Nothing is sent to Kite.</div>
+          <div className="rform"><div className="fr"><span>Capital per account<small>position size = account value ÷ {d.max_pos}; quantities follow from the capital. The default is the paper capital setting.</small></span>
+            <span style={{ whiteSpace: 'nowrap' }}>₹<input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />{' '}
+              <button type="button" className="btn primary small" onClick={start} disabled={!(Number(cap) > 0)}>Start</button></span></div></div>
+        </Panel>
+        <div><HowItWorks r={rules} paper open /></div>
+      </div>
+    </div>;
   }
   const accts = d.accounts;
   const keys = Object.keys(accts);
   const a0 = accts[keys[0]];
-  return (
-    <div className="orb">
-      {banner(<span className="muted small">Started {day(a0.start_date)} · {inr(a0.account.capital)} each · data to {day(a0.as_of)} · updated {stamp(a0.updated_at)}
-        {' '}<button className="btn" onClick={reset}>Reset…</button></span>)}
-      <AttentionStrip tab="paper" />
-      {err && <div className="warn small">{err}</div>}
-      <div className="panel">Today's market filter ({day(a0.decided)} close): {keys.map((k) => <FilterBadge key={k} k={k} f={accts[k].filter} />)}
-        <div className="summary">{keys.map((k) => (
-          <div key={k} className="k"><div className={`v ${cls(accts[k].account.net)}`}>{sgn(accts[k].account.net)}</div>
-            <div className="l"><span className={`v${k}`}>{k}</span> after costs · {pct(accts[k].account.return)}<Tip text="Account value minus the starting capital: price moves minus charges and slippage." /></div></div>))}
-          {keys.map((k) => (
-          <div key={`r${k}`} className="k"><div className="v">{accts[k].positions.length} / {accts[k].allowed ? accts[k].cap : d.max_pos}</div>
-            <div className="l"><span className={`v${k}`}>{k}</span> open positions · cash {inr(accts[k].account.cash)}</div></div>))}</div></div>
-      <SubTabs tabs={[['overview', 'Accounts'], ['trades', 'Trade logs'], ['how', 'How it works']]} value={sub} onChange={setSub} />
-      {sub === 'overview' && <div className="panel"><h3>Since the start <span className="muted small">· after costs</span></h3>
-        <Curve accts={accts} capital={a0.account.capital} />
-        <div className="small">{keys.map((k) => <span key={k} className={`v${k}`}><b>━ {k} {pct(accts[k].account.return)}</b> &nbsp; </span>)}
-          <span className="muted">╍ NIFTY 50 {pct(a0.account.nifty)}</span></div></div>}
-      {sub !== 'how' && <div className="paperacc">{keys.map((k) => <Account key={k} k={k} a={accts[k]} maxPos={d.max_pos} phone={phone} view={sub} />)}</div>}
-      <p className="muted small">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and delivery charges (STT, exchange,
-        SEBI, GST, stamp, DP). Stops are checked on the day's low after the close (no live intraday price), as in the backtest. Past results don't guarantee future returns.</p>
-      {sub === 'how' && <HowItWorks r={rules} paper open />}
-      {sub === 'overview' && <NextUp />}
+  const shown = show === 'both' ? keys : keys.filter((k) => k === show);
+  const slots = (a) => (a.allowed ? a.cap : 0);
+  const free = (a) => Math.max(0, slots(a) - a.positions.length + a.orders.filter((o) => o.action === 'SELL').length);
+  const last = keys.find((k) => accts[k].curve?.net?.length);
+  const lastSession = (k) => { const n = accts[k].curve?.net || []; return n.length > 1 ? n[n.length - 1] - n[n.length - 2] : null; };
+  const allTrades = keys.flatMap((k) => accts[k].trades.map((t) => ({ ...t, k }))).sort((a, b) => (b.out || '').localeCompare(a.out || ''));
+  const wonN = allTrades.filter((t) => t.net > 0).length;
+  const avg = (xs) => (xs.length ? xs.reduce((a, t) => a + (t.sell / t.buy - 1) * 100, 0) / xs.length : null);
+  const dailyAll = (() => { const n = (accts[last]?.curve?.net || []); return n.slice(1).map((v, i) => v - n[i]); })();
+  const nOrders = keys.reduce((a, k) => a + accts[k].orders.length, 0);
+  const buysOf = (k) => accts[k].orders.filter((o) => o.action === 'BUY');
+  const skippedN = keys.reduce((a, k) => a + Math.max(0, buysOf(k).length - free(accts[k])), 0);
+  const slotsUsed = keys.reduce((a, k) => a + accts[k].positions.length, 0), slotsAll = keys.reduce((a, k) => a + (accts[k].allowed ? accts[k].cap : d.max_pos), 0);
+
+  // open positions, grouped per shown account
+  const posRows = shown.flatMap((k) => { const a = accts[k]; return [
+    `${NAME[k]} · ${a.positions.length} of ${a.allowed ? a.cap : d.max_pos}${a.filter?.state === 'HALF' ? ' · HALF' : ''} · ${signed(a.positions.reduce((s, x) => s + (x.net || 0), 0))}`,
+    ...a.positions.map((x) => ({ key: k + x.symbol, title: `before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.warning ? ` · ⚠️ ${x.warning}` : ''}`,
+      cells: [<><b>{x.symbol}</b>{x.warning && <Tag c="w" title={x.warning}>⚠️ split?</Tag>}</>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, x.qty, <>{day(x.in)} · {rs(x.buy)}</>, x.sma != null ? rs(x.sma) : '—', rs(x.last),
+        <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
+        <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, x.days ?? '—'] }))]; });
+  // orders for the next open: SELL rows first, BUY rows up to the free slots, then the skipped count
+  const ordRows = shown.flatMap((k) => { const a = accts[k], sells = a.orders.filter((o) => o.action === 'SELL'), buys = buysOf(k), f = free(a);
+    return [...sells.map((o) => ({ key: `${k}s${o.symbol}`, title: o.why, cells: [<b>{o.symbol}</b>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, <Tag c="bad">SELL</Tag>, o.qty, '—', <span className="muted">{o.why}</span>] })),
+      ...buys.slice(0, f).map((o) => ({ key: `${k}b${o.symbol}`, cells: [<b>{o.symbol}</b>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, <Tag c="ok">BUY</Tag>, `~${o.qty_est}`, rs(o.stop), inr(o.risk_est)] })),
+      ...(buys.length > f ? [`${NAME[k]} · +${buys.length - f} skipped · ${a.allowed ? 'slots full' : 'filter off'}`] : [])]; });
+  const trdRows = allTrades.filter((t) => shown.includes(t.k)).map((t) => ({ key: t.k + t.symbol + t.in, title: `charges ${inr(t.charges)} + slippage ${inr(t.slippage)}`,
+    cells: [<b>{t.symbol}</b>, <span className={`v${t.k}`}>{t.k === 'E' ? 'E+' : t.k}</span>, `${day(t.in)} → ${day(t.out)}`, t.days, <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why] }));
+  const totals = shown.map((k) => accts[k].trade_totals).reduce((a, t) => ({ gross: a.gross + (t.gross || 0), costs: a.costs + (t.costs || 0), net: a.net + (t.net || 0) }), { gross: 0, costs: 0, net: 0 });
+  if (trdRows.length) trdRows.push({ key: 'total', cells: [<b>Total</b>, '', '', '', <span className={cls(totals.gross)}>{signed(totals.gross)}</span>, <span className="muted">{inr(totals.costs)}</span>, <b className={cls(totals.net)}>{signed(totals.net)}</b>, ''] });
+  const curve = a0.curve || {};
+  const series = [...shown.map((k) => ({ name: `${NAME[k]} ${pct(accts[k].account.return)}`, pts: accts[k].curve?.net || [], color: COLOR[k], fill: k === 'E' })),
+    { name: `NIFTY 50 ${pct(a0.account.nifty)}`, pts: curve.nifty || [], color: 'var(--muted)', dash: true }];
+  const n = (curve.dates || []).length;
+  const labels = n ? [day(curve.dates[0]), ...(n > 2 ? [day(curve.dates[Math.floor(n / 2)])] : []), day(curve.dates[n - 1])] : [];
+
+  return <div className="rd">
+    <AttentionStrip tab="paper" />
+    {err && <div className="rbanner bad">{err}</div>}
+    <Head title="Paper · swing" right={<>
+      <button type="button" className="btn small" onClick={() => setHow((h) => !h)}>{how ? 'Hide how it works' : 'How it works'}</button>
+      <button type="button" className="btn small" onClick={() => document.getElementById('papertrades')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Trade log</button>
+      <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} onClick={reset}>Reset…</button></>}>
+      <Seg small opts={[...keys.map((k) => [k, k === 'E' ? 'E+' : k]), ['both', 'Both']]} v={show} set={setShow} />
+      <Chip title={`decided at the ${day(a0.decided)} close`}>filter tonight · {keys.map((k) => <span key={k}> <b className={`v${k}`}>{k}</b> <b className={accts[k].filter?.state === 'OFF' ? 'down' : 'up'}>{filterText(accts[k].filter)}</b></span>)}</Chip>
+      <Chip>started {day(a0.start_date)} · {inr(a0.account.capital)} each · data to {day(a0.as_of)} · updated {stamp(a0.updated_at)}</Chip>
+    </Head>
+    <Cards n={keys.length + 3}>
+      {keys.map((k) => { const a = accts[k], A = a.account, cmp = a.compare || {}; return <Card key={k} label={<><span className={`v${k}`}>{NAME[k]}</span>{a.filter ? <span className={a.filter.state === 'OFF' ? 'down' : 'up'}> · {a.filter.state}</span> : null}</>} value={inr(A.value)} num={A.value} k={cls(A.net)}
+        sub={P(<><span className={cls(A.return)}>{pct(A.return)}</span> since {day(a.start_date)} · {a.positions.length} open · {a.positions.length} of {a.allowed ? a.cap : d.max_pos} slots · cash {inr(A.cash)}</>, `${pct(A.return)} · ${a.positions.length} of ${a.allowed ? a.cap : d.max_pos} slots · cash ${inr(A.cash)}`)}
+        spark={a.curve?.net}
+        fact={P(<>vs NIFTY <b className={cls(A.return - (A.nifty || 0))}>{pct(A.return - (A.nifty || 0))}</b> · after costs <b className={cls(A.net)}>{signed(A.net)}</b>{cmp.return != null ? <> · backtest {pct(cmp.return)}</> : null}</>, `vs NIFTY ${pct(A.return - (A.nifty || 0))} · net ${signed(A.net)}`)} />; })}
+      <Card label={`Last session · ${last === 'E' ? 'E+' : last || '—'}`} value={signed(lastSession(last))} num={lastSession(last)} k={cls(lastSession(last))}
+        sub={`${keys.filter((k) => k !== last).map((k) => `${k} ${signed(lastSession(k))}`).join(' · ')}${keys.length > 1 ? ' · ' : ''}${day(a0.as_of)}`} spark={dailyAll.slice(-30)}
+        fact={dailyAll.length ? P(<>best day <b className="up">{signed(Math.max(...dailyAll))}</b> · worst <b className="down">{signed(Math.min(...dailyAll))}</b></>, `best ${signed(Math.max(...dailyAll))} · worst ${signed(Math.min(...dailyAll))}`) : 'after the first session'} />
+      <Card unit="n" label="Trades closed" value={allTrades.length} num={allTrades.length} sub={`won ${wonN} · lost ${allTrades.length - wonN} · ${allTrades.length ? Math.round(1000 * wonN / allTrades.length) / 10 : 0}%`}
+        fact={P(<>avg win <b className="up">{pct(avg(allTrades.filter((t) => t.net > 0)))}</b> · avg loss <b className="down">{pct(avg(allTrades.filter((t) => t.net <= 0)))}</b>{keys.map((k) => <span key={k}> · {k} PF {accts[k].profit_factor ?? '—'} · DD {pct(-accts[k].drawdown)}</span>)}</>, `avg win ${pct(avg(allTrades.filter((t) => t.net > 0)))} · loss ${pct(avg(allTrades.filter((t) => t.net <= 0)))}`)} />
+      <Card unit="n" label="Orders for the next open" value={nOrders} num={nOrders} sub={`${keys.map((k) => `${k} buys ${buysOf(k).length}`).join(' · ')} · at the 9:15 AM open`}
+        fact={P(<><Bar pct={slotsAll ? 100 * slotsUsed / slotsAll : 0} />slots {slotsUsed} of {slotsAll}{skippedN ? <> · <b>{skippedN}</b> skipped</> : ''}</>, `slots ${slotsUsed} of ${slotsAll}${skippedN ? ` · ${skippedN} skipped` : ''}`)} />
+    </Cards>
+    {how && <HowItWorks r={rules} paper open />}
+    <div className="two">
+      <div className="rd" style={COL}>
+        <Panel title="Since the start · vs NIFTY 50" meta="after costs" right={<Meta>NIFTY 50 with the same capital, dashed</Meta>}>
+          <LineChart series={series} labels={labels} h={200} />
+        </Panel>
+        <Panel title={`Open · ${shown.map((k) => (k === 'E' ? 'E+' : k)).join(' + ')}`} meta={shown.reduce((a, k) => a + accts[k].positions.length, 0)} right={<Meta>net <b className={`mono ${cls(shown.reduce((a, k) => a + accts[k].positions.reduce((s, x) => s + (x.net || 0), 0), 0))}`}>{signed(shown.reduce((a, k) => a + accts[k].positions.reduce((s, x) => s + (x.net || 0), 0), 0))}</b> · after costs, if sold</Meta>}>
+          <FixedTable cols={POS_COLS} rows={posRows} empty="None." />
+          {shown.some((k) => accts[k].notes?.length) && <div className="rnote">{shown.flatMap((k) => (accts[k].notes || []).map((x) => `📌 ${k} ${x.day}: ${x.text}`)).join(' · ')}</div>}
+        </Panel>
+        <Panel id="papertrades" title="Trade log" meta={trdRows.length ? trdRows.length - 1 : 0}>
+          <FixedTable cols={TRD_COLS} rows={trdRows} empty="None yet." />
+          <div className="rnote">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and delivery charges (STT, exchange, SEBI, GST, stamp, DP). Stops are checked on the day's low after the close (no live intraday price), as in the backtest. Past results don't guarantee future returns.</div>
+        </Panel>
+      </div>
+      <div className="rd" style={COL}>
+        <Panel title="Orders for the next open" meta={nOrders} right={<Meta>decided {day(a0.decided)}</Meta>}>
+          <FixedTable cols={ORD_COLS} rows={ordRows} empty="None." />
+        </Panel>
+        <Panel title="Accounts" meta={keys.length}>
+          {keys.map((k) => { const A = accts[k].account; return <Act key={k} icon={k} cls={cls(A.net)} text={<><b className={`v${k}`}>{NAME[k]}</b> · {signed(A.gross)} − {inr(A.costs)} = <b className={cls(A.net)}>{signed(A.net)}</b></>}
+            meta={`charges ${inr(A.charges)} · slippage ${inr(A.slippage)} · realised ${signed(A.realised)} · unrealised ${signed(A.unrealised)} · won ${accts[k].won} of ${accts[k].closed}`} />; })}
+        </Panel>
+        <NextUp />
+      </div>
     </div>
-  );
+  </div>;
 }

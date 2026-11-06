@@ -1026,12 +1026,20 @@ def follow_rebuild():
 
 @router.put("/follow/settings")
 def follow_settings(req: dict):
-    """₹ per position (new entries from now; Rebuild to apply it to the whole history)."""
+    """₹ per position (new entries from now; Rebuild to apply it to the whole history), and / or the saved
+    "Try it as" selection (`defaults`: the page opens on it next time; {} clears it)."""
     from backend.engine import follow
-    try:
-        return {"per_position": follow.set_per_position(float(req.get("per_position")))}
-    except (TypeError, ValueError):
-        raise HTTPException(400, "per_position must be a number")
+    out = {}
+    if "defaults" in req:
+        if not isinstance(req["defaults"], dict):
+            raise HTTPException(400, "defaults must be an object")
+        out["defaults"] = follow.set_defaults(req["defaults"])
+    if "per_position" in req:
+        try:
+            out["per_position"] = follow.set_per_position(float(req.get("per_position")))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "per_position must be a number")
+    return out
 
 
 @router.get("/flow/journey")

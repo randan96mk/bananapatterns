@@ -8,6 +8,7 @@ import { useIsPhone } from '../useMedia';
 import { useBeat, useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
 import * as api from '../services/api';
 import HealthStrip from './HealthStrip';
+import { Card, Spark, Bar } from './ui2';
 
 // 🏠 Home: the day on one screen. Timeline, account cards with sparklines, the stats strip, today's live P&L, the
 // positions map, the market pulse, positions by book, what needs a look, risk, next up, activity. Every block
@@ -19,29 +20,9 @@ const at12 = (s) => {
 };
 const hm = (s) => (s ? new Date(s).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
 const dayName = (s) => (s ? new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
-const BOOK = { real: 'Real · Tradetron', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
+const BOOK = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
-
-function Spark({ values, color = 'var(--ok)', h = 22, w = 300 }) {
-  const v = (values || []).filter((x) => x != null);
-  if (v.length < 2) return null;
-  const lo = Math.min(...v), hi = Math.max(...v);
-  const pts = v.map((x, i) => `${(i / (v.length - 1)) * w},${h - 3 - ((x - lo) / (hi - lo || 1)) * (h - 6)}`).join(' ');
-  return <svg className="hspark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={pts} /></svg>;
-}
-
-function Card({ label, value, num, sub, k, spark, stale, live, fact }) {
-  const beat = useBeat(num);
-  const trend = spark && spark.length > 1 ? (spark[spark.length - 1] >= spark[0] ? 'var(--ok)' : 'var(--bad)') : 'var(--muted)';
-  return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''}`}>
-    <div className="l">{label}{live && <span className="livedot" title="live" />}{stale && <span className="warn"> · stale</span>}</div>
-    <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span></div>
-    {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{signed(beat.delta)}</span>}
-    <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>
-    <div className="bl">{fact}</div>{spark ? <Spark values={spark} color={trend} /> : <span />}</div>;
-}
-const Bar = ({ pct, bad }) => <span className="fbar"><i style={{ width: `${Math.max(0, Math.min(100, pct || 0))}%`, background: bad ? 'var(--bad)' : 'var(--blue)' }} /></span>;
 
 function Timeline({ events, jobs, now, feed, phone }) {
   const nowT = new Date(now).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
@@ -154,7 +135,7 @@ export default function HomePage({ onGo, onStock }) {
     <div className="kpis">
       <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} sub={`intraday ${signed(it.day_pnl)} · swing last session ${signed((o.today || 0) - (it.day_pnl || 0))}`} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
         fact={F.today ? <>high <b className="up">{signed(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{signed(F.today.low)}</b> {hm24(F.today.low_at)}</> : <span className="muted">high / low from the open</span>} />
-      {A.real && <Card label={<>Real · Tradetron <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
+      {A.real && <Card label={<>Real <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
         sub={<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>} spark={A.real.spark} stale={stale}
         fact={F.real && <><b>{inr(F.real.in_use)}</b> in use · {F.real.slots} of {F.real.max_pos} slots<Bar pct={F.real.capital ? 100 * F.real.in_use / F.real.capital : 0} /></>} />}
       {A.paper_A && <Card label="Paper A · swing" value={pct(A.paper_A.return)} num={A.paper_A.value} k={cls(A.paper_A.return)} sub={<>{inr(A.paper_A.value)} · <span className={cls(A.paper_A.day_pnl)}>{signed(A.paper_A.day_pnl)}</span> last session · {A.paper_A.positions} open</>} spark={A.paper_A.spark} fact={factPaper(F.paper_A)} />}

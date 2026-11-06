@@ -2,14 +2,19 @@ import React, { useCallback, useEffect, useState } from 'react';
 import * as api from '../services/api';
 import StockChart from './StockChart';
 import StageList, { StagePeek } from './StageList';
-import MarketCard from './MarketCard';
+import MarketCard, { STATUS } from './MarketCard';
 import PlanCard from './PlanCard';
 import { useIsPhone } from '../useMedia';
 import { NewsList, ResultsList } from './NewsFeed';
+import { Head, Chip, Cards, Card, Bar, Panel, Seg, Act } from './ui2';
 
 const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '—');
+const dayOf = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—');
+const MLABEL = { uptrend: '🟢 Uptrend', pressure: '🟡 Pressure', correction: '🔴 Correction' };
+const KIND = { breakout: ['↑', 'up'], below_pivot: ['↓', 'down'], played_out: ['↓', 'down'], forming: ['~', 'warn'] };
+const slot = { width: 118, textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', flex: 'none' };
 
-// The stage board: four cards, what-changed feed, and a drill-down list per stage.
+// The stage board: the four stage cards, the market filter, what changed since the last close, and the names per stage.
 export default function ScreensHome({ hasData }) {
   const [screen, setScreen] = useState('bases');
   const [summary, setSummary] = useState(null);
@@ -54,144 +59,81 @@ export default function ScreensHome({ hasData }) {
   }, [phone, picked, summary, stage]);
   const pickStage = (id) => { setStage(id); setSelected(null); setPicked(true); setPeekAll(false); };
   const pickScreen = (id) => { setScreen(id); setSelected(null); setPicked(false); setPeekAll(false); };
-  // [id, title, sub, short sub for the phone's 2x2 grid]
+  // [id, title, sub, fact]
   const CARDS = [
-    ['forming', 'Forming', 'pausing in a tight range under its lid', 'tight, under its lid'],
-    ['fresh', 'Fresh breakouts', `cleared it in the last ${n} sessions`, `last ${n} sessions`],
-    ['climbing', 'Climbing', 'broke out earlier — the breakout is holding', 'breakout holding'],
-    ['played_out', 'Played out', 'ended recently: below the 50-day line or 8% under the pivot', 'below 50d / −8%'],
+    ['forming', 'Forming', 'tight range under its lid', 'waiting for the pivot'],
+    ['fresh', 'Fresh breakouts', `cleared it in the last ${n} sessions`, c.fresh_low_volume ? `+${c.fresh_low_volume} on low volume` : 'on the volume rule'],
+    ['climbing', 'Climbing', 'broke out earlier, holding', 'above pivot and 50-day'],
+    ['played_out', 'Played out', 'below 50-day or 8% under pivot', 'back in the base, or done'],
   ];
-  const SCREENS = [['vcp', 'VCP', 'VCP'], ['flag', 'Bull flag', 'Flag'],
-    ['bases', 'Bases (all)', 'Bases']];
+  const SCREENS = [['vcp', 'VCP'], ['flag', 'Bull flag'], ['bases', 'Bases']];
   const rows = feed?.rows || [];
-  const headline = `${c.fresh || 0} fresh breakout${c.fresh === 1 ? '' : 's'}`;
+  const names = ['forming', 'fresh', 'climbing', 'played_out'].reduce((a, k) => a + (c[k] || 0), 0);
+  const about = {
+    vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend.',
+    flag: 'Bull flags: a 20%+ pole in up to 6 weeks on volume, then a 1–5 week flag that gives back at most 38% on drying volume (HTF = +90% pole).',
+  }[screen] || 'Every base the engine finds, at the stage it has reached.';
+  const h = mkt?.health, br = h?.breadth || {}, bo = h?.breakouts || {};
+  const mCls = h ? (STATUS[h.status] || [])[1] || '' : '', mLabel = h ? MLABEL[h.status] || h.status : '—';
+  const feedN = phone ? 3 : 6, newsN = phone ? 4 : 8;
 
-  const notices = <>
-    {summary?.stale && <span className="warn">Board is older than the data (latest bar {fmtDate(summary.latest_bar)}): rescan.</span>}
-    {err && <span className="warn">{err}</span>}
-  </>;
-  const toolbar = phone ? (
-    <div className="row toolbar spills">
-      {SCREENS.map(([id, , short]) => (
-        <button key={id} className={`spill ${screen === id ? 'on' : ''}`} aria-pressed={screen === id}
-                onClick={() => pickScreen(id)}>{short}</button>))}
-      <button className="spill icon" disabled={busy} onClick={rescan} aria-label="Rescan" title="Rescan">
-        {busy ? '…' : '↻'}</button>
-      {notices}
-    </div>
-  ) : (
-    <div className="row toolbar">
-      <select value={screen} onChange={(e) => pickScreen(e.target.value)}>
-        {SCREENS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-      </select>
-      <button className="btn ghost" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : 'Rescan'}</button>
-      {notices}
-      <span className="right updated">Updated EOD · {fmtDate(summary?.as_of)}</span>
-    </div>
-  );
-  const noScan = (
-    <p>No scan yet. {hasData ? <>Press <b>{phone ? '↻' : 'Rescan'}</b>.</> : <>Load data first: <b>Data → Refresh universe → Sync candles</b>.</>}</p>);
-  const cards = (
-    <div className="cards">
-      {CARDS.map(([id, title, sub, short]) => (
-        <button key={id} className={`card ${stage === id ? 'active' : ''} ${(c[id] ?? 0) === 0 ? 'zero' : ''}`}
-                onClick={() => pickStage(id)}>
-          <span className="tap">tap to view ›</span>
-          <span className="count">{c[id] ?? 0}</span>
-          <span className="title">{title}</span>
-          <span className="sub">{phone ? short : sub}{id === 'fresh' && c.fresh_low_volume ? ` · +${c.fresh_low_volume} on low volume` : ''}</span>
-        </button>
-      ))}
-    </div>);
   const feedBox = (
-    <div className="feed">
-      <div className="tabs" role="tablist">
-        {[['moves', 'Moves', rows.length], ['news', 'News', news?.items.length],
-          ['results', 'Results', news?.results.length]].map(([id, label, k]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`}
-                  onClick={() => { setTab(id); setFullFeed(false); }}>
-            {label}{k != null && <span className="count">{k}</span>}</button>))}
-      </div>
+    <Panel title="What changed since last close" meta={tab === 'moves' ? rows.length : tab === 'news' ? news?.items.length : news?.results.length}
+      right={<Seg small opts={[['moves', `Moves ${rows.length}`], ['news', `News ${news?.items.length ?? '…'}`], ['results', `Results ${news?.results.length ?? '…'}`]]}
+        v={tab} set={(id) => { setTab(id); setFullFeed(false); }} />}>
       {tab === 'news' && <>
-        <div className="muted small">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board
-          stocks (VCP, Bull flag, Bases) + held / watched</div>
-        <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : (phone ? 4 : 8)} />
-        {(news?.items.length || 0) > (phone ? 4 : 8) && <button className="linkbtn"
-          onClick={() => setFullFeed(!fullFeed)}>
-          {fullFeed ? 'Show less' : `Show the full feed (${news.items.length}) ›`}</button>}
+        <div className="rnote">Exchange news, last {news?.days ?? 3} days · {news?.scope ?? 0} board stocks (VCP, Bull flag, Bases) + held / watched</div>
+        <NewsList data={news} onSelect={setSelected} limit={fullFeed ? 0 : newsN} />
+        {(news?.items.length || 0) > newsN && <div className="rnote"><button type="button" className="btn ghost small" onClick={() => setFullFeed(!fullFeed)}>
+          {fullFeed ? 'Show less' : `Show the full feed (${news.items.length}) ›`}</button></div>}
       </>}
       {tab === 'results' && <>
-        <div className="muted small">Board stocks reporting results soon: a results gap can jump the stop</div>
+        <div className="rnote">Board stocks reporting results soon: a results gap can jump the stop</div>
         <ResultsList data={news} onSelect={setSelected} />
       </>}
       {tab === 'moves' && <>
-        <div className="row"><b>What changed since last close</b>
-          <span className="muted">({fmtDate(feed?.as_of)}) · end of day · {rows.length} moves</span></div>
-        {rows.length === 0 && <p className="muted">No stage moves today.</p>}
-        {(fullFeed ? rows : rows.slice(0, phone ? 3 : 6)).map((r, i) => (
-          <div key={i} className={`feeditem k-${r.kind}`} onClick={() => setSelected(r.symbol)}>
-            <span>{r.text}</span>
-            <span className={`num ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`}>
+        <div className="rnote">{fmtDate(feed?.as_of)} · end of day · {rows.length} stage moves</div>
+        {rows.length === 0 && <p className="muted small rempty">No stage moves today.</p>}
+        {(fullFeed ? rows : rows.slice(0, feedN)).map((r, i) => {
+          const [icon, cls] = KIND[r.kind] || ['·', ''];
+          return <Act key={i} icon={icon} cls={cls} text={r.text} meta={`${r.kind.replace('_', ' ')} · ${screen}`} onClick={() => setSelected(r.symbol)}>
+            <span className={`mono ${r.change_pct > 0 ? 'up' : r.change_pct < 0 ? 'down' : ''}`} style={slot}>
               ₹{r.close?.toLocaleString('en-IN')} {r.change_pct != null && `${r.change_pct > 0 ? '+' : ''}${r.change_pct.toFixed(1)}%`}</span>
-          </div>
-        ))}
-        {rows.length > (phone ? 3 : 6) && <button className="linkbtn" onClick={() => setFullFeed(!fullFeed)}>
-          {fullFeed ? 'Show less' : `Show the full feed (${rows.length}) ›`}</button>}
+          </Act>;
+        })}
+        {rows.length > feedN && <div className="rnote"><button type="button" className="btn ghost small" onClick={() => setFullFeed(!fullFeed)}>
+          {fullFeed ? 'Show less' : `Show the full feed (${rows.length}) ›`}</button></div>}
       </>}
-    </div>);
+    </Panel>);
   const chart = selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />;
   const listProps = { screen, stage, asOf: summary?.as_of, selected, onSelect: setSelected };
-
-  // Phone: ticker (App) -> screen pills -> market line -> stage cards -> names in that stage -> moves / news /
-  // results -> plan -> positions. Desktop / tablet: market line -> stage cards + moves / news / results -> names in
-  // that stage -> chart -> plan -> positions.
-  if (phone) {
-    return (
-      <>
-        {toolbar}
-        <MarketCard data={mkt} />
-        <div className="panel board">
-          {!summary?.as_of ? noScan : <>
-            <div className="headline">{headline} <span className="muted">· last {n} sessions · EOD {fmtDate(summary.as_of)}</span></div>
-            {cards}
-          </>}
-        </div>
-        {summary?.as_of && (peekAll
-          ? <StageList {...listProps} onLess={() => setPeekAll(false)} />
-          : <StagePeek {...listProps} count={c[stage] ?? 0} onAll={() => setPeekAll(true)} />)}
-        {chart}
-        {summary?.as_of && <div className="panel">{feedBox}</div>}
-        <PlanCard plan={plan} onSelect={setSelected} />
-      </>
-    );
-  }
+  const stageList = !summary?.as_of ? null : phone && !peekAll
+    ? <StagePeek {...listProps} count={c[stage] ?? 0} onAll={() => setPeekAll(true)} />
+    : <StageList {...listProps} onLess={phone ? () => setPeekAll(false) : undefined} />;
 
   return (
-    <>
-      {toolbar}
-
-      <MarketCard data={mkt} />
-
-      <div className="panel board">
-        {!summary?.as_of ? noScan : (
-          <>
-            <h2>{headline} in the last {n} sessions.</h2>
-            <p className="muted">{{
-            vcp: 'Classic VCPs: shrinking pullbacks, drying volume, RS 70+, in an uptrend — tap a stage to see the names.',
-            flag: 'Bull flags: a 20%+ pole in up to 6 weeks on volume, then a 1–5 week flag that gives back at most 38% '
-              + 'on drying volume (HTF = +90% pole) — tap a stage to see the names.',
-          }[screen] || 'Every base the engine finds, at the stage it has reached — tap a stage to see the names.'}</p>
-            <div className="boardgrid">
-              {cards}
-              {feedBox}
-            </div>
-          </>
-        )}
-      </div>
-
-      {summary?.as_of && <StageList {...listProps} />}
-      {chart}
+    <div className="rd">
+      <Head title="Screens" right={<>
+        <Seg opts={SCREENS} v={screen} set={pickScreen} />
+        <Seg opts={CARDS.map(([id, t]) => [id, t.split(' ')[0]])} v={stage} set={pickStage} />
+        <button type="button" className="btn ghost small" disabled={busy} onClick={rescan}>{busy ? 'Scanning…' : '↻ Rescan'}</button></>}>
+        <Chip title={about}>scanned <b>{fmtDate(summary?.as_of)}</b> · {names} names · candles to {fmtDate(summary?.latest_bar)}</Chip>
+      </Head>
+      {summary?.stale && <div className="rbanner warn">Board is older than the data (latest bar {fmtDate(summary.latest_bar)}): rescan.</div>}
+      {err && <div className="rbanner bad">{err}</div>}
+      {summary && !summary.as_of && <div className="rbanner">No scan yet. {hasData ? <>Press <b>Rescan</b>.</> : <>Load data first: <b>Data → Refresh universe → Sync candles</b>.</>}</div>}
+      {summary && <Cards n={6}>
+        {CARDS.map(([id, title, sub, fact]) => (
+          <Card unit="n" key={id} label={`${stage === id ? '▸ ' : ''}${title}`} value={c[id] ?? 0} num={c[id] ?? 0} k={stage === id ? 'up' : ''} sub={sub} fact={fact} onClick={() => pickStage(id)} />))}
+        <Card label="Market filter" value={mLabel} k={mCls === 'ok' ? 'up' : mCls === 'bad' ? 'down' : mCls === 'w' ? 'warn' : ''}
+          sub={h ? `breadth ${br.above_50_pct ?? '–'}% · dist ${h.dist_days ?? '–'} · working ${bo.working ?? 0}/${bo.total ?? 0}` : 'no market health yet'}
+          fact={h ? <><Bar pct={br.above_50_pct} ok={br.above_50_pct >= (mkt.config?.breadth_up ?? 50)} bad={br.above_50_pct < (mkt.config?.breadth_correction ?? 35)} /> {br.above_50_pct ?? '–'}% above 50 d</> : 'Data → Sync candles'} />
+        <Card label="Data" value={summary?.stale ? '⚠ stale' : summary?.as_of ? '✓ fresh' : '—'} k={summary?.stale ? 'warn' : summary?.as_of ? 'up' : ''}
+          sub={`board ${dayOf(summary?.as_of)} · candles to ${dayOf(summary?.latest_bar)}`} fact={summary?.stale ? 'rescan to catch up' : 'updated EOD'} />
+      </Cards>}
+      {phone ? <>{stageList}{chart}{summary?.as_of && feedBox}<MarketCard data={mkt} /></>
+        : <>{summary?.as_of && (mkt?.health ? <div className="two">{feedBox}<MarketCard data={mkt} /></div> : feedBox)}{stageList}{chart}</>}
       <PlanCard plan={plan} onSelect={setSelected} />
-    </>
+    </div>
   );
 }
