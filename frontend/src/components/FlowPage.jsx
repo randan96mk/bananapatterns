@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import { push, useLive } from '../services/live';
 import { StopMeter } from './ui';
-import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg, Tag, Box } from './ui2';
+import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg, Tag } from './ui2';
 import { clock } from '../timefmt';
 import { inr, signed, cls } from '../fmt';
 import FlowBacktest from './FlowBacktest';
@@ -51,12 +51,13 @@ function Status({ r }) {
   return <Tag c={c} title={r.status === 'pending' ? 'filling at the next minute' : undefined}>{t}{r.status === 'closed' && r.exit_t ? ` ${r.exit_t}` : ''}</Tag>;
 }
 // The box's one line: the first parts of its summary that fit (the whole summary sits in the settings panel).
-const brief = (s) => { const parts = (s || '').split(' · '); let out = parts[0].slice(0, 34); for (const p of parts.slice(1)) { if (out.length + p.length + 3 > 34) return `${out} …`; out += ` · ${p}`; } return out; };
+
 const drops = (n) => Object.entries(n.drops || {}).map(([k, v]) => `${k} ${v}`).join(' · ');
 
 const SIG_COLS = [{ h: 'Stock' }, { h: 'Time', w: 70 }, { h: 'Signal', w: 110 }, { h: 'Status', w: 110 }, { h: 'Entry', w: 80, n: true }, { h: 'Now', w: 90, n: true },
   { h: 'P&L after costs', w: 110, n: true }, { h: '%', w: 70, n: true, lo: true }, { h: 'R', w: 50, n: true, lo: true }, { h: 'Stop ← price → target', w: 150 },
   { h: 'SL', w: 90, n: true, lo: true }, { h: 'Target', w: 80, n: true, lo: true }, { h: 'RVOL', w: 60, n: true, lo: true }];
+const W = 210, H = 112;                                   // box size on the canvas
 const POS_COLS = [{ h: 'Stock' }, { h: 'Side', w: 80 }, { h: 'Qty', w: 60, n: true }, { h: 'Entry', w: 90, n: true }, { h: 'Stop', w: 90, n: true }, { h: 'Target', w: 90, n: true, lo: true },
   { h: 'Distance to stop', w: 150 }, { h: 'Status', w: 100 }, { h: 'After costs', w: 130, n: true }];
 const AGG_COLS = [{ h: '' }, { h: 'Trades', w: 70, n: true }, { h: 'Won', w: 70, n: true }, { h: 'Net', w: 110, n: true }, { h: 'Avg R', w: 70, n: true }];
@@ -77,7 +78,9 @@ export default function FlowPage() {
   const lv = useLive('flow_live');                       // live prices and P&L of today's signals (every 3 s when live)
   const feedLive = d?.feed?.state === 'live';
   const [jr, setJr] = useState(null);
-  const [full, setFull] = useState(false);                // full screen: the pipe alone, no side column
+  const [full, setFull] = useState(false);                // full screen: the canvas alone
+  const [drag, setDrag] = useState(null);                 // {id, dx, dy, x, y} while a box is dragged
+  const [moved, setMoved] = useState({});                 // positions dropped here, until the next refresh
   useEffect(() => {
     const esc = (e) => { if (e.key === 'Escape') setFull(false); };
     window.addEventListener('keydown', esc);
@@ -94,9 +97,32 @@ export default function FlowPage() {
   }, []);
   if (!d) return <div className="rd"><Panel title="⚡ Intraday Flow"><p className="muted small rempty">{err ? <span className="warn">{err}</span> : 'Loading…'}</p></Panel></div>;
 
-  const nodes = ordered(d.nodes);
+  const nodes = d.nodes.map((n) => {
+    const p = drag?.id === n.id ? [drag.x, drag.y] : moved[n.id];
+    return p ? { ...n, x: p[0], y: p[1] } : n;
+  });
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const resetLayout = () => api.flowLayout({}).then(load).catch((e) => setErr(e.message));
+  const steps = ordered(d.nodes);                         // phone: the boxes as a numbered list, in flow order
+  const down = (e, n) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    setDrag({ id: n.id, dx: e.clientX - n.x, dy: e.clientY - n.y, x: n.x, y: n.y, moved: false });
+  };
+  const move = (e) => {
+    if (!drag) return;
+    const x = Math.max(0, Math.round((e.clientX - drag.dx) / 5) * 5), y = Math.max(0, Math.round((e.clientY - drag.dy) / 5) * 5);
+    if (x !== drag.x || y !== drag.y) setDrag({ ...drag, x, y, moved: true });
+  };
+  const up = () => {
+    if (!drag) return;
+    if (drag.moved) {
+      setMoved({ ...moved, [drag.id]: [drag.x, drag.y] });
+      api.flowLayout({ [drag.id]: [drag.x, drag.y] }).catch((e) => setErr(e.message));
+    } else setSel(drag.id);
+    setDrag(null);
+  };
+  const resetLayout = () => api.flowLayout({}).then(() => { setMoved({}); load(); }).catch((e) => setErr(e.message));
+  const maxX = Math.max(...nodes.map((n) => n.x)) + W + 30, maxY = Math.max(...nodes.map((n) => n.y)) + H + 30;
   const node = byId[sel] || d.nodes[0];
   const setMode = (mode) => api.flowMode(mode).then(load).catch((e) => setErr(e.message));
   const change = (key, v) => {
@@ -211,9 +237,32 @@ export default function FlowPage() {
             <button type="button" className="btn ghost small" onClick={() => { setJsym(null); setJourney(true); }} title="Why a trade or not: every step, the rules, a stock's check">🧭 Journey</button>
             <button type="button" className="btn ghost small" onClick={resetLayout} title="Put every box back in its place">↺ Reset layout</button>
             <button type="button" className="btn ghost small" title="Every box's settings back to the recommended defaults" onClick={defaults}>↺ Default settings</button></>}>
-            <div className="rpipe" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${full ? 220 : 236}px, 1fr))`, rowGap: 10 }}>{nodes.map((n) => <Box key={n.id} icon={n.icon} title={n.title} inN={n.in} outN={n.out} text={brief(n.summary)} status={STATUS[n.status] || STATUS.idle}
-              on={!n.config?.skip} selected={sel === n.id} onClick={() => setSel(n.id)} />)}</div>
-            <div className="rsteps">{nodes.map((n, i) => <div key={n.id} className={`step ${sel === n.id ? 'sel' : ''}`} onClick={() => setSel(n.id)}>
+            <div className={`flowcanvas ${full ? 'full' : ''}`} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+          <div className="flowinner" style={{ width: maxX, height: maxY }}>
+          <svg className="flowedges" width={maxX} height={maxY}>
+            {nodes.flatMap((n) => n.inputs.map((i) => {
+              const a = byId[i]; const x1 = a.x + W, y1 = a.y + H / 2, x2 = n.x, y2 = n.y + H / 2;
+              const dx = Math.max(40, Math.abs(x2 - x1) / 2);
+              const path = x2 > x1 ? `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`
+                : `M${x1},${y1} C${x1 + 60},${y1} ${x1 + 60},${(y1 + y2) / 2} ${(x1 + x2) / 2},${(y1 + y2) / 2} S${x2 - 60},${y2} ${x2},${y2}`;
+              return <path key={i + n.id} d={path} className={`edge ${a.status === 'ok' || a.status === 'running' ? 'live' : ''}`} />;
+            }))}
+          </svg>
+          {nodes.map((n) => {
+            const [label, cls] = STATUS[n.status] || STATUS.idle;
+            return (
+              <button key={n.id} className={`fnode ${n.config?.skip ? 'skipped' : ''} ${sel === n.id ? 'sel' : ''} ${drag?.id === n.id ? 'dragging' : ''}`}
+                      style={{ left: n.x, top: n.y, width: W }} onPointerDown={(e) => down(e, n)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') setSel(n.id); }}>
+                <div className="fh"><span className="fico">{n.icon}</span><b>{n.title}</b><span className={`fst ${cls}`}>{label}</span></div>
+                {n.in != null && <div className="fio"><b>{n.in}</b> → <b className="up">{n.out}</b> <span className="muted small">{n.ms} ms</span></div>}
+                <div className="fsum">{n.summary}</div>
+                {n.inputs.length > 0 && <span className="port in" />}<span className="port out" />
+              </button>);
+          })}
+        </div>
+            </div>
+            <div className="rsteps">{steps.map((n, i) => <div key={n.id} className={`step ${sel === n.id ? 'sel' : ''}`} onClick={() => setSel(n.id)}>
               <span className="c">{i + 1}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: n.config?.skip ? 0.5 : 1 }}>{n.icon} {n.title}</span>
               <span className="n mono">{n.out ?? '—'}{n.in != null && <small className="muted"> of {n.in}</small>}</span></div>)}</div>
             {full && <div className="rnote">{node.icon} <b>{node.title}</b> · {node.summary}{node.in != null && <> · {node.in} in · <b>{node.out} passed</b> · {node.ms} ms{drops(node) ? ` · dropped: ${drops(node)}` : ''}</>} · exit full screen to change settings.</div>}
