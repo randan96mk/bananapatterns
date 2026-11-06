@@ -2,9 +2,9 @@
 
     ./docker.sh verify-e300
 
-1. a sample day: A's universe size, E's, and the stocks ranked 201-300 (E can pick them, A can't);
-2. the backtest of A and E next to the expected numbers (Sep 2020 -> Oct 2026 on the user's data);
-3. a dry run of the paper and real evening plans: tomorrow's E candidates, marking those from ranks 201-300."""
+1. a sample day: the universe size and the stocks ranked 201-300 (the ones the old top-200 universe could not pick);
+2. the backtest of E (no late trail) next to the expected numbers (Sep 2020 -> Oct 2026 on the user's data);
+3. a dry run of the paper and real evening plans: tomorrow's candidates, marking those from ranks 201-300."""
 
 import copy
 import sys
@@ -16,8 +16,8 @@ from backend.engine import paper
 from backend.engine import real
 from backend.engine import trend_breakout as tb
 
-EXPECTED = {"A": {"trades": 388, "cagr": 16.5, "stress_cagr": 14.7, "pf": 1.62, "dd": 27, "robust": "6-7/14"},
-            "E": {"trades": 413, "cagr": 19.4, "stress_cagr": 17.1, "pf": 1.69, "dd": 28, "robust": "10/14"}}
+EXPECTED = {"E": {"trades": 413, "cagr": 19.4, "stress_cagr": 17.1, "pf": 1.69, "dd": 28, "robust": "10/14"}}
+OLD_TOP = 200                                             # the universe before Oct 31, 2026 (and of the removed A)
 
 
 def main() -> None:
@@ -28,12 +28,11 @@ def main() -> None:
         sys.exit(data["error"])
     cal, S = data["cal"], data["S"]
     i = len(cal) - 1
-    pa, pe = tb.rules(config, "A"), replace(tb.rules(config, "E"), late_at=0.0)   # E before E+ (no late trail)
+    pe = replace(tb.rules(config, "E"), late_at=0.0)       # E before E+ (no late trail)
     order = tb.ranked_by_turnover(S, i, pe.min_price)
-    ua, ue = tb.liquid(S, i, pa.top), tb.liquid(S, i, pe.top)
-    print(f"\n1) Sample day {cal[i]}: A universe {len(ua)} (top {pa.top}) · E universe {len(ue)} (top {pe.top}) · "
-          f"A inside E: {ua <= ue}")
-    print(f"   Ranked {pa.top + 1}-{pe.top} (E only): " + ", ".join(order[pa.top:pe.top]))
+    ue = tb.liquid(S, i, pe.top)
+    print(f"\n1) Sample day {cal[i]}: universe {len(ue)} (top {pe.top})")
+    print(f"   Ranked {OLD_TOP + 1}-{pe.top} (not in the old top {OLD_TOP}): " + ", ".join(order[OLD_TOP:pe.top]))
     if data["missing"]:
         print(f"   ⚠️ {len(data['missing'])} stocks without enough candles: {', '.join(data['missing'])}")
 
@@ -44,7 +43,7 @@ def main() -> None:
     nifty = [close[k] / close[first - 1] * config.breakout.capital for k in range(first, len(cal))]
     nifty_cagr = tb.perf(nifty, config.breakout.capital, n)[1]
     print(f"   {cal[first]} -> {cal[-1]} · NIFTY 50 CAGR {nifty_cagr:.1f}%")
-    for key, p in (("A", pa), ("E", pe)):
+    for key, p in (("E", pe),):
         r = tb.evaluate(p, cal, S, data["index_ok"], first, nifty_cagr, data["filters"])
         nb = sum(tb.evaluate(q, cal, S, data["index_ok"], first, nifty_cagr, data["filters"])["ok"]
                  for _, q in tb.neighbours(p))
@@ -68,7 +67,7 @@ def main() -> None:
         print(f"   {label}: {len(buys)} BUY candidate(s) for the next open")
         for o in buys:
             rk = ranks.get(o["symbol"])
-            print(f"     {o['symbol']:<12} turnover rank {rk}{'  <- from ranks 201-300 (E only)' if rk and rk > pa.top else ''}")
+            print(f"     {o['symbol']:<12} turnover rank {rk}{f'  <- from ranks {OLD_TOP + 1}-{pe.top}' if rk and rk > OLD_TOP else ''}")
 
 
 if __name__ == "__main__":

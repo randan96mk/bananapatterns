@@ -1,11 +1,11 @@
-"""📝 Paper trading: the Trend Breakout rules (backend/engine/trend_breakout.py) run forward, one session at a time,
-from the day it is started, in one virtual account per variant (A: 200-day filter, E: half filter), side by side.
-Simulated: never orders, never a Kite order call.
+"""📝 Paper trading: the Trend Breakout E+ rules (backend/engine/trend_breakout.py) run forward, one session at a
+time, from the day it is started, in one virtual account per variant (E+ is the only one since A was removed in Nov
+2026; its account key is "E"). Simulated: never orders, never a Kite order call.
 
 Each evening (after the daily sync), for every new session since the last one processed, exactly as simulate():
   1. yesterday's SELL orders fill at today's open (slippage, delivery charges);
   2. yesterday's BUY orders fill at today's open, best 6-month return first, equal weight, while the account has a
-     free slot under its own filter (A: 10 or none; E: 10, 5 or none):
+     free slot under the half filter (10, 5 or none):
      qty = floor(min(account value / max_pos, cash) / (fill x 1.0012)); skipped when no slot or under 1 share;
   3. a day's low at or under a position's stop sells it at min(open, stop); otherwise it is marked at the close;
   4. at the close: a close under SMA(exit_sma) queues a SELL; the day's breakouts queue BUYs (filter permitting).
@@ -30,7 +30,8 @@ _lock = threading.Lock()
 
 
 def variants(config: AppConfig) -> list[str]:
-    return [v for v in (config.paper.variants or ["A"]) if v in tb.MODES]
+    """The enabled accounts that exist: a saved config still listing "A" gives ["E"]."""
+    return [v for v in (config.paper.variants or ["E"]) if v in tb.MODES] or list(tb.MODES)
 
 
 def _rules(config: AppConfig, key: str):
@@ -38,12 +39,14 @@ def _rules(config: AppConfig, key: str):
 
 
 def _states() -> dict:
-    """Every account's state; one saved before the A / E accounts (Oct 2026) gets its variant and name."""
+    """Every existing account's state (an "A" row from before the migration is never read); one saved before the
+    accounts had a variant (Oct 2026) gets its variant and name."""
     with get_db() as conn:
-        states = {r["account"]: json.loads(r["payload"]) for r in conn.execute("SELECT account, payload FROM paper_state")}
+        states = {r["account"]: json.loads(r["payload"]) for r in conn.execute("SELECT account, payload FROM paper_state")
+                  if r["account"] in tb.MODES}
     for k, st in states.items():
         st.setdefault("variant", k)
-        st.setdefault("name", tb.variant_name(k, 200))
+        st.setdefault("name", tb.variant_name(k, st.get("top", 300)))
     return states
 
 
@@ -229,8 +232,8 @@ def migrate_eplus(st: dict, data: dict, p) -> list:
 def _advance(key: str, st: dict, data: dict, p) -> int:
     """Every session after st["as_of"]; returns how many were processed (0 when already up to date)."""
     cal = data["cal"]
-    if st.get("top", 200) != p.top:                       # the universe changed: noted in the log; positions stay
-        st.setdefault("notes", []).append({"day": st["as_of"], "text": f"universe top {st.get('top', 200)} → top {p.top} "
+    if st.get("top", p.top) != p.top:                     # the universe changed: noted in the log; positions stay
+        st.setdefault("notes", []).append({"day": st["as_of"], "text": f"universe top {st.get('top')} → top {p.top} "
                                                                        f"for new buys from the next session"})
         st["top"], st["name"] = p.top, tb.variant_name(key, p.top)
     st["raised"] = migrate_eplus(st, data, p)            # once; then the trail runs in _step
@@ -251,8 +254,8 @@ def _advance(key: str, st: dict, data: dict, p) -> int:
 
 
 def process(config: AppConfig, data: Optional[dict] = None) -> dict:
-    """Every account's new sessions; an enabled account that is missing (E added later) starts on the same day as
-    the others, replayed from the stored candles. Returns the day's report, also kept for the evening report."""
+    """Every account's new sessions; an enabled account that is missing starts on the same day as the others,
+    replayed from the stored candles. Returns the day's report, also kept for the evening report."""
     with _lock:
         states = _states()
         if not states:
@@ -363,7 +366,7 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
 
 
 def summary(config: AppConfig) -> dict:
-    """Everything the 📝 Paper trading tab shows: the accounts side by side."""
+    """Everything the 📝 Paper trading tab shows: the accounts ({"E": ...})."""
     states = _states()
     base = {"capital": config.paper.capital, "variants": variants(config), "max_pos": config.breakout.max_pos,
             "slippage_pct": config.breakout.slippage_pct}

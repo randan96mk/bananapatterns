@@ -1,6 +1,7 @@
 """Trend Breakout: the indicators, delivery charges, the entry and exit rules, the fixed stop (from the entry day),
 the fill at the next open (no look-ahead), sizing, the market filter, the run, the evening scan and the API."""
 
+from dataclasses import replace
 from datetime import date, timedelta
 from math import floor
 
@@ -10,7 +11,9 @@ from backend.config import AppConfig, BreakoutConfig
 from backend.database.models import get_db, upsert_candles
 from backend.engine import trend_breakout as tb
 
-P = BreakoutConfig()
+# swing.py's plain "breakout" rules for the rule tests: the all-or-nothing 200-day filter (index_ok, no filters
+# argument), top 200, no late trail. The app's one variant (E+) is these rules with the half filter and the trail.
+P = BreakoutConfig(regime_mode="sma200", top=200, late_at=0.0)
 
 
 def days(n, start=date(2019, 1, 1)):
@@ -120,7 +123,7 @@ def test_trend_exit_at_the_next_open_after_a_close_under_sma50():
     for k in range(283, 300):                                                         # drift down, lows over the stop
         c = rows[282]["close"] * (1 - 0.004 * (k - 282))
         rows[k].update(open=c, close=c, high=c * 1.001, low=c * 0.999)
-    cal, S, (_, _, trades, _) = sim({"UP": rows}, p=BreakoutConfig(atr_mult=100))      # stop at -8%
+    cal, S, (_, _, trades, _) = sim({"UP": rows}, p=replace(P, atr_mult=100))          # stop at -8%
     t = trades[0]
     under = next(k for k in range(282, 300) if rows[k]["close"] < S["UP"]["ind"]["sma50"][k])
     assert t["why"] == "exit" and t["out"] == cal[under + 1] and t["sell"] == round(rows[under + 1]["open"], 2)
@@ -130,7 +133,7 @@ def test_trend_exit_at_the_next_open_after_a_close_under_sma50():
 def test_market_filter_off_blocks_new_buys():
     _, _, (_, _, trades, funnel) = sim({"UP": trend(300, breakout_at=280)}, regime=False)
     assert trades == [] and funnel["market_off"] >= 1
-    _, _, (_, _, trades, _) = sim({"UP": trend(300, breakout_at=280)}, p=BreakoutConfig(regime=False), regime=False)
+    _, _, (_, _, trades, _) = sim({"UP": trend(300, breakout_at=280)}, p=replace(P, regime=False), regime=False)
     assert len(trades) == 1
 
 
@@ -169,28 +172,34 @@ def test_run_scan_and_api(monkeypatch):
     store(monkeypatch)
     cfg = AppConfig()
     r = tb.run(cfg)
-    assert r["status"] == "ok" and r["A"]["trades"] >= 1 and "E" in r
+    assert r["status"] == "ok" and r["E"]["trades"] >= 1 and set(r) == {"status", "E"}
     s = tb.saved()
-    for v in ("A", "E"):
-        x = s["variants"][v]
-        assert [y["name"] for y in x["splits"]] == ["Development", "Validation", "Out-of-sample"]
-        assert len(x["robust"]) == (14 if v == "A" else 18) and s["sessions"] == len(x["curve"]["normal"]) == len(s["curve"]["dates"])
-        assert x["normal"]["net"] == pytest.approx(x["normal"]["gross"] - x["normal"]["costs"], abs=0.02)
-        assert 0 <= x["allowed_pct"] <= 100
+    assert set(s["variants"]) == {"E"}                                               # E+ is the only variant
+    x = s["variants"]["E"]
+    assert x["name"] == "E+ · half filter, top 300, late trail" and x["mode"] == "half" and x["top"] == 300
+    assert [y["name"] for y in x["splits"]] == ["Development", "Validation", "Out-of-sample"]
+    assert len(x["robust"]) == 18 and s["sessions"] == len(x["curve"]["normal"]) == len(s["curve"]["dates"])
+    assert x["normal"]["net"] == pytest.approx(x["normal"]["gross"] - x["normal"]["costs"], abs=0.02)
+    assert 0 <= x["allowed_pct"] <= 100
     sc = tb.run_scan(cfg, FakeKite())
-    assert sc["market_on"] and "holdings" not in sc and sc["filters"]["A"]["state"] == "ON"   # Kite holdings never read
-    assert sc["filters"]["E"]["state"] == "FULL"
+    assert sc["market_on"] and "holdings" not in sc                                 # Kite holdings never read
+    assert set(sc["filters"]) == {"E"} and sc["filters"]["E"]["state"] == "FULL" and sc["filters"]["E"]["top"] == 300
+    assert all("for" not in b for b in sc["buys"])                                   # no A+E / E only tags
     from backend.alerts import messages as msg
-    assert "signals only, no orders" in msg.breakout_scan(sc) and "SELL at open" not in msg.breakout_scan(sc)
+    text = msg.breakout_scan(sc)
+    assert "signals only, no orders" in text and "SELL at open" not in text and "A+E" not in text and "<b>E</b> · top 300" in text
     monkeypatch.setenv("BP_NO_STATIC", "1")
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
     from backend import main
     with TestClient(main.app) as tc:
         d = tc.get("/api/breakout").json()
-        assert d["built"] and "trades" not in d["run"]["variants"]["A"] and d["rules"]["max_pos"] == 10
-        assert d["scan"]["as_of"] and set(d["run"]["variants"]) == {"A", "E"}
+        assert d["built"] and "trades" not in d["run"]["variants"]["E"] and d["rules"]["max_pos"] == 10
+        assert d["scan"]["as_of"] and set(d["run"]["variants"]) == {"E"} and "top_e" not in d["rules"]
+        assert d["rules"]["top"] == 300 and d["rules"]["late_at"] == 100.0
         t = tc.get("/api/breakout/trades?variant=E&scenario=stress&limit=1").json()
         assert t["total"] >= 1 and len(t["rows"]) == 1
+        assert tc.get("/api/breakout/trades?limit=1").json() == tc.get("/api/breakout/trades?variant=E&limit=1").json()
+        assert tc.get("/api/breakout/trades?variant=A&limit=1").json() == tc.get("/api/breakout/trades?variant=E&limit=1").json()
         assert tc.get("/api/breakout/trades?scenario=x").status_code == 422
         assert tc.get("/api/breakout/trades?variant=Z").status_code == 422
         a = tc.get("/api/attention").json()
@@ -260,7 +269,7 @@ def test_the_filter_never_sells():
     assert len(trades) == 1 and trades[0]["why"] == "end"                             # held to the end
 
 
-def test_variant_a_is_unchanged_by_the_filters_argument():
+def test_sma200_mode_is_unchanged_by_the_filters_argument():
     cal, S = universe({"UP": trend(300, breakout_at=280), "B": trend(300, breakout_at=270, start=300)})
     ok = [True] * len(cal)
     a = tb.simulate(cal, S, ok, P, 0.1, 260)
@@ -268,7 +277,7 @@ def test_variant_a_is_unchanged_by_the_filters_argument():
     assert a[0] == b[0] and a[2] == b[2]
 
 
-# --- E's universe: top 300 (A stays top 200) ---------------------------------------------------------
+# --- E's universe: top 300 ------------------------------------------------------------------------------
 
 def many(n_stocks=320, n=300):
     """n_stocks stocks with different turnovers (volume grows with k), all on the same calendar."""
@@ -294,33 +303,26 @@ def test_universe_uses_only_data_up_to_the_day():
     assert tb.ranked_by_turnover(S, i, 100) == tb.ranked_by_turnover(cut, i, 100)
 
 
-def test_a_and_e_pick_from_their_own_universe():
+def test_e_is_the_only_variant_and_picks_from_the_top_300():
     from backend.config import AppConfig
     c = AppConfig()
-    pa, pe = tb.rules(c, "A"), tb.rules(c, "E")
-    assert (pa.top, pa.regime_mode, pe.top, pe.regime_mode) == (200, "sma200", 300, "half")
+    pe = tb.rules(c, "E")
+    assert tb.MODES == {"E": "half"} and tb.rules(c) == pe == replace(c.breakout, regime_mode="half")
+    assert (pe.top, pe.regime_mode, pe.late_at, pe.late_pct) == (300, "half", 100.0, 25.0)
+    with pytest.raises(KeyError):
+        tb.rules(c, "A")                                                            # A was removed (Nov 2026)
     cal, S = many()
     i = 280
-    a = {s for s, _ in tb.decide(i, S, {}, True, pa)[1]}
     e = {s for s, _ in tb.decide(i, S, {}, True, pe)[1]}
-    assert a <= tb.liquid(S, i, 200) and e <= tb.liquid(S, i, 300) and a <= e and e - a
-    assert [lbl for lbl, _ in tb.neighbours(pa) if "universe" in lbl] == ["universe top 100", "universe top 300"]
+    assert e <= tb.liquid(S, i, 300) and e - tb.liquid(S, i, 200)                  # ranks 201-300 are picked too
     assert [lbl for lbl, _ in tb.neighbours(pe) if "universe" in lbl] == ["universe top 150", "universe top 450"]
-
-
-def test_a_is_unchanged_by_the_per_strategy_universe():
-    from backend.config import AppConfig
-    cal, S = many(60)
-    ok = [True] * len(cal)
-    old = BreakoutConfig()                                                          # the pre-change A: top 200, sma200
-    assert tb.simulate(cal, S, ok, old, 0.1, 260)[2] == tb.simulate(cal, S, ok, tb.rules(AppConfig(), "A"), 0.1, 260)[2]
+    assert tb.variant_name("E", 300) == "E+ · half filter, top 300, late trail"
+    assert tb.variant_name("E", 300, late=False) == "E · half filter, top 300"
 
 
 def test_a_stock_that_leaves_the_universe_is_not_sold():
     cal, S = universe({"UP": trend(300, breakout_at=280, vol=1_000_000)})
-    p = BreakoutConfig()
-    from dataclasses import replace
-    tiny = replace(p, top=0)                                                        # nothing is in the universe now
+    tiny = replace(P, top=0)                                                        # nothing is in the universe now
     sells, buys, _, _ = tb.decide(290, S, {"UP": None}, True, tiny)
     assert sells == set() and buys == []
 
@@ -330,7 +332,16 @@ def test_stale_run_and_scan_tags(monkeypatch):
     cfg = AppConfig()
     tb.run(cfg)
     assert tb.saved(cfg)["stale"] == []
-    cfg.breakout.top_e = 250
+    cfg.breakout.top = 250
     assert tb.saved(cfg)["stale"] == ["E"]
+    cfg.breakout.top, cfg.breakout.late_pct = 300, 20.0
+    assert tb.saved(cfg)["stale"] == ["E"]
+    with get_db() as conn:                                                          # a breakout on the scan day
+        upsert_candles(conn, 2, trend(420, breakout_at=419))
     sc = tb.scan(AppConfig())
-    assert all(b["for"] for b in sc["buys"]) and sc["filters"]["E"]["top"] == 300
+    assert [b["symbol"] for b in sc["buys"]] == ["UP"] and set(sc["filters"]) == {"E"} and sc["filters"]["E"]["top"] == 300
+    b = sc["buys"][0]
+    assert "for" not in b and b["turnover_rank"] >= 1 and b["qty"] == floor(P.capital / 10 / b["close"])
+    from backend.alerts import messages as msg
+    line = next(x for x in msg.breakout_lines(sc) if "<b>UP</b>" in x)
+    assert "<i>" not in line and "only" not in line and "A+E" not in line                 # no A+E / E only tag

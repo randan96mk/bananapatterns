@@ -1,9 +1,9 @@
 """🏠 Home and 💼 Portfolio: every account the app runs, in one shape (read-only, built from the same data as the
-Real, Paper and Intraday Flow pages). Accounts: Real (orders to Tradetron), Paper A and Paper E+ (swing, simulated),
-Intraday (paper). Broker holdings are never read here.
+Real, Paper and Intraday Flow pages). Accounts: Real (orders to Tradetron), Paper E+ (swing, simulated), Intraday
+(paper). Broker holdings are never read here.
 
-A position / trade / order is {account, book, strategy, symbol, side, qty, ...}; book is real | paper_A | paper_E |
-intraday, so the page can filter without asking again."""
+A position / trade / order is {account, book, strategy, symbol, side, qty, ...}; book is real | paper_E | intraday,
+so the page can filter without asking again."""
 
 import json
 from collections import defaultdict
@@ -13,8 +13,8 @@ from typing import Optional
 from backend.config import IST, AppConfig
 from backend.database.models import get_db
 
-NAMES = {"real": "Real", "paper_A": "Paper A", "paper_E": "Paper E+", "intraday": "Intraday"}
-STRATEGY = {"A": "Trend Breakout A", "E": "Trend Breakout E+"}
+NAMES = {"real": "Real", "paper_E": "Paper E+", "intraday": "Intraday"}
+STRATEGY = {"E": "Trend Breakout E+"}
 
 
 def _pct(pnl, value):
@@ -321,7 +321,7 @@ def facts(config: AppConfig, accts: dict, pos: list, curve: list, n_signals: int
         filters = (tb.saved_scan() or {}).get("filters") or {}
     except Exception:
         filters = {}
-    for k in ("A", "E"):
+    for k in STRATEGY:
         a = accts.get(f"paper_{k}")
         if a:
             out[f"paper_{k}"] = {"vs_nifty": round((a.get("return") or 0) - (a.get("nifty") or 0), 2) if a.get("nifty") is not None else None,

@@ -1,5 +1,6 @@
 """SQLite (WAL) schema and data-access helpers."""
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -292,13 +293,13 @@ CREATE INDEX IF NOT EXISTS idx_deals_symbol_date ON deals (symbol, date);
 
 -- 📝 Paper trading (backend/engine/paper.py): the account state (cash, positions, the next open's orders) and the
 -- append-only record (fills, closed trades, the account each session); never rewritten.
--- One account per variant (A: 200-day filter, E: half filter).
+-- One account per variant; E+ is the only one since Nov 2026 (A rows are deleted on start by _migrate_drop_paper_a).
 CREATE TABLE IF NOT EXISTS paper_state (account TEXT PRIMARY KEY, payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL DEFAULT 'A',
+CREATE TABLE IF NOT EXISTS paper_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL DEFAULT 'E',
                                          payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS paper_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL DEFAULT 'A',
+CREATE TABLE IF NOT EXISTS paper_fills (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL DEFAULT 'E',
                                         day TEXT NOT NULL, payload TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS paper_equity (account TEXT NOT NULL DEFAULT 'A', day TEXT NOT NULL, equity REAL NOT NULL,
+CREATE TABLE IF NOT EXISTS paper_equity (account TEXT NOT NULL DEFAULT 'E', day TEXT NOT NULL, equity REAL NOT NULL,
                                          gross REAL NOT NULL, nifty REAL, PRIMARY KEY (account, day));
 
 -- 💰 Real trading (backend/engine/real.py): the account, every webhook sent to Tradetron (never deleted; the token
@@ -364,6 +365,7 @@ def init_db(path: Optional[str] = None) -> None:
         dropped = _migrate_orb(conn)
         _migrate_paper(conn)
         conn.executescript(SCHEMA)
+        _migrate_drop_paper_a(conn)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _drop_track_record(conn)
         n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
@@ -380,7 +382,8 @@ def init_db(path: Optional[str] = None) -> None:
 
 
 def _migrate_paper(conn) -> None:
-    """Paper trading became one account per variant (Oct 2026): the single account becomes account A."""
+    """Paper trading became one account per variant (Oct 2026): the single account becomes account A (which
+    _migrate_drop_paper_a then deletes: A, the 200-day filter, was removed in Nov 2026)."""
     cols = lambda t: [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
     if "id" in cols("paper_state"):
         conn.execute("ALTER TABLE paper_state RENAME TO paper_state_old")
@@ -397,6 +400,36 @@ def _migrate_paper(conn) -> None:
         conn.execute("INSERT INTO paper_equity (account, day, equity, gross, nifty) "
                      "SELECT 'A', day, equity, gross, nifty FROM paper_equity_old")
         conn.execute("DROP TABLE paper_equity_old")
+
+
+PAPER_TABLES = ("paper_state", "paper_trades", "paper_fills", "paper_equity")
+
+
+def _migrate_drop_paper_a(conn) -> None:
+    """Trend Breakout A (the 200-day filter) was removed in Nov 2026: E+ is the only swing variant. Once, on the
+    first start after the upgrade: Paper A's rows (account = 'A') are deleted from the paper tables and the A
+    variant is dropped from the saved backtest run. Nothing else is touched (E's rows, candles, settings, any other
+    table). Idempotent: running it again finds nothing to do and is silent."""
+    removed = {}
+    for t in PAPER_TABLES:
+        n = conn.execute(f"DELETE FROM {t} WHERE account = 'A'").rowcount
+        if n:
+            removed[t] = n
+    for rid, raw in conn.execute("SELECT id, payload FROM breakout_runs").fetchall():
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        variants = payload.get("variants")
+        if isinstance(variants, dict) and "A" in variants:
+            del variants["A"]
+            payload.pop("stale", None)
+            conn.execute("UPDATE breakout_runs SET payload = ? WHERE id = ?", (json.dumps(payload), rid))
+            removed["breakout_runs.variants"] = 1
+    if removed:
+        print("Trend Breakout A removed (E+ is the only variant): deleted "
+              + ", ".join(f"{n} {t} row(s)" if not t.startswith("breakout_runs") else "the A variant from the saved backtest run"
+                          for t, n in removed.items()))
 
 
 def _migrate_orb(conn) -> bool:

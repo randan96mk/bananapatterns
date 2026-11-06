@@ -719,11 +719,14 @@ def breakout_summary():
 
 
 @router.get("/breakout/trades")
-def breakout_trades(variant: str = "A", scenario: str = "normal", limit: int = 200, offset: int = 0):
-    """A variant's trades, newest first: variant A / E, scenario normal / stress."""
+def breakout_trades(variant: str = "E", scenario: str = "normal", limit: int = 200, offset: int = 0):
+    """The variant's trades, newest first: variant E (the only one; "A", removed in Nov 2026, is read as E), scenario
+    normal / stress."""
     from backend.engine import trend_breakout as tb
     if scenario not in ("normal", "stress"):
         raise HTTPException(422, "scenario must be normal or stress")
+    if variant == "A":
+        variant = "E"
     if variant not in tb.MODES:
         raise HTTPException(422, f"variant must be one of {', '.join(tb.MODES)}")
     run = tb.saved() or {"variants": {}}
@@ -947,7 +950,7 @@ def stock_everywhere(symbol: str):
 
 @router.get("/export/trades.csv")
 def export_trades(days: int = Query(3650, ge=1)):
-    """⬇ Every closed trade of every book (Real, Paper A / E+, Intraday) as one CSV."""
+    """⬇ Every closed trade of every book (Real, Paper E+, Intraday) as one CSV."""
     import csv
     import io
     from backend.engine import overview
@@ -1141,7 +1144,8 @@ def real_summary():
 
 @router.post("/real/settings")
 def real_settings(req: RealSettings):
-    """Turn real trading on / off, or pick the strategy for new buys (A / E); saved with the settings."""
+    """Turn real trading on / off; saved with the settings. `variant` is kept for compatibility: only "E" (E+, the
+    one variant) is accepted."""
     from backend.engine import trend_breakout as tb
     st = S()
     if req.variant is not None and req.variant not in tb.MODES:

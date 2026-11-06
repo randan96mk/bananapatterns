@@ -145,13 +145,16 @@ def test_stop_watch_sends_exit_once(monkeypatch):
     assert real.watch_stops(c, nologin, day, s)["status"] in ("no_login", "nothing")
 
 
-def test_switching_the_variant_changes_only_new_buys(monkeypatch):
+def test_e_is_the_only_variant(monkeypatch):
     c = setup(monkeypatch)
     data, cut, end = first_day_with_buys(c)
     real.evening(c, cut)
     real.send_orders(c, None, data["cal"][end + 1], Sender())
-    c.real.variant = "A"
-    assert {p["variant"] for p in real.summary(c)["positions"]} == {"E"}
+    s = real.summary(c)
+    assert {p["variant"] for p in s["positions"]} == {"E"} and s["variant"] == "E" and s["tops"] == {"E": 300}
+    assert s["filter"]["name"] == "E+ · half filter, top 300, late trail" and s["filter"]["state"] in ("FULL", "HALF", "OFF")
+    with pytest.raises(KeyError):
+        real._rules(c, "A")                                                            # A was removed (Nov 2026)
 
 
 def test_schedule():
@@ -176,7 +179,9 @@ def test_api(monkeypatch):
         d = tc.get("/api/real").json()
         assert d["enabled"] is True and d["variant"] == "E" and d["token_set"] and d["started"] is False
         assert tc.post("/api/real/settings", json={"variant": "Z"}).status_code == 422
-        assert tc.post("/api/real/settings", json={"variant": "A", "enabled": False}).json() == {"enabled": False, "variant": "A"}
+        assert tc.post("/api/real/settings", json={"variant": "A"}).status_code == 422          # A was removed
+        assert tc.post("/api/real/settings", json={"variant": "E", "enabled": False}).json() == {"enabled": False, "variant": "E"}
+        assert "paper_A" not in tc.get("/api/overview").text and set(tc.get("/api/real").json()["tops"]) == {"E"}
         assert tc.post("/api/real/kill?on=true").json()["killed"] is True
         assert "real" in tc.get("/api/attention").json()
         assert TOKEN not in tc.get("/api/real").text
@@ -378,4 +383,5 @@ def test_morning_preview_lists_the_queued_orders():
     t = msg.real_preview(orders, "E", "09:16", True, False)
     assert "2 orders go out at 9:16" in t and "BUY <b>X</b> 22" in t and "EXIT <b>Y</b> 5" in t and "kill switch" in t
     assert "kill switch ON: nothing goes out" in msg.real_preview(orders, "E", "09:16", True, True)
-    assert "OFF: nothing goes out" in msg.real_preview(orders, "A", "09:16", False, False)
+    assert "OFF: nothing goes out" in msg.real_preview(orders, "E", "09:16", False, False)
+    assert msg.tb_name("E", 300) == "E+ · half filter, top 300, late trail" and msg.tb_name("E") == "E+ · half filter"

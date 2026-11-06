@@ -155,7 +155,8 @@ def rules(config, key: str):
     """A variant's full rule set: the shared settings with its own market filter and universe (A: 200-day filter,
     top `top`; E: half filter, top `top_e`)."""
     b = config.breakout
-    return replace(b, regime_mode=MODES[key], top=b.top if key == "A" else b.top_e)
+    # (the live BreakoutConfig lost `top_e` when A was removed in Nov 2026: E's universe is `top` there)
+    return replace(b, regime_mode=MODES[key], top=b.top if key == "A" else getattr(b, "top_e", b.top))
 
 
 def variant_name(key: str, top: int) -> str:
