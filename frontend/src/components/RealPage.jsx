@@ -5,7 +5,7 @@ import { inr, rs, signed, pct, cls } from '../fmt';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
 import { StopMeter } from './ui';
-import { Head, Chip, Seg, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
+import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const STATUS = { sent: 'ok', failed: 'bad', skipped: 'w' };
@@ -156,9 +156,9 @@ export default function RealPage() {
           ['Retries', 'each order sent once']]} />
       </Panel>
       <Panel title="Strategy for new buys">
-        <div className="rbody"><Seg opts={[['A', `A · 200-day · top ${d.tops?.A ?? ''}`], ['E', `E+ · half, late trail · top ${d.tops?.E ?? ''}`]]} v={d.variant} set={(k) => set({ variant: k })} /></div>
-        <div className="rnote">{d.variant === 'E' ? 'E+ · late trail: 25% under the highest close once +100%; only ever raised, from the next session.' : 'A · buys only when NIFTY is above its 200-day average; fixed stop, exit under the 50-day.'}
-          {' '}Switching changes only NEW buys; open positions keep their own stop and exit.</div>
+        <div className="rbody"><Chip><b className="vE">E+</b> · half filter, late trail · top {d.tops?.E ?? ''}</Chip></div>
+        <div className="rnote">Half market filter: all slots above NIFTY's 200-day, half above the 50-day only, none below. Late trail: 25% under the highest close once +100%; only ever raised, from the next session.
+          {' '}Open positions keep their own stop and exit.</div>
       </Panel>
     </div>
 

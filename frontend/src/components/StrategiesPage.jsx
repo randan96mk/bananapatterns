@@ -37,7 +37,7 @@ export default function StrategiesPage({ onGo }) {
   const latest = (setup) => results.filter((r) => r.setup === setup).sort((a, b) => (b.ran_at || '').localeCompare(a.ran_at || ''))[0];
   const canvas = latest('On the canvas');
   const real = A.real?.variant;
-  const running = (V.E ? 1 : 0) + (V.A ? 1 : 0) + (flow && !flow.stopped && flow.mode !== 'off' ? 1 : 0);
+  const running = (V.E ? 1 : 0) + (flow && !flow.stopped && flow.mode !== 'off' ? 1 : 0);
   const setups = Object.keys(bt?.setups || {});
   const cols = [{ h: 'Setup' }, { h: 'Period', w: 70 }, { h: 'Trades', w: 70, n: true }, { h: 'Plain profit', w: 110, n: true, lo: true }, { h: 'Net after costs', w: 140, n: true },
     { h: 'CAGR', w: 80, n: true }, { h: 'PF', w: 60, n: true, lo: true }, { h: 'Ran', w: 100, lo: true }];
@@ -46,15 +46,12 @@ export default function StrategiesPage({ onGo }) {
     r ? r.period : '', r ? r.trades : '', r ? <span className={cls(r.charges?.plain)}>{inr(r.charges?.plain)}</span> : '',
     r ? <b className={cls(r.net)}>{signed(r.net)}</b> : '', r ? pct(r.cagr) : '', r ? r.profit_factor ?? '—' : '', r ? (r.ran_at || '').slice(0, 10) : ''] }; });
   return <div className="rd">
-    <Head title="Strategies"><Chip>{running} running · {3 - running} paused</Chip>{flow?.template && <Chip>Intraday <b>{flow.template}</b></Chip>}</Head>
+    <Head title="Strategies"><Chip>{running} running · {2 - running} paused</Chip>{flow?.template && <Chip>Intraday <b>{flow.template}</b></Chip>}</Head>
     <div className="cols c2">
       {V.E && <StratPanel title={`📈 ${V.E.name || 'Trend Breakout E+'}`} kind="swing · daily" chip={real === 'E' ? 'Real + Paper' : 'Paper'} on today={(A.paper_E?.day_pnl || 0) + (real === 'E' ? A.real?.day_pnl || 0 : 0)}
         cagr={V.E.normal?.cagr} dd={V.E.normal?.drawdown} open={openOf(real === 'E' ? ['paper_E', 'real'] : ['paper_E'])} curve={V.E.curve?.normal}
         color="var(--ok)" onOpen={() => onGo('breakout')} note={`${V.E.normal?.trades} trades · robust ${V.E.robust_pass}/${(V.E.robust || []).length}`} />}
-      {V.A && <StratPanel title={`📈 ${V.A.name || 'Trend Breakout A'}`} kind="swing · daily" chip={real === 'A' ? 'Real + Paper' : 'Paper'} on today={(A.paper_A?.day_pnl || 0) + (real === 'A' ? A.real?.day_pnl || 0 : 0)}
-        cagr={V.A.normal?.cagr} dd={V.A.normal?.drawdown} open={openOf(real === 'A' ? ['paper_A', 'real'] : ['paper_A'])} curve={V.A.curve?.normal}
-        color="#6c8cff" onOpen={() => onGo('breakout')} note={`${V.A.normal?.trades} trades · robust ${V.A.robust_pass}/${(V.A.robust || []).length}`} />}
-      {!V.E && !V.A && <Panel title="📈 Trend Breakout · A vs E" meta="swing · daily" right={<button type="button" className="btn small" onClick={() => onGo('breakout')}>Open →</button>}>
+      {!V.E && <Panel title="📈 Trend Breakout · E+" meta="swing · daily" right={<button type="button" className="btn small" onClick={() => onGo('breakout')}>Open →</button>}>
         <p className="muted small rempty">Not backtested yet: open the page and run it once.</p></Panel>}
       <StratPanel title={`⚡ Intraday Flow${flow?.template ? ` · ${flow.template}` : ''}`} kind="intraday · paper" chip={flow?.stopped ? 'stopped' : flow?.mode || '—'} on={flow && !flow.stopped && flow.mode !== 'off'}
         today={A.intraday?.day_pnl} cagr={canvas?.cagr} dd={canvas?.drawdown} open={openOf(['intraday'])} curve={canvas?.curve?.net}

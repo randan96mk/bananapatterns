@@ -39,7 +39,7 @@ export default function StatusBar({ kite, onKite, onGo }) {
         <i className={`dot ${loggedIn ? 'ok' : 'bad'}`} />{loggedIn ? 'Kite' : 'Kite: log in'}</button>
       {m && <span className="sb">{m.open ? `NSE open · closes ${at12(m.closes_at)}` : m.opens_at ? `NSE closed · opens ${new Date(m.opens_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short' })} ${at12(m.opens_at)}` : 'NSE closed'}</span>}
       {eod?.at && <span className="sb hide-phone">Evening run {at12(eod.at)} {eod.status === 'ok' ? '✓' : '⚠'}</span>}
-      {real && <button className="sb" onClick={() => onGo('real')}>💰 Real <b className={real.enabled && !real.killed ? 'up' : 'down'}>{real.killed ? 'KILLED' : real.enabled ? 'ON' : 'OFF'}</b> · {real.variant}</button>}
+      {real && <button className="sb" onClick={() => onGo('real')}>💰 Real <b className={real.enabled && !real.killed ? 'up' : 'down'}>{real.killed ? 'KILLED' : real.enabled ? 'ON' : 'OFF'}</b> · {real.variant === 'E' ? 'E+' : real.variant}</button>}
       {next && <span className="sb">⏱ Next: <b>{next.name}</b> in <b className="mono">{left(next.at, now)}</b>
         <span className="hide-phone muted">{later.map((j) => ` · ${j.name.toLowerCase()} ${left(j.at, now)}`).join('')}</span></span>}
       <span className="sbfill" />
