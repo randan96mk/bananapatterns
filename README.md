@@ -2022,6 +2022,20 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **🏠 Home redesign + heartbeat (PR 1 of the redesign)**: an icon rail instead of the sidebar (sub-pages stay in the
+  row under the title); a **day timeline** (9:15–15:30, what happened and what is next, a moving "now"); account
+  cards with 30-session **sparklines**; a **stats strip** (win streak, best / worst day in 30 d, days since a loss,
+  signals today + 30-day hit rate, real orders this week); **Today, live** (today's P&L sampled once a minute in
+  market hours, in memory); a **positions map** (size = value, colour = P&L); **Market pulse** (regime, breadth,
+  distribution days, breakouts working; advancing / declining, % above VWAP and NIFTY vs VWAP while the feed runs);
+  positions **grouped by book** with subtotals and "near stop" tags; **Needs a look** as actions with a button to the
+  page; a **Risk now** panel (money in use vs capital, worst case to the stops, biggest position, today's orders, the
+  intraday loss limit); a **hover card** on a position (60 sessions, entry / stop lines). **Heartbeat**
+  (`frontend/src/heartbeat.js`): a card rings and its number flashes when it changes (delta chip for 10 s), changed
+  rows and cells flash, a new row slides in blue, a live block with no update for 3 min dims as stale, new
+  "needs a look" items glow amber and put a ● in the tab title, timeline dots ping once, toasts for money events;
+  reduced motion respected. `GET /api/overview` adds `stats`, `risk`, `timeline`, `pulse`, `today_curve` and
+  per-account `spark`.
 - **Old Kite-sourced guard rows removed on start**: positions the guard had copied from Kite holdings in earlier
   versions (source `kite`) are deleted when the app starts, so the 9:10 "Opening check · your positions", the live
   under-stop checks and the 3:15 check no longer mention them; `guard.sync` now marks what it sets as `sync`, and
