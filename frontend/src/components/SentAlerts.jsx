@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
+import { stamp } from '../timefmt';
+import { Head, Chip, Seg, Switch, Panel, Act } from './ui2';
 
 // 📨 Every alert the app sent (screens, intraday, guard, real orders, system): search, filter, open the stock.
-const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
 const strip = (html) => html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+const ICON = { intraday: '⚡', real: '₹', system: '⚙', digest: '📋', report: '🌙', breakout: '🚀', near_pivot: '🎯', forming: '🔵',
+  below_pivot: '🔻', played_out: '🏁', guard: '🛡', failed: '⚠️', close_check: '🕒', plan: '☀', login: '🔑' };
+const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 export default function SentAlerts({ onStock }) {
   const [d, setD] = useState(null);
   const [kind, setKind] = useState('');
@@ -15,20 +19,25 @@ export default function SentAlerts({ onStock }) {
     const id = setTimeout(() => api.alertsLog(new URLSearchParams({ limit: 300, kind, q, days, failed }).toString()).then(setD).catch(() => {}), 250);
     return () => clearTimeout(id);
   }, [kind, q, days, failed]);
-  return <div className="panel">
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}><b>📨 Sent alerts</b>
-      <input className="input" style={{ width: 200 }} placeholder="search text or stock" value={q} onChange={(e) => setQ(e.target.value)} />
-      <select className="input" value={kind} onChange={(e) => setKind(e.target.value)}><option value="">every kind</option>{(d?.kinds || []).map((k) => <option key={k} value={k}>{k}</option>)}</select>
-      <span className="seg">{[['1', 'today'], ['7', '7 days'], ['30', '30 days'], ['0', 'all']].map(([k, l]) => <button key={k} className={days === k ? 'active' : ''} onClick={() => setDays(k)}>{l}</button>)}</span>
-      <label className="small"><input type="checkbox" checked={failed} onChange={(e) => setFailed(e.target.checked)} /> failed only</label>
-      <span className="muted small" style={{ marginLeft: 'auto' }}>{d ? `${d.rows.length} shown` : 'Loading…'}</span></div>
-    {d && !d.rows.length && <p className="muted">Nothing sent for these filters.</p>}
-    {d && d.rows.length > 0 && <div className="v2list">{d.rows.map((r) => <div key={r.key} className="it" style={{ cursor: 'pointer' }} onClick={() => setOpen(open === r.key ? null : r.key)}>
-      <span className="muted small" style={{ width: 118 }}>{when(r.sent_at)}</span>
-      <span className="chip small" style={{ width: 70, textAlign: 'center' }}>{r.kind}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {r.symbol && <b style={{ marginRight: 6, cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onStock && onStock(r.symbol); }}>{r.symbol}</b>}
-        <span className={open === r.key ? '' : 'small'} style={open === r.key ? { whiteSpace: 'pre-wrap' } : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', maxWidth: '100%', verticalAlign: 'bottom' }}>{strip(r.text)}</span>
-        {!r.ok && <div className="down small">failed: {r.error}</div>}{r.ok && r.error && <div className="muted small">{r.error}</div>}</div></div>)}</div>}
+  const rows = d?.rows || [];
+  const t = today();
+  const todayRows = rows.filter((r) => (r.sent_at || '').slice(0, 10) === t);
+  const label = { 1: 'Today', 7: 'Last 7 days', 30: 'Last 30 days', 0: 'All time' }[days];
+  return <div className="rd">
+    <Head title="📨 Sent alerts" right={<>
+      <Seg opts={[['1', 'Today'], ['7', '7 d'], ['30', '30 d'], ['0', 'All']]} v={days} set={setDays} />
+      <Seg small opts={[['', 'All'], ...(d?.kinds || []).map((k) => [k, k])]} v={kind} set={setKind} />
+      <input className="input" style={{ width: 180 }} placeholder="⌕ text or stock…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <Switch on={failed} onChange={setFailed} label="failed only" /></>}>
+      <Chip>today <b>{todayRows.length}</b> · {todayRows.filter((r) => !r.ok).length} failed</Chip>
+    </Head>
+    <Panel title={label} meta={d ? rows.length : null} right={d ? `${rows.length} shown · newest first` : 'Loading…'}>
+      {d && !rows.length && <p className="muted small rempty">Nothing sent for these filters.</p>}
+      {rows.map((r) => <Act key={r.key} icon={ICON[r.kind] || '✉'} cls={r.ok ? 'up' : 'down'} onClick={() => setOpen(open === r.key ? null : r.key)}
+        text={<span style={open === r.key ? { whiteSpace: 'pre-wrap' } : { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
+          {r.symbol && <b style={{ marginRight: 6 }}>{r.symbol}</b>}{strip(r.text)}</span>}
+        meta={<>{stamp(r.sent_at)} · {r.kind} · {r.ok ? 'delivered' : <span className="down">failed: {r.error}</span>}{r.ok && r.error ? ` · ${r.error}` : ''}</>}
+        btn={r.symbol && onStock ? 'open' : null} onBtn={() => onStock(r.symbol)} />)}
+    </Panel>
   </div>;
 }
