@@ -2022,6 +2022,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **Home cards: a fact next to the corner chart**: each card is a 4-row grid (label · value · sub-line · fact |
+  chart). The bottom-left fact per card (`overview.facts`): today's high / low with times, Real's capital in use and
+  slots (bar), each paper book vs NIFTY in points and its filter state, the intraday loss limit used and signals
+  used today (bar), Follow's open book and the breakouts it buys at the next open. The small chart sits bottom-right
+  in its own column, so nothing can overlap; the visual check asserts it.
 - **Home visual check** (`frontend/scripts/home_visual_check.cjs`): renders the built Home against a running backend
   with a faked live stream (15 positions, a busy timeline, every panel filled) at any width and fails on any overlap
   or spill (card text vs sparkline, map tiles vs their box, the stop meter vs its cell, timeline dots, horizontal

@@ -303,9 +303,46 @@ def pulse(config: AppConfig, live: dict) -> dict:
     return out
 
 
+def facts(config: AppConfig, accts: dict, pos: list, curve: list, n_signals: int) -> dict:
+    """One fact per account card (the bottom-left of the card): today's high / low, Real's capital in use and
+    slots, each paper book vs NIFTY and its filter state, the intraday loss limit and signals used, Follow's open
+    book and the breakouts it buys at the next open."""
+    out = {}
+    if curve:
+        hi = max(curve, key=lambda x: x[1])
+        lo = min(curve, key=lambda x: x[1])
+        out["today"] = {"high": hi[1], "high_at": hi[0][11:16], "low": lo[1], "low_at": lo[0][11:16]}
+    real = [p for p in pos if p["book"] == "real"]
+    if accts.get("real"):
+        out["real"] = {"in_use": round(sum((p.get("entry") or 0) * (p.get("qty") or 0) for p in real), 2),
+                       "slots": len(real), "max_pos": config.breakout.max_pos, "capital": float(config.real.capital)}
+    try:
+        from backend.engine import trend_breakout as tb
+        filters = (tb.saved_scan() or {}).get("filters") or {}
+    except Exception:
+        filters = {}
+    for k in ("A", "E"):
+        a = accts.get(f"paper_{k}")
+        if a:
+            out[f"paper_{k}"] = {"vs_nifty": round((a.get("return") or 0) - (a.get("nifty") or 0), 2) if a.get("nifty") is not None else None,
+                                 "filter": (filters.get(k) or {}).get("state"), "open": a.get("positions")}
+    it = accts.get("intraday") or {}
+    try:
+        from backend.intraday import flow
+        per_day = flow.node_configs()["dedup"].get("per_day")
+    except Exception:
+        per_day = None
+    out["intraday"] = {"loss_used": round(max(0.0, -(it.get("realised") or 0)), 2), "loss_limit": it.get("loss_limit"),
+                       "signals": n_signals, "per_day": per_day}
+    f = accts.get("follow")
+    if f:
+        out["follow"] = {"open": f.get("open"), "open_pnl": f.get("open_pnl"), "pending": f.get("pending")}
+    return out
+
+
 def overview(config: AppConfig, quote=None) -> dict:
     """Home: each account's figures, today's P&L across them, every open position, the latest activity, plus the
-    sparklines, the stats strip, risk, today's timeline, the live P&L curve and the market pulse."""
+    sparklines, the stats strip, risk, today's timeline, the live P&L curve, the market pulse and a fact per card."""
     from backend.engine import paper, real
     from backend.intraday import flow
     real_s, paper_s, live = real.summary(config), paper.summary(config), flow.live()
@@ -356,6 +393,10 @@ def overview(config: AppConfig, quote=None) -> dict:
             extra[name] = fn()
         except Exception as exc:                      # one broken panel never blanks Home
             extra[name] = {"error": str(exc)[:120]} if name != "timeline" and name != "today_curve" else []
+    try:
+        extra["facts"] = facts(config, accts, pos, extra.get("today_curve") or [], (extra.get("stats") or {}).get("signals_today") or 0)
+    except Exception as exc:
+        extra["facts"] = {"error": str(exc)[:120]}
     return {"at": now.isoformat(timespec="seconds"), "accounts": accts, "today": today_pnl, "positions": pos,
             "activity": act[:10], "feed": live.get("feed"), **extra}
 

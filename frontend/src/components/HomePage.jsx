@@ -31,15 +31,17 @@ function Spark({ values, color = 'var(--ok)', h = 22, w = 300 }) {
   return <svg className="hspark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={pts} /></svg>;
 }
 
-function Card({ label, value, num, sub, k, spark, stale, live }) {
+function Card({ label, value, num, sub, k, spark, stale, live, fact }) {
   const beat = useBeat(num);
   const trend = spark && spark.length > 1 ? (spark[spark.length - 1] >= spark[0] ? 'var(--ok)' : 'var(--bad)') : 'var(--muted)';
   return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''}`}>
     <div className="l">{label}{live && <span className="livedot" title="live" />}{stale && <span className="warn"> · stale</span>}</div>
-    <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span>
-      {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{signed(beat.delta)}</span>}</div>
-    <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>{spark && <Spark values={spark} color={trend} />}</div>;
+    <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span></div>
+    {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{signed(beat.delta)}</span>}
+    <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>
+    <div className="bl">{fact}</div>{spark ? <Spark values={spark} color={trend} /> : <span />}</div>;
 }
+const Bar = ({ pct, bad }) => <span className="fbar"><i style={{ width: `${Math.max(0, Math.min(100, pct || 0))}%`, background: bad ? 'var(--bad)' : 'var(--blue)' }} /></span>;
 
 function Timeline({ events, jobs, now, feed, phone }) {
   const nowT = new Date(now).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
@@ -139,7 +141,9 @@ export default function HomePage({ onGo, onStock }) {
     });
   }, [freshAct, o]);
   if (!o) return <div className="v2card muted">Loading…</div>;
-  const A = o.accounts || {}, it = A.intraday || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {};
+  const A = o.accounts || {}, it = A.intraday || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {}, F = o.facts || {};
+  const hm24 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '');
+  const factPaper = (f) => f && <>vs NIFTY <b className={cls(f.vs_nifty)}>{f.vs_nifty != null ? `${f.vs_nifty > 0 ? '+' : ''}${f.vs_nifty} pts` : '—'}</b>{f.filter ? <> · filter <b className={/ON|FULL/.test(f.filter) ? 'up' : 'muted'}>{f.filter}</b></> : null}</>;
   const jobs = (sch?.jobs || []).filter((j) => !j.skip);
   const groups = ['real', 'paper_A', 'paper_E', 'intraday'].map((b) => [b, o.positions.filter((p) => p.book === b)]).filter(([, ps]) => ps.length);
   const net = o.positions.reduce((a, p) => a + (p.pnl || 0), 0);
@@ -148,13 +152,17 @@ export default function HomePage({ onGo, onStock }) {
     <HealthStrip onGo={onGo} compact={phone} />
     <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} />
     <div className="kpis">
-      <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} sub={`intraday ${signed(it.day_pnl)} · swing last session ${signed((o.today || 0) - (it.day_pnl || 0))}`} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow} />
+      <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} sub={`intraday ${signed(it.day_pnl)} · swing last session ${signed((o.today || 0) - (it.day_pnl || 0))}`} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
+        fact={F.today ? <>high <b className="up">{signed(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{signed(F.today.low)}</b> {hm24(F.today.low_at)}</> : <span className="muted">high / low from the open</span>} />
       {A.real && <Card label={<>Real · Tradetron <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
-        sub={<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>} spark={A.real.spark} stale={stale} />}
-      {A.paper_A && <Card label="Paper A · swing" value={pct(A.paper_A.return)} num={A.paper_A.value} k={cls(A.paper_A.return)} sub={<>{inr(A.paper_A.value)} · <span className={cls(A.paper_A.day_pnl)}>{signed(A.paper_A.day_pnl)}</span> last session · {A.paper_A.positions} open</>} spark={A.paper_A.spark} />}
-      {A.paper_E && <Card label="Paper E+ · swing" value={pct(A.paper_E.return)} num={A.paper_E.value} k={cls(A.paper_E.return)} sub={<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{signed(A.paper_E.day_pnl)}</span> last session · {A.paper_E.positions} open</>} spark={A.paper_E.spark} />}
-      <Card label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} num={it.day_pnl} k={cls(it.day_pnl)} sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)} · loss limit ${inr(Math.max(0, -(it.realised || 0)))}/${inr(it.loss_limit)}`} spark={it.spark} stale={stale} live={o.feed === 'live'} />
-      {A.follow && A.follow.breakouts > 0 && <Card label="Screens · Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.open} open · ${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}% · ${inr(A.follow.per_position)} each`} />}
+        sub={<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>} spark={A.real.spark} stale={stale}
+        fact={F.real && <><b>{inr(F.real.in_use)}</b> in use · {F.real.slots} of {F.real.max_pos} slots<Bar pct={F.real.capital ? 100 * F.real.in_use / F.real.capital : 0} /></>} />}
+      {A.paper_A && <Card label="Paper A · swing" value={pct(A.paper_A.return)} num={A.paper_A.value} k={cls(A.paper_A.return)} sub={<>{inr(A.paper_A.value)} · <span className={cls(A.paper_A.day_pnl)}>{signed(A.paper_A.day_pnl)}</span> last session · {A.paper_A.positions} open</>} spark={A.paper_A.spark} fact={factPaper(F.paper_A)} />}
+      {A.paper_E && <Card label="Paper E+ · swing" value={pct(A.paper_E.return)} num={A.paper_E.value} k={cls(A.paper_E.return)} sub={<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{signed(A.paper_E.day_pnl)}</span> last session · {A.paper_E.positions} open</>} spark={A.paper_E.spark} fact={factPaper(F.paper_E)} />}
+      <Card label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} num={it.day_pnl} k={cls(it.day_pnl)} sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)}`} spark={it.spark} stale={stale} live={o.feed === 'live'}
+        fact={F.intraday && <>loss limit <b>{inr(F.intraday.loss_used)}</b> / {inr(F.intraday.loss_limit)}{F.intraday.per_day ? <> · signals <b>{F.intraday.signals}</b> of {F.intraday.per_day}</> : null}<Bar pct={F.intraday.loss_limit ? 100 * F.intraday.loss_used / F.intraday.loss_limit : 0} bad /></>} />
+      {A.follow && A.follow.breakouts > 0 && <Card label="Screens · Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}% · ${inr(A.follow.per_position)} each`}
+        fact={F.follow && <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{signed(F.follow.open_pnl)}</b> · buys next open <b>{F.follow.pending ?? 0}</b></>} />}
     </div>
     {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
       <div><span className="l">Win streak</span><b className={S.win_streak ? 'up' : ''}>{S.win_streak || 0} day{S.win_streak === 1 ? '' : 's'}</b></div>
