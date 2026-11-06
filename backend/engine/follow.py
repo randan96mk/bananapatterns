@@ -397,5 +397,7 @@ def summary() -> dict:
         ps = [p for p in _rows(conn) if p.get("qty")]
         as_of = get_setting(conn, "follow.as_of")
     a = _agg(ps)
-    return {"name": "Screens · Follow", "net": a["net"], "open_pnl": a["open_net"], "open": a["open"], "breakouts": a["breakouts"],
+    with get_db() as conn:
+        pending = conn.execute("SELECT COUNT(*) FROM screen_follow WHERE status = 'pending'").fetchone()[0]
+    return {"name": "Screens · Follow", "net": a["net"], "open_pnl": a["open_net"], "open": a["open"], "breakouts": a["breakouts"], "pending": pending,
             "win_rate": a["win_rate"], "as_of": as_of, "per_position": per_position()}

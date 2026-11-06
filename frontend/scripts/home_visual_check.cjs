@@ -25,6 +25,7 @@ const overview = { at: now.toISOString(), today: -1202, feed: 'live', positions,
     paper_E: { name: 'Paper E+', value: 202656, net: 2656, return: 1.3, day_pnl: -528, positions: 5, spark: sp(199000, 202656) },
     intraday: { name: 'Intraday · paper', day_pnl: -145, realised: 1000, open_pnl: -1145, trades: 3, open: 2, at_risk: 1793, loss_limit: 3000, capital: 200000, mode: 'signals', spark: sp(2000, 500) },
     follow: { name: 'Screens · Follow', net: 504329, open_pnl: 137270, open: 33, breakouts: 540, win_rate: 30.6, per_position: 100000 } },
+  facts: { today: { high: 2140, high_at: '09:27', low: -969, low_at: '10:22' }, real: { in_use: 156842, slots: 8, max_pos: 10, capital: 202070 }, paper_A: { vs_nifty: -4.7, filter: 'ON', open: 0 }, paper_E: { vs_nifty: -3.4, filter: 'FULL', open: 5 }, intraday: { loss_used: 86, loss_limit: 3000, signals: 3, per_day: 6 }, follow: { open: 33, open_pnl: 137270, pending: 3 } },
   activity: [{ at: iso(9, 40), account: 'Intraday', text: 'BUY signal GLENMARK' }, { at: iso(9, 16), account: 'Real', text: 'BUY MOTHERSON 121 · sent' }, { at: iso(9, 16), account: 'Real', text: 'BUY HEGAM 69 · sent' }],
   stats: { win_streak: 0, best_day: { day: '2026-11-04', net: 4989 }, worst_day: { day: '2026-11-05', net: -1405 }, days_since_loss: 0, signals_today: 3, hit_rate_30d: 42.9, closed_30d: 7, orders_week: 10, orders_failed_week: 0 },
   risk: { in_use: 396900, capital: 860000, worst_case: -22817, biggest: { symbol: 'GAIL', value: 20950 }, orders_today: { sent: 4, failed: 0 }, near_stop: ['M&M'], loss_used: 0, loss_limit: 3000 },
@@ -50,8 +51,11 @@ const schedule = { now: now.toISOString(), jobs: [{ key: 'real_stops', name: 'Re
   const problems = await p.evaluate(() => {
     const out = [], R = (el) => el.getBoundingClientRect();
     document.querySelectorAll('.hcard').forEach((c) => {
-      const s = c.querySelector('.s'), sp = c.querySelector('.hspark'), v = c.querySelector('.vrow');
+      const s = c.querySelector('.s'), sp = c.querySelector('.hspark'), v = c.querySelector('.vrow'), bl = c.querySelector('.bl');
       if (s && sp && R(s).bottom > R(sp).top + 0.5) out.push(`card text under the sparkline: ${c.textContent.slice(0, 30)}`);
+      if (bl && sp && R(bl).right > R(sp).left + 0.5) out.push(`card fact under the sparkline: ${c.textContent.slice(0, 30)}`);
+      if (s && bl && R(s).bottom > R(bl).top + 0.5) out.push(`card sub-line over the fact: ${c.textContent.slice(0, 30)}`);
+      [...c.children].forEach((ch) => { if (R(ch).width && (R(ch).right > R(c).right + 0.5 || R(ch).bottom > R(c).bottom + 0.5)) out.push(`card part spills: ${ch.className}`); });
       if (v && R(v).bottom > R(c).bottom) out.push(`card value outside the card: ${c.textContent.slice(0, 30)}`);
       if (R(c).height > 120) out.push(`card taller than 120: ${c.textContent.slice(0, 30)}`);
     });

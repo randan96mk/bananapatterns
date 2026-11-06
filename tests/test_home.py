@@ -31,3 +31,14 @@ def test_home_blocks_from_the_books():
     assert p["signals_live"] == 0
     o = overview.overview(cfg)
     assert {"stats", "risk", "timeline", "pulse", "today_curve"} <= set(o) and isinstance(o["today_curve"], list)
+
+
+def test_facts_per_card():
+    from backend.engine.overview import facts
+    cfg = AppConfig()
+    accts = {"real": {"value": 1}, "paper_A": {"return": 1.0, "nifty": 4.7, "positions": 0}, "intraday": {"realised": -86, "loss_limit": 3000}, "follow": {"open": 3, "open_pnl": 10, "pending": 1}}
+    pos = [{"book": "real", "symbol": "X", "entry": 100.0, "qty": 10}]
+    f = facts(cfg, accts, pos, [["2026-11-06T09:27:00", 2140.0], ["2026-11-06T10:22:00", -969.0]], 3)
+    assert f["today"] == {"high": 2140.0, "high_at": "09:27", "low": -969.0, "low_at": "10:22"}
+    assert f["real"]["in_use"] == 1000.0 and f["real"]["slots"] == 1 and f["real"]["max_pos"] == cfg.breakout.max_pos
+    assert f["paper_A"]["vs_nifty"] == -3.7 and f["intraday"]["loss_used"] == 86.0 and f["intraday"]["signals"] == 3 and f["follow"]["pending"] == 1

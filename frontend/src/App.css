@@ -889,3 +889,17 @@ tr.row-new td, .it.row-new { background: color-mix(in srgb, var(--blue) 12%, tra
 .hcard .vrow { flex: none; } .hcard .s { flex: none; }
 .hcard .hspark { position: static; width: 100%; height: 18px; margin-top: auto; opacity: .75; left: auto; right: auto; bottom: auto; }
 @media (max-width: 760px) { .hcard { height: 100px; } .hcard .hspark { height: 14px; } }
+
+/* ---- Home cards: a 4-row grid (label · value · sub-line · fact | chart); nothing can overlap ---- */
+.hcard { display: grid; grid-template-rows: 16px 30px 16px 1fr; grid-template-columns: 1fr 96px; column-gap: 8px; height: 112px; padding: 9px 12px 8px; }
+.hcard .l { grid-column: 1 / 3; padding-right: 62px; }
+.hcard .vrow { grid-column: 1 / 3; height: 30px; margin: 0; }
+.hcard .s { grid-column: 1 / 3; }
+.hcard .bl { grid-column: 1; align-self: end; font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; min-width: 0; }
+.hcard .bl b { color: var(--text); font-weight: 600; }
+.hcard .fbar { display: block; height: 4px; border-radius: 2px; background: var(--bg); margin-top: 3px; overflow: hidden; max-width: 120px; }
+.hcard .fbar i { display: block; height: 100%; }
+.hcard .hspark { grid-column: 2; align-self: end; position: static; width: 96px; height: 26px; margin: 0; opacity: .6; }
+.hcard .delta { position: absolute; top: 8px; right: 10px; }
+@media (max-width: 760px) { .hcard { grid-template-columns: 1fr 70px; height: 104px; } .hcard .hspark { width: 70px; height: 22px; } .hcard .vrow .v { font-size: 19px; } }
+.hcard { grid-template-columns: 1fr clamp(64px, 28%, 96px); } .hcard .l { padding-right: 50px; } .hcard .hspark { width: 100%; }
