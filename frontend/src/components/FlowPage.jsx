@@ -1,17 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import { push, useLive } from '../services/live';
-import { useIsPhone } from '../useMedia';
-import { StopMeter, SubTabs } from './ui';
+import { StopMeter } from './ui';
+import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg, Tag, Box } from './ui2';
+import { clock } from '../timefmt';
 import { inr, signed, cls } from '../fmt';
 import FlowBacktest from './FlowBacktest';
 import FlowStrategy from './FlowStrategy';
 import JourneyPanel, { NodeStocks } from './JourneyPanel';
 
-const W = 210, H = 112;                                   // box size on the canvas
 const STATUS = { ok: ['✓', 'ok'], running: ['…', 'run'], idle: ['idle', 'idle'], error: ['!', 'err'] };
 const MODES = [['off', 'Off'], ['signals', 'Signals'], ['paper', '📝 Paper']];
-const ist = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
+const SUBS = [['flow', 'Flow'], ['positions', 'Positions'], ['journal', 'Journal'], ['backtest', '🧪 Backtest'], ['strategy', '📜 Strategy']];
 
 // Seconds to the next candle close of `interval` minutes (aligned to 9:15 IST).
 function nextClose(interval) {
@@ -19,6 +19,18 @@ function nextClose(interval) {
   const m = now.getHours() * 60 + now.getMinutes() - (9 * 60 + 15);
   const left = (interval - (((m % interval) + interval) % interval)) * 60 - now.getSeconds();
   return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+}
+
+// Boxes in the order they run: each after every box it reads from.
+function ordered(nodes) {
+  const out = [], done = new Set();
+  let left = nodes.slice();
+  while (left.length) {
+    const ready = left.filter((n) => n.inputs.every((i) => done.has(i)));
+    (ready.length ? ready : [left[0]]).forEach((n) => { out.push(n); done.add(n.id); });
+    left = left.filter((n) => !done.has(n.id));
+  }
+  return out;
 }
 
 function Field({ f, value, onChange }) {
@@ -32,23 +44,26 @@ function Field({ f, value, onChange }) {
 }
 
 const pctx = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`;
-const STATUS_TXT = { open: ['open', 'up'], pending: ['filling at the next minute', 'warn'], closed: ['closed', 'muted'], cancelled: ['cancelled', 'muted'], signal: ['signal', 'muted'] };
+const n2 = (v) => (v == null ? '—' : (+v).toFixed(2));
+const STATUS_TXT = { open: ['open', 'ok'], pending: ['filling', 'w'], closed: ['closed', ''], cancelled: ['cancelled', ''], signal: ['signal', 'a'] };
 function Status({ r }) {
-  const [t, c] = STATUS_TXT[r.status] || ['—', 'muted'];
-  return <span className={`small ${c}`}>{t}{r.status === 'closed' && r.exit_t ? ` ${r.exit_t}` : ''}</span>;
+  const [t, c] = STATUS_TXT[r.status] || ['—', ''];
+  return <Tag c={c} title={r.status === 'pending' ? 'filling at the next minute' : undefined}>{t}{r.status === 'closed' && r.exit_t ? ` ${r.exit_t}` : ''}</Tag>;
 }
-function SignalCard({ s, r }) {
-  return <div className="pcard"><div className="t"><span><b>{s.symbol}</b> <Status r={r} /></span>
-    <b className={cls(r.pnl ?? r.move_pct)}>{r.pnl != null ? `${signed(r.pnl)} · ${pctx(r.pct || 0)}` : r.move_pct != null ? pctx(r.move_pct) : '—'}</b></div>
-    <div className="muted small">{s.signal} {s.qty ? `${s.qty} @ ` : 'at '}{(r.entry ?? s.entry)?.toFixed(2)} · now <b>{r.now ? r.now.toFixed(2) : '—'}</b>{r.r != null ? ` · ${r.r}R` : ''} · {ist(s.at)}</div>
-    {r.status === 'open' && r.now && <StopMeter last={s.side === 'short' ? -r.now : r.now} stop={s.side === 'short' ? -r.stop : r.stop} wide />}
-    <div className="muted small">stop {(r.stop ?? s.sl)?.toFixed(2)}{r.trailed ? ' (trailed)' : ''} · {s.target ? `target ${s.target.toFixed(2)}` : 'no target'}</div></div>;
-}
+// The box's one line: the first parts of its summary that fit (the whole summary sits in the settings panel).
+const brief = (s) => { const parts = (s || '').split(' · '); let out = parts[0].slice(0, 34); for (const p of parts.slice(1)) { if (out.length + p.length + 3 > 34) return `${out} …`; out += ` · ${p}`; } return out; };
+const drops = (n) => Object.entries(n.drops || {}).map(([k, v]) => `${k} ${v}`).join(' · ');
 
-// ⚡ Intraday Flow: the template's boxes on a canvas, live (in → out, status, run time), settings per box.
+const SIG_COLS = [{ h: 'Stock' }, { h: 'Time', w: 70 }, { h: 'Signal', w: 110 }, { h: 'Status', w: 110 }, { h: 'Entry', w: 80, n: true }, { h: 'Now', w: 90, n: true },
+  { h: 'P&L after costs', w: 110, n: true }, { h: '%', w: 70, n: true, lo: true }, { h: 'R', w: 50, n: true, lo: true }, { h: 'Stop ← price → target', w: 150 },
+  { h: 'SL', w: 90, n: true, lo: true }, { h: 'Target', w: 80, n: true, lo: true }, { h: 'RVOL', w: 60, n: true, lo: true }];
+const POS_COLS = [{ h: 'Stock' }, { h: 'Side', w: 80 }, { h: 'Qty', w: 60, n: true }, { h: 'Entry', w: 90, n: true }, { h: 'Stop', w: 90, n: true }, { h: 'Target', w: 90, n: true, lo: true },
+  { h: 'Distance to stop', w: 150 }, { h: 'Status', w: 100 }, { h: 'After costs', w: 130, n: true }];
+const AGG_COLS = [{ h: '' }, { h: 'Trades', w: 70, n: true }, { h: 'Won', w: 70, n: true }, { h: 'Net', w: 110, n: true }, { h: 'Avg R', w: 70, n: true }];
+
+// ⚡ Intraday Flow: the template's boxes as a pipeline, live (in → out, status), settings per box.
 // Signals only in phase 1: nothing is ever ordered from here.
 export default function FlowPage() {
-  const phone = useIsPhone();
   const d = useLive('flow');
   const [journey, setJourney] = useState(false);          // 🧭 the side panel, and a stock to check in it
   const [jsym, setJsym] = useState(null);
@@ -62,9 +77,7 @@ export default function FlowPage() {
   const lv = useLive('flow_live');                       // live prices and P&L of today's signals (every 3 s when live)
   const feedLive = d?.feed?.state === 'live';
   const [jr, setJr] = useState(null);
-  const [full, setFull] = useState(false);
-  const [drag, setDrag] = useState(null);                 // {id, dx, dy, x, y} while a box is dragged
-  const [moved, setMoved] = useState({});                 // positions dropped here, until the next refresh
+  const [full, setFull] = useState(false);                // full screen: the pipe alone, no side column
   useEffect(() => {
     const esc = (e) => { if (e.key === 'Escape') setFull(false); };
     window.addEventListener('keydown', esc);
@@ -79,32 +92,11 @@ export default function FlowPage() {
     const b = setInterval(() => tick((x) => x + 1), 1000);
     return () => clearInterval(b);
   }, []);
-  if (!d) return <div className="panel">{err ? <span className="warn">{err}</span> : 'Loading…'}</div>;
+  if (!d) return <div className="rd"><Panel title="⚡ Intraday Flow"><p className="muted small rempty">{err ? <span className="warn">{err}</span> : 'Loading…'}</p></Panel></div>;
 
-  const nodes = d.nodes.map((n) => {
-    const p = drag?.id === n.id ? [drag.x, drag.y] : moved[n.id];
-    return p ? { ...n, x: p[0], y: p[1] } : n;
-  });
+  const nodes = ordered(d.nodes);
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const down = (e, n) => {
-    if (e.button !== undefined && e.button !== 0) return;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    setDrag({ id: n.id, dx: e.clientX - n.x, dy: e.clientY - n.y, x: n.x, y: n.y, moved: false });
-  };
-  const move = (e) => {
-    if (!drag) return;
-    const x = Math.max(0, Math.round((e.clientX - drag.dx) / 5) * 5), y = Math.max(0, Math.round((e.clientY - drag.dy) / 5) * 5);
-    if (x !== drag.x || y !== drag.y) setDrag({ ...drag, x, y, moved: true });
-  };
-  const up = () => {
-    if (!drag) return;
-    if (drag.moved) {
-      setMoved({ ...moved, [drag.id]: [drag.x, drag.y] });
-      api.flowLayout({ [drag.id]: [drag.x, drag.y] }).catch((e) => setErr(e.message));
-    } else setSel(drag.id);
-    setDrag(null);
-  };
-  const resetLayout = () => api.flowLayout({}).then(() => { setMoved({}); load(); }).catch((e) => setErr(e.message));
+  const resetLayout = () => api.flowLayout({}).then(load).catch((e) => setErr(e.message));
   const node = byId[sel] || d.nodes[0];
   const setMode = (mode) => api.flowMode(mode).then(load).catch((e) => setErr(e.message));
   const change = (key, v) => {
@@ -124,147 +116,114 @@ export default function FlowPage() {
     (d.stopped ? api.flowStart() : api.flowStop()).then(load).catch((e) => setErr(e.message));
   };
   const runNow = () => api.flowRun().then(load).catch((e) => setErr(e.message));
-  const maxX = Math.max(...nodes.map((n) => n.x)) + W + 30, maxY = Math.max(...nodes.map((n) => n.y)) + H + 30;
+  const defaults = () => window.confirm('Put every box back to its default settings? Applies from the next candle. Save the canvas as a setup first (🧪 Backtest) if you want to keep the current one.')
+    && api.flowResetNodes().then(load).catch((e) => setErr(e.message));
   const f = d.feed || {};
   const stats = lv?.stats || d.stats;
+  const used = stats ? Math.max(0, -stats.realised) : 0;
+  const today = stats ? stats.realised + stats.unrealised : null;
+
+  const sigRows = d.signals.map((s) => { const r = lv?.rows?.[s.symbol] || {}; return { key: s.symbol, cells: [
+    <><b>{s.symbol}</b>{s.qty ? <small> {s.qty} sh</small> : null}</>, clock(s.at), <span className={s.side === 'short' ? 'down' : 'up'}>{s.signal}</span>, <Status r={r} />,
+    n2(r.entry ?? s.entry), r.status === 'closed' ? <span className="muted" title="exit">{n2(r.exit)} (exit)</span> : r.now ? <b>{r.now.toFixed(2)}</b> : '—',
+    r.pnl != null ? <b className={cls(r.pnl)}>{signed(r.pnl)}</b> : '—',
+    <span className={cls(r.pct ?? r.move_pct)}>{r.pct != null ? pctx(r.pct) : r.move_pct != null ? <span title="move since the signal">{pctx(r.move_pct)}</span> : '—'}</span>,
+    <span className={cls(r.r)}>{r.r ?? '—'}</span>,
+    r.status === 'open' && r.now ? <StopMeter last={s.side === 'short' ? -r.now : r.now} stop={s.side === 'short' ? -r.stop : r.stop} />
+      : <small>{r.status === 'closed' ? `out ${r.exit_t} · ${r.reason}` : r.status === 'pending' ? 'waiting for the fill' : ''}</small>,
+    <>{n2(r.stop ?? s.sl)}{r.trailed && <small> ↑ trailed</small>}</>, s.target ? s.target.toFixed(2) : '—', `${s.rvol ?? '—'}×`] }; });
+  const posRows = (d.positions || []).map((p) => {
+    const lg = p.side === 'long', last = p.last_price || p.entry;
+    const unreal = p.status === 'open' && p.entry ? (lg ? last - p.entry : p.entry - last) * p.open_qty : null;
+    return { key: p.id, cells: [<><b>{p.symbol}</b> <small>{p.entry_t || p.signal_t}</small></>, <span className={lg ? 'up' : 'down'}>{lg ? '▲ long' : '▼ short'}</span>,
+      p.open_qty ?? p.qty, p.entry ? p.entry.toFixed(2) : 'pending', n2(p.stop ?? p.stop0), p.target ? p.target.toFixed(2) : '—',
+      p.status === 'open' ? <StopMeter last={lg ? last : (p.stop ?? p.stop0)} stop={lg ? (p.stop ?? p.stop0) : last} /> : '',
+      p.status === 'closed' ? p.reason : p.status,
+      <><b className={cls(p.net ?? unreal)}>{signed(p.net ?? unreal)}</b>{p.costs != null && <small title={`${signed(p.gross)} before − ${inr(p.costs)} costs`}> {signed(p.gross)} − {inr(p.costs)}</small>}</>] };
+  });
+  const aggRows = (g) => Object.entries(jr?.by?.[g] || {}).map(([k, v]) => ({ key: k, cells: [k, v.trades, `${v.win_rate}%`, <span className={cls(v.net)}>{signed(v.net)}</span>, v.avg_r] }));
+
+  const nodePanel = <Panel title={`${node.icon} ${node.title}`} right={<span title={node.summary}>{node.summary}</span>}>
+    {node.schema.length > 0 && <div className="rform">
+      {visible(node.schema, node.config).map((s) => <label key={s.key} className="fr"><span>{s.label}</span><Field f={s} value={node.config[s.key]} onChange={(v) => change(s.key, v)} /></label>)}
+      <div className="rnote" style={{ padding: '6px 0' }}>Applies from the next candle.</div></div>}
+    {node.kind !== 'monitor' && <div className="rbody">
+      <button type="button" className="btn small" onClick={() => rerun(node.id)} title="Same candle's data, the settings above; no alert, no trade">↻ Re-run from this box</button>
+      {rr?.from === node.id && <div className={`small ${rr.error ? 'warn' : 'muted'}`} style={{ marginTop: 6 }}>{rr.error ? rr.error
+        : <>Dry run on the latest candle with these settings: {rr.boxes.length} box(es) re-run · <b>{rr.would_signal}</b> would signal (no alert sent, no trade opened).</>}</div>}</div>}
+    {node.in != null && <div className="rbody"><b>Last run</b> {node.dry && <Tag c="w">dry run</Tag>}
+      <div className="small"><span className="mono">{node.in}</span> in · <b className="mono">{node.out}</b> passed · <span className="mono">{node.ms}</span> ms</div>
+      {drops(node) && <div className="small muted" style={{ marginTop: 4 }}>Dropped: {drops(node)}</div>}
+      {node.sample?.length > 0 && <div className="flowchips">{node.sample.map((s) => <span key={s} className="spill">{s}</span>)}
+        {node.out > node.sample.length && <span className="muted small">+{node.out - node.sample.length}</span>}</div>}</div>}
+    {node.kind !== 'monitor' && <div className="rbody"><NodeStocks nid={node.id} stamp={`${d.last_run?.at}|${rr?.from || ''}|${node.in}|${node.out}`} onSymbol={(x) => { setJsym(x); setJourney(true); }} /></div>}
+  </Panel>;
 
   return (
-    <div className="flowpage">
-      <div className="flowtop">
-        <b className="flowtitle">⚡ Intraday Flow</b>
-        <button className={`btn killbtn ${d.stopped ? 'start' : 'stop'}`} onClick={toggleStop}>
-          {d.stopped ? '▶ Start intraday' : '⏹ Stop intraday'}</button>
-        <span className="sb">Template: <b>{d.template}</b></span>
-        <span className="seg">{MODES.map(([id, label]) => (
-          <button key={id} className={d.mode === id ? 'active' : ''} onClick={() => setMode(id)}>{label}</button>))}</span>
-        <span className="sb"><i className={`dot ${f.state === 'live' ? 'ok' : f.state === 'off' ? '' : 'warn'}`} />
-          {f.state === 'live' ? `Live ticks · ${f.tokens} stocks` : f.state === 'off' ? 'Feed off (starts 9:10 AM in Signals or Paper mode)' : `Feed ${f.state}`}</span>
-        <span className="sb">Next {d.interval}m close in <b className="mono">{nextClose(d.interval)}</b></span>
-        {d.last_run && <span className="sb">Last run {ist(d.last_run.at)} · {d.last_run.ms} ms</span>}
-        <button className="btn" onClick={runNow} disabled={d.running}>{d.running ? 'Running…' : '▶ Run now'}</button>
-      </div>
-      {d.stopped && <div className="stopbanner">⏹ <b>INTRADAY STOPPED</b> · no live data, no flow runs, no signals, no paper
+    <div className="rd">
+      <Head title="⚡ Intraday Flow" right={<>
+        <button type="button" className={`btn small killbtn ${d.stopped ? 'start' : 'stop'}`} onClick={toggleStop}>{d.stopped ? '▶ Start intraday' : '⏹ Stop intraday'}</button>
+        <Seg opts={MODES} v={d.mode} set={setMode} />
+        <button type="button" className="btn small" onClick={runNow} disabled={d.running}>{d.running ? 'Running…' : '▶ Run now'}</button></>}>
+        <Chip dot={f.state === 'live' ? 'ok' : f.state === 'off' ? '' : 'warn'} title={f.error || undefined}>
+          {f.state === 'live' ? <>Live ticks · <b>{f.tokens}</b> stocks</> : f.state === 'off' ? 'Feed off (starts 9:10 AM in Signals or Paper mode)' : `Feed ${f.state}`}</Chip>
+        <Chip title={d.template}>Template <b>{d.template}</b></Chip>
+        <Chip>Next {d.interval}m close in <b className="mono" style={{ display: 'inline-block', width: 40 }}>{nextClose(d.interval)}</b></Chip>
+        {d.last_run && <Chip>Last run <b>{clock(d.last_run.at)}</b> · <span className="mono">{d.last_run.ms}</span> ms</Chip>}
+      </Head>
+      {d.stopped && <div className="rbanner bad">⏹ <b>INTRADAY STOPPED</b> · no live data, no flow runs, no signals, no paper
         trades. Stays stopped (also after a restart or the next day) until you press ▶ Start intraday.</div>}
-      {err && <div className="warn small">{err}</div>}
-      {stats && <div className="summary" style={{ marginBottom: 12 }}>
-        <div className="k"><div className={`v ${cls(stats.realised + stats.unrealised)}`}>{signed(stats.realised + stats.unrealised)}</div>
-          <div className="l">today after costs · realised {signed(stats.realised)} · open {signed(stats.unrealised)}</div></div>
-        <div className="k"><div className="v">{stats.trades}</div><div className="l">paper trades · {stats.won} won · {stats.open} open</div></div>
-        <div className="k"><div className="v down">{inr(stats.at_risk)}</div><div className="l">at risk now (to the stops)</div></div>
-        <div className="k"><div className="v">{inr(Math.max(0, -stats.realised))} / {inr(stats.loss_limit)}</div>
-          <div className="l">daily loss used · capital {inr(stats.capital)}</div></div>
-      </div>}
-      <SubTabs tabs={[['flow', 'Flow'], ['positions', `Positions (${d.positions?.length || 0})`], ['journal', 'Journal'], ['backtest', '🧪 Backtest'], ['strategy', '📜 Strategy']]} value={sub} onChange={setSub} />
-      {sub === 'positions' && <div className="panel"><h3>📝 Paper positions today <span className="muted small">· simulated, no orders</span></h3>
-        {!d.positions?.length ? <p className="muted">None today{d.mode === 'off' ? ' (the mode is Off)' : ''}.</p> : (
-          <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Side</th><th className="num">Qty</th><th className="num">Entry</th>
-            <th className="num">Stop</th><th className="num">Target</th><th>Distance to stop</th><th>Status</th><th className="num">After costs</th></tr></thead>
-            <tbody>{d.positions.map((p) => {
-              const lg = p.side === 'long', last = p.last_price || p.entry;
-              const unreal = p.status === 'open' && p.entry ? (lg ? last - p.entry : p.entry - last) * p.open_qty : null;
-              return (<tr key={p.id}><td><b>{p.symbol}</b> <span className="muted small">{p.entry_t || p.signal_t}</span></td>
-                <td className={lg ? 'up' : 'down'}>{lg ? '▲ long' : '▼ short'}</td><td className="num">{p.open_qty ?? p.qty}</td>
-                <td className="num">{p.entry ? p.entry.toFixed(2) : 'pending'}</td><td className="num">{(p.stop ?? p.stop0)?.toFixed(2)}</td>
-                <td className="num">{p.target ? p.target.toFixed(2) : '—'}</td>
-                <td>{p.status === 'open' && <StopMeter last={lg ? last : (p.stop ?? p.stop0)} stop={lg ? (p.stop ?? p.stop0) : last} />}</td>
-                <td>{p.status === 'closed' ? p.reason : p.status}</td>
-                <td className={`num ${cls(p.net ?? unreal)}`}><b>{signed(p.net ?? unreal)}</b>
-                  {p.costs != null && <div className="muted small">{signed(p.gross)} − {inr(p.costs)}</div>}</td></tr>);
-            })}</tbody></table></div>)}</div>}
+      {err && <div className="rbanner warn">{err}</div>}
+      {stats && <Cards n={4}>
+        <Card label="Today · after costs" value={signed(today)} num={today} k={cls(today)} live={feedLive}
+          sub={<>realised <span className={cls(stats.realised)}>{signed(stats.realised)}</span> · open <span className={cls(stats.unrealised)}>{signed(stats.unrealised)}</span></>}
+          fact={`mode ${d.mode}`} />
+        <Card label="Paper trades" value={stats.trades} num={stats.trades} sub={`${stats.won} won · ${stats.open} open · ${stats.closed ?? 0} closed`} fact={d.mode === 'paper' ? 'simulated, no orders' : d.mode === 'signals' ? 'signals tracked like paper' : 'mode off: nothing tracked'} />
+        <Card label="At risk now" value={inr(stats.at_risk)} num={stats.at_risk} k="down" sub="to the stops, open positions" fact={`capital ${inr(stats.capital)}`} />
+        <Card label="Daily loss used" value={inr(used)} num={used} k={used > 0 ? 'down' : ''} sub={`of ${inr(stats.loss_limit)} limit`}
+          fact={<><Bar pct={stats.loss_limit ? (used / stats.loss_limit) * 100 : 0} bad={used >= stats.loss_limit} /> {stats.loss_limit ? Math.round((used / stats.loss_limit) * 100) : 0}% used</>} />
+      </Cards>}
+      <Seg opts={SUBS.map(([k, l]) => [k, k === 'positions' ? `${l} (${d.positions?.length || 0})` : l])} v={sub} set={setSub} />
+
+      {sub === 'positions' && <Panel title="📝 Paper positions today" meta={d.positions?.length || 0} right="simulated, no orders">
+        <FixedTable cols={POS_COLS} rows={posRows} empty={`None today${d.mode === 'off' ? ' (the mode is Off)' : ''}.`} /></Panel>}
       {journey && <><div className="drawer-back" onClick={() => setJourney(false)} />
         <JourneyPanel symbol={jsym} onSymbol={setJsym} onClose={() => setJourney(false)} /></>}
       {sub === 'backtest' && <FlowBacktest />}
       {sub === 'strategy' && <FlowStrategy stamp={d?.nodes} />}
-      {sub === 'journal' && <div className="panel"><h3>📒 Journal <span className="muted small">· closed paper trades, last 30 days, after costs</span></h3>
-        {!jr ? 'Loading…' : !jr.total.trades ? <p className="muted">No closed paper trades yet.</p> : <>
-          <div className="summary">
-            <div className="k"><div className={`v ${cls(jr.total.net)}`}>{signed(jr.total.net)}</div><div className="l">net · {signed(jr.total.gross)} before − {inr(jr.total.costs)} costs</div></div>
-            <div className="k"><div className="v">{jr.total.win_rate}%</div><div className="l">won · {jr.total.trades} trades</div></div>
-            <div className="k"><div className="v">{jr.total.avg_r ?? '—'}R</div><div className="l">average R</div></div>
-            <div className="k"><div className="v">{jr.total.profit_factor ?? '—'}</div><div className="l">profit factor</div></div></div>
-          {['side', 'time'].map((g) => (
-            <table key={g} className="orbvs" style={{ marginTop: 12 }}><thead><tr><th>{g === 'side' ? 'Side' : 'Entry time'}</th><th className="num">Trades</th>
-              <th className="num">Won</th><th className="num">Net</th><th className="num">Avg R</th></tr></thead>
-              <tbody>{Object.entries(jr.by[g]).map(([k, v]) => <tr key={k}><td>{k}</td><td className="num">{v.trades}</td><td className="num">{v.win_rate}%</td>
-                <td className={`num ${cls(v.net)}`}>{signed(v.net)}</td><td className="num">{v.avg_r}</td></tr>)}</tbody></table>))}
-        </>}</div>}
-      {sub === 'flow' && <><div className="flowbody">
-        <div className={`flowcanvas ${full ? 'full' : ''}`} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-          <div className="flowtools">
-            <button className="btn" onClick={() => setFull(!full)} title={full ? 'Exit full screen (Esc)' : 'Full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button>
-            <button className="btn" onClick={() => { setJsym(null); setJourney(true); }} title="Why a trade or not: every step, the rules, a stock's check">🧭 Journey</button>
-            <button className="btn" onClick={resetLayout} title="Put every box back in its place">↺ Reset layout</button>
-            <button className="btn" title="Every box's settings back to the recommended defaults"
-              onClick={() => window.confirm('Put every box back to its default settings? Applies from the next candle. Save the canvas as a setup first (🧪 Backtest) if you want to keep the current one.')
-                && api.flowResetNodes().then(load).catch((e) => setErr(e.message))}>↺ Default settings</button>
-            <span className="muted small">drag a box to move it · click to configure</span></div>
-          <div className="flowinner" style={{ width: maxX, height: maxY }}>
-          <svg className="flowedges" width={maxX} height={maxY}>
-            {nodes.flatMap((n) => n.inputs.map((i) => {
-              const a = byId[i]; const x1 = a.x + W, y1 = a.y + H / 2, x2 = n.x, y2 = n.y + H / 2;
-              const dx = Math.max(40, Math.abs(x2 - x1) / 2);
-              const path = x2 > x1 ? `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`
-                : `M${x1},${y1} C${x1 + 60},${y1} ${x1 + 60},${(y1 + y2) / 2} ${(x1 + x2) / 2},${(y1 + y2) / 2} S${x2 - 60},${y2} ${x2},${y2}`;
-              return <path key={i + n.id} d={path} className={`edge ${a.status === 'ok' || a.status === 'running' ? 'live' : ''}`} />;
-            }))}
-          </svg>
-          {nodes.map((n) => {
-            const [label, cls] = STATUS[n.status] || STATUS.idle;
-            return (
-              <button key={n.id} className={`fnode ${n.config?.skip ? 'skipped' : ''} ${sel === n.id ? 'sel' : ''} ${drag?.id === n.id ? 'dragging' : ''}`}
-                      style={{ left: n.x, top: n.y, width: W }} onPointerDown={(e) => down(e, n)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') setSel(n.id); }}>
-                <div className="fh"><span className="fico">{n.icon}</span><b>{n.title}</b><span className={`fst ${cls}`}>{label}</span></div>
-                {n.in != null && <div className="fio"><b>{n.in}</b> → <b className="up">{n.out}</b> <span className="muted small">{n.ms} ms</span></div>}
-                <div className="fsum">{n.summary}</div>
-                {n.inputs.length > 0 && <span className="port in" />}<span className="port out" />
-              </button>);
-          })}
+      {sub === 'journal' && (!jr ? <Panel title="📒 Journal"><p className="muted small rempty">Loading…</p></Panel> : !jr.total.trades
+        ? <Panel title="📒 Journal" right="closed paper trades, last 30 days, after costs"><p className="muted small rempty">No closed paper trades yet.</p></Panel> : <>
+          <Cards n={4}>
+            <Card label="Journal · net after costs" value={signed(jr.total.net)} num={jr.total.net} k={cls(jr.total.net)} sub={`${signed(jr.total.gross)} before − ${inr(jr.total.costs)} costs`} fact="last 30 days" />
+            <Card label="Won" value={`${jr.total.win_rate}%`} num={jr.total.win_rate} sub={`${jr.total.trades} trades`} />
+            <Card label="Average R" value={`${jr.total.avg_r ?? '—'}R`} num={jr.total.avg_r} sub="per closed trade" />
+            <Card label="Profit factor" value={jr.total.profit_factor ?? '—'} num={jr.total.profit_factor} sub="gross wins ÷ gross losses" />
+          </Cards>
+          <div className="cols c2">
+            <Panel title="By side"><FixedTable cols={AGG_COLS} rows={aggRows('side')} empty="Nothing yet." /></Panel>
+            <Panel title="By entry time"><FixedTable cols={AGG_COLS} rows={aggRows('time')} empty="Nothing yet." /></Panel>
+          </div></>)}
+
+      {sub === 'flow' && <div className={full ? '' : 'two'}>
+        <div className="rd">
+          <Panel title="The flow · live counts from the last scan" meta={`${nodes.length} boxes`} right={<>
+            <button type="button" className="btn ghost small" onClick={() => setFull(!full)} title={full ? 'Exit full screen (Esc)' : 'Full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button>
+            <button type="button" className="btn ghost small" onClick={() => { setJsym(null); setJourney(true); }} title="Why a trade or not: every step, the rules, a stock's check">🧭 Journey</button>
+            <button type="button" className="btn ghost small" onClick={resetLayout} title="Put every box back in its place">↺ Reset layout</button>
+            <button type="button" className="btn ghost small" title="Every box's settings back to the recommended defaults" onClick={defaults}>↺ Default settings</button></>}>
+            <div className="rpipe" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${full ? 220 : 236}px, 1fr))`, rowGap: 10 }}>{nodes.map((n) => <Box key={n.id} icon={n.icon} title={n.title} inN={n.in} outN={n.out} text={brief(n.summary)} status={STATUS[n.status] || STATUS.idle}
+              on={!n.config?.skip} selected={sel === n.id} onClick={() => setSel(n.id)} />)}</div>
+            <div className="rsteps">{nodes.map((n, i) => <div key={n.id} className={`step ${sel === n.id ? 'sel' : ''}`} onClick={() => setSel(n.id)}>
+              <span className="c">{i + 1}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: n.config?.skip ? 0.5 : 1 }}>{n.icon} {n.title}</span>
+              <span className="n mono">{n.out ?? '—'}{n.in != null && <small className="muted"> of {n.in}</small>}</span></div>)}</div>
+            {full && <div className="rnote">{node.icon} <b>{node.title}</b> · {node.summary}{node.in != null && <> · {node.in} in · <b>{node.out} passed</b> · {node.ms} ms{drops(node) ? ` · dropped: ${drops(node)}` : ''}</>} · exit full screen to change settings.</div>}
+          </Panel>
+          <Panel title="🟢 Today's signals" meta={d.signals.length} right={<>
+            <span>{d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : d.mode === 'signals' ? 'signals only, no orders · each is tracked like a paper trade' : 'mode off'}</span>
+            {lv && <Chip dot={feedLive ? 'ok' : 'warn'}>{feedLive ? <>live · prices <b>{clock(lv.at)}</b></> : <>prices as of <b>{clock(lv.at)}</b> (feed {lv.feed})</>}</Chip>}</>}>
+            <FixedTable cols={SIG_COLS} rows={sigRows} empty="None yet today." /></Panel>
         </div>
-          {full && <div className="panel flowpanel floating">
-            <h3>{node.icon} {node.title}</h3><div className="muted small">{node.summary}</div>
-            {node.in != null && <div className="small" style={{ marginTop: 8 }}>{node.in} in · <b>{node.out} passed</b> · {node.ms} ms
-              {Object.keys(node.drops || {}).length > 0 && <div className="muted">Dropped: {Object.entries(node.drops).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>}</div>}
-            <div className="muted small" style={{ marginTop: 8 }}>Exit full screen to change settings.</div></div>}
-        </div>
-        <div className="panel flowpanel">
-          <h3>{node.icon} {node.title}</h3>
-          <div className="muted small">{node.summary}</div>
-          {node.schema.length > 0 && <><h4>Settings</h4>
-            {visible(node.schema, node.config).map((s) => (
-              <label key={s.key} className="flowfield"><span>{s.label}</span><Field f={s} value={node.config[s.key]} onChange={(v) => change(s.key, v)} /></label>))}
-            <div className="muted small">Applies from the next candle.</div></>}
-          {node.kind !== 'monitor' && <div style={{ margin: '10px 0' }}>
-            <button className="btn" onClick={() => rerun(node.id)} title="Same candle's data, the settings above; no alert, no trade">↻ Re-run from this box</button>
-            {rr?.from === node.id && <div className={`small ${rr.error ? 'warn' : 'muted'}`} style={{ marginTop: 6 }}>{rr.error ? rr.error
-              : <>Dry run on the latest candle with these settings: {rr.boxes.length} box(es) re-run · <b>{rr.would_signal}</b> would signal (no alert sent, no trade opened).</>}</div>}</div>}
-          {node.in != null && <><h4>Last run {node.dry && <span className="achip">dry run</span>}</h4>
-            <div className="small">{node.in} in · <b>{node.out} passed</b> · {node.ms} ms</div>
-            {Object.keys(node.drops || {}).length > 0 && <div className="small muted" style={{ marginTop: 4 }}>Dropped: {Object.entries(node.drops).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>}
-            {node.sample?.length > 0 && <div className="flowchips">{node.sample.map((s) => <span key={s} className="spill">{s}</span>)}
-              {node.out > node.sample.length && <span className="muted small">+{node.out - node.sample.length}</span>}</div>}</>}
-          {node.kind !== 'monitor' && <NodeStocks nid={node.id} stamp={`${d.last_run?.at}|${rr?.from || ''}|${node.in}|${node.out}`} onSymbol={(x) => { setJsym(x); setJourney(true); }} />}
-        </div>
-      </div></>}
-      {sub === 'flow' && <div className="panel"><h3>🟢 Today's signals <span className="muted small">· {d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : d.mode === 'signals' ? 'signals only, no orders · each is tracked like a paper trade (fill, stop, target, exit)' : 'mode off'}</span></h3>
-        {lv && <span className="muted small">{feedLive ? <><i className="dot ok" /> live · prices {ist(lv.at)}</> : `prices as of ${ist(lv.at)} (feed ${lv.feed})`}</span>}
-        {!d.signals.length ? <p className="muted">None yet today.</p> : phone ? (
-          <div className="pcards">{d.signals.map((s) => <SignalCard key={s.symbol} s={s} r={lv?.rows?.[s.symbol] || {}} />)}</div>) : (
-          <div className="tablewrap"><table className="grid"><thead><tr><th>Time</th><th>Stock</th><th>Signal</th><th>Status</th><th className="num">Entry</th>
-            <th className="num">Now</th><th className="num">P&amp;L after costs</th><th className="num">%</th><th className="num">R</th><th>Stop ← price → target</th>
-            <th className="num">SL</th><th className="num">Target</th><th className="num">RVOL</th></tr></thead>
-            <tbody>{d.signals.map((s) => { const r = lv?.rows?.[s.symbol] || {}; return (
-              <tr key={s.symbol}><td className="muted">{ist(s.at)}</td><td><b>{s.symbol}</b>{s.qty ? <span className="muted small"> {s.qty} sh</span> : null}</td>
-                <td className={s.side === 'short' ? 'down' : 'up'}>{s.signal}</td><td><Status r={r} /></td>
-                <td className="num">{(r.entry ?? s.entry)?.toFixed(2)}</td>
-                <td className="num">{r.status === 'closed' ? <span className="muted">{r.exit} (exit)</span> : r.now ? <b>{r.now.toFixed(2)}</b> : '—'}</td>
-                <td className={`num ${cls(r.pnl)}`}>{r.pnl != null ? <b>{signed(r.pnl)}</b> : '—'}</td>
-                <td className={`num ${cls(r.pct ?? r.move_pct)}`}>{r.pct != null ? pctx(r.pct) : r.move_pct != null ? <span title="move since the signal">{pctx(r.move_pct)}</span> : '—'}</td>
-                <td className={`num ${cls(r.r)}`}>{r.r ?? '—'}</td>
-                <td>{r.status === 'open' && r.now ? <StopMeter last={s.side === 'short' ? -r.now : r.now} stop={s.side === 'short' ? -r.stop : r.stop} />
-                  : <span className="muted small">{r.status === 'closed' ? `out ${r.exit_t} · ${r.reason}` : r.status === 'pending' ? 'waiting for the fill' : ''}</span>}</td>
-                <td className="num">{(r.stop ?? s.sl)?.toFixed(2)}{r.trailed && <span className="muted small"> ↑ trailed</span>}</td>
-                <td className="num">{s.target ? s.target.toFixed(2) : '—'}</td><td className="num">{s.rvol ?? '—'}×</td></tr>); })}</tbody></table></div>)}
+        {!full && nodePanel}
       </div>}
     </div>);
 }
