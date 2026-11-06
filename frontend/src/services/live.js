@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 
 const subs = {};            // topic -> Set of setState
 const last = {};            // topic -> latest value
+const stamps = {};          // topic -> ms of the latest value (the heartbeat's stale check)
 let es = null;
 let open = '';
 let pending = null;
@@ -28,6 +29,7 @@ const later = () => { if (!pending) pending = setTimeout(sync, 0); };
 // Puts a value in the store (from the stream, or right after an action that changed it) and tells every panel.
 export function push(topic, value) {
   last[topic] = value;
+  stamps[topic] = Date.now();
   (subs[topic] || []).forEach((set) => set(value));
 }
 
@@ -41,4 +43,12 @@ export function useLive(topic) {
     return () => { subs[topic].delete(setValue); later(); };
   }, [topic]);
   return value;
+}
+
+// When the topic's latest value arrived (ms), re-read every 15 s so a stale block can dim.
+export function useLiveStamp(topic) {
+  const value = useLive(topic);
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 15000); return () => clearInterval(t); }, []);
+  return value === undefined ? null : stamps[topic] || null;
 }

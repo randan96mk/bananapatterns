@@ -115,7 +115,7 @@ export default function App() {
   return (
     <div className="shell">
       {!phone && <aside className="sidebar" aria-label="Sections">
-        <div className="brand">🍌 Banana<span>Patterns</span></div>
+        <div className="brand" title="BananaPatterns">🍌<span className="brandtxt"> Banana<span>Patterns</span></span></div>
         {SECTIONS.map(([s, label, sub], i) => (
           <React.Fragment key={s}>
             {s === 'system' && <div className="navsep" />}

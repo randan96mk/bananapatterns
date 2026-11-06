@@ -175,8 +175,137 @@ def orders(config: AppConfig, limit: int = 200) -> list:
     return sorted(out, key=lambda o: o["at"] or "", reverse=True)[:limit]
 
 
+_today_curve: list = []                           # [(ISO time, today's P&L)] sampled while the market is open
+
+
+def _sample_today(today_pnl: float, now: datetime) -> list:
+    """Today's P&L sampled about once a minute in market hours (in memory; a restart starts again)."""
+    day = now.date().isoformat()
+    if _today_curve and not _today_curve[0][0].startswith(day):
+        _today_curve.clear()
+    if market_open(now) and (not _today_curve or (now - datetime.fromisoformat(_today_curve[-1][0])).total_seconds() >= 55):
+        _today_curve.append((now.isoformat(timespec="seconds"), round(today_pnl, 2)))
+        del _today_curve[:-400]
+    return [list(x) for x in _today_curve]
+
+
+def stats(config: AppConfig, dp: dict, today: str) -> dict:
+    """The strip: win streak, best / worst day in 30 days, days since a loss (all books' daily P&L), signals today
+    and the 30-day intraday hit rate, real orders this week and failures."""
+    byday = defaultdict(float)
+    for d in dp.values():
+        for day, v in d.items():
+            byday[day] += v
+    days = sorted(byday)
+    recent = [(d, byday[d]) for d in days if d >= (date.fromisoformat(today) - timedelta(days=30)).isoformat()]
+    streak = 0
+    for d in reversed(days):
+        if byday[d] > 0:
+            streak += 1
+        else:
+            break
+    since_loss = next((i for i, d in enumerate(reversed(days)) if byday[d] < 0), len(days))
+    best = max(recent, key=lambda x: x[1], default=None)
+    worst = min(recent, key=lambda x: x[1], default=None)
+    since30 = (date.fromisoformat(today) - timedelta(days=30)).isoformat()
+    monday = (date.fromisoformat(today) - timedelta(days=date.fromisoformat(today).weekday())).isoformat()
+    with get_db() as conn:
+        n_sig = conn.execute("SELECT COUNT(*) FROM flow_signals WHERE day = ?", (today,)).fetchone()[0]
+        closed = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM flow_positions WHERE status = 'closed' AND day >= ?", (since30,))]
+        orders = conn.execute("SELECT status, COUNT(*) FROM real_orders WHERE day >= ? GROUP BY status", (monday,)).fetchall()
+    won = sum(1 for p in closed if (p.get("net") or 0) > 0)
+    o = {r[0]: r[1] for r in orders}
+    return {"win_streak": streak, "best_day": {"day": best[0], "net": round(best[1], 2)} if best else None,
+            "worst_day": {"day": worst[0], "net": round(worst[1], 2)} if worst else None, "days_since_loss": since_loss,
+            "signals_today": n_sig, "hit_rate_30d": round(100 * won / len(closed), 1) if closed else None, "closed_30d": len(closed),
+            "orders_week": sum(o.values()), "orders_failed_week": o.get("failed", 0)}
+
+
+def risk(config: AppConfig, accts: dict, pos: list) -> dict:
+    """Money in open positions across every book against the total capital, the worst case to the stops, the
+    biggest position, today's real orders, the intraday loss limit."""
+    in_use = sum((p.get("entry") or 0) * (p.get("qty") or 0) for p in pos)
+    worst = 0.0
+    for p in pos:
+        if p.get("stop") and p.get("now") and p.get("qty"):
+            loss = (p["stop"] - p["now"]) * p["qty"] if p.get("side") != "short" else (p["now"] - p["stop"]) * p["qty"]
+            worst += min(loss, 0)
+    big = max(pos, key=lambda p: (p.get("entry") or 0) * (p.get("qty") or 0), default=None)
+    capital = (float(config.real.capital) if accts.get("real") else 0) + sum(a.get("value") or 0 for k, a in accts.items() if k.startswith("paper_")) \
+        + float((accts.get("intraday") or {}).get("capital") or 0)
+    today = datetime.now(IST).date().isoformat()
+    with get_db() as conn:
+        o = {r[0]: r[1] for r in conn.execute("SELECT status, COUNT(*) FROM real_orders WHERE day = ? GROUP BY status", (today,))}
+    near = [p["symbol"] for p in pos if p.get("stop_dist") is not None and 0 <= p["stop_dist"] < 2]
+    it = accts.get("intraday") or {}
+    return {"in_use": round(in_use, 2), "capital": round(capital, 2), "worst_case": round(worst, 2),
+            "biggest": {"symbol": big["symbol"], "value": round(big["entry"] * big["qty"], 2)} if big else None,
+            "orders_today": {"sent": o.get("sent", 0), "failed": o.get("failed", 0)}, "near_stop": near,
+            "loss_used": round(max(0.0, -(it.get("realised") or 0)), 2), "loss_limit": it.get("loss_limit")}
+
+
+def timeline(today: str) -> list:
+    """What happened today, in order: real orders, intraday signals, intraday exits, real exits."""
+    ev = []
+    with get_db() as conn:
+        for r in conn.execute("SELECT created_at, symbol, action, qty, status FROM real_orders WHERE day = ? ORDER BY id", (today,)):
+            ev.append({"t": r[0][11:16], "kind": "order" if r[4] == "sent" else "failed", "text": f"{r[2]} {r[1]} {r[3] or ''} · {r[4]}"})
+        for at, p in conn.execute("SELECT at, payload FROM flow_signals WHERE day = ? ORDER BY at", (today,)):
+            s = json.loads(p)
+            ev.append({"t": at[11:16] if len(at) > 10 else at, "kind": "signal", "text": f"{s.get('signal', 'BUY')} signal {s['symbol']}"})
+        for (p,) in conn.execute("SELECT payload FROM flow_positions WHERE day = ? AND status = 'closed'", (today,)):
+            x = json.loads(p)
+            ev.append({"t": x.get("exit_t"), "kind": "exit", "text": f"{x['symbol']} out · {x.get('reason')} · {signed_rs(x.get('net'))}"})
+        for (p,) in conn.execute("SELECT payload FROM real_trades WHERE json_extract(payload, '$.out') = ?", (today,)):
+            x = json.loads(p)
+            ev.append({"t": "09:16", "kind": "exit", "text": f"Real · {x['symbol']} sold · {x.get('why') or ''} · {signed_rs(x.get('net'))}"})
+    return sorted([e for e in ev if e.get("t")], key=lambda e: e["t"])
+
+
+def signed_rs(v) -> str:
+    return "" if v is None else f"{'+' if v >= 0 else '−'}₹{abs(v):,.0f}"
+
+
+def pulse(config: AppConfig, live: dict) -> dict:
+    """The market in one row: the regime from the last close (market health), and the live NIFTY vs VWAP, breadth
+    above VWAP and advancing / declining while the intraday feed runs."""
+    from backend.engine import market
+    out = {}
+    with get_db() as conn:
+        h = market.latest(conn)
+    if h:
+        out.update(regime=h.get("status"), as_of=h.get("as_of"), breadth_50=(h.get("breadth") or {}).get("above_50_pct"),
+                   dist_days=h.get("dist_days"), breakouts=(h.get("breakouts") or {}))
+    rows = (live or {}).get("rows") or {}
+    if live and live.get("feed") == "live":
+        try:
+            from backend.intraday import feed, flow
+            r = feed.RUNNER
+            if r and r.feed:
+                up = dn = above = n = 0
+                for tok, bars in r.feed.builder.bars.items():
+                    if tok in (flow.NIFTY_TOKEN, flow.VIX_TOKEN) or not bars:
+                        continue
+                    n += 1
+                    up += bars[-1]["c"] > bars[0]["o"]
+                    dn += bars[-1]["c"] < bars[0]["o"]
+                    v = sum(b["v"] for b in bars)
+                    vw = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in bars) / v if v else None
+                    above += bool(vw and bars[-1]["c"] > vw)
+                nb = r.feed.builder.bars.get(flow.NIFTY_TOKEN) or []
+                if nb:
+                    out["nifty_vs_vwap"] = "above" if nb[-1]["c"] > sum(b["c"] for b in nb) / len(nb) else "below"
+                if n:
+                    out.update(advancing=up, declining=dn, above_vwap_pct=round(100 * above / n, 1), live=True)
+        except Exception:
+            pass
+    out["signals_live"] = sum(1 for x in rows.values() if x.get("status") in ("open", "pending"))
+    return out
+
+
 def overview(config: AppConfig, quote=None) -> dict:
-    """Home: each account's figures, today's P&L across them, every open position, the latest activity."""
+    """Home: each account's figures, today's P&L across them, every open position, the latest activity, plus the
+    sparklines, the stats strip, risk, today's timeline, the live P&L curve and the market pulse."""
     from backend.engine import paper, real
     from backend.intraday import flow
     real_s, paper_s, live = real.summary(config), paper.summary(config), flow.live()
@@ -189,18 +318,20 @@ def overview(config: AppConfig, quote=None) -> dict:
         accts["real"] = {"name": "Real · Tradetron", "value": a["value"], "net": a["net"], "return": a["return"],
                          "last_day": last, "day_pnl": dp.get("real", {}).get(last, 0.0) if last else 0.0,
                          "positions": len(real_s.get("positions") or []),
-                         "on": bool(real_s.get("enabled") and not real_s.get("killed")), "variant": real_s.get("variant")}
+                         "on": bool(real_s.get("enabled") and not real_s.get("killed")), "variant": real_s.get("variant"),
+                         "spark": [e for _, e in cv.get("real", [])[-30:]]}
     for k, a in (paper_s.get("accounts") or {}).items():
         b = f"paper_{k}"
         last = cv.get(b, [])[-1][0] if cv.get(b) else None
         accts[b] = {"name": NAMES.get(b, b), "value": a["account"]["value"], "net": a["account"]["net"],
                     "return": a["account"]["return"], "nifty": a["account"].get("nifty"), "last_day": last,
-                    "day_pnl": dp.get(b, {}).get(last, 0.0) if last else 0.0, "positions": len(a.get("positions") or [])}
+                    "day_pnl": dp.get(b, {}).get(last, 0.0) if last else 0.0, "positions": len(a.get("positions") or []),
+                    "spark": [e for _, e in cv.get(b, [])[-30:]]}
     st = live.get("stats") or {}
     accts["intraday"] = {"name": "Intraday · paper", "day_pnl": round((st.get("realised") or 0) + (st.get("unrealised") or 0), 2),
                          "realised": st.get("realised"), "open_pnl": st.get("unrealised"), "trades": st.get("trades"),
                          "open": st.get("open"), "at_risk": st.get("at_risk"), "loss_limit": st.get("loss_limit"),
-                         "capital": st.get("capital"), "mode": config.flow.mode}
+                         "capital": st.get("capital"), "mode": config.flow.mode, "spark": [e for _, e in cv.get("intraday", [])[-30:]]}
     try:                                                    # 📈 Follow: every breakout bought blindly (read-only)
         from backend.engine import follow
         accts["follow"] = follow.summary()
@@ -214,10 +345,19 @@ def overview(config: AppConfig, quote=None) -> dict:
             s = json.loads(p)
             act.append({"at": at, "account": "Intraday", "text": f"{s.get('signal', 'BUY')} signal {s['symbol']}"})
     act.sort(key=lambda x: x["at"] or "", reverse=True)
-    return {"at": datetime.now(IST).isoformat(timespec="seconds"), "accounts": accts,
-            "today": round(sum(a.get("day_pnl") or 0 for a in accts.values()), 2),
-            "positions": positions(config, real_s, paper_s, live, quote), "activity": act[:10],
-            "feed": live.get("feed")}
+    now = datetime.now(IST)
+    pos = positions(config, real_s, paper_s, live, quote)
+    today_pnl = round(sum(a.get("day_pnl") or 0 for a in accts.values()), 2)
+    extra = {}
+    for name, fn in (("stats", lambda: stats(config, dp, today)), ("risk", lambda: risk(config, accts, pos)),
+                     ("timeline", lambda: timeline(today)), ("pulse", lambda: pulse(config, live)),
+                     ("today_curve", lambda: _sample_today(today_pnl, now))):
+        try:
+            extra[name] = fn()
+        except Exception as exc:                      # one broken panel never blanks Home
+            extra[name] = {"error": str(exc)[:120]} if name != "timeline" and name != "today_curve" else []
+    return {"at": now.isoformat(timespec="seconds"), "accounts": accts, "today": today_pnl, "positions": pos,
+            "activity": act[:10], "feed": live.get("feed"), **extra}
 
 
 def portfolio(config: AppConfig, days: int = 365, quote=None) -> dict:
