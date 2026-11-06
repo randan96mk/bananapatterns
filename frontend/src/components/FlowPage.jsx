@@ -238,6 +238,11 @@ export default function FlowPage() {
             <button type="button" className="btn ghost small" onClick={resetLayout} title="Put every box back in its place">↺ Reset layout</button>
             <button type="button" className="btn ghost small" title="Every box's settings back to the recommended defaults" onClick={defaults}>↺ Default settings</button></>}>
             <div className={`flowcanvas ${full ? 'full' : ''}`} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+              {full && <div className="flowtools">
+                <button type="button" className="btn small" onClick={() => setFull(false)}>✕ Exit full screen (Esc)</button>
+                <button type="button" className="btn ghost small" onClick={() => { setJsym(null); setJourney(true); }}>🧭 Journey</button>
+                <button type="button" className="btn ghost small" onClick={resetLayout}>↺ Reset layout</button>
+                <span className="muted small">drag a box to move it · click a box to see it below · exit full screen to change settings</span></div>}
           <div className="flowinner" style={{ width: maxX, height: maxY }}>
           <svg className="flowedges" width={maxX} height={maxY}>
             {nodes.flatMap((n) => n.inputs.map((i) => {
@@ -265,7 +270,9 @@ export default function FlowPage() {
             <div className="rsteps">{steps.map((n, i) => <div key={n.id} className={`step ${sel === n.id ? 'sel' : ''}`} onClick={() => setSel(n.id)}>
               <span className="c">{i + 1}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: n.config?.skip ? 0.5 : 1 }}>{n.icon} {n.title}</span>
               <span className="n mono">{n.out ?? '—'}{n.in != null && <small className="muted"> of {n.in}</small>}</span></div>)}</div>
-            {full && <div className="rnote">{node.icon} <b>{node.title}</b> · {node.summary}{node.in != null && <> · {node.in} in · <b>{node.out} passed</b> · {node.ms} ms{drops(node) ? ` · dropped: ${drops(node)}` : ''}</>} · exit full screen to change settings.</div>}
+            {full && <div className="panel flowpanel floating"><h3 style={{ margin: 0 }}>{node.icon} {node.title}</h3><div className="muted small">{node.summary}</div>
+              {node.in != null && <div className="small" style={{ marginTop: 8 }}>{node.in} in · <b>{node.out} passed</b> · {node.ms} ms{drops(node) ? <div className="muted">Dropped: {drops(node)}</div> : null}</div>}
+              <div className="muted small" style={{ marginTop: 8 }}>Exit full screen to change settings.</div></div>}
           </Panel>
           <Panel title="🟢 Today's signals" meta={d.signals.length} right={<>
             <span>{d.mode === 'paper' ? 'paper trades are opened from these (simulated)' : d.mode === 'signals' ? 'signals only, no orders · each is tracked like a paper trade' : 'mode off'}</span>
