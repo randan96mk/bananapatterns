@@ -157,7 +157,9 @@ def test_switching_the_variant_changes_only_new_buys(monkeypatch):
 def test_schedule():
     c = cfg()
     at = lambda h, m: datetime(2026, 11, 2, h, m, tzinfo=IST)
-    assert real.due(at(9, 10), c, set(), True, None) == []
+    assert real.due(at(8, 59), c, set(), True, None) == []
+    assert real.due(at(9, 10), c, set(), True, None) == ["real_preview"]                       # the morning reminder
+    assert real.due(at(9, 10), c, {"real_preview"}, True, None) == []
     assert real.due(at(9, 16), c, set(), True, None) == ["real_send", "real_stops"]
     assert real.due(at(9, 20), c, {"real_send"}, True, at(9, 16)) == []
     assert real.due(at(9, 21), c, {"real_send"}, True, at(9, 16)) == ["real_stops"]                 # every 5 min
@@ -367,3 +369,13 @@ def test_manual_retry_of_a_failed_order(monkeypatch):
     assert row["status"] == "sent" and "manual retry" in row["reason"]
     assert real.retry_order(c, kite, tomorrow, bad, "BUY", at(10, 1), s)["error"] == "this order is sent"   # once only
     assert len(s.calls) == 1
+
+
+def test_morning_preview_lists_the_queued_orders():
+    from backend.alerts import messages as msg
+    orders = [{"symbol": "X", "action": "BUY", "qty": 22, "close": 850.0, "stop": 820.0},
+              {"symbol": "Y", "action": "EXIT", "qty": 5, "why": "stop 100 hit"}]
+    t = msg.real_preview(orders, "E", "09:16", True, False)
+    assert "2 orders go out at 9:16" in t and "BUY <b>X</b> 22" in t and "EXIT <b>Y</b> 5" in t and "kill switch" in t
+    assert "kill switch ON: nothing goes out" in msg.real_preview(orders, "E", "09:16", True, True)
+    assert "OFF: nothing goes out" in msg.real_preview(orders, "A", "09:16", False, False)

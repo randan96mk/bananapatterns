@@ -2022,6 +2022,9 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **💰 Real: a morning reminder** (`real.preview_time`, default 09:00, "" = off): one Telegram line listing the day's
+  queued orders before they go out at `send_time`, with the kill-switch hint; says "kill switch ON" / "OFF" when
+  nothing will go out. Job `real_preview`, once a trading day.
 - **Kite holdings are never read, anywhere**: the holdings guard (`kite_holdings_guard`, `holdings_refresh_min`,
   `guard.kite_holdings`, the market-hours holdings re-read and "Now following" alert) and the Trend Breakout evening
   scan's HOLD / SELL-at-open block on your holdings are gone; the report lists only the market filter and the buys.

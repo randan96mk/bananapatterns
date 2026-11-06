@@ -653,6 +653,20 @@ def real_plan(res: dict, variant: str) -> str:
     return "\n".join(lines)
 
 
+def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: bool) -> str:
+    """The morning reminder: the orders that go out at send_at, and the one-line way to hold them."""
+    state = "🔴 kill switch ON: nothing goes out" if killed else "OFF: nothing goes out" if not on else f"go out at {ampm(send_at)}"
+    lines = [f"{REAL} · {len(orders)} order{'s' if len(orders) != 1 else ''} {state} · {escape(tb_name(variant, None))}"]
+    for o in orders:
+        if o["action"] == "EXIT":
+            lines.append(f"🔴 EXIT <b>{escape(o['symbol'])}</b> {o['qty']} · {escape(o.get('why') or '')}")
+        else:
+            lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {o['qty']} · ~{_rup(o['qty'] * o['close'])} · stop {_rup(o['stop'])}")
+    if on and not killed:
+        lines.append("<i>To hold them: Real page → Stop all · kill switch, before the send time.</i>")
+    return "\n".join(lines)
+
+
 def real_sent(res: dict, at: str) -> str:
     lines = [f"{REAL} · ORDERS SENT · {at}"]
     for o in res["sent"]:
