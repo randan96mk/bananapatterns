@@ -428,7 +428,7 @@ def reset() -> None:
 def summary(config: AppConfig) -> dict:
     st = _state()
     base = {"enabled": bool(config.real.enabled), "killed": killed(), "variant": config.real.variant,
-            "settings": {k: getattr(config.real, k) for k in ("capital", "send_time", "send_until", "stop_check_min",
+            "settings": {k: getattr(config.real, k) for k in ("capital", "preview_time", "send_time", "send_until", "stop_check_min",
                                                                "max_buys_per_day", "max_order_pct", "send_stop",
                                                                "nologin_alarm_min")},
             "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token()),
@@ -495,6 +495,8 @@ def due(now: datetime, config: AppConfig, done: set, trading: bool, last_stop: O
     rc, t, jobs = config.real, now.time(), []
     if not trading:
         return jobs
+    if rc.preview_time and "real_preview" not in done and hm(rc.preview_time) <= t < hm(rc.send_time):
+        jobs.append("real_preview")                        # the morning reminder: what goes out at send_time
     if "real_send" not in done and hm(rc.send_time) <= t < hm(rc.send_until):
         jobs.append("real_send")
     if hm(rc.send_time) <= t < MARKET_CLOSE and (last_stop is None or (now - last_stop).total_seconds() >= rc.stop_check_min * 60):

@@ -822,6 +822,19 @@ class Scheduler:
             return 0
         return int(self.notifier().send(f"{res['as_of']}|real-plan", "real", msg.real_plan(res, self.state.config.real.variant)))
 
+    def run_real_preview(self, now: datetime) -> dict:
+        """The morning reminder (real.preview_time): today's queued orders, before they go out at send_time."""
+        from backend.engine import real
+        today, started, cfg = now.date(), now_ist(), self.state.config
+        st = real._state() or {}
+        orders = [o for o in st.get("orders", []) if not o.get("sent")]
+        sent = False
+        if orders:
+            sent = self.notifier().send(f"{today}|real-preview", "real",
+                                        msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed()))
+        self.record("real_preview", today, "ok", f"{len(orders)} queued · sent {int(bool(sent))}", started)
+        return {"orders": len(orders), "sent": bool(sent)}
+
     def run_real_send(self, now: datetime) -> dict:
         """The morning send: EXITs, then BUYs, to Tradetron (once each)."""
         from backend.engine import real

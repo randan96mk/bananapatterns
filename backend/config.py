@@ -339,6 +339,7 @@ class RealConfig:
     enabled: bool = True                   # send orders (the kill switch on the tab overrides it)
     variant: str = "E"                     # strategy for NEW buys: A (200-day filter) or E (half filter)
     capital: float = 200_000.0             # set on the tab; a later change counts as money added / withdrawn
+    preview_time: str = "09:00"            # a Telegram line listing the day's orders before they go ("" = off)
     send_time: str = "09:16"               # the day's orders (EXITs, then BUYs) go out from here...
     send_until: str = "09:30"              # ...until here (missed: not sent that day, with an alert)
     stop_check_min: int = 5                # stops watched with live prices every N minutes in market hours
