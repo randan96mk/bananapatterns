@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../services/api';
-import { useIsPhone } from '../useMedia';
 import { inr, cls } from '../fmt';
+import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg, Tag, KV, Bars } from './ui2';
 
 // 📈 Follow: every fresh breakout on the Research screens bought blindly with ₹X. Everything on the page follows the
 // filters (screens, status, result, max open at once): tiles, growth chart vs NIFTY 50, drawdown, the table.
@@ -9,7 +9,7 @@ const TAG = { bases: ['BASES', '#26a69a'], vcp: ['VCP', '#c58af9'], flag: ['FLAG
 const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '—');
 const n2 = (v) => (v == null ? '—' : (+v).toLocaleString('en-IN', { maximumFractionDigits: 2 }));
 const pc = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${(+v).toFixed(1)}%`);
-const Tags = ({ s }) => s.map((k) => <span key={k} className="chip small" style={{ color: TAG[k]?.[1], borderColor: TAG[k]?.[1], marginRight: 3 }}>{TAG[k]?.[0] || k}</span>);
+const Tags = ({ s }) => s.map((k) => <span key={k} className="rtag" style={{ color: TAG[k]?.[1], borderColor: TAG[k]?.[1] }}>{TAG[k]?.[0] || k}</span>);
 const SCREEN_F = [['all', 'All'], ['vcp', 'VCP'], ['bases', 'Bases'], ['flag', 'Flag'], ['vcp+flag', 'VCP + Flag'], ['vcp+bases', 'VCP + Bases'], ['flag+bases', 'Flag + Bases'],
   ['bases-only', 'Bases only'], ['vcp-only', 'VCP only'], ['flag-only', 'Flag only']];
 const STATUS_F = [['all', 'All'], ['open', 'Open'], ['closed', 'Closed']];
@@ -20,7 +20,6 @@ const STOP_F = [['1', '1%'], ['2', '2%'], ['3', '3%'], ['4', '4%'], ['5', '5%'],
 const BASIS_F = [['entry', 'under entry'], ['pivot', 'under pivot']];
 const MKT_F = [['0', 'Off'], ['1', 'NIFTY above its 50-day line']];
 const TIME_F = [['0', 'Off'], ['5', '5'], ['6', '6'], ['7', '7'], ['8', '8'], ['9', '9'], ['10', '10']];
-const Seg = ({ opts, v, set }) => <span className="seg">{opts.map(([k, l]) => <button key={k} className={v === k ? 'active' : ''} onClick={() => set(k)}>{l}</button>)}</span>;
 const live = (p) => p.status !== 'closed';
 const has = (p, k) => p.screens.includes(k);
 const screenOk = (p, f) => f === 'all' || (f === 'vcp+flag' ? has(p, 'vcp') || has(p, 'flag') : f === 'vcp+bases' ? has(p, 'vcp') && has(p, 'bases') : f === 'flag+bases' ? has(p, 'flag') && has(p, 'bases')
@@ -150,8 +149,11 @@ const peakUse = (ps) => {
   return best;
 };
 
+// The "Try it as" selectors the board can save as the page's default (PUT /api/follow/settings {defaults}).
+const DEFAULT_KEYS = ['scr', 'status', 'result', 'maxOpen', 'capital', 'stopPct', 'basis', 'timeN', 'mkt'];
+const short = (v) => (v == null ? '—' : Math.abs(v) >= 1e5 ? `${v < 0 ? '−' : ''}₹${(Math.abs(v) / 1e5).toFixed(1)}L` : inr(v));
+
 export default function FollowPage() {
-  const phone = useIsPhone();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [scr, setScr] = useState('all');
@@ -166,6 +168,8 @@ export default function FollowPage() {
   const [timeN, setTimeN] = useState('0');
   const [per, setPer] = useState('');
   const [max, setMax] = useState(100);
+  const [saved, setSaved] = useState('');                    // "saved" / "cleared" flash after a defaults call
+  const applied = useRef(false);                             // the saved defaults are applied once, on the first load
   const load = () => api.follow().then((x) => { setD(x); setErr(''); setPer((v) => (v === '' ? String(x.per_position) : v)); }).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
   useEffect(() => {                                           // while a rebuild runs: progress every 2 s
@@ -173,6 +177,20 @@ export default function FollowPage() {
     const id = setInterval(load, 2000);
     return () => clearInterval(id);
   }, [d?.status?.state]);
+  const applyDefaults = (df) => {
+    const S = { scr: setScr, status: setSt, result: setRes, maxOpen: setMaxOpen, capital: setCapital, stopPct: setStopPct, basis: setBasis, timeN: setTimeN, mkt: setMkt };
+    DEFAULT_KEYS.forEach((k) => { if (df?.[k] != null) S[k](String(df[k])); });
+    if (df?.capital != null && !CAP_F.some(([k]) => k === String(df.capital))) setCapBox(String(df.capital));
+  };
+  useEffect(() => {                                           // never overwrite the user's live changes on later reloads
+    if (!d || applied.current) return;
+    applied.current = true;
+    if (Object.keys(d.defaults || {}).length) applyDefaults(d.defaults);
+  }, [d]);
+  const flash = (msg) => { setSaved(msg); setTimeout(() => setSaved(''), 2000); };
+  const saveDefaults = () => api.followDefaults({ scr, status: st, result: res, maxOpen, capital, stopPct, basis, timeN, mkt })
+    .then(() => { flash('saved'); load(); }).catch((e) => setErr(e.message));
+  const clearDefaults = () => api.followDefaults({}).then(() => { flash('cleared · the page opens on the board defaults next time'); load(); }).catch((e) => setErr(e.message));
   const mktOk = useMemo(() => {                                         // NIFTY above its 50-day line on the entry day
     if (!d || mkt !== '1') return null;
     const m = {}; let lastOk = true;
@@ -185,13 +203,15 @@ export default function FollowPage() {
   const grid = useMemo(() => (d ? STOP_F.map(([sp]) => TIME_F.map(([tn]) => { const t = run(+sp, basis, +tn).filter((p) => !p.skipped); const cl = t.filter((p) => !live(p) && p.qty);
     return { net: t.reduce((a, p) => a + (p.qty ? p.net : 0), 0), won: cl.length ? Math.round(100 * cl.filter((p) => p.net > 0).length / cl.length) : null, dd: drawdown(curve(t)).value }; })) : []),
   [d, scr, maxOpen, capital, basis, mktOk]);
+  // "blind": every breakout taken, the stored exits only (8% under the pivot), no cap, no filter
+  const blind = useMemo(() => (d ? capped(d.rows.map((p) => applyRules(p, 8, 'pivot', 0)), 0, 0, null).reduce((a, p) => a + (p.qty ? p.net : 0), 0) : 0), [d]);
   const corp = useMemo(() => (d ? d.rows.filter((p) => p.corp_action && screenOk(p, scr)) : []), [d, scr]);
   const taken = useMemo(() => base.filter((p) => !p.skipped), [base]);
   const rows = useMemo(() => base.filter((p) => !p.skipped || (st === 'all' && res === 'all'))
     .filter((p) => st === 'all' || (st === 'open' ? live(p) : !live(p)))
     .filter((p) => res === 'all' || (res === 'profit' ? p.net > 0 : p.net <= 0)), [base, st, res]);
   const cv = useMemo(() => curve(taken), [taken]);
-  if (!d) return <div className="panel muted">{err || 'Loading…'}</div>;
+  if (!d) return <div className="rd"><div className="rbanner">{err || 'Loading…'}</div></div>;
   const t = agg(taken), peak = peakUse(taken), dd = drawdown(cv), skipped = base.length - taken.length;
   const closedByExit = taken.filter((p) => !live(p) && p.qty).sort((a, b) => a.exit_date.localeCompare(b.exit_date));
   let streak = 0, worstStreak = 0;
@@ -213,83 +233,124 @@ export default function FollowPage() {
     reasons[k] = reasons[k] || { n: 0, net: 0 }; reasons[k].n += 1; reasons[k].net += p.qty ? p.net : 0; });
   const bestNet = Math.max(...grid.flat().map((g) => g.net), -Infinity);
   const inUse = taken.filter((p) => live(p) && p.qty).reduce((a, p) => a + p.value, 0);
-  const Tile = ({ v, l, k }) => <div className="k"><div className={`v ${k || ''}`}>{v}</div><div className="l">{l}</div></div>;
-  return <>
-    <div className="panel">
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <b>📈 Every fresh breakout bought with {inr(d.per_position)}{+maxOpen ? `, at most ${maxOpen} open at once` : ''}{+capital ? `, within ${inr(+capital)} of capital` : ''}{!+maxOpen && !+capital ? ', nothing skipped' : ''}</b>
-        <span className="chip small">Buy: next day's open after the breakout day</span>
-        <span className="chip small">Sell: a close under the {d.rows[0]?.ma || 50}-day line, or {stopPct}% under the {basis}{+timeN ? `, or not in profit after ${timeN} sessions` : ''} → next open</span>
-        <span className="chip small">Delivery charges included</span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }} className="small">₹ a position
-          <input className="input" style={{ width: 100, textAlign: 'right' }} inputMode="numeric" value={per} onChange={(e) => setPer(e.target.value.replace(/[^0-9]/g, ''))} />
-          <button className="btn" onClick={() => act(api.followSettings(+per))} disabled={+per < 1000}>Save</button>
-          <button className="btn primary" disabled={running} onClick={() => window.confirm(`Rebuild the whole book from the saved daily candles (last ${d.months} months)? Takes a few minutes.`) && act(api.followRebuild())}>{running ? 'Rebuilding…' : '↻ Rebuild'}</button></span>
+  // derived for the cards: CAGR on the peak money, payoff, expectancy, the drawdown series and where the curve sits now
+  const days = cv.length > 1 ? (new Date(cv[cv.length - 1][0]) - new Date(cv[0][0])) / 86400000 : 0;
+  const cagr = peak.value > 0 && days >= 30 && peak.value + t.net > 0 ? ((peak.value + t.net) / peak.value) ** (365 / days) - 1 : null;
+  const payoff = t.avg_win != null && t.avg_loss ? Math.abs(t.avg_win / t.avg_loss) : null;
+  const expect = t.win_rate != null && t.avg_win != null && t.avg_loss != null ? (t.win_rate / 100) * t.avg_win + (1 - t.win_rate / 100) * t.avg_loss : null;
+  let runPeak = 0;
+  const ddSeries = cv.map(([, v]) => { runPeak = Math.max(runPeak, v); return v - runPeak; });
+  const ddNow = ddSeries.length ? ddSeries[ddSeries.length - 1] : 0;
+  const nPending = taken.filter((p) => p.status === 'pending').length, nClosing = taken.filter((p) => p.status === 'closing').length;
+  const defaultsOn = Object.keys(d.defaults || {}).length > 0;
+  const statusTag = (p) => (p.skipped ? <Tag>skipped · {p.skipped === 'cash' ? 'no cash' : p.skipped === 'market' ? 'market filter' : 'no slot'}</Tag>
+    : p.status === 'pending' ? <Tag c="a">pending · buys next open</Tag> : p.status === 'closing' ? <Tag c="w">sells next open</Tag>
+      : live(p) ? <Tag c="ok">open · {p.days} d</Tag> : <Tag c={p.net > 0 ? 'ok' : 'bad'}>closed · {p.days} d</Tag>);
+  const whyText = (p) => (p.skipped ? (p.skipped === 'cash' ? 'no cash left in the capital' : p.skipped === 'market' ? 'NIFTY under its 50-day line on the entry day' : 'no free slot')
+    : `${p.reason || ''}${p.trigger ? ` · ${day(p.trigger.date)} close ${n2(p.trigger.close)}${p.trigger.gap != null ? `, next open ${p.trigger.gap > 0 ? '+' : ''}${p.trigger.gap}%` : ''}` : ''}`);
+  const bCols = [{ h: 'Stock' }, { h: 'Breakout', w: 72 }, { h: 'Screens', w: 100 }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now / exit', w: 90, n: true },
+    { h: 'Qty', w: 52, n: true, lo: true }, { h: 'Value', w: 92, n: true, lo: true }, { h: 'P&L', w: 96, n: true }, { h: '%', w: 66, n: true }, { h: 'Held', w: 56, n: true, lo: true }, { h: 'Status', w: 190 }];
+  const total = `Total · ${shownTaken.length} taken${rows.length - shownTaken.length ? ` · ${rows.length - shownTaken.length} skipped` : ''} · value ${inr(sumShown((p) => p.value))} · P&L ${inr(sumShown((p) => p.net))} (${sumShown((p) => p.value) ? pc(sumShown((p) => p.net) / sumShown((p) => p.value) * 100) : '—'}) · held ${shownTaken.length ? Math.round(sumShown((p) => p.days) / shownTaken.length) : 0} d avg · ${nOpen} open · ${nClosed} closed · ${nWon} won`;
+  const bRows = rows.slice(0, max).map((p) => ({ key: p.symbol + p.breakout_date, cls: p.skipped ? 'dim' : '', title: whyText(p), cells: [
+    <><b>{p.symbol}</b> <small>{p.entry_date ? `bought ${day(p.entry_date)}` : 'not bought yet'} · pivot {n2(p.pivot)} · stop {n2(p.stop)}{p.exit_date ? ` · sold ${day(p.exit_date)}` : ''}</small></>,
+    day(p.breakout_date), <Tags s={p.screens} />, n2(p.entry), n2(p.exit ?? p.last), p.qty || '—', inr(p.value),
+    <b className={cls(p.net)}>{p.skipped ? '—' : inr(p.net)}</b>, <span className={cls(p.pct)}>{p.skipped ? '—' : pc(p.pct)}</span>, `${p.days} d`,
+    <>{statusTag(p)} <small>{p.skipped ? '' : whyText(p)}</small></>] }));
+  const cCols = [{ h: 'Stop ↓ · time stop →', w: undefined }, ...TIME_F.map(([k, l]) => ({ h: l, w: 118, n: true, key: k }))];
+  const cRows = STOP_F.map(([sp, sl], i) => ({ key: sp, cells: [<b>{sl}</b>, ...TIME_F.map(([tn], j) => { const g = grid[i]?.[j]; if (!g) return '';
+    const best = g.net === bestNet && bestNet !== 0, here = sp === stopPct && tn === timeN;
+    return <span role="button" tabIndex={0} title={`stop ${sl} · time stop ${tn === '0' ? 'off' : tn} · net ${inr(g.net)} · won ${g.won ?? '—'}% · worst fall ${inr(-g.dd)} · click to set`}
+      onClick={() => { setStopPct(sp); setTimeN(tn); }} className={cls(g.net)}
+      style={{ cursor: 'pointer', display: 'inline-block', padding: '2px 6px', borderRadius: 4, background: best ? 'var(--ok-bg)' : here ? 'var(--hover)' : undefined, outline: here ? '1px solid var(--accent)' : undefined }}>
+      <b>{short(g.net)}</b> <small>{g.won ?? '—'}%</small></span>; })] }));
+  const sCols = [{ h: 'Screen' }, { h: 'Breakouts', w: 90, n: true }, { h: 'Open', w: 64, n: true, lo: true }, { h: 'Closed · won', w: 110, n: true }, { h: 'Avg win / loss', w: 130, n: true, lo: true }, { h: 'P&L', w: 110, n: true }];
+  const sRows = Object.entries(d.by_screen).map(([k, a]) => ({ key: k, cells: [<>{TAG[k] ? <Tags s={[k]} /> : null} {d.names[k]}</>, a.breakouts, a.open, `${a.closed} · ${a.win_rate ?? '—'}%`,
+    `${pc(a.avg_win)} / ${pc(a.avg_loss)}`, <span className={cls(a.net)}>{inr(a.net)}</span>] }));
+  const col = { display: 'grid', gap: 12, minWidth: 0, alignContent: 'start' };
+  return <div className="rd">
+    <Head title="📈 Follow · every fresh breakout bought blind" right={<>
+      <button type="button" className="btn ghost small" onClick={() => document.getElementById('follow-where')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Where the result came from</button>
+      <button type="button" className="btn small" disabled={running} onClick={() => window.confirm(`Rebuild the whole book from the saved daily candles (last ${d.months} months)? Takes a few minutes.`) && act(api.followRebuild())}>{running ? 'Rebuilding…' : '↻ Rebuild'}</button>
+      <button type="button" className="btn ghost small" onClick={() => csv(rows)} disabled={!rows.length}>⬇ CSV</button></>}>
+      <Chip title="One stock is one position at a time, tagged with every screen that flagged it · judged on each day's data only · updated every evening after the scan · nothing is ordered.">
+        <b className="mono">{t.n}</b> breakouts · <b className="mono">{inr(d.per_position)}</b> a position · {d.as_of ? `as of ${day(d.as_of)}` : 'not built yet: press Rebuild'}{running ? ' · rebuilding' : ''}</Chip>
+      <Chip>Buy: next day's open after the breakout day</Chip>
+      <Chip>Sell: a close under the {d.rows[0]?.ma || 50}-day line, or {stopPct}% under the {basis}{+timeN ? `, or not in profit after ${timeN} sessions` : ''} → next open</Chip>
+      <Chip>Delivery charges included</Chip>
+    </Head>
+    {(running || d.status.message) && <div className="rbanner">{d.status.message}{running && <div className="bar"><i style={{ width: `${d.status.pct}%` }} /></div>}</div>}
+    {err && <div className="rbanner bad">{err}</div>}
+    <Panel title="Try it as" meta={defaultsOn ? 'saved default' : null} right={<>
+      {saved && <span className="up">{saved}</span>}
+      <button type="button" className="btn ghost small" onClick={saveDefaults}>💾 Save as default</button>
+      <button type="button" className="btn ghost small" disabled={!defaultsOn} onClick={() => applyDefaults(d.defaults)}>Reset to default</button>
+      {defaultsOn && <button type="button" className="linkbtn small" style={{ padding: 0 }} onClick={clearDefaults}>Clear saved default</button>}</>}>
+      <div className="rwrap">
+        <span>Screens <Seg small opts={SCREEN_F} v={scr} set={setScr} /></span>
+        <span>Status <Seg small opts={STATUS_F} v={st} set={setSt} /></span>
+        <span>Result <Seg small opts={RESULT_F} v={res} set={setRes} /></span>
+        <span>₹ a position <input className="input" style={{ width: 90, textAlign: 'right' }} inputMode="numeric" value={per} onChange={(e) => setPer(e.target.value.replace(/[^0-9]/g, ''))} />
+          <button type="button" className="btn ghost small" onClick={() => act(api.followSettings(+per))} disabled={+per < 1000}>Save</button></span>
+        <span>Capital <Seg small opts={CAP_F} v={CAP_F.some(([k]) => k === capital) ? capital : 'custom'} set={(k) => { setCapital(k); setCapBox(''); }} />
+          <input className="input" style={{ width: 90, textAlign: 'right' }} inputMode="numeric" placeholder="custom ₹" value={capBox}
+            onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setCapBox(v); setCapital(+v >= 10000 ? v : '0'); }} /></span>
+        <span>Max open at once <Seg small opts={MAX_F} v={maxOpen} set={setMaxOpen} /></span>
+        <span>Stop <Seg small opts={STOP_F} v={stopPct} set={setStopPct} /> <Seg small opts={BASIS_F} v={basis} set={setBasis} /></span>
+        <span>New entries only while <Seg small opts={MKT_F} v={mkt} set={setMkt} /></span>
+        <span>Time stop (sessions) <Seg small opts={TIME_F} v={timeN} set={setTimeN} /></span>
       </div>
-      <div className="muted small">One stock is one position at a time, tagged with every screen that flagged it · judged on each day's data only · updated every evening after the scan ·
-        {d.as_of ? ` as of ${day(d.as_of)}` : ' not built yet: press Rebuild'} · a new ₹ a position applies to new entries (Rebuild to apply it to the history) · nothing is ordered.</div>
-      {(running || d.status.message) && <div className="small" style={{ marginTop: 6 }}>{d.status.message}{running && <div className="bar"><i style={{ width: `${d.status.pct}%` }} /></div>}</div>}
-      {err && <div className="warn small">{err}</div>}
-    </div>
-    <div className="panel">
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}><b>Try it as</b>
-        <span className="muted small">Screens</span><Seg opts={SCREEN_F} v={scr} set={setScr} />
-        <span className="muted small">Max open at once</span><Seg opts={MAX_F} v={maxOpen} set={setMaxOpen} />
-        <span className="muted small">Capital</span><Seg opts={CAP_F} v={CAP_F.some(([k]) => k === capital) ? capital : 'custom'} set={(k) => { setCapital(k); setCapBox(''); }} />
-        <input className="input small" style={{ width: 96, textAlign: 'right' }} inputMode="numeric" placeholder="custom ₹" value={capBox}
-          onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setCapBox(v); setCapital(+v >= 10000 ? v : '0'); }} />
-        <span className="muted small">Stop</span><Seg opts={STOP_F} v={stopPct} set={setStopPct} /><Seg opts={BASIS_F} v={basis} set={setBasis} />
-        <span className="muted small">Time stop (sessions)</span><Seg opts={TIME_F} v={timeN} set={setTimeN} />
-        <span className="muted small">New entries only while</span><Seg opts={MKT_F} v={mkt} set={setMkt} /></div>
-      <div className="muted small" style={{ marginTop: 4 }}>Every number below is for <b>{scope}</b>. "VCP + Flag" = flagged by either (a stock is still one position: a second screen adds its tag, never a second trade) · "VCP + Bases" = by both · "Bases only" = by no other screen.
+      <div className="rnote">Every number below is for <b>{scope}</b>. "VCP + Flag" = flagged by either (a stock is still one position: a second screen adds its tag, never a second trade) · "VCP + Bases" = by both · "Bases only" = by no other screen.
         With a max or a capital, breakouts are taken in entry order; one with no free slot, or whose value does not fit in the capital beside the money already in open positions, is skipped (greyed, out of every number). A sale gives its money back; closed profit / loss does not change the capital. The stop (under your entry price, or under the pivot) and the time stop re-run every position's exits on its daily closes (sold at the next open); the 50-day-line exit and the stored 8%-under-pivot exit always stay.
+        A new ₹ a position applies to new entries (Rebuild to apply it to the history) · nothing is ordered.
         {corp.length > 0 && <> <b>{corp.length} position{corp.length > 1 ? 's' : ''} left out</b> (a split / bonus moved the price 40%+ in a day; the daily candles are not adjusted): {corp.map((p) => p.symbol).join(', ')}.</>}</div>
-      <div className="summary" style={{ marginTop: 10 }}>
-        <Tile v={inr(t.net)} k={cls(t.net)} l={`net profit / loss · ${t.n} breakouts${skipped ? ` · ${skipped} skipped (${[nSlot && `${nSlot} no slot`, nCash && `${nCash} no cash`, nMkt && `${nMkt} market filter`].filter(Boolean).join(', ')})` : ''}`} />
-        <Tile v={inr(t.open_net)} k={cls(t.open_net)} l={`open P&L · ${t.open} open now`} />
-        <Tile v={`${t.closed} · ${t.win_rate ?? '—'}%`} l="closed · won" />
-        <Tile v={`${pc(t.avg_win)} / ${pc(t.avg_loss)}`} l="avg win / avg loss" />
-        <Tile v={inr(peak.value)} l={`peak money in use · ${peak.positions} positions${peak.date ? ` on ${day(peak.date)}` : ''}${+capital ? ` · now ${inr(inUse)} of ${inr(+capital)}` : ''}`} />
-        <Tile v={peak.value ? pc(t.net / peak.value * 100) : '—'} k={cls(t.net)} l={`net on the peak money · NIFTY 50 ${pc(niftyPct)} over the same dates`} />
+    </Panel>
+    <Cards n={6}>
+      <Card label="Net · this setting" value={inr(t.net)} num={t.net} k={cls(t.net)} sub={`${t.n} taken · ${t.open} open · ${t.closed} closed`} spark={cv.map(([, v]) => v)}
+        fact={<>vs blind <Bar pct={blind ? 100 * t.net / blind : 0} ok={t.net >= blind} /> <b>{inr(blind)}</b></>} />
+      {cagr != null ? <Card label="CAGR · vs NIFTY" value={pc(cagr * 100)} num={cagr} k={cls(cagr)} sub={`NIFTY 50 ${pc(niftyPct)} · same dates`} fact={<>on <b>{inr(peak.value)}</b> peak money · net {pc(peak.value ? t.net / peak.value * 100 : null)}</>} />
+        : <Card label="Net on the peak money" value={peak.value ? pc(t.net / peak.value * 100) : '—'} num={peak.value ? t.net / peak.value : 0} k={cls(t.net)} sub={`NIFTY 50 ${pc(niftyPct)} over the same dates`} fact={<>peak <b>{inr(peak.value)}</b> · {peak.positions} positions{peak.date ? ` on ${day(peak.date)}` : ''}</>} />}
+      <Card label="Win rate · payoff" value={`${t.win_rate ?? '—'}% · ${payoff != null ? payoff.toFixed(1) : '—'}`} num={t.win_rate} sub={`avg win ${pc(t.avg_win)} · avg loss ${pc(t.avg_loss)}`}
+        fact={<>expectancy <b>{pc(expect)}</b> a trade</>} />
+      <Card label="Max drawdown" value={inr(-dd.value)} num={-dd.value} k={dd.value ? 'down' : ''} spark={ddSeries.length > 1 ? ddSeries : undefined}
+        sub={dd.from ? `${day(dd.from)} → ${day(dd.to)} · ${dd.sessions} sessions` : 'no fall yet'}
+        fact={<>now <b className={ddNow < 0 ? 'down' : 'up'}>{inr(ddNow)}</b> from the high{dd.recovered ? ` · back at the peak ${day(dd.recovered)}` : dd.to ? ' · not back yet' : ''}</>} />
+      <Card label="Pending · open" value={`${nPending} · ${t.open}`} num={t.open} sub={`buy next open · open P&L ${inr(t.open_net)}`}
+        fact={<><b>{nClosing}</b> selling · in use <b>{inr(inUse)}</b>{+capital ? ` of ${inr(+capital)}` : ''}</>} />
+      <Card label="Skipped" value={skipped} num={skipped} k={skipped ? 'warn' : ''} sub={`${nSlot} no slot · ${nCash} no cash · ${nMkt} market filter`} fact={<>left out <b>{corp.length}</b> corp action{corp.length === 1 ? '' : 's'}</>} />
+    </Cards>
+    <div className="two">
+      <div style={col}>
+        <Panel title="Growth" right={<span>{scope} · vs NIFTY 50</span>}><div className="rbody"><Chart cv={cv} nifty={d.nifty} peakValue={peak.value} /></div></Panel>
+        <Panel title="Compare" meta="stop × time stop" right={<span>net · won % · best in green · click a cell to set it</span>}>
+          <FixedTable cols={cCols} rows={cRows} />
+          <div className="rnote">{SCREEN_F.find(([k]) => k === scr)[1]}{+maxOpen ? ` · max ${maxOpen}` : ''}{+capital ? ` · ${inr(+capital)}` : ''} · stop {basis === 'entry' ? 'under entry' : 'under pivot'} · hover a cell for its worst fall.</div>
+        </Panel>
+        <Panel title="By screen" right={<span>the whole book, no cap · a breakout counts under every screen that flagged it</span>}><FixedTable cols={sCols} rows={sRows} /></Panel>
+        <Panel title="Breakouts" meta={rows.length} right={<>
+          <Seg small opts={STATUS_F} v={st} set={setSt} /><Seg small opts={RESULT_F} v={res} set={setRes} /></>}>
+          <FixedTable cols={bCols} rows={bRows.length ? [...bRows, total] : []} empty={`No breakouts match${d.as_of ? '' : ' (not built yet: press Rebuild, or wait for the evening scan)'}.`} />
+          {rows.length > max && <div className="rnote"><button type="button" className="btn ghost small" onClick={() => setMax(rows.length)}>show all {rows.length}</button></div>}
+          <div className="rnote">Newest first. The total line follows the filters: value = the sum of every shown taken position's buy value, % = profit / loss over it. Open rows are marked at the last close, after the charges a sale would take.</div>
+        </Panel>
+      </div>
+      <div style={col}>
+        <Panel title="Drawdown" right={<span>how deep and how long the profit curve fell</span>}>
+          {ddSeries.length > 1 ? <Bars vals={ddSeries} h={90} titles={cv.map(([dt], i) => `${day(dt)}: ${inr(ddSeries[i])}`)} /> : null}
+          <KV pairs={[['Worst fall from a peak', <span className="down">{inr(-dd.value)}{peak.value ? ` · ${pc(-dd.value / peak.value * 100)}` : ''}</span>],
+            ['Peak → low', dd.from ? `${day(dd.from)} → ${day(dd.to)}` : 'no fall yet'],
+            ['Sessions under water', `${dd.sessions}${dd.recovered ? ` · back ${day(dd.recovered)}` : dd.to ? ' · not back yet' : ''}`],
+            ['Now from the high', <span className={ddNow < 0 ? 'down' : ''}>{inr(ddNow)}</span>],
+            ['Losing trades in a row', worstStreak],
+            ['Worst trade', worstTrade ? <span className="down" title={worstTrade.reason}>{inr(worstTrade.net)} · {worstTrade.symbol} {day(worstTrade.exit_date)}</span> : '—'],
+            ['Worst month', worstMonth ? <span className={cls(worstMonth[1])}>{inr(worstMonth[1])} · {worstMonth[0]}</span> : '—']]} />
+        </Panel>
+        <Panel title="Where the result came from" id="follow-where" right={<span>by exit</span>}>
+          {Object.keys(reasons).length ? <KV pairs={Object.entries(reasons).map(([k, r]) => [`${k} · ${r.n}`, <span className={cls(r.net)}>{inr(r.net)}</span>])} /> : <p className="muted small rempty">Nothing taken yet.</p>}
+          <KV pairs={[['Entry', 'next open after breakout'], ['Exit', `${d.rows[0]?.ma || 50}-day · stop · time stop`],
+            ['Skipped', `slots ${nSlot} · cash ${nCash} · filter ${nMkt}`], ['Left out', `${corp.length} · corp action`]]} />
+          {corp.length > 0 && <div className="rnote">Left out: {corp.map((p) => p.symbol).join(', ')} — a split / bonus moved the price 40%+ in a day; the daily candles are not adjusted.</div>}
+        </Panel>
       </div>
     </div>
-    <div className="panel"><b>Where the result came from</b> <span className="muted small">· {scope} · by exit</span>
-      <div className="summary" style={{ marginTop: 8 }}>{Object.entries(reasons).map(([k, r]) => <Tile key={k} v={inr(r.net)} k={cls(r.net)} l={`${k} · ${r.n}`} />)}</div></div>
-    <div className="panel"><b>Compare</b> <span className="muted small">· every stop × time stop for {SCREEN_F.find(([k]) => k === scr)[1]}{+maxOpen ? ` · max ${maxOpen}` : ''}{+capital ? ` · ${inr(+capital)}` : ''} · stop {basis === 'entry' ? 'under entry' : 'under pivot'} · net · won % · worst fall · best net in green · click a cell to set it</span>
-      <div className="tablewrap"><table className="grid small"><thead><tr><th>Stop ↓ · Time stop →</th>{TIME_F.map(([, l]) => <th key={l} className="num">{l}</th>)}</tr></thead>
-        <tbody>{STOP_F.map(([sp, sl], i) => <tr key={sp}><td><b>{sl}</b></td>{TIME_F.map(([tn], j) => { const g = grid[i]?.[j]; if (!g) return <td key={tn} />;
-          return <td key={tn} className={`num ${cls(g.net)}`} style={{ cursor: 'pointer', background: g.net === bestNet ? 'rgba(38,166,154,.14)' : sp === stopPct && tn === timeN ? 'rgba(78,161,255,.14)' : undefined }} onClick={() => { setStopPct(sp); setTimeN(tn); }}>
-            <b>{inr(g.net)}</b><div className="muted">{g.won ?? '—'}% · {inr(-g.dd)}</div></td>; })}</tr>)}</tbody></table></div></div>
-    <div className="panel"><b>Growth</b> <span className="muted small">· {scope} · vs NIFTY 50</span><Chart cv={cv} nifty={d.nifty} peakValue={peak.value} /></div>
-    <div className="panel"><b>Drawdown</b> <span className="muted small">· {scope} · how deep and how long the profit curve fell</span>
-      <div className="summary" style={{ marginTop: 8 }}>
-        <Tile v={inr(-dd.value)} k="down" l={`worst fall from a peak${peak.value ? ` · ${pc(-dd.value / peak.value * 100)} of the peak money` : ''}`} />
-        <Tile v={`${dd.sessions} sessions`} l={`${dd.from ? `peak ${day(dd.from)} → low ${day(dd.to)}` : 'no fall yet'}${dd.recovered ? ` · back at the peak ${day(dd.recovered)}` : dd.to ? ' · not back at that peak yet' : ''}`} />
-        <Tile v={worstStreak} l="losing trades in a row, at worst" />
-        <Tile v={worstTrade ? inr(worstTrade.net) : '—'} k={cls(worstTrade?.net)} l={`worst trade${worstTrade ? ` · ${worstTrade.symbol} ${day(worstTrade.exit_date)} · ${worstTrade.reason}` : ''}`} />
-        <Tile v={worstMonth ? inr(worstMonth[1]) : '—'} k={cls(worstMonth?.[1])} l={`worst month${worstMonth ? ` · ${worstMonth[0]}` : ''} (closed trades)`} />
-      </div></div>
-    <div className="panel"><b>By screen</b> <span className="muted small">· the whole book, no cap · a breakout counts under every screen that flagged it</span>
-      <div className="tablewrap"><table className="grid"><thead><tr><th>Screen</th><th className="num">Breakouts</th><th className="num">Open</th><th className="num">Closed · won</th><th className="num">Avg win / loss</th><th className="num">Profit / loss</th></tr></thead>
-        <tbody>{Object.entries(d.by_screen).map(([k, a]) => <tr key={k}><td>{TAG[k] ? <Tags s={[k]} /> : null}{d.names[k]}</td><td className="num">{a.breakouts}</td><td className="num">{a.open}</td>
-          <td className="num">{a.closed} · {a.win_rate ?? '—'}%</td><td className="num">{pc(a.avg_win)} / {pc(a.avg_loss)}</td><td className={`num ${cls(a.net)}`}>{inr(a.net)}</td></tr>)}</tbody></table></div></div>
-    <div className="panel">
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}><b>Breakouts</b> <span className="muted small">· {scope} · newest first</span>
-        <span className="muted small">Status</span><Seg opts={STATUS_F} v={st} set={setSt} /><span className="muted small">Result</span><Seg opts={RESULT_F} v={res} set={setRes} />
-        <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => csv(rows)} disabled={!rows.length}>⬇ CSV</button></div>
-      {!rows.length ? <p className="muted">No breakouts match{d.as_of ? '' : ' (not built yet: press Rebuild, or wait for the evening scan)'}.</p>
-        : phone ? <div className="pcards">{rows.slice(0, max).map((p) => <details key={p.symbol + p.breakout_date} className="pcard" style={p.skipped ? { opacity: 0.5 } : {}}><summary className="t"><span><b>{p.symbol}</b> <Tags s={p.screens} /> <span className="muted small">{day(p.breakout_date)}</span></span><b className={cls(p.net)}>{p.skipped ? 'skipped' : inr(p.net)}</b></summary>
-          <div className="small">bought {day(p.entry_date)} @ {n2(p.entry)} × {p.qty} = {inr(p.value)} · pivot {n2(p.pivot)} · stop {n2(p.stop)}<br />{live(p) ? `now ${n2(p.last)} · open ${p.days} d` : `sold ${day(p.exit_date)} @ ${n2(p.exit)} · ${p.days} d`} · {pc(p.pct)}{p.reason ? ` · ${p.reason}` : ''}</div></details>)}</div>
-          : <div className="tablewrap"><table className="grid"><thead><tr><th>Stock</th><th>Screens</th><th>Breakout</th><th>Bought</th><th className="num">Entry ₹</th><th className="num">Qty</th><th className="num">Value ₹</th>
-            <th className="num">Pivot</th><th className="num">Stop</th><th>Sold</th><th className="num">Exit / Now ₹</th><th className="num">Profit / loss</th><th className="num">%</th><th className="num">Held</th><th>Status · why</th></tr></thead>
-            <tbody>{rows.slice(0, max).map((p) => <tr key={p.symbol + p.breakout_date} style={p.skipped ? { opacity: 0.45 } : {}}><td><b>{p.symbol}</b></td><td><Tags s={p.screens} /></td><td>{day(p.breakout_date)}</td><td>{day(p.entry_date)}</td>
-              <td className="num">{n2(p.entry)}</td><td className="num">{p.qty || '—'}</td><td className="num">{inr(p.value)}</td><td className="num">{n2(p.pivot)}</td><td className="num">{n2(p.stop)}</td>
-              <td>{day(p.exit_date)}</td><td className="num">{n2(p.exit ?? p.last)}</td><td className={`num ${cls(p.net)}`}><b>{inr(p.net)}</b></td><td className={`num ${cls(p.pct)}`}>{pc(p.pct)}</td>
-              <td className="num">{p.days} d</td><td>{p.skipped ? `skipped · ${p.skipped === 'cash' ? 'no cash left in the capital' : 'no free slot'}` : live(p) ? <span className="up">● {p.status === 'pending' ? 'buys at the next open' : p.status === 'closing' ? <>sells at the next open · <Why p={p} /></> : 'open'}</span> : <>closed · <Why p={p} /></>}</td></tr>)}</tbody>
-            <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={6}>Total · {shownTaken.length} taken{rows.length - shownTaken.length ? ` · ${rows.length - shownTaken.length} skipped` : ''}</td><td className="num">{inr(sumShown((p) => p.value))}</td><td colSpan={4} /><td className={`num ${cls(sumShown((p) => p.net))}`}>{inr(sumShown((p) => p.net))}</td>
-              <td className={`num ${cls(sumShown((p) => p.net))}`}>{sumShown((p) => p.value) ? pc(sumShown((p) => p.net) / sumShown((p) => p.value) * 100) : '—'}</td><td className="num">{shownTaken.length ? Math.round(sumShown((p) => p.days) / shownTaken.length) : 0} d avg</td><td>{nOpen} open · {nClosed} closed · {nWon} won</td></tr></tfoot></table></div>}
-      {rows.length > max && <button className="linkbtn small" onClick={() => setMax(rows.length)}>show all {rows.length}</button>}
-      <div className="muted small" style={{ marginTop: 6 }}>The total line follows the filters: value = the sum of every shown taken position's buy value, % = profit / loss over it. Open rows are marked at the last close, after the charges a sale would take.</div>
-    </div>
-  </>;
+  </div>;
 }
