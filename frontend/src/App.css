@@ -884,3 +884,8 @@ tr.row-new td, .it.row-new { background: color-mix(in srgb, var(--blue) 12%, tra
 .hpos .stopmeter .track { width: 84px; } .hpos .stopmeter .dist { min-width: 44px; }
 .hpos .tag { padding: 0 4px; font-size: 10px; }
 .hmap { flex-wrap: nowrap; } .hmap .lane { padding: 0; align-items: stretch; min-height: 0; } .hmap .tile { min-height: 0; }
+/* ---- Home cards: label / value / sub-line / sparkline stacked, so nothing can overlap ---- */
+.hcard { display: flex; flex-direction: column; height: 112px; }
+.hcard .vrow { flex: none; } .hcard .s { flex: none; }
+.hcard .hspark { position: static; width: 100%; height: 18px; margin-top: auto; opacity: .75; left: auto; right: auto; bottom: auto; }
+@media (max-width: 760px) { .hcard { height: 100px; } .hcard .hspark { height: 14px; } }
