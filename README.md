@@ -2022,6 +2022,11 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **Home visual check** (`frontend/scripts/home_visual_check.cjs`): renders the built Home against a running backend
+  with a faked live stream (15 positions, a busy timeline, every panel filled) at any width and fails on any overlap
+  or spill (card text vs sparkline, map tiles vs their box, the stop meter vs its cell, timeline dots, horizontal
+  page overflow). Run at 1600 / 1920 / 390 before pushing a Home change. Cards are now a stacked layout (label,
+  value, sub-line, sparkline strip), so nothing can overlap whatever the values.
 - **🏠 Home redesign + heartbeat (PR 1 of the redesign)**: an icon rail instead of the sidebar (sub-pages stay in the
   row under the title); a **day timeline** (9:15–15:30, what happened and what is next, a moving "now"); account
   cards with 30-session **sparklines**; a **stats strip** (win streak, best / worst day in 30 d, days since a loss,
