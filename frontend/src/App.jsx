@@ -38,7 +38,7 @@ const ICONS = {
 export const SECTIONS = [
   ['home', 'Home', [['home', 'Overview']]],
   ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout']]],
-  ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real (Tradetron)'], ['paper', 'Paper · swing']]],
+  ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe']]],
   ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
 ];
@@ -126,7 +126,7 @@ export default function App() {
               <button key={p} className={tab === p ? 'active' : ''} onClick={() => go(p)}>{pl}
                 {DOTS.includes(p) && <AttentionDot tab={p} active={tab === p} />}</button>))}</div>}
           </React.Fragment>))}
-        <div className="sidefoot">{realOn ? '💰 Real trading ON (Tradetron)' : 'Screen-only (no orders)'}<br />Personal use · data © NSE via Kite</div>
+        <div className="sidefoot">{realOn ? '💰 Real trading ON' : 'Screen-only (no orders)'}<br />Personal use · data © NSE via Kite</div>
       </aside>}
       <div className="mainpane">
         <div className="topbar">

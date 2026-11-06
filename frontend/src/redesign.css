@@ -65,9 +65,10 @@
 .rd .ract .mono { flex: none; } .rd .ract .btn { margin-left: auto; flex: none; }
 .rd .ract.fresh { background: var(--warn-bg); box-shadow: inset 3px 0 0 var(--warn); }
 
-.rd .rkv { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; padding: 4px 14px; }
-.rd .rkv div { padding: 6px 0; border-bottom: 1px solid var(--rowline); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.rd .rkv div:nth-child(odd) { color: var(--muted); } .rd .rkv div:nth-last-child(-n+2) { border-bottom: 0; }
+.rd .rkv { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 0 12px; padding: 4px 14px; }
+.rd .rkv div { padding: 6px 0; border-bottom: 1px solid var(--rowline); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; min-height: 31px; }
+.rd .rkv div:nth-child(odd) { color: var(--muted); white-space: normal; line-height: 1.25; display: flex; align-items: center; }
+.rd .rkv div:nth-child(even) { text-align: right; } .rd .rkv div:nth-last-child(-n+2) { border-bottom: 0; }
 
 .rd .rchart { position: relative; padding: 8px 14px 0; }
 .rd .rchart svg { width: 100%; height: var(--h, 180px); display: block; }
@@ -134,7 +135,10 @@
   .rd .ftab td:first-child { grid-column: 1 / -1; font-size: 13px; }
   .rd .ftab td:before { content: attr(data-h); display: block; font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .rd .ftab td:first-child:before, .rd .ftab tr.grp td:before { display: none; } .rd .ftab td:empty { display: none; }
-  .rd .ftab td .stopmeter .track { width: 64px; }
+  .rd .ftab td .stopmeter .track { display: none; }
+  .rd .rkv { grid-template-columns: 1fr; gap: 0; }
+  .rd .rkv div:nth-child(odd) { border-bottom: 0; padding-bottom: 0; min-height: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+  .rd .rkv div:nth-child(even) { text-align: left; padding-top: 2px; }
   .rd .rpipe { display: none; }
   .rd .rsteps { display: block; padding: 6px 14px; }
   .rd .rsteps .step { display: grid; grid-template-columns: 24px 1fr 90px; gap: 8px; align-items: center; height: 40px; border-bottom: 1px solid var(--rowline); font-size: 12.5px; }

@@ -12,13 +12,14 @@ const CHECK = () => {
   document.querySelectorAll('.hcard').forEach((k) => {
     const parts = [...k.querySelectorAll(':scope > .l, :scope > .vrow, :scope > .s, :scope > .bl, :scope > .hspark')].filter(shown); const kr = R(k);
     parts.forEach((p) => { const r = R(p); if (r.right > kr.right + 1 || r.bottom > kr.bottom + 1) bad.push(`card part spills: ${p.className} "${p.textContent.slice(0, 30)}"`);
-      if (innerWidth > 760 && p.scrollWidth > p.clientWidth + 2 && !p.classList.contains('hspark')) bad.push(`card text clipped: "${p.textContent.slice(0, 40)}"`); });
+      if (innerWidth > 760 && p.scrollWidth > p.clientWidth + 2 && !p.classList.contains('hspark') && !p.classList.contains('s') && !p.classList.contains('bl')) bad.push(`card text clipped: "${p.textContent.slice(0, 40)}"`); });
     for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) if (ov(R(parts[i]), R(parts[j]))) bad.push(`card overlap: ${parts[i].className} × ${parts[j].className} in "${k.querySelector('.l')?.textContent}"`);
   });
-  document.querySelectorAll('.rd .ftab td, .rd .ftab th, .rd .rbox .t, .rd .rbox .d, .rd .ph, .rd .rkv div').forEach((e) => { if (shown(e) && e.scrollWidth > e.clientWidth + 2) bad.push(`clipped: "${e.textContent.trim().slice(0, 40)}"`); });
+  document.querySelectorAll('.rd .ftab tr:not(.grp) td:not(.ell), .rd .ftab th, .rd .rbox .t, .rd .rbox .d, .rd .ph, .rd .rkv div').forEach((e) => { if (shown(e) && e.scrollWidth > e.clientWidth + 2) bad.push(`clipped: "${e.textContent.trim().slice(0, 40)}"`); });
   document.querySelectorAll('.rd .rpanel, .rd .hcard, .rd .rbox, .rd .rsc').forEach((p) => { const pr = R(p); [...p.querySelectorAll('*')].forEach((c) => {
     const r = R(c), q = R(c.parentElement); const pos = getComputedStyle(c).position;
-    if (r.width && (r.right > pr.right + 2 || r.left < pr.left - 2) && !(q.right > pr.right + 2 || q.left < pr.left - 2) && pos !== 'fixed' && pos !== 'absolute') bad.push(`spill: ${c.tagName}.${c.className} out of ${p.className.split(' ')[0]} "${c.textContent.trim().slice(0, 30)}"`); }); });
+    let a = c.parentElement, hid = false; while (a && a !== p) { if (/hidden|auto|scroll|clip/.test(getComputedStyle(a).overflow)) { hid = true; break; } a = a.parentElement; }
+    if (!hid && r.width && (r.right > pr.right + 2 || r.left < pr.left - 2) && !(q.right > pr.right + 2 || q.left < pr.left - 2) && pos !== 'fixed' && pos !== 'absolute') bad.push(`spill: ${c.tagName}.${c.className} out of ${p.className.split(' ')[0]} "${c.textContent.trim().slice(0, 30)}"`); }); });
   return [...new Set(bad)];
 };
 const DRIFT = () => {
@@ -32,6 +33,7 @@ const DRIFT = () => {
 (async () => {
   const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: +width, height: 900 }, deviceScaleFactor: 1 });
   const errs = []; p.on('pageerror', (e) => errs.push(e.message.split('\n')[0]));
+  await p.addInitScript((t) => { try { localStorage.setItem('bp.theme', t); } catch (e) { /* private mode */ } }, process.env.BP_THEME || 'dark');
   await p.goto(`${base}/#/${route}`, { waitUntil: 'domcontentloaded' }); await p.waitForTimeout(2500);
   const bad = await p.evaluate(CHECK); await p.screenshot({ path: out, fullPage: true });
   const drift = await p.evaluate(DRIFT);

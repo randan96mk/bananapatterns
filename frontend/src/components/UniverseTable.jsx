@@ -45,7 +45,7 @@ export default function UniverseTable({ data, selected, onSelect }) {
   const short = rows.filter((r) => r.bars > 0 && r.bars < 260).length;
   const indices = rows.filter((r) => r.kind === 'index').length;
   const head = (k, label) => <span style={{ cursor: 'pointer' }} onClick={() => setSort([k, sort[0] === k ? -sort[1] : 1])}>{label}{sort[0] === k ? (sort[1] > 0 ? ' ▲' : ' ▼') : ''}</span>;
-  const cols = COLS.map(([k, label, w, n, lo]) => ({ key: k, h: head(k, label), w, n: !!n, lo: !!lo }));
+  const cols = COLS.map(([k, label, w, n, lo]) => ({ key: k, h: head(k, label), w, n: !!n, lo: !!lo, ell: k === 'company' || k === 'industry' }));
   const list = view.map((r) => ({
     key: r.instrument_token, cls: r.symbol === selected ? 'sel' : '', onClick: () => onSelect(r.symbol), title: r.last_error || r.company || '',
     cells: [<><b>{r.symbol}</b>{r.kind === 'index' && <Tag>index</Tag>}

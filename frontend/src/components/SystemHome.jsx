@@ -52,7 +52,7 @@ export default function SystemHome({ onGo, onKite }) {
         <button className="btn ghost" onClick={() => onGo('alerts')}>Alerts & schedule</button></Conn>
       <Conn title="Intraday live feed" ok={f.state ? f.state === 'live' || f.state === 'off' : null} state={f.state || '…'}
         pairs={[['Instruments', f.state === 'live' ? f.tokens : '—'], ['Last tick', f.last_tick ? clock(f.last_tick, true) : '—'],
-          ['Starts', '9:10 AM · Signals or Paper']]}>
+          ['Starts', '9:10 AM']]}>
         <button className="btn ghost" onClick={() => onGo('flow')}>Intraday Flow</button></Conn>
       <Conn title="Evening sync + scan" ok={!eod?.last || eod.last.status === 'ok'} state={eod?.last ? (eod.last.status === 'ok' ? 'ok' : eod.last.status) : 'not run yet'}
         pairs={[['Last run', eod?.last?.at ? stamp(eod.last.at) : 'never'], ['Next', eod?.at ? stamp(eod.at) : '—'],

@@ -352,7 +352,7 @@ def overview(config: AppConfig, quote=None) -> dict:
     if real_s.get("started"):
         a = real_s["account"]
         last = cv.get("real", [])[-1][0] if cv.get("real") else None
-        accts["real"] = {"name": "Real · Tradetron", "value": a["value"], "net": a["net"], "return": a["return"],
+        accts["real"] = {"name": "Real", "value": a["value"], "net": a["net"], "return": a["return"],
                          "last_day": last, "day_pnl": dp.get("real", {}).get(last, 0.0) if last else 0.0,
                          "positions": len(real_s.get("positions") or []),
                          "on": bool(real_s.get("enabled") and not real_s.get("killed")), "variant": real_s.get("variant"),

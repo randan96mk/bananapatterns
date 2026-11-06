@@ -20,7 +20,7 @@ const at12 = (s) => {
 };
 const hm = (s) => (s ? new Date(s).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
 const dayName = (s) => (s ? new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
-const BOOK = { real: 'Real · Tradetron', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
+const BOOK = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
 
@@ -135,7 +135,7 @@ export default function HomePage({ onGo, onStock }) {
     <div className="kpis">
       <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} sub={`intraday ${signed(it.day_pnl)} · swing last session ${signed((o.today || 0) - (it.day_pnl || 0))}`} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
         fact={F.today ? <>high <b className="up">{signed(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{signed(F.today.low)}</b> {hm24(F.today.low_at)}</> : <span className="muted">high / low from the open</span>} />
-      {A.real && <Card label={<>Real · Tradetron <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
+      {A.real && <Card label={<>Real <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
         sub={<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>} spark={A.real.spark} stale={stale}
         fact={F.real && <><b>{inr(F.real.in_use)}</b> in use · {F.real.slots} of {F.real.max_pos} slots<Bar pct={F.real.capital ? 100 * F.real.in_use / F.real.capital : 0} /></>} />}
       {A.paper_A && <Card label="Paper A · swing" value={pct(A.paper_A.return)} num={A.paper_A.value} k={cls(A.paper_A.return)} sub={<>{inr(A.paper_A.value)} · <span className={cls(A.paper_A.day_pnl)}>{signed(A.paper_A.day_pnl)}</span> last session · {A.paper_A.positions} open</>} spark={A.paper_A.spark} fact={factPaper(F.paper_A)} />}

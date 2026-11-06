@@ -51,7 +51,7 @@ function Results({ view, onCount, ...props }) {
 function Table({ screen, stage, selected, onSelect, shown }) {
   const extra = { vcp: VCP_COLS, flag: FLAG_COLS }[screen] || [];
   const stageCols = [...COLS[stage], ...extra];
-  const cols = [{ h: 'Symbol' }, { h: 'Company', w: 160, lo: true }, { h: 'Industry', w: 130, lo: true }, { h: 'Tags', w: 150, lo: true }, { h: 'Close', w: 90, n: true }, { h: 'Chg %', w: 70, n: true },
+  const cols = [{ h: 'Symbol' }, { h: 'Company', w: 160, lo: true, ell: true }, { h: 'Industry', w: 130, lo: true, ell: true }, { h: 'Tags', w: 150, lo: true }, { h: 'Close', w: 90, n: true }, { h: 'Chg %', w: 70, n: true },
     { h: 'RS', w: 50, n: true }, { h: 'Trend', w: 60, n: true, lo: true },
     ...stageCols.map(([h, , w, n], i) => ({ h, w, n: !!n, lo: i >= 2 }))];
   const rows = shown.map((r) => ({

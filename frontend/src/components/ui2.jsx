@@ -23,7 +23,7 @@ export function Card({ label, value, num, sub, k, spark, stale, live, fact, onCl
     <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span></div>
     {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{unit === '₹' ? signed(beat.delta) : `${beat.delta > 0 ? '+' : '−'}${Math.abs(+beat.delta.toFixed(2))}${unit === '%' ? '%' : ''}`}</span>}
     <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>
-    <div className="bl">{fact}</div>{spark ? <Spark values={spark} color={trend} /> : <span />}</div>;
+    <div className="bl" title={typeof fact === 'string' ? fact : undefined}>{fact}</div>{spark ? <Spark values={spark} color={trend} /> : <span />}</div>;
 }
 export const Bar = ({ pct, bad, ok }) => <span className="fbar"><i style={{ width: `${Math.max(0, Math.min(100, pct || 0))}%`, background: bad ? 'var(--bad)' : ok ? 'var(--ok)' : 'var(--blue)' }} /></span>;
 export const Cards = ({ children, n }) => <div className="kpis rcards" style={n ? { '--n': n } : undefined}>{children}</div>;
@@ -35,7 +35,8 @@ export function Panel({ title, meta, right, children, className = '', id }) {
     {children}</div>;
 }
 
-// Fixed-width table. cols: [{h, w, n (number, right-aligned), lo (hidden on a phone), key}]; the first column takes
+// Fixed-width table. cols: [{h, w, n (number, right-aligned), lo (hidden on a phone), ell (free text: an ellipsis is
+// expected), key}]; the first column takes
 // the remaining width. rows: [{key, cells: [...], cls, onClick, title}] or a string for a group row.
 export function FixedTable({ cols, rows, empty, className = '' }) {
   if (!rows?.length) return empty ? <p className="muted small rempty">{empty}</p> : null;
@@ -43,7 +44,7 @@ export function FixedTable({ cols, rows, empty, className = '' }) {
     <thead><tr>{cols.map((c, i) => <th key={c.key || c.h || i} className={`${c.n ? 'n' : ''} ${c.lo ? 'lo' : ''}`} title={c.title}>{c.h}</th>)}</tr></thead>
     <tbody>{rows.map((r, i) => (typeof r === 'string' ? <tr key={`g${i}`} className="grp"><td colSpan={cols.length}>{r}</td></tr>
       : <tr key={r.key ?? i} className={`${r.cls || ''} ${r.onClick ? 'click' : ''}`} onClick={r.onClick} title={r.title}>
-        {r.cells.map((v, j) => <td key={j} data-h={cols[j]?.h} className={`${cols[j]?.n ? 'n' : ''} ${cols[j]?.lo ? 'lo' : ''}`}>{v}</td>)}</tr>))}</tbody></table>;
+        {r.cells.map((v, j) => <td key={j} data-h={cols[j]?.h} className={`${cols[j]?.n ? 'n' : ''} ${cols[j]?.lo ? 'lo' : ''} ${cols[j]?.ell ? 'ell' : ''}`} title={cols[j]?.ell && typeof v === 'string' ? v : undefined}>{v}</td>)}</tr>))}</tbody></table>;
 }
 
 export const Seg = ({ opts, v, set, small }) => <span className={`seg ${small ? 'small' : ''}`}>{opts.map(([k, l, title]) => (

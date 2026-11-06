@@ -20,10 +20,10 @@ const Trail = ({ x }) => (x.trail_active || x.trailed ? <Tag c="ok" title={`E+ l
   : x.best ? <Tag title="best close so far">best {rs(x.best)}</Tag> : null);
 const filterText = (f) => (f ? `${f.state}${f.state === 'HALF' ? ` (${f.slots} slots)` : ''}${f.changed ? ` · was ${f.prev}` : ''}` : '—');
 
-const POS_COLS = [{ h: 'Stock' }, { h: 'Strategy', w: 70, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 150, lo: true }, { h: 'SMA50', w: 86, n: true, lo: true }, { h: 'Last', w: 90, n: true },
-  { h: 'After costs', w: 96, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
-const ORD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 56 }, { h: 'Side', w: 60 }, { h: 'Qty', w: 56, n: true }, { h: 'Stop', w: 86, n: true }, { h: 'Risk', w: 80, n: true, lo: true }];
-const TRD_COLS = [{ h: 'Closed' }, { h: 'Book', w: 48 }, { h: 'Stock', w: 108 }, { h: 'Days', w: 50, n: true, lo: true }, { h: 'Before', w: 84, n: true, lo: true }, { h: 'Costs', w: 72, n: true, lo: true }, { h: 'After', w: 90, n: true }, { h: 'Exit', w: 96, lo: true }];
+const POS_COLS = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 150, lo: true }, { h: 'SMA50', w: 86, n: true, lo: true }, { h: 'Last', w: 90, n: true },
+  { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
+const ORD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 58 }, { h: 'Side', w: 58 }, { h: 'Qty', w: 50, n: true }, { h: 'Stop', w: 80, n: true }, { h: 'Risk', w: 72, n: true, lo: true }];
+const TRD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 62 }, { h: 'Closed', w: 150, lo: true }, { h: 'Days', w: 56, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110, lo: true }];
 
 // 📝 Paper trading: accounts A and E+ side by side, from the same start day. Simulated: no real orders.
 export default function PaperPage() {
@@ -96,7 +96,7 @@ export default function PaperPage() {
       ...buys.slice(0, f).map((o) => ({ key: `${k}b${o.symbol}`, cells: [<b>{o.symbol}</b>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, <Tag c="ok">BUY</Tag>, `~${o.qty_est}`, rs(o.stop), inr(o.risk_est)] })),
       ...(buys.length > f ? [`${NAME[k]} · +${buys.length - f} skipped · ${a.allowed ? 'slots full' : 'filter off'}`] : [])]; });
   const trdRows = allTrades.filter((t) => shown.includes(t.k)).map((t) => ({ key: t.k + t.symbol + t.in, title: `charges ${inr(t.charges)} + slippage ${inr(t.slippage)}`,
-    cells: [`${day(t.in)} → ${day(t.out)}`, <span className={`v${t.k}`}>{t.k === 'E' ? 'E+' : t.k}</span>, <b>{t.symbol}</b>, t.days, <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why] }));
+    cells: [<b>{t.symbol}</b>, <span className={`v${t.k}`}>{t.k === 'E' ? 'E+' : t.k}</span>, `${day(t.in)} → ${day(t.out)}`, t.days, <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why] }));
   const totals = shown.map((k) => accts[k].trade_totals).reduce((a, t) => ({ gross: a.gross + (t.gross || 0), costs: a.costs + (t.costs || 0), net: a.net + (t.net || 0) }), { gross: 0, costs: 0, net: 0 });
   if (trdRows.length) trdRows.push({ key: 'total', cells: [<b>Total</b>, '', '', '', <span className={cls(totals.gross)}>{signed(totals.gross)}</span>, <span className="muted">{inr(totals.costs)}</span>, <b className={cls(totals.net)}>{signed(totals.net)}</b>, ''] });
   const curve = a0.curve || {};
@@ -139,14 +139,14 @@ export default function PaperPage() {
           <FixedTable cols={POS_COLS} rows={posRows} empty="None." />
           {shown.some((k) => accts[k].notes?.length) && <div className="rnote">{shown.flatMap((k) => (accts[k].notes || []).map((x) => `📌 ${k} ${x.day}: ${x.text}`)).join(' · ')}</div>}
         </Panel>
+        <Panel id="papertrades" title="Trade log" meta={trdRows.length ? trdRows.length - 1 : 0}>
+          <FixedTable cols={TRD_COLS} rows={trdRows} empty="None yet." />
+          <div className="rnote">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and delivery charges (STT, exchange, SEBI, GST, stamp, DP). Stops are checked on the day's low after the close (no live intraday price), as in the backtest. Past results don't guarantee future returns.</div>
+        </Panel>
       </div>
       <div className="rd" style={COL}>
         <Panel title="Orders for the next open" meta={nOrders} right={<Meta>decided {day(a0.decided)}</Meta>}>
           <FixedTable cols={ORD_COLS} rows={ordRows} empty="None." />
-        </Panel>
-        <Panel id="papertrades" title="Trade log" meta={trdRows.length ? trdRows.length - 1 : 0}>
-          <FixedTable cols={TRD_COLS} rows={trdRows} empty="None yet." />
-          <div className="rnote">Fills use the day's open from the daily candle (+{d.slippage_pct}% slippage a fill) and delivery charges (STT, exchange, SEBI, GST, stamp, DP). Stops are checked on the day's low after the close (no live intraday price), as in the backtest. Past results don't guarantee future returns.</div>
         </Panel>
         <Panel title="Accounts" meta={keys.length}>
           {keys.map((k) => { const A = accts[k].account; return <Act key={k} icon={k} cls={cls(A.net)} text={<><b className={`v${k}`}>{NAME[k]}</b> · {signed(A.gross)} − {inr(A.costs)} = <b className={cls(A.net)}>{signed(A.net)}</b></>}

@@ -248,8 +248,8 @@ export default function FollowPage() {
       : live(p) ? <Tag c="ok">open · {p.days} d</Tag> : <Tag c={p.net > 0 ? 'ok' : 'bad'}>closed · {p.days} d</Tag>);
   const whyText = (p) => (p.skipped ? (p.skipped === 'cash' ? 'no cash left in the capital' : p.skipped === 'market' ? 'NIFTY under its 50-day line on the entry day' : 'no free slot')
     : `${p.reason || ''}${p.trigger ? ` · ${day(p.trigger.date)} close ${n2(p.trigger.close)}${p.trigger.gap != null ? `, next open ${p.trigger.gap > 0 ? '+' : ''}${p.trigger.gap}%` : ''}` : ''}`);
-  const bCols = [{ h: 'Stock' }, { h: 'Breakout', w: 72 }, { h: 'Screens', w: 100 }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now / exit', w: 90, n: true },
-    { h: 'Qty', w: 52, n: true, lo: true }, { h: 'Value', w: 92, n: true, lo: true }, { h: 'P&L', w: 96, n: true }, { h: '%', w: 66, n: true }, { h: 'Held', w: 56, n: true, lo: true }, { h: 'Status', w: 190 }];
+  const bCols = [{ h: 'Stock', ell: true }, { h: 'Breakout', w: 86 }, { h: 'Screens', w: 124 }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now / exit', w: 90, n: true },
+    { h: 'Qty', w: 52, n: true, lo: true }, { h: 'Value', w: 92, n: true, lo: true }, { h: 'P&L', w: 96, n: true }, { h: '%', w: 66, n: true }, { h: 'Held', w: 56, n: true, lo: true }, { h: 'Status', w: 190, ell: true }];
   const total = `Total · ${shownTaken.length} taken${rows.length - shownTaken.length ? ` · ${rows.length - shownTaken.length} skipped` : ''} · value ${inr(sumShown((p) => p.value))} · P&L ${inr(sumShown((p) => p.net))} (${sumShown((p) => p.value) ? pc(sumShown((p) => p.net) / sumShown((p) => p.value) * 100) : '—'}) · held ${shownTaken.length ? Math.round(sumShown((p) => p.days) / shownTaken.length) : 0} d avg · ${nOpen} open · ${nClosed} closed · ${nWon} won`;
   const bRows = rows.slice(0, max).map((p) => ({ key: p.symbol + p.breakout_date, cls: p.skipped ? 'dim' : '', title: whyText(p), cells: [
     <><b>{p.symbol}</b> <small>{p.entry_date ? `bought ${day(p.entry_date)}` : 'not bought yet'} · pivot {n2(p.pivot)} · stop {n2(p.stop)}{p.exit_date ? ` · sold ${day(p.exit_date)}` : ''}</small></>,
@@ -341,7 +341,7 @@ export default function FollowPage() {
             ['Sessions under water', `${dd.sessions}${dd.recovered ? ` · back ${day(dd.recovered)}` : dd.to ? ' · not back yet' : ''}`],
             ['Now from the high', <span className={ddNow < 0 ? 'down' : ''}>{inr(ddNow)}</span>],
             ['Losing trades in a row', worstStreak],
-            ['Worst trade', worstTrade ? <span className="down" title={worstTrade.reason}>{inr(worstTrade.net)} · {worstTrade.symbol} {day(worstTrade.exit_date)}</span> : '—'],
+            ['Worst trade', worstTrade ? <span className="down" title={`${worstTrade.symbol} · sold ${day(worstTrade.exit_date)} · ${worstTrade.reason}`}>{inr(worstTrade.net)} · {worstTrade.symbol}</span> : '—'],
             ['Worst month', worstMonth ? <span className={cls(worstMonth[1])}>{inr(worstMonth[1])} · {worstMonth[0]}</span> : '—']]} />
         </Panel>
         <Panel title="Where the result came from" id="follow-where" right={<span>by exit</span>}>

@@ -86,16 +86,16 @@ export default function RealPage() {
   const risk = (d.positions || []).reduce((t, x) => t + Math.max(0, x.qty * (x.last - x.stop)), 0);
   const variant = d.variant === 'E' ? 'E+' : d.variant;
   const filterState = d.filter?.state;
-  const orderCols = [{ h: 'Stock' }, { h: 'Side', w: 62 }, { h: 'Qty', w: 56, n: true }, { h: 'Stop', w: 90, n: true, lo: true }, { h: '≈ Value', w: 90, n: true }, { h: '₹ at risk', w: 86, n: true, lo: true }, { h: 'Why', w: 170, lo: true }, { h: 'Status', w: 128 }];
+  const orderCols = [{ h: 'Stock' }, { h: 'Side', w: 62 }, { h: 'Qty', w: 56, n: true }, { h: 'Stop', w: 90, n: true, lo: true }, { h: '≈ Value', w: 90, n: true }, { h: '₹ at risk', w: 86, n: true, lo: true }, { h: 'Why', w: 170, lo: true, ell: true }, { h: 'Status', w: 128 }];
   const orderRows = (d.orders || []).map((o) => ({ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.stop ? rs(o.stop) : '—',
     o.close ? inr(o.qty * o.close) : '—', o.risk ? inr(o.risk) : '—', <span className="muted">{o.why}</span>,
     <Tag c={o.sent === 'sent' ? 'ok' : o.sent === 'failed' ? 'bad' : live ? 'a' : 'w'}>{o.sent || (live ? `queued · ${ampm(s.send_time)}` : 'not sending')}</Tag>] }));
-  const posCols = [{ h: 'Stock' }, { h: 'Strategy', w: 70, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 150, lo: true }, { h: 'Last', w: 90, n: true }, { h: 'After costs', w: 96, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
+  const posCols = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 180, lo: true }, { h: 'Last', w: 90, n: true }, { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
   const posRows = (d.positions || []).map((x) => ({ key: x.symbol, title: `before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}`,
     cells: [<><b>{x.symbol}</b>{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>, <span className={`v${x.variant}`}>{x.variant === 'E' ? 'E+' : x.variant}</span>, x.qty,
       <>{day(x.in)} · {rs(x.buy)}{x.est && <small> (est.)</small>}</>, rs(x.last), <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
       <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, x.days ?? '—'] }));
-  const tradeCols = [{ h: 'Stock' }, { h: 'Bought · sold', w: 150, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Before', w: 90, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 96, n: true }, { h: 'Exit', w: 110 }];
+  const tradeCols = [{ h: 'Stock' }, { h: 'Bought · sold', w: 150, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110 }];
   const tradeRows = (d.trades || []).map((t) => ({ key: t.symbol + t.in, cells: [<b>{t.symbol}</b>, `${day(t.in)} · ${day(t.out)}`, t.qty, <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why] }));
   const capRow = <div className="rform"><div className="fr"><span>Capital<small>size {inr(d.limits?.size)} a stock (÷ {d.max_pos}) · largest order {inr(d.limits?.max_order)} ({s.max_order_pct}%) · whole shares, within the cash left</small></span>
     <span style={{ whiteSpace: 'nowrap' }}>₹<input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />{' '}

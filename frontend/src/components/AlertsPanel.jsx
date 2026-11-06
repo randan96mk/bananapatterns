@@ -159,9 +159,9 @@ export default function AlertsPanel() {
             rows={(jobs?.runs || []).map((r) => ({ key: r.id, title: r.message, cells: [r.job, r.run_date, stamp(r.started_at), <Tag c={STATUS[r.status] || ''}>{r.status}</Tag>, r.message] }))} />
         </Panel>
         <Panel title="Sent alerts" meta={log.length || null} right="the latest · the Sent alerts page has them all">
-          <FixedTable empty="Nothing sent yet." cols={[{ h: 'Text' }, { h: 'Time', w: 150 }, { h: 'Kind', w: 100, lo: true }, { h: 'Stock', w: 110 }, { h: 'OK', w: 60 }]}
-            rows={log.map((r) => ({ key: r.key, title: strip(r.text).slice(0, 220), cells: [strip(r.text).slice(0, 220), stamp(r.sent_at), r.kind, r.symbol,
-              <span className={r.ok ? 'up' : 'down'} title={r.error || ''}>{r.ok ? '✓' : `✗ ${r.error || ''}`}</span>] }))} />
+          <FixedTable empty="Nothing sent yet." cols={[{ h: 'Text', ell: true }, { h: 'Time', w: 150 }, { h: 'Kind', w: 100, lo: true }, { h: 'Stock', w: 110 }, { h: 'OK', w: 60 }]}
+            rows={log.map((r) => ({ key: r.key, title: strip(r.text).slice(0, 220), cells: [strip(r.text).split('\n')[0].slice(0, 220), stamp(r.sent_at), r.kind, r.symbol,
+              <span className={r.ok ? 'up' : 'down'} title={r.error || ''}>{r.ok ? '✓' : '✗'}</span>] }))} />
         </Panel>
       </div><div className="cols">
         <Panel title="Telegram" right={<span className={st.ready ? 'up' : 'down'}>{st.ready ? 'Ready' : 'Not ready'}</span>}>
