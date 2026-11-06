@@ -2022,6 +2022,10 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   each time it is opened, so it changes the moment a box changes, a setup is loaded or the boxes are reset. Below it a
   change log (the last 50: when, which box, what went from what to what; `app_settings` flow.changes). API
   `GET /api/flow/strategy`.
+- **Old Kite-sourced guard rows removed on start**: positions the guard had copied from Kite holdings in earlier
+  versions (source `kite`) are deleted when the app starts, so the 9:10 "Opening check · your positions", the live
+  under-stop checks and the 3:15 check no longer mention them; `guard.sync` now marks what it sets as `sync`, and
+  ✅ I bought rows (`manual`) stay.
 - **💰 Real: a morning reminder** (`real.preview_time`, default 09:00, "" = off): one Telegram line listing the day's
   queued orders before they go out at `send_time`, with the kill-switch hint; says "kill switch ON" / "OFF" when
   nothing will go out. Job `real_preview`, once a trading day.

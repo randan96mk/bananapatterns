@@ -101,3 +101,15 @@ def test_positions_api(monkeypatch):
         assert tc.put("/api/positions/X", json={"stop": 9.5}).json() == {"symbol": "X", "stop": 9.5}
         assert tc.put("/api/positions/X", json={"stop": -1}).status_code == 422
         assert tc.put("/api/positions/NOPE", json={"stop": 1}).status_code == 404
+
+
+def test_start_up_removes_positions_that_came_from_kite():
+    from backend.database.models import get_db, init_db, now_ist
+    with get_db() as conn:
+        for sym, src in (("OLD", "kite"), ("MINE", "manual")):
+            conn.execute("INSERT INTO guard_positions (symbol, qty, avg_price, first_seen, stop, stop_source, updated_at, source) "
+                         "VALUES (?, 1, 10, ?, 9, 'x', ?, ?)", (sym, now_ist(), now_ist(), src))
+    init_db()
+    assert [p["symbol"] for p in guard.positions()] == ["MINE"]
+    guard.sync({"NEW": {"qty": 2, "avg": 20.0}}, VcpConfig())
+    assert all(p["source"] in ("manual", "sync") for p in guard.positions())

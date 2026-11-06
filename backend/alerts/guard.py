@@ -45,31 +45,33 @@ def _initial_stop(conn, symbol: str, avg: float, as_of: Optional[str], vcp_cfg: 
 
 
 def sync(held: dict[str, dict], vcp_cfg: VcpConfig) -> dict:
-    """Set the followed positions (manual "I bought" entries; Kite holdings are never read). Returns {added, closed}."""
+    """Set the followed positions to `held` ({symbol: {qty, avg}}): rows it sets carry source 'sync'; "I bought"
+    rows (source 'manual') stay until removed; a 'sync' row absent from `held` is closed. Kite holdings are never
+    read (rows with source 'kite' from older versions are deleted on start). Returns {added, closed}."""
     added, closed, now = [], [], now_ist()
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
         rows = conn.execute("SELECT symbol, source FROM guard_positions").fetchall()
         known = {r["symbol"] for r in rows}
-        from_kite = {r["symbol"] for r in rows if r["source"] == "kite"}
+        synced = {r["symbol"] for r in rows if r["source"] != "manual"}
         for sym, h in held.items():
-            if sym in known:                               # a manual ("I bought") entry becomes Kite-backed
-                conn.execute("UPDATE guard_positions SET qty = ?, avg_price = ?, source = 'kite', updated_at = ? "
+            if sym in known:                               # a manual ("I bought") entry gets its quantity and price
+                conn.execute("UPDATE guard_positions SET qty = ?, avg_price = ?, source = 'sync', updated_at = ? "
                              "WHERE symbol = ?", (h["qty"], h["avg"], now, sym))
                 continue
             pivot, stop, src = _initial_stop(conn, sym, h["avg"], as_of, vcp_cfg)
             conn.execute("INSERT INTO guard_positions (symbol, qty, avg_price, first_seen, pivot, stop, stop_source, "
-                         "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         "updated_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sync')",
                          (sym, h["qty"], h["avg"], as_of or now[:10], pivot, stop, src, now))
             added.append(sym)
-        for sym in from_kite - set(held):                  # sold; manual entries stay until removed
+        for sym in synced - set(held):                     # gone; manual entries stay until removed
             conn.execute("DELETE FROM guard_positions WHERE symbol = ?", (sym,))
             closed.append(sym)
     return {"added": added, "closed": closed}
 
 
 def add_manual(symbol: str, price: float, vcp_cfg: VcpConfig) -> dict:
-    """Follow a position from the bot's "I bought" button (qty 0 until Kite holdings show it)."""
+    """Follow a position from the bot's "I bought" button (qty 0: the app never reads Kite holdings)."""
     with get_db() as conn:
         if not conn.execute("SELECT 1 FROM guard_positions WHERE symbol = ?", (symbol,)).fetchone():
             as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]

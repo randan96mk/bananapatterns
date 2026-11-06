@@ -79,7 +79,7 @@ def test_chart_and_bought_buttons(monkeypatch):
     assert p["source"] == "manual" and p["qty"] == 0 and p["stop"] == 230.0
 
 
-def test_manual_position_survives_sync_and_becomes_kite_backed():
+def test_manual_position_survives_sync_and_takes_its_quantity():
     guard.add_manual("MAN", 100.0, VcpConfig())
     guard.sync({"K": {"qty": 5, "avg": 10.0}}, VcpConfig())
     assert {p["symbol"] for p in guard.positions()} == {"MAN", "K"}
@@ -87,7 +87,7 @@ def test_manual_position_survives_sync_and_becomes_kite_backed():
     assert {p["symbol"] for p in guard.positions()} == {"MAN"}               # sold K drops; manual stays
     guard.sync({"MAN": {"qty": 7, "avg": 101.0}}, VcpConfig())
     p = guard.positions()[0]
-    assert p["source"] == "kite" and p["qty"] == 7
+    assert p["source"] == "sync" and p["qty"] == 7
 
 
 def test_commands():
