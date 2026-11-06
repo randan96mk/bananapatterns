@@ -7,6 +7,7 @@ import { inr, pct, cls, signed } from '../fmt';
 import { useIsPhone } from '../useMedia';
 import { useBeat, useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
 import * as api from '../services/api';
+import HealthStrip from './HealthStrip';
 
 // 🏠 Home: the day on one screen. Timeline, account cards with sparklines, the stats strip, today's live P&L, the
 // positions map, the market pulse, positions by book, what needs a look, risk, next up, activity. Every block
@@ -35,24 +36,30 @@ function Card({ label, value, num, sub, k, spark, stale, live }) {
   const trend = spark && spark.length > 1 ? (spark[spark.length - 1] >= spark[0] ? 'var(--ok)' : 'var(--bad)') : 'var(--muted)';
   return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''}`}>
     <div className="l">{label}{live && <span className="livedot" title="live" />}{stale && <span className="warn"> · stale</span>}</div>
-    <div className={`v mono ${k || ''}`}><span className={beat.on ? `flash-${beat.dir}` : ''}>{value}</span>
-      {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{signed(beat.delta)}</span>}</div>
-    <div className="s">{sub}</div>{spark && <Spark values={spark} color={trend} />}</div>;
+    <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span>
+      <span className={`delta ${beat.delta != null ? (beat.delta > 0 ? 'up' : 'down') : 'hide'}`}>{beat.delta != null ? signed(beat.delta) : '+0'}</span></div>
+    <div className={`s ${spark ? 'gut' : ''}`} title={typeof sub === 'string' ? sub : undefined}>{sub}</div>{spark && <Spark values={spark} color={trend} />}</div>;
 }
 
-function Timeline({ events, jobs, now, feed }) {
+function Timeline({ events, jobs, now, feed, phone }) {
   const nowT = new Date(now).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   const upcoming = (jobs || []).map((j) => ({ t: new Date(j.at).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }), kind: 'job', text: j.name }))
     .filter((j) => j.t >= '09:15' && j.t <= '15:30');
-  const all = [...(events || []), ...upcoming].filter((e) => e.t && e.t >= '09:00' && e.t <= '15:45');
+  const all = [...(events || []), ...upcoming].filter((e) => e.t && e.t >= '09:00' && e.t <= '15:45').sort((a, b) => a.t.localeCompare(b.t));
   const fresh = useNewIds('bp.tl', (events || []).map((e) => `${e.t}|${e.text}`));
   const col = { order: 'var(--ok)', failed: 'var(--bad)', signal: 'var(--blue)', exit: 'var(--bad)', job: 'var(--muted)' };
-  return <div className="htl" aria-label="Today's timeline">
+  const clusters = [];                                        // events closer than 1.5% of the day share one dot
+  all.forEach((e) => { const x = pctOfDay(e.t); const c = clusters[clusters.length - 1]; if (c && x - c.x < 1.5) { c.items.push(e); c.x2 = x; } else clusters.push({ x, x2: x, items: [e] }); });
+  const show = feed === 'live' || (nowT >= '09:15' && nowT <= '15:30');
+  return <div className={`htl ${phone ? 'phone' : ''}`} aria-label="Today's timeline">
     <div className="past" style={{ width: `${pctOfDay(nowT)}%` }} />
-    {['09:15', '10:30', '12:00', '13:30', '15:30'].map((t) => <span key={t} className="h" style={{ left: `${pctOfDay(t)}%` }}>{t}</span>)}
-    {all.map((e, i) => <span key={i} className={`ev ${fresh.includes(`${e.t}|${e.text}`) ? 'ping' : ''}`} style={{ left: `${pctOfDay(e.t)}%`, top: [4, 18, 32][i % 3] }} title={`${e.t} · ${e.text}`}>
-      <span className="txt">{e.text.length > 26 ? `${e.text.slice(0, 25)}…` : e.text}</span><i style={{ background: col[e.kind] || 'var(--muted)' }} /></span>)}
-    {feed === 'live' || (nowT >= '09:15' && nowT <= '15:30') ? <div className="now" style={{ left: `${pctOfDay(nowT)}%` }}><span>now {hm(now)}</span></div> : null}
+    {(phone ? ['09:15', '12:00', '15:30'] : ['09:15', '10:30', '12:00', '13:30', '15:30']).map((t) => <span key={t} className={`h ${t === '09:15' ? 'first' : t === '15:30' ? 'last' : ''}`} style={{ left: `${pctOfDay(t)}%` }}>{t}</span>)}
+    {clusters.map((c, i) => { const tip = c.items.map((e) => `${e.t} · ${e.text}`).join('\n'); const ping = c.items.some((e) => fresh.includes(`${e.t}|${e.text}`));
+      const kind = c.items.find((e) => e.kind !== 'job')?.kind || 'job';
+      return c.items.length > 1
+        ? <span key={i} className={`cl ${ping ? 'ping' : ''}`} style={{ left: `${(c.x + c.x2) / 2}%` }} title={tip}>{c.items.length}</span>
+        : <span key={i} className={`ev ${ping ? 'ping' : ''}`} style={{ left: `${c.x}%` }} title={tip}><i style={{ background: col[kind] || 'var(--muted)' }} /></span>; })}
+    {show && <div className="now" style={{ left: `${pctOfDay(nowT)}%` }}>{!phone && <span>now {hm(now)}</span>}</div>}
   </div>;
 }
 
@@ -71,13 +78,18 @@ function TodayCurve({ points, today }) {
 }
 
 function PositionsMap({ positions, onStock }) {
-  const rows = (positions || []).filter((p) => p.entry && p.qty).map((p) => ({ ...p, value: p.entry * p.qty }));
-  if (!rows.length) return <p className="muted small">No open positions.</p>;
-  const total = rows.reduce((a, p) => a + p.value, 0);
-  const sorted = [...rows].sort((a, b) => b.value - a.value);
+  const rows = (positions || []).filter((p) => p.entry && p.qty).map((p) => ({ ...p, value: p.entry * p.qty })).sort((a, b) => b.value - a.value);
+  if (!rows.length) return <div className="hmap"><p className="muted small">No open positions.</p></div>;
+  const total = rows.reduce((a, p) => a + p.value, 0), nRows = Math.max(1, Math.min(4, Math.round(Math.sqrt(rows.length / 2.5))));
+  const lanes = [];                                           // rows of similar total value, biggest first
+  let lane = [], sum = 0;
+  rows.forEach((p) => { lane.push(p); sum += p.value; if (sum >= total / nRows && lanes.length < nRows - 1) { lanes.push(lane); lane = []; sum = 0; } });
+  if (lane.length) lanes.push(lane);
   const shade = (x) => { const a = Math.min(1, Math.abs(x || 0) / 6); return x >= 0 ? `color-mix(in srgb, var(--ok) ${25 + 65 * a}%, var(--panel))` : `color-mix(in srgb, var(--bad) ${25 + 65 * a}%, var(--panel))`; };
-  return <div className="hmap">{sorted.map((p) => <div key={p.book + p.symbol} style={{ flexBasis: `${Math.max(9, (p.value / total) * 100)}%`, background: shade(p.pct) }} title={`${p.symbol} · ${p.account} · ${inr(p.value)} · ${pct(p.pct)}`} onClick={() => onStock(p.symbol)}>
-    <b>{p.symbol}</b><small>{pct(p.pct)}</small></div>)}</div>;
+  const short = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
+  return <div className="hmap">{lanes.map((ps, i) => <div key={i} className="lane" style={{ flex: ps.reduce((a, p) => a + p.value, 0) }}>
+    {ps.map((p) => <div key={p.book + p.symbol} className="tile" style={{ flex: p.value, background: shade(p.pct) }} title={`${p.symbol} · ${p.account} · ${inr(p.value)} · ${pct(p.pct)}`} onClick={() => onStock(p.symbol)}>
+      <b>{p.symbol}</b><small>{pct(p.pct)}</small><em>{short[p.book] || p.book}</em></div>)}</div>)}</div>;
 }
 
 function HoverCard({ p, at }) {
@@ -109,7 +121,10 @@ export default function HomePage({ onGo, onStock }) {
   const flashMap = useMemo(() => Object.fromEntries((o?.positions || []).map((p) => [p.book + p.symbol, p.pnl])), [o]);
   const flash = useFlashKeys(flashMap);
   const needs = att ? Object.entries(att).filter(([, a]) => a?.level && a.level !== 'running') : [];
-  const needIds = needs.flatMap(([tab, a]) => (a.items || []).map((x) => `${tab}|${x.text}`));
+  const needRows = useMemo(() => { const m = new Map();                 // one line per message, every page it belongs to
+    needs.forEach(([tab, a]) => (a.items || []).forEach((x) => { const r = m.get(x.text) || { text: x.text, level: x.level, tabs: [] }; if (!r.tabs.includes(tab)) r.tabs.push(tab); m.set(x.text, r); }));
+    return [...m.values()]; }, [att]);
+  const needIds = needRows.map((x) => x.text);
   const freshNeeds = useNewIds('bp.needs', needIds, 600000);
   const actIds = (o?.activity || []).map((a) => `${a.at}|${a.text}`);
   const freshAct = useNewIds('bp.act', actIds, 30000);
@@ -130,7 +145,8 @@ export default function HomePage({ onGo, onStock }) {
   const net = o.positions.reduce((a, p) => a + (p.pnl || 0), 0);
   const liveNow = o.positions.some((p) => p.live) || o.feed === 'live';
   return <>
-    {!phone && <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} />}
+    <HealthStrip onGo={onGo} compact={phone} />
+    <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} />
     <div className="kpis">
       <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} sub={`intraday ${signed(it.day_pnl)} · swing last session ${signed((o.today || 0) - (it.day_pnl || 0))}`} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow} />
       {A.real && <Card label={<>Real · Tradetron <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
@@ -140,7 +156,7 @@ export default function HomePage({ onGo, onStock }) {
       <Card label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} num={it.day_pnl} k={cls(it.day_pnl)} sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)} · loss limit ${inr(Math.max(0, -(it.realised || 0)))}/${inr(it.loss_limit)}`} spark={it.spark} stale={stale} live={o.feed === 'live'} />
       {A.follow && A.follow.breakouts > 0 && <Card label="Screens · Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.open} open · ${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}% · ${inr(A.follow.per_position)} each`} />}
     </div>
-    {!S.error && <div className="hstats">
+    {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
       <div><span className="l">Win streak</span><b className={S.win_streak ? 'up' : ''}>{S.win_streak || 0} day{S.win_streak === 1 ? '' : 's'}</b></div>
       <div><span className="l">Best day · 30 d</span><b className="up">{S.best_day ? `${signed(S.best_day.net)} · ${dayName(S.best_day.day)}` : '—'}</b></div>
       <div><span className="l">Worst day · 30 d</span><b className="down">{S.worst_day ? `${signed(S.worst_day.net)} · ${dayName(S.worst_day.day)}` : '—'}</b></div>
@@ -163,28 +179,30 @@ export default function HomePage({ onGo, onStock }) {
     </div>}
     <div className="v2grid">
       <div className="v2card"><h3>Open positions <span className="achip">{o.positions.length}</span>{liveNow && <span className="livedot" />}
-        <span className="r">net <b className={cls(net)}>{signed(net)}</b>{R.worst_case != null && <> · worst case to the stops <b className="down">{signed(R.worst_case)}</b></>}{R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" onClick={() => onGo('portfolio')}>Portfolio →</button></span></h3>
+        <span className="r">net <b className={cls(net)}>{signed(net)}</b>{!phone && R.worst_case != null && <> · worst case to the stops <b className="down">{signed(R.worst_case)}</b></>}{!phone && R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" onClick={() => onGo('portfolio')}>Portfolio →</button></span></h3>
         {!o.positions.length ? <p className="muted">No open positions.</p> : phone
-          ? <div className="v2list">{o.positions.map((p) => <div key={p.book + p.symbol} className={`it ${flash[p.book + p.symbol] ? `row-${flash[p.book + p.symbol]}` : ''}`} onClick={() => onStock(p.symbol)}>
-            <div><b>{p.symbol}</b><div className="muted small">{p.account} · {p.qty} @ {p.entry}</div></div>
-            <div style={{ marginLeft: 'auto', textAlign: 'right' }}><b className={cls(p.pnl)}>{signed(p.pnl)}</b><div className="muted small">{p.now} · {pct(p.pct)}</div></div></div>)}</div>
-          : <div className="tablewrap"><table className="grid hpos"><thead><tr><th>Stock</th><th>Strategy</th><th className="num">Qty</th><th className="num">Entry</th><th className="num">Now</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop · distance</th></tr></thead>
+          ? <div className="hprows">{groups.map(([b, ps]) => <React.Fragment key={b}><div className="grp">{BOOK[b] || b} · {ps.length} · <span className={cls(ps.reduce((a, p) => a + (p.pnl || 0), 0))}>{signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}</span></div>
+            {ps.map((p) => { const f = flash[p.book + p.symbol]; return <div key={p.book + p.symbol} className={`prow ${f ? `row-${f}` : ''}`} onClick={() => onStock(p.symbol)}>
+              <div className="n"><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <span className="tag warn" style={{ marginLeft: 6 }}>near stop</span>}<small>{p.qty} @ {p.entry} · now <span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span>{f === 'up' ? ' ▲' : f === 'down' ? ' ▼' : ''}</small></div>
+              <div className="p"><b className={`mono ${cls(p.pnl)}`}>{signed(p.pnl)}</b><small className={cls(p.pct)}>{pct(p.pct)}</small></div>
+              <div>{p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : <span className="muted small">—</span>}</div></div>; })}</React.Fragment>)}</div>
+          : <div className="tablewrap"><table className="grid hpos"><colgroup><col style={{ width: 150 }} /><col style={{ width: 170 }} /><col style={{ width: 70 }} /><col style={{ width: 96 }} /><col style={{ width: 108 }} /><col style={{ width: 112 }} /><col style={{ width: 80 }} /><col /></colgroup><thead><tr><th>Stock</th><th>Strategy</th><th className="num">Qty</th><th className="num">Entry</th><th className="num">Now</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop · distance</th></tr></thead>
             <tbody>{groups.map(([b, ps]) => <React.Fragment key={b}>
               <tr className="grp"><td colSpan={8}>{BOOK[b] || b} · {ps.length} · <span className={cls(ps.reduce((a, p) => a + (p.pnl || 0), 0))}>{signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}</span> · {inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use</td></tr>
               {ps.map((p) => { const f = flash[p.book + p.symbol]; return <tr key={p.book + p.symbol} className={f ? `row-${f}` : ''} style={{ cursor: 'pointer' }} onClick={() => onStock(p.symbol)}
                 onMouseEnter={(e) => setHover({ p, at: { x: Math.min(e.clientX + 12, window.innerWidth - 320), y: e.clientY + 12 } })} onMouseLeave={() => setHover(null)}>
                 <td><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <span className="tag warn" style={{ marginLeft: 6 }}>near stop</span>}{f === 'new' && <span className="tag" style={{ marginLeft: 6, color: 'var(--blue)' }}>new</span>}</td>
                 <td className="muted">{p.strategy}</td><td className="num mono">{p.qty}</td><td className="num mono">{p.entry}</td>
-                <td className={`num mono ${f && f !== 'new' ? `flash-${f}` : ''}`}>{p.now ?? '—'}{f === 'up' ? ' ▲' : f === 'down' ? ' ▼' : ''}</td>
-                <td className={`num mono ${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`}>{signed(p.pnl)}</td><td className={`num mono ${cls(p.pct)}`}>{pct(p.pct)}</td>
+                <td className="num mono"><span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span><span className={`tick ${f === 'up' ? 'up' : f === 'down' ? 'down' : ''}`}>{f === 'up' ? '▲' : f === 'down' ? '▼' : ''}</span></td>
+                <td className={`num mono ${cls(p.pnl)}`}><span className={f && f !== 'new' ? `flash-${f}` : ''}>{signed(p.pnl)}</span></td><td className={`num mono ${cls(p.pct)}`}>{pct(p.pct)}</td>
                 <td>{p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—'}</td></tr>; })}
             </React.Fragment>)}</tbody></table></div>}
       </div>
       <div>
         <div className="v2card"><h3>Needs a look {needIds.length > 0 && <span className="achip">{needIds.length}</span>}{freshNeeds.length > 0 && <span className="r warn">● {freshNeeds.length} new</span>}</h3>
-          {needs.length ? <div className="v2list">{needs.flatMap(([tab, a]) => (a.items || []).map((x, i) => <div key={tab + i} className={`it hact ${freshNeeds.includes(`${tab}|${x.text}`) ? 'fresh' : ''}`}>
+          {needRows.length ? <div className="v2list">{needRows.map((x) => <div key={x.text} className={`it hact ${freshNeeds.includes(x.text) ? 'fresh' : ''}`}>
             <span className={`i ${x.level === 'warn' || x.level === 'sell' ? 'warn' : ''}`}>{x.level === 'sell' ? '↓' : x.level === 'buy' ? '↑' : x.level === 'warn' ? '!' : 'i'}</span><span style={{ flex: 1 }}>{x.text}</span>
-            <button className="btn ghost small" onClick={() => onGo(tab)}>{tab}</button></div>))}</div> : <p className="muted small">Nothing right now.</p>}</div>
+            {x.tabs.map((tab) => <button key={tab} className="btn ghost small" onClick={() => onGo(tab)}>{tab}</button>)}</div>)}</div> : <p className="muted small">Nothing right now.</p>}</div>
         {!R.error && <div className="v2card"><h3>Risk now <span className="r">all books</span></h3>
           <div className="hrisk"><div><b className="mono">{inr(R.in_use)}</b><div className="muted small">in open positions{R.capital ? ` · ${Math.round(100 * R.in_use / R.capital)}% of ${inr(R.capital)} capital` : ''}</div></div>
             <div className="bar"><i style={{ width: `${R.capital ? Math.min(100, 100 * R.in_use / R.capital) : 0}%` }} /></div></div>

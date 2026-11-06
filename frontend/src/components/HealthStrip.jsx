@@ -3,7 +3,7 @@ import * as api from '../services/api';
 
 // 🩺 One dot per source: green fresh, amber stale, red failing. Compact on Home, full list with details on Data.
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
-export default function HealthStrip({ full = false, onGo }) {
+export default function HealthStrip({ full = false, compact = false, onGo }) {   // compact: only what is red or amber
   const [h, setH] = useState(null);
   useEffect(() => { const load = () => api.health().then(setH).catch(() => {}); load(); const id = setInterval(load, 120000); return () => clearInterval(id); }, []);
   if (!h) return null;
@@ -11,7 +11,7 @@ export default function HealthStrip({ full = false, onGo }) {
   if (!full) {
     return <div className="v2card" style={{ padding: '8px 12px', display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', cursor: onGo ? 'pointer' : 'default' }} onClick={() => onGo && onGo('data')} title="Open System › Data">
       <b className="small">🩺 {h.red ? <span className="down">{h.red} failing</span> : h.amber ? <span className="warn">{h.amber} stale</span> : <span className="up">all fresh</span>}</b>
-      {h.checks.map((c) => <span key={c.key} className="small" title={`${c.detail}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} <span className="muted">{c.state}</span></span>)}
+      {h.checks.filter((c) => !compact || !c.ok || c.warn).map((c) => <span key={c.key} className="small" title={`${c.detail}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} <span className="muted">{c.state}</span></span>)}
     </div>;
   }
   return <div className="panel"><h3>🩺 Health <span className="muted small">· checked {when(h.at)} · every 2 min</span></h3>
