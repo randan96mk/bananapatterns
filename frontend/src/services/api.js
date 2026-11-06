@@ -79,6 +79,7 @@ export const realReconcile = (days = 30) => req('GET', `/api/real/reconcile?days
 export const corpActions = () => req('GET', '/api/corp-actions');
 export const followRebuild = () => req('POST', '/api/follow/rebuild');
 export const followSettings = (per_position) => req('PUT', '/api/follow/settings', { per_position });
+export const followDefaults = (defaults) => req('PUT', '/api/follow/settings', { defaults });
 export const flowNode = (id, values) => req('PUT', `/api/flow/node/${id}`, values);
 export const flowMode = (mode) => req('POST', '/api/flow/mode', { mode });
 export const flowStop = () => req('POST', '/api/flow/stop');

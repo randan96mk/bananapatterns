@@ -50,6 +50,24 @@ def per_position() -> float:
     return float(v) if v else DEFAULT_PER_POSITION
 
 
+def defaults() -> dict:
+    """The saved "Try it as" selection (screens, per position, capital, max open, stop, basis, time stop, market filter)."""
+    with get_db() as conn:
+        raw = get_setting(conn, "follow.defaults")
+    try:
+        return json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+
+
+def set_defaults(d: dict) -> dict:
+    """Save (or clear with {}) the "Try it as" selection: the page opens on it next time."""
+    keep = {k: str(v) for k, v in d.items() if k in ("scr", "status", "result", "maxOpen", "capital", "stopPct", "basis", "timeN", "mkt")}
+    with get_db() as conn:
+        set_setting(conn, "follow.defaults", json.dumps(keep))
+    return keep
+
+
 def set_per_position(v: float) -> float:
     v = max(1000.0, float(v))
     with get_db() as conn:
@@ -370,7 +388,7 @@ def report(index_token: Optional[int] = None) -> dict:
     ok = [p for p in ps if not p.get("corp_action")]
     by_screen = {k: _agg([p for p in ok if k in p["screens"]]) for k in SCREENS}
     by_screen["vcp+bases"] = _agg([p for p in ok if "vcp" in p["screens"] and "bases" in p["screens"]])
-    return {"status": status(), "per_position": per_position(), "as_of": as_of, "rebuilt": rebuilt, "months": MONTHS,
+    return {"status": status(), "per_position": per_position(), "defaults": defaults(), "as_of": as_of, "rebuilt": rebuilt, "months": MONTHS,
             "total": {**_agg(ok), "peak": _peak(ok), "drawdown": _drawdown(ok)}, "by_screen": by_screen,
             "names": {**NAMES, "vcp+bases": "VCP + Bases together"}, "rows": ps, "nifty": nifty}
 
