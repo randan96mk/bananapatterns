@@ -364,8 +364,11 @@ def init_db(path: Optional[str] = None) -> None:
         dropped = _migrate_orb(conn)
         _migrate_paper(conn)
         conn.executescript(SCHEMA)
-        _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'kite'")   # kite / manual
+        _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _drop_track_record(conn)
+        n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
+        if n:
+            print(f"Removed {n} guard position(s) that came from Kite holdings (the app no longer reads them)")
     if dropped:                                         # give the ~400 MB of 5-minute candles back to the disk
         conn = sqlite3.connect(str(p), timeout=30, isolation_level=None)
         try:
