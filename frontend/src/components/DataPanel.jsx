@@ -101,6 +101,9 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       btns: <button className="btn small" onClick={backupNow}>Back up now</button> },
   ];
   const cur = steps.find((s) => s.k === sel);
+  // a box shows the short form of a health state: "snapshot 2026-10-24" → "24 Oct"
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const shortVal = (v) => (typeof v === 'string' ? v.replace(/^(snapshot|as of|to)\s+/, '').replace(/(\d{4})-(\d{2})-(\d{2})/, (m, y, mo, d) => `${+d} ${MON[+mo - 1]}`) : v);
 
   return <div className="rd">
     <Head title="Data" right={<>
@@ -116,7 +119,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
     <div className="two"><div className="cols">
       <Panel title="Data pipeline" meta="evening job" right={msg ? <span className="msg">{msg}</span> : 'in the order the evening job runs them'}>
         <div className="rpipe" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
-          {steps.map((s) => <Box key={s.k} icon={s.icon} title={s.title} outN={s.val ?? '—'} text={s.text} status={stOf(s.c)} selected={sel === s.k} onClick={() => setSel(s.k)} />)}
+          {steps.map((s) => <Box key={s.k} icon={s.icon} title={s.title} outN={shortVal(s.val ?? '—')} text={s.text} status={stOf(s.c)} selected={sel === s.k} onClick={() => setSel(s.k)} />)}
         </div>
         <div className="rsteps">{steps.map((s, i) => <div key={s.k} className={`step ${sel === s.k ? 'sel' : ''}`} onClick={() => setSel(s.k)}><span className="c">{i + 1}</span><span>{s.title}</span><span className="n mono">{s.val ?? '—'}</span></div>)}</div>
         {cur && <div className="rwrap"><b style={{ color: 'var(--text)' }}>{cur.icon} {cur.title}</b><span>{cur.long}</span>{cur.btns}</div>}

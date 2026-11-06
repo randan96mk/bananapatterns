@@ -111,7 +111,7 @@ export default function PaperPage() {
     <Head title="Paper · swing" right={<>
       <button type="button" className="btn small" onClick={() => setHow((h) => !h)}>{how ? 'Hide how it works' : 'How it works'}</button>
       <button type="button" className="btn small" onClick={() => document.getElementById('papertrades')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Trade log</button>
-      <button type="button" className="btn small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} onClick={reset}>Reset…</button></>}>
+      <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} onClick={reset}>Reset…</button></>}>
       <Seg small opts={[...keys.map((k) => [k, k === 'E' ? 'E+' : k]), ['both', 'Both']]} v={show} set={setShow} />
       <Chip title={`decided at the ${day(a0.decided)} close`}>filter tonight · {keys.map((k) => <span key={k}> <b className={`v${k}`}>{k}</b> <b className={accts[k].filter?.state === 'OFF' ? 'down' : 'up'}>{filterText(accts[k].filter)}</b></span>)}</Chip>
       <Chip>started {day(a0.start_date)} · {inr(a0.account.capital)} each · data to {day(a0.as_of)} · updated {stamp(a0.updated_at)}</Chip>
