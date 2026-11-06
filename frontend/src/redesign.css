@@ -148,3 +148,8 @@
   .rd .rtxt { font-size: 10.5px; }
   .rd .rsc { height: 120px; }
 }
+/* Intraday Flow: the canvas (boxes with their connecting lines, draggable) inside the redesign panel */
+.rd .flowcanvas { border: 0; border-radius: 0; max-height: 760px; }
+.rd .flowcanvas.full { max-height: none; }
+.rd .fnode { height: 112px; overflow: hidden; } .rd .fsum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px) { .rd .flowcanvas { display: none; } }
