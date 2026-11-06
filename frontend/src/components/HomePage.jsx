@@ -23,7 +23,7 @@ const BOOK = { real: 'Real · Tradetron', paper_A: 'Paper A', paper_E: 'Paper E+
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
 
-function Spark({ values, color = 'var(--ok)', h = 34, w = 110 }) {
+function Spark({ values, color = 'var(--ok)', h = 22, w = 300 }) {
   const v = (values || []).filter((x) => x != null);
   if (v.length < 2) return null;
   const lo = Math.min(...v), hi = Math.max(...v);
@@ -37,8 +37,8 @@ function Card({ label, value, num, sub, k, spark, stale, live }) {
   return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''}`}>
     <div className="l">{label}{live && <span className="livedot" title="live" />}{stale && <span className="warn"> · stale</span>}</div>
     <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span>
-      <span className={`delta ${beat.delta != null ? (beat.delta > 0 ? 'up' : 'down') : 'hide'}`}>{beat.delta != null ? signed(beat.delta) : '+0'}</span></div>
-    <div className={`s ${spark ? 'gut' : ''}`} title={typeof sub === 'string' ? sub : undefined}>{sub}</div>{spark && <Spark values={spark} color={trend} />}</div>;
+      {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{signed(beat.delta)}</span>}</div>
+    <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>{spark && <Spark values={spark} color={trend} />}</div>;
 }
 
 function Timeline({ events, jobs, now, feed, phone }) {
@@ -80,15 +80,15 @@ function TodayCurve({ points, today }) {
 function PositionsMap({ positions, onStock }) {
   const rows = (positions || []).filter((p) => p.entry && p.qty).map((p) => ({ ...p, value: p.entry * p.qty })).sort((a, b) => b.value - a.value);
   if (!rows.length) return <div className="hmap"><p className="muted small">No open positions.</p></div>;
-  const total = rows.reduce((a, p) => a + p.value, 0), nRows = Math.max(1, Math.min(4, Math.round(Math.sqrt(rows.length / 2.5))));
-  const lanes = [];                                           // rows of similar total value, biggest first
+  const total = rows.reduce((a, p) => a + p.value, 0), nRows = Math.max(1, Math.min(4, Math.ceil(rows.length / 5)));
+  const lanes = [];                                           // rows of similar total value, at most ~5 tiles each, biggest first
   let lane = [], sum = 0;
-  rows.forEach((p) => { lane.push(p); sum += p.value; if (sum >= total / nRows && lanes.length < nRows - 1) { lanes.push(lane); lane = []; sum = 0; } });
+  rows.forEach((p) => { lane.push(p); sum += p.value; if ((sum >= total / nRows || lane.length >= Math.ceil(rows.length / nRows)) && lanes.length < nRows - 1) { lanes.push(lane); lane = []; sum = 0; } });
   if (lane.length) lanes.push(lane);
   const shade = (x) => { const a = Math.min(1, Math.abs(x || 0) / 6); return x >= 0 ? `color-mix(in srgb, var(--ok) ${25 + 65 * a}%, var(--panel))` : `color-mix(in srgb, var(--bad) ${25 + 65 * a}%, var(--panel))`; };
   const short = { real: 'Real', paper_A: 'Paper A', paper_E: 'Paper E+', intraday: 'Intraday' };
-  return <div className="hmap">{lanes.map((ps, i) => <div key={i} className="lane" style={{ flex: ps.reduce((a, p) => a + p.value, 0) }}>
-    {ps.map((p) => <div key={p.book + p.symbol} className="tile" style={{ flex: p.value, background: shade(p.pct) }} title={`${p.symbol} · ${p.account} · ${inr(p.value)} · ${pct(p.pct)}`} onClick={() => onStock(p.symbol)}>
+  return <div className="hmap">{lanes.map((ps, i) => <div key={i} className="lane" style={{ flex: `${ps.reduce((a, p) => a + p.value, 0)} 1 0%` }}>
+    {ps.map((p) => <div key={p.book + p.symbol} className="tile" style={{ flex: `${p.value} 1 0%`, background: shade(p.pct) }} title={`${p.symbol} · ${p.account} · ${inr(p.value)} · ${pct(p.pct)}`} onClick={() => onStock(p.symbol)}>
       <b>{p.symbol}</b><small>{pct(p.pct)}</small><em>{short[p.book] || p.book}</em></div>)}</div>)}</div>;
 }
 
@@ -186,7 +186,7 @@ export default function HomePage({ onGo, onStock }) {
               <div className="n"><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <span className="tag warn" style={{ marginLeft: 6 }}>near stop</span>}<small>{p.qty} @ {p.entry} · now <span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span>{f === 'up' ? ' ▲' : f === 'down' ? ' ▼' : ''}</small></div>
               <div className="p"><b className={`mono ${cls(p.pnl)}`}>{signed(p.pnl)}</b><small className={cls(p.pct)}>{pct(p.pct)}</small></div>
               <div>{p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : <span className="muted small">—</span>}</div></div>; })}</React.Fragment>)}</div>
-          : <div className="tablewrap"><table className="grid hpos"><colgroup><col style={{ width: 150 }} /><col style={{ width: 170 }} /><col style={{ width: 70 }} /><col style={{ width: 96 }} /><col style={{ width: 108 }} /><col style={{ width: 112 }} /><col style={{ width: 80 }} /><col /></colgroup><thead><tr><th>Stock</th><th>Strategy</th><th className="num">Qty</th><th className="num">Entry</th><th className="num">Now</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop · distance</th></tr></thead>
+          : <div className="tablewrap"><table className="grid hpos"><colgroup><col style={{ width: 124 }} /><col style={{ width: 136 }} /><col style={{ width: 52 }} /><col style={{ width: 84 }} /><col style={{ width: 96 }} /><col style={{ width: 92 }} /><col style={{ width: 66 }} /><col /></colgroup><thead><tr><th>Stock</th><th>Strategy</th><th className="num">Qty</th><th className="num">Entry</th><th className="num">Now</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop · distance</th></tr></thead>
             <tbody>{groups.map(([b, ps]) => <React.Fragment key={b}>
               <tr className="grp"><td colSpan={8}>{BOOK[b] || b} · {ps.length} · <span className={cls(ps.reduce((a, p) => a + (p.pnl || 0), 0))}>{signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}</span> · {inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use</td></tr>
               {ps.map((p) => { const f = flash[p.book + p.symbol]; return <tr key={p.book + p.symbol} className={f ? `row-${f}` : ''} style={{ cursor: 'pointer' }} onClick={() => onStock(p.symbol)}

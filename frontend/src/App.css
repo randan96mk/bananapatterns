@@ -873,3 +873,14 @@ tr.row-new td, .it.row-new { background: color-mix(in srgb, var(--blue) 12%, tra
   .kpis .hcard:first-child { grid-column: 1 / -1; }
   .v2card h3 { flex-wrap: wrap; } .v2card h3 .r { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 }
+
+/* ---- Home: cards (delta chip in the corner, sparkline as a strip), map tiles, table meter ---- */
+.hcard { height: 104px; }
+.hcard .delta { position: absolute; top: 9px; right: 10px; min-width: 0; }
+.hcard .s, .hcard .s.gut { padding-right: 0; }
+.hcard .hspark { position: absolute; left: 12px; right: 12px; bottom: 8px; width: auto; height: 20px; opacity: .7; }
+@media (max-width: 760px) { .hcard { height: 92px; } .hcard .hspark { height: 16px; bottom: 6px; } }
+.hmap .lane { min-width: 0; } .hmap .tile { flex-basis: 0; }
+.hpos .stopmeter .track { width: 84px; } .hpos .stopmeter .dist { min-width: 44px; }
+.hpos .tag { padding: 0 4px; font-size: 10px; }
+.hmap { flex-wrap: nowrap; } .hmap .lane { padding: 0; align-items: stretch; min-height: 0; } .hmap .tile { min-height: 0; }
