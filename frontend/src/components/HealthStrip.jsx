@@ -6,7 +6,7 @@ import { Chip } from './ui2';
 // `chips` = one chip per check for a redesigned (.rd) panel; `onLoad` hands the whole health answer to the parent.
 const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
 const colour = (c) => (!c.ok ? 'var(--bad)' : c.warn ? 'var(--warn, #f5c518)' : 'var(--ok)');
-export default function HealthStrip({ full = false, compact = false, chips = false, onGo, onLoad }) {   // compact: only what is red or amber
+export default function HealthStrip({ full = false, compact = false, chips = false, onGo, onLoad }) {   // compact: Home's chip line
   const [h, setH] = useState(null);
   useEffect(() => {
     const load = () => api.health().then((x) => { setH(x); onLoad && onLoad(x); }).catch(() => {});
@@ -20,10 +20,17 @@ export default function HealthStrip({ full = false, compact = false, chips = fal
       {h.checks.map((c) => <Chip key={c.key} title={`${c.detail}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} · <b>{c.state}</b></Chip>)}
     </div>;
   }
+  if (compact) {                                           // Home: one line of chips; a chip's detail only on hover (title), never inline
+    return <div className="hhealth" aria-label="Health">
+      <Chip c={h.red ? 'bad' : h.amber ? 'warn' : 'ok'} dot={h.red ? 'bad' : h.amber ? 'warn' : 'ok'} title="Open System › Data" onClick={() => onGo && onGo('data')}>
+        🩺 {h.red ? `${h.red} failing` : h.amber ? `${h.amber} stale` : 'all fresh'} · checked {when(h.at)}</Chip>
+      {h.checks.map((c) => <Chip key={c.key} title={`${c.name}: ${c.state}${c.detail ? ` · ${c.detail}` : ''}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} · <b>{c.state}</b></Chip>)}
+    </div>;
+  }
   if (!full) {
     return <div className="v2card" style={{ padding: '8px 12px', display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', cursor: onGo ? 'pointer' : 'default' }} onClick={() => onGo && onGo('data')} title="Open System › Data">
       <b className="small">🩺 {h.red ? <span className="down">{h.red} failing</span> : h.amber ? <span className="warn">{h.amber} stale</span> : <span className="up">all fresh</span>}</b>
-      {h.checks.filter((c) => !compact || !c.ok || c.warn).map((c) => <span key={c.key} className="small" title={`${c.detail}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} <span className="muted">{c.state}</span></span>)}
+      {h.checks.map((c) => <span key={c.key} className="small" title={`${c.detail}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} <span className="muted">{c.state}</span></span>)}
     </div>;
   }
   return <div className="panel"><h3>🩺 Health <span className="muted small">· checked {when(h.at)} · every 2 min</span></h3>

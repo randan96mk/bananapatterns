@@ -42,6 +42,7 @@ export default function IndexTicker({ onSelect }) {
         if (i.missing) return null;
         const vix = i.symbol === 'INDIA VIX';
         const up = (i.change ?? 0) >= 0;
+        // VIX is coloured by meaning: a falling VIX is calmer (green), a rising one is fear (amber)
         const cls = vix ? (up ? 'warn' : 'up') : (up ? 'up' : 'down');
         const sign = up ? '+' : '';
         return (
@@ -50,7 +51,7 @@ export default function IndexTicker({ onSelect }) {
             <Spark points={i.spark} prev={i.prev_close} cls={cls} />
             <span className="tk-body">
               <span className="nm">{i.label}
-                {vix ? (up && i.change ? <span className="ma warnbg">fear ↑</span> : null)
+                {vix ? (i.change ? <span className={`ma ${up ? 'warnbg' : 'ok'}`} title={up ? 'VIX up on the day: more fear' : 'VIX down on the day: calmer'}>{up ? 'fear ↑' : 'calmer'}</span> : null)
                   : i.above_ma50 != null && <span className={`ma ${i.above_ma50 ? 'ok' : 'bad'}`}
                       title={`${i.above_ma50 ? 'Above' : 'Below'} its 50-day average (${fmt(i.ma50)})`}>
                       {i.above_ma50 ? '▲' : '▼'} 50d</span>}

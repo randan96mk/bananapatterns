@@ -20,7 +20,7 @@ from math import floor
 from typing import Optional
 
 from backend.config import AppConfig
-from backend.database.models import get_db, now_ist
+from backend.database.models import get_db, now_ist, set_setting
 from backend.engine import trend_breakout as tb
 from backend.logging_config.logger import setup_logger
 
@@ -188,14 +188,16 @@ def _step(st: dict, data: dict, i: int, p) -> tuple[list, list]:
             continue
         pos["prev"], pos["last"] = pos["last"], b["close"]
         if p.late_at:                                     # E+: the late trail from today's close, used tomorrow
+            before = pos.get("stop")
             new = tb.raise_late(pos, b["close"], p)
             if new is not None:
-                st.setdefault("raised", []).append(_raise_note(sym, pos, d))
+                st.setdefault("raised", []).append(_raise_note(sym, pos, d, before))
     return trades, fills
 
 
-def _raise_note(sym: str, pos: dict, d: str) -> dict:
-    return {"day": d, "symbol": sym, "stop": round(pos["stop"], 2), "best": round(pos["best"], 2), "entry": round(pos["px"], 2)}
+def _raise_note(sym: str, pos: dict, d: str, before: Optional[float] = None) -> dict:
+    return {"day": d, "symbol": sym, "stop": round(pos["stop"], 2), "best": round(pos["best"], 2), "entry": round(pos["px"], 2),
+            "from": round(before, 2) if before else None}
 
 
 def best_since(S: dict, sym: str, since: str, until: str) -> Optional[float]:
@@ -219,8 +221,9 @@ def migrate_eplus(st: dict, data: dict, p) -> list:
         if best is None:
             best = max(pos["px"], pos["last"])
         pos["best"] = best
+        before = pos.get("stop")
         if tb.raise_late(pos, best, p) is not None:
-            raised.append(_raise_note(sym, pos, st["as_of"]))
+            raised.append(_raise_note(sym, pos, st["as_of"], before))
     st["eplus_since"] = st["as_of"]
     st["name"] = tb.variant_name(st.get("variant", "E"), p.top)
     st.setdefault("notes", []).append({"day": st["as_of"], "text": f"strategy updated to E+ on {st['as_of']}: late "
@@ -250,6 +253,9 @@ def _advance(key: str, st: dict, data: dict, p) -> int:
     st["compare"] = _compare(st, data, p)
     st["updated_at"] = now_ist()
     _save(key, st, all_trades, all_fills, equity)
+    if new:                                               # the last run's raises, for Home's timeline
+        with get_db() as conn:
+            set_setting(conn, "paper.trail_raised", json.dumps({"day": st["as_of"], "account": key, "raised": st.get("raised", [])}))
     return len(new)
 
 

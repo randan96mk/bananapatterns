@@ -6,24 +6,29 @@ import { signed } from '../fmt';
 // Rules baked in: a card is a fixed-height grid (label · value · sub-line · fact | corner chart); a table has fixed
 // column widths and fixed row heights, numbers never wrap, and on a phone each row becomes a fixed-shape stacked card.
 
-export function Spark({ values, color = 'var(--ok)', h = 22, w = 300 }) {
-  const v = (values || []).filter((x) => x != null);
+// `values2` is a reference series (NIFTY rebased to the same start) drawn dashed and muted on the same scale.
+export function Spark({ values, values2, color = 'var(--ok)', h = 22, w = 300 }) {
+  const v = (values || []).filter((x) => x != null), v2 = (values2 || []).filter((x) => x != null);
   if (v.length < 2) return null;
-  const lo = Math.min(...v), hi = Math.max(...v);
-  const pts = v.map((x, i) => `${(i / (v.length - 1)) * w},${h - 3 - ((x - lo) / (hi - lo || 1)) * (h - 6)}`).join(' ');
-  return <svg className="hspark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={pts} /></svg>;
+  const all = v2.length > 1 ? [...v, ...v2] : v;
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const line = (a) => a.map((x, i) => `${(i / (a.length - 1)) * w},${h - 3 - ((x - lo) / (hi - lo || 1)) * (h - 6)}`).join(' ');
+  return <svg className="hspark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+    {v2.length > 1 && <polyline fill="none" stroke="var(--muted)" strokeWidth="1.2" strokeDasharray="3 2" opacity=".8" vectorEffect="non-scaling-stroke" points={line(v2)} />}
+    <polyline fill="none" stroke={color} strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={line(v)} /></svg>;
 }
 
 // label · value (beats when `num` changes) · sub-line · fact (bottom-left) | sparkline (bottom-right corner)
-export function Card({ label, value, num, sub, k, spark, stale, live, fact, onClick, unit = '₹' }) {   // unit: '₹' | 'n' | '%'
+// `title` is the hover tooltip for everything that did not fit the two lines; `spark2` a dashed reference series.
+export function Card({ label, value, num, sub, k, spark, spark2, stale, live, fact, onClick, unit = '₹', title }) {   // unit: '₹' | 'n' | '%'
   const beat = useBeat(num);
   const trend = spark && spark.length > 1 ? (spark[spark.length - 1] >= spark[0] ? 'var(--ok)' : 'var(--bad)') : 'var(--muted)';
-  return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''} ${onClick ? 'click' : ''}`} onClick={onClick}>
+  return <div className={`kpi2 hcard ${beat.on ? `beat-${beat.dir}` : ''} ${stale ? 'stale' : ''} ${onClick ? 'click' : ''}`} onClick={onClick} title={title}>
     <div className="l">{label}{live && <span className="livedot" title="live" />}{stale && <span className="warn"> · stale</span>}</div>
     <div className="vrow"><span className={`v mono ${k || ''} ${beat.on ? `flash-${beat.dir}` : ''}`}>{value}</span></div>
     {beat.delta != null && <span className={`delta ${beat.delta > 0 ? 'up' : 'down'}`}>{unit === '₹' ? signed(beat.delta) : `${beat.delta > 0 ? '+' : '−'}${Math.abs(+beat.delta.toFixed(2))}${unit === '%' ? '%' : ''}`}</span>}
     <div className="s" title={typeof sub === 'string' ? sub : undefined}>{sub}</div>
-    <div className="bl" title={typeof fact === 'string' ? fact : undefined}>{fact}</div>{spark ? <Spark values={spark} color={trend} /> : <span />}</div>;
+    <div className="bl" title={typeof fact === 'string' ? fact : undefined}>{fact}</div>{spark ? <Spark values={spark} values2={spark2} color={trend} /> : <span />}</div>;
 }
 export const Bar = ({ pct, bad, ok }) => <span className="fbar"><i style={{ width: `${Math.max(0, Math.min(100, pct || 0))}%`, background: bad ? 'var(--bad)' : ok ? 'var(--ok)' : 'var(--blue)' }} /></span>;
 export const Cards = ({ children, n }) => <div className="kpis rcards" style={n ? { '--n': n } : undefined}>{children}</div>;
@@ -36,14 +41,14 @@ export function Panel({ title, meta, right, children, className = '', id }) {
 }
 
 // Fixed-width table. cols: [{h, w, n (number, right-aligned), lo (hidden on a phone), ell (free text: an ellipsis is
-// expected), key}]; the first column takes
+// expected), key, onClick (a sortable header)}]; the first column takes
 // the remaining width. rows: [{key, cells: [...], cls, onClick, title}] or a string for a group row.
 export function FixedTable({ cols, rows, empty, className = '' }) {
   if (!rows?.length) return empty ? <p className="muted small rempty">{empty}</p> : null;
   return <table className={`ftab ${className}`}><colgroup>{cols.map((c, i) => <col key={c.key || c.h || i} style={i ? { width: c.w } : undefined} className={c.lo ? 'lo' : ''} />)}</colgroup>
-    <thead><tr>{cols.map((c, i) => <th key={c.key || c.h || i} className={`${c.n ? 'n' : ''} ${c.lo ? 'lo' : ''}`} title={c.title}>{c.h}</th>)}</tr></thead>
+    <thead><tr>{cols.map((c, i) => <th key={c.key || c.h || i} className={`${c.n ? 'n' : ''} ${c.lo ? 'lo' : ''} ${c.onClick ? 'sort' : ''}`} title={c.title} onClick={c.onClick}>{c.h}</th>)}</tr></thead>
     <tbody>{rows.map((r, i) => (typeof r === 'string' ? <tr key={`g${i}`} className="grp"><td colSpan={cols.length}>{r}</td></tr>
-      : <tr key={r.key ?? i} className={`${r.cls || ''} ${r.onClick ? 'click' : ''}`} onClick={r.onClick} title={r.title}>
+      : <tr key={r.key ?? i} data-key={r.key} className={`${r.cls || ''} ${r.onClick ? 'click' : ''}`} onClick={r.onClick} title={r.title}>
         {r.cells.map((v, j) => <td key={j} data-h={cols[j]?.h} className={`${cols[j]?.n ? 'n' : ''} ${cols[j]?.lo ? 'lo' : ''} ${cols[j]?.ell ? 'ell' : ''}`} title={cols[j]?.ell && typeof v === 'string' ? v : undefined}>{v}</td>)}</tr>))}</tbody></table>;
 }
 

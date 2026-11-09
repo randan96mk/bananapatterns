@@ -903,3 +903,39 @@ tr.row-new td, .it.row-new { background: color-mix(in srgb, var(--blue) 12%, tra
 .hcard .delta { position: absolute; top: 8px; right: 10px; }
 @media (max-width: 760px) { .hcard { grid-template-columns: 1fr 70px; height: 104px; } .hcard .hspark { width: 70px; height: 22px; } .hcard .vrow .v { font-size: 19px; } }
 .hcard { grid-template-columns: 1fr clamp(64px, 28%, 96px); } .hcard .l { padding-right: 50px; } .hcard .hspark { width: 100%; }
+
+/* ---- Home inside the redesign shell (.rd): the old Home blocks lose their own margins (the grid gap spaces them) ---- */
+.rd .kpis, .rd .hstats, .rd .htl, .rd .hthree { margin-bottom: 0; }
+.rd .hthree { gap: 12px; } .rd .hthree .rpanel { min-height: 190px; }
+.hhealth { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.hhealth .rchip { cursor: default; } .hhealth .rchip.click { cursor: pointer; }
+.hhealth .rchip .dot { width: 7px; height: 7px; border-radius: 50%; } .hhealth .rchip .dot.ok { background: var(--ok); } .hhealth .rchip .dot.warn { background: var(--warn); } .hhealth .rchip .dot.bad { background: var(--bad); }
+.htl .ev, .htl .cl { cursor: pointer; } .htl .cl.on, .htl .ev.on i { box-shadow: 0 0 0 2px var(--blue); } .htl .cl.on { border-color: var(--blue); background: var(--blue-bg); }
+.htl .tlf { position: absolute; left: 8%; top: 5px; font-size: 10px; color: var(--blue); font-weight: 600; white-space: nowrap; background: var(--panel); padding: 0 6px; border-radius: 8px; border: 1px solid var(--blue); cursor: pointer; z-index: 2; }
+.hthree .hbody { padding: 10px 14px; }
+.hcurve-box { height: 110px; } .hcurve-box p { margin: 0; }
+.hlegend { height: 18px; line-height: 18px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hcontrib { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 6px 0 4px; background: var(--bg); }
+.hcontrib i { display: block; height: 100%; min-width: 0; } .hcontrib i + i { margin-left: 2px; }
+.hcontrib i.g { background: var(--ok); } .hcontrib i.r { background: var(--bad); }
+.hcl { display: flex; gap: 10px; height: 18px; line-height: 18px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.hcl span { white-space: nowrap; } .hcl b { color: var(--text); }
+.rd .hmap { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: 46px; gap: 3px; height: 144px; overflow: hidden; align-content: start; }
+.rd .hmap .tile { position: relative; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 0; padding: 4px 7px; }
+.rd .hmap .tile b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; } .rd .hmap .tile small { font-size: 10.5px; }
+.rd .hmap .tile em { position: absolute; top: 3px; right: 6px; font-size: 9.5px; opacity: .75; }
+.rd .hmap .tile.more { background: var(--bg); color: var(--muted); } .rd .hmap p { grid-column: 1 / -1; margin: 0; }
+.htl .now span.flip { left: auto; right: 6px; }
+.rd .v2list .it .t { white-space: nowrap; }
+.hmini div { height: 60px; overflow: hidden; }
+.hmini b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 18px; }
+.hmini small { display: block; font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 14px; }
+.rd .hfilters { display: flex; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); align-items: center; flex-wrap: wrap; }
+.rd .hfilters .seg:last-child { margin-left: auto; }
+.rd .ftab th.sort { cursor: pointer; color: var(--text); } .rd .ftab th.sort:hover { text-decoration: underline; }
+.rd .ftab td .trail { font-size: 11px; color: var(--muted); } .rd .ftab td .trail.on { color: var(--purple); }
+.rd .rnote .linkbtn { padding: 0; font-size: 11px; margin-left: 6px; }
+.rd .rbody .v2list .it { padding: 7px 0; }
+.rd .v2list .ell1 { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd .rbody .hrisk { margin-bottom: 10px; }
+@media (max-width: 760px) { .hhealth .rchip { white-space: normal; } .rd .hfilters .seg:last-child { margin-left: 0; } .hmini div { height: 56px; } }
