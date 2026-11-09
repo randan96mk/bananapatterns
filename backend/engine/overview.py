@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from backend.config import IST, AppConfig
-from backend.database.models import get_db
+from backend.database.models import get_db, get_setting
 
 NAMES = {"real": "Real", "paper_E": "Paper E+", "intraday": "Intraday"}
 STRATEGY = {"E": "Trend Breakout E+"}
@@ -89,13 +89,113 @@ def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optiona
                     "pct": r.get("pct"), "stop": r.get("stop"), "stop_dist": _stop_dist(r.get("now"), r.get("stop"), p["side"]),
                     "opened": f"{today} {p.get('entry_t', '')}".strip()})
     _mark_live(out, quote)
+    _add_trail(config, out, real_s, paper_s)
+    _add_results(out, today)
     return sorted(out, key=lambda x: (x["book"] != "intraday", x["opened"]), reverse=False)
+
+
+RESULTS_DAYS = 7                                  # a results date this close shows on the position and the strip
+
+
+def _trail(x: dict, p) -> Optional[dict]:
+    """The E+ late trail of one swing row (real.summary / paper._one: buy, best, trailed): active once the best close
+    is +late_at % over the entry; pct_to_arm = the % still needed (0 when active); raised = the trail set the stop."""
+    if not p or not p.late_at or not x.get("buy"):
+        return None
+    best = x.get("best") or max(x["buy"], x.get("last") or x["buy"])
+    gain = (best / x["buy"] - 1) * 100
+    active = bool(x.get("trail_active")) or best >= x["buy"] * (1 + p.late_at / 100)
+    return {"active": active, "pct_to_arm": 0.0 if active else round(max(0.0, p.late_at - gain), 2),
+            "best": round(best, 2) if x.get("best") else None, "raised": bool(x.get("trailed"))}
+
+
+def _add_trail(config: AppConfig, rows: list, real_s: dict, paper_s: dict) -> None:
+    """trail on the real and paper rows (null for intraday); a failure leaves the key null."""
+    from backend.engine import trend_breakout as tb
+    for r in rows:
+        r["trail"] = None
+    try:
+        src = {("real", x["symbol"]): (x, tb.rules(config, "E")) for x in real_s.get("positions") or []}
+        for k, a in (paper_s.get("accounts") or {}).items():
+            try:
+                p = tb.rules(config, k)
+            except KeyError:
+                continue
+            src.update({(f"paper_{k}", x["symbol"]): (x, p) for x in a.get("positions") or []})
+        for r in rows:
+            hit = src.get((r["book"], r["symbol"]))
+            if hit:
+                r["trail"] = _trail(*hit)
+    except Exception:
+        pass
+
+
+def _results(symbols: set, today: str) -> dict:
+    """{symbol: {date, sessions}}: the next results (board meeting) within RESULTS_DAYS calendar days, from the
+    stored NSE events calendar."""
+    from backend.ingest import events
+    if not symbols:
+        return {}
+    return events.upcoming_results(today, sorted(symbols), horizon_days=RESULTS_DAYS)
+
+
+def _add_results(rows: list, today: str) -> None:
+    for r in rows:
+        r["results_date"] = r["results_in"] = None
+    try:
+        res = _results({r["symbol"] for r in rows if r["book"] != "intraday"}, today)
+        for r in rows:
+            x = res.get(r["symbol"]) if r["book"] != "intraday" else None
+            if x:
+                r["results_date"], r["results_in"] = x["date"], x["sessions"]
+    except Exception:
+        pass
+
+
+def results_held(pos: list) -> list:
+    """stats.results_held: [{symbol, date}] of the held swing names (real + paper E+, unique) reporting within
+    RESULTS_DAYS."""
+    seen, out = set(), []
+    for p in pos:
+        if p.get("book") in ("real", "paper_E") and p.get("results_date") and p["symbol"] not in seen:
+            seen.add(p["symbol"])
+            out.append({"symbol": p["symbol"], "date": p["results_date"]})
+    return sorted(out, key=lambda x: (x["date"], x["symbol"]))
 
 
 def _equity(table: str, account: Optional[str] = None) -> list:
     q = f"SELECT day, equity FROM {table}" + (" WHERE account = ?" if account else "") + " ORDER BY day"
     with get_db() as conn:
         return [(r[0], r[1]) for r in conn.execute(q, (account,) if account else ())]
+
+
+def spark_nifty(table: str, account: Optional[str], capital: float, n: int = 30) -> list:
+    """NIFTY 50 rebased to the account's starting capital (the first stored session = capital), the last n sessions:
+    the same days as the account's spark, so both fit one scale. [] without a NIFTY column."""
+    q = f"SELECT day, nifty FROM {table}" + (" WHERE account = ?" if account else "") + " ORDER BY day"
+    with get_db() as conn:
+        rows = [(r[0], r[1]) for r in conn.execute(q, (account,) if account else ())]
+    base = next((v for _, v in rows if v), None)
+    if not base or not capital:
+        return []
+    return [round(v / base * capital, 2) if v else None for _, v in rows[-n:]]
+
+
+def drift(pos: list, cv: dict, n: int = 30) -> dict:
+    """Real vs Paper E+ over the names held in both books today, and the last n sessions of real equity minus paper
+    equity (on the days both have)."""
+    real = {p["symbol"]: p for p in pos if p.get("book") == "real"}
+    paper = {p["symbol"]: p for p in pos if p.get("book") == "paper_E"}
+    both = sorted(set(real) & set(paper))
+    rp = round(float(sum(real[s].get("pnl") or 0 for s in both)), 2)
+    pp = round(float(sum(paper[s].get("pnl") or 0 for s in both)), 2)
+    diff = round(rp - pp, 2)
+    spark = []
+    if cv.get("real") and cv.get("paper_E"):
+        pe = dict(cv["paper_E"])
+        spark = [round(e - pe[d], 2) for d, e in cv["real"] if d in pe][-n:]
+    return {"names": len(both), "symbols": both, "real_pnl": rp, "paper_pnl": pp, "diff": diff,
+            "pct_of_paper": round(diff / pp * 100, 2) if pp else None, "spark": spark}
 
 
 def curves(config: AppConfig) -> dict:
@@ -244,9 +344,30 @@ def risk(config: AppConfig, accts: dict, pos: list) -> dict:
             "loss_used": round(max(0.0, -(it.get("realised") or 0)), 2), "loss_limit": it.get("loss_limit")}
 
 
-def timeline(today: str) -> list:
-    """What happened today, in order: real orders, intraday signals, intraday exits, real exits."""
+def trail_events(today: str, config: Optional[AppConfig] = None) -> list:
+    """The stops the E+ late trail raised at the last evening run, when that run was today (real.evening and
+    paper._advance keep the last run's list in app_settings real.trail_raised / paper.trail_raised)."""
+    t = (config.alerts.job_time if config else "18:30") or "18:30"
     ev = []
+    with get_db() as conn:
+        saved = {k: get_setting(conn, f"{k}.trail_raised") for k in ("real", "paper")}
+    for k, raw in saved.items():
+        x = json.loads(raw) if raw else {}
+        if x.get("day") != today:
+            continue
+        for r in x.get("raised") or []:
+            arrow = f"{r['from']:,.0f} → {r['stop']:,.0f}" if r.get("from") else f"→ {r['stop']:,.0f}"
+            ev.append({"t": t, "kind": "trail", "text": ("" if k == "real" else "Paper E+ · ") + f"stop raised {r['symbol']} {arrow}"})
+    return ev
+
+
+def timeline(today: str, config: Optional[AppConfig] = None) -> list:
+    """What happened today, in order: real orders, intraday signals, intraday exits, real exits, raised stops."""
+    ev = []
+    try:
+        ev += trail_events(today, config)
+    except Exception:
+        pass
     with get_db() as conn:
         for r in conn.execute("SELECT created_at, symbol, action, qty, status FROM real_orders WHERE day = ? ORDER BY id", (today,)):
             ev.append({"t": r[0][11:16], "kind": "order" if r[4] == "sent" else "failed", "text": f"{r[2]} {r[1]} {r[3] or ''} · {r[4]}"})
@@ -260,6 +381,22 @@ def timeline(today: str) -> list:
             x = json.loads(p)
             ev.append({"t": "09:16", "kind": "exit", "text": f"Real · {x['symbol']} sold · {x.get('why') or ''} · {signed_rs(x.get('net'))}"})
     return sorted([e for e in ev if e.get("t")], key=lambda e: e["t"])
+
+
+def next_open(config: AppConfig, pos: list) -> Optional[dict]:
+    """Tomorrow's open from the latest saved evening scan (trend_breakout.run_scan): the E+ filter, the free real
+    slots (max_pos minus the open real positions), every buy in scan order and how many fit. None without a scan."""
+    from backend.engine import trend_breakout as tb
+    sc = tb.saved_scan()
+    if not sc:
+        return None
+    held = sum(1 for p in pos if p.get("book") == "real")
+    free = max(0, config.breakout.max_pos - held)
+    buys = [{"symbol": b["symbol"], "qty": b.get("qty"), "value": b.get("value"), "stop_pct": b.get("stop_pct"),
+             "risk": b.get("risk")} for b in sc.get("buys") or []]
+    return {"as_of": sc.get("as_of"), "filter": ((sc.get("filters") or {}).get("E") or {}).get("state"),
+            "slots_free": free, "buys": buys, "total_value": round(sum(b["value"] or 0 for b in buys), 2),
+            "fits": min(len(buys), free)}
 
 
 def signed_rs(v) -> str:
@@ -299,7 +436,55 @@ def pulse(config: AppConfig, live: dict) -> dict:
                     out.update(advancing=up, declining=dn, above_vwap_pct=round(100 * above / n, 1), live=True)
         except Exception:
             pass
+    if not out.get("live"):
+        out["live"] = False
+        try:
+            out.update(close_pulse(config))
+        except Exception:
+            pass
     out["signals_live"] = sum(1 for x in rows.values() if x.get("status") in ("open", "pending"))
+    return out
+
+
+def close_pulse(config: AppConfig) -> dict:
+    """The pulse from the last session's daily candles while the intraday feed is off: advancing / declining =
+    close vs the previous close over the Nifty 500, above_vwap_pct with the day's typical price (high + low + close)
+    / 3 standing in for VWAP (proxy: true), NIFTY 50 vs its typical price; as_of_close: true."""
+    from backend.database.models import get_candles
+    from backend.engine import trend_breakout as tb
+    from backend.ingest import universe as uni
+    u = uni.resolve_universe(config.ingest)
+    tokens = {s["instrument_token"]: s["symbol"] for s in u["stocks"]}
+    idx = next((i["instrument_token"] for i in u["indices"] if i["symbol"] == tb.INDEX), None)
+    if not tokens:
+        return {}
+    with get_db() as conn:
+        last = conn.execute("SELECT MAX(date) FROM candles_daily WHERE instrument_token IN (%s)" % ",".join("?" * len(tokens)),
+                            list(tokens)).fetchone()[0]
+        if not last:
+            return {}
+        since = (date.fromisoformat(last) - timedelta(days=10)).isoformat()
+        rows = conn.execute("SELECT instrument_token, date, high, low, close FROM candles_daily WHERE instrument_token IN (%s) "
+                            "AND date >= ? ORDER BY instrument_token, date" % ",".join("?" * len(tokens)), list(tokens) + [since]).fetchall()
+        nb = get_candles(conn, idx, limit=1) if idx is not None else []
+    by = defaultdict(list)
+    for r in rows:
+        by[r[0]].append(r)
+    up = dn = above = n = 0
+    for tok, cs in by.items():
+        if cs[-1][1] != last or len(cs) < 2:
+            continue
+        n += 1
+        c, prev = cs[-1][4], cs[-2][4]
+        up += c > prev
+        dn += c < prev
+        above += c > (cs[-1][2] + cs[-1][3] + cs[-1][4]) / 3
+    out = {"as_of_close": True, "proxy": True, "close_date": last}
+    if n:
+        out.update(advancing=up, declining=dn, above_vwap_pct=round(100 * above / n, 1))
+    if nb:
+        b = nb[-1]
+        out["nifty_vs_vwap"] = "above" if b["close"] > (b["high"] + b["low"] + b["close"]) / 3 else "below"
     return out
 
 
@@ -356,14 +541,23 @@ def overview(config: AppConfig, quote=None) -> dict:
                          "last_day": last, "day_pnl": dp.get("real", {}).get(last, 0.0) if last else 0.0,
                          "positions": len(real_s.get("positions") or []),
                          "on": bool(real_s.get("enabled") and not real_s.get("killed")), "variant": real_s.get("variant"),
-                         "spark": [e for _, e in cv.get("real", [])[-30:]]}
+                         "spark": [e for _, e in cv.get("real", [])[-30:]], "spark_nifty": []}
+        try:                                                # NIFTY 50 on the Real card's scale (starting capital)
+            first_cap = a["capital"] - sum(x["amount"] for x in real_s.get("deposits") or [])
+            accts["real"]["spark_nifty"] = spark_nifty("real_equity", None, first_cap)
+        except Exception:
+            pass
     for k, a in (paper_s.get("accounts") or {}).items():
         b = f"paper_{k}"
         last = cv.get(b, [])[-1][0] if cv.get(b) else None
         accts[b] = {"name": NAMES.get(b, b), "value": a["account"]["value"], "net": a["account"]["net"],
                     "return": a["account"]["return"], "nifty": a["account"].get("nifty"), "last_day": last,
                     "day_pnl": dp.get(b, {}).get(last, 0.0) if last else 0.0, "positions": len(a.get("positions") or []),
-                    "spark": [e for _, e in cv.get(b, [])[-30:]]}
+                    "spark": [e for _, e in cv.get(b, [])[-30:]], "spark_nifty": []}
+        try:
+            accts[b]["spark_nifty"] = spark_nifty("paper_equity", k, a["account"].get("capital") or 0)
+        except Exception:
+            pass
     st = live.get("stats") or {}
     accts["intraday"] = {"name": "Intraday · paper", "day_pnl": round((st.get("realised") or 0) + (st.get("unrealised") or 0), 2),
                          "realised": st.get("realised"), "open_pnl": st.get("unrealised"), "trades": st.get("trades"),
@@ -387,12 +581,18 @@ def overview(config: AppConfig, quote=None) -> dict:
     today_pnl = round(sum(a.get("day_pnl") or 0 for a in accts.values()), 2)
     extra = {}
     for name, fn in (("stats", lambda: stats(config, dp, today)), ("risk", lambda: risk(config, accts, pos)),
-                     ("timeline", lambda: timeline(today)), ("pulse", lambda: pulse(config, live)),
-                     ("today_curve", lambda: _sample_today(today_pnl, now))):
+                     ("timeline", lambda: timeline(today, config)), ("pulse", lambda: pulse(config, live)),
+                     ("today_curve", lambda: _sample_today(today_pnl, now)), ("drift", lambda: drift(pos, cv)),
+                     ("next_open", lambda: next_open(config, pos))):
         try:
             extra[name] = fn()
         except Exception as exc:                      # one broken panel never blanks Home
-            extra[name] = {"error": str(exc)[:120]} if name != "timeline" and name != "today_curve" else []
+            extra[name] = {"error": str(exc)[:120]} if name not in ("timeline", "today_curve", "next_open") else ([] if name != "next_open" else None)
+    try:
+        if isinstance(extra.get("stats"), dict):
+            extra["stats"]["results_held"] = results_held(pos)
+    except Exception:
+        pass
     try:
         extra["facts"] = facts(config, accts, pos, extra.get("today_curve") or [], (extra.get("stats") or {}).get("signals_today") or 0)
     except Exception as exc:

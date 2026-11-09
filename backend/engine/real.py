@@ -125,6 +125,8 @@ def evening(config: AppConfig, data: Optional[dict] = None) -> dict:
                     t.update(sell=round(b["open"], 2), gross=round(t["gross"] + diff, 2), net=round(t["net"] + diff, 2), est=False)
                     conn.execute("UPDATE real_trades SET payload = ? WHERE id = ?", (json.dumps(t), r[0]))
         raised = late_trail(st, data, day, _rules(config, "E"))
+        with get_db() as conn:                            # the last evening's raises, for Home's timeline
+            set_setting(conn, "real.trail_raised", json.dumps({"day": day, "raised": raised}))
         _plan(st, data, i, config)
         st["as_of"] = day
         eq = _value(st)
@@ -147,9 +149,10 @@ def late_trail(st: dict, data: dict, day: str, p) -> list:
     for sym, pos in st["positions"].items():
         best = best_since(data["S"], sym, pos["d"], day)
         pos["best"] = max(pos.get("best") or pos["px"], best or pos["px"])
+        before = pos.get("stop")
         if tb.raise_late(pos, pos["best"], p) is not None:
             raised.append({"day": day, "symbol": sym, "stop": round(pos["stop"], 2), "best": round(pos["best"], 2),
-                           "entry": round(pos["px"], 2)})
+                           "entry": round(pos["px"], 2), "from": round(before, 2) if before else None})
     if not st.get("eplus_since"):
         st["eplus_since"] = day
         st.setdefault("notes", []).append({"day": day, "text": f"strategy updated to E+ on {day}: late trail "
