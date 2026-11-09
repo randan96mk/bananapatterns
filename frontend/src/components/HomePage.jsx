@@ -5,50 +5,61 @@ import { useAttention } from './AttentionStrip';
 import { StopMeter } from './ui';
 import { inr, pct, cls, signed } from '../fmt';
 import { useIsPhone } from '../useMedia';
-import { useBeat, useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
+import { useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
 import * as api from '../services/api';
 import HealthStrip from './HealthStrip';
-import { Card, Spark, Bar } from './ui2';
+import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, Chip } from './ui2';
 
-// 🏠 Home: the day on one screen. Timeline, account cards with sparklines, the stats strip, today's live P&L, the
-// positions map, the market pulse, positions by book, what needs a look, risk, next up, activity. Every block
-// pulses when its own data changes (heartbeat.js).
+// 🏠 Home: the day on one screen. Timeline (click a dot: Activity filters to it), account cards with sparklines (Real
+// and Paper E+ against NIFTY), the stats strip, today's live P&L with who made the day, the positions map (one tile
+// per name), the market pulse, positions by book with filters and sortable headers, the next open's buys, what needs
+// a look, risk, next up, activity. Every block pulses when its own data changes (heartbeat.js).
 const at12 = (s) => {
   if (!s) return '';
   const d = new Date(s.length > 10 ? s : `${s}T00:00:00`);
   return isNaN(d) ? s : d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 };
 const hm = (s) => (s ? new Date(s).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true }) : '');
-const dayName = (s) => (s ? new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
+const hm24of = (s) => (s && s.length > 10 ? new Date(s).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }) : '');
+const dayName = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
+const weekday = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }) : '');
+const sgn = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
+const shortName = (s) => (s && s.length > 9 ? `${s.slice(0, 8)}…` : s || '');       // the same shortening everywhere on the map
 const BOOK = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday' };
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
+const evId = (e) => `${e.t}|${e.text}`;
+const remembered = (key, dflt) => { try { return localStorage.getItem(key) || dflt; } catch { return dflt; } };
+const remember = (key, v) => { try { localStorage.setItem(key, v); } catch { /* private mode */ } };
 
-function Timeline({ events, jobs, now, feed, phone }) {
+function Timeline({ events, jobs, now, feed, phone, picked, onPick }) {
   const nowT = new Date(now).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   const upcoming = (jobs || []).map((j) => ({ t: new Date(j.at).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }), kind: 'job', text: j.name }))
     .filter((j) => j.t >= '09:15' && j.t <= '15:30');
   const all = [...(events || []), ...upcoming].filter((e) => e.t && e.t >= '09:00' && e.t <= '15:45').sort((a, b) => a.t.localeCompare(b.t));
-  const fresh = useNewIds('bp.tl', (events || []).map((e) => `${e.t}|${e.text}`));
-  const col = { order: 'var(--ok)', failed: 'var(--bad)', signal: 'var(--blue)', exit: 'var(--bad)', job: 'var(--muted)' };
+  const fresh = useNewIds('bp.tl', (events || []).map(evId));
+  const col = { order: 'var(--ok)', failed: 'var(--bad)', signal: 'var(--blue)', exit: 'var(--bad)', trail: 'var(--purple)', job: 'var(--muted)' };
   const clusters = [];                                        // events closer than 1.5% of the day share one dot
   all.forEach((e) => { const x = pctOfDay(e.t); const c = clusters[clusters.length - 1]; if (c && x - c.x < 1.5) { c.items.push(e); c.x2 = x; } else clusters.push({ x, x2: x, items: [e] }); });
   const show = feed === 'live' || (nowT >= '09:15' && nowT <= '15:30');
+  const isOn = (c) => picked && c.items.some((e) => picked.includes(evId(e)));
+  const pick = (c) => onPick(isOn(c) ? null : c.items.filter((e) => e.kind !== 'job'));
   return <div className={`htl ${phone ? 'phone' : ''}`} aria-label="Today's timeline">
     <div className="past" style={{ width: `${pctOfDay(nowT)}%` }} />
     {(phone ? ['09:15', '12:00', '15:30'] : ['09:15', '10:30', '12:00', '13:30', '15:30']).map((t) => <span key={t} className={`h ${t === '09:15' ? 'first' : t === '15:30' ? 'last' : ''}`} style={{ left: `${pctOfDay(t)}%` }}>{t}</span>)}
-    {clusters.map((c, i) => { const tip = c.items.map((e) => `${e.t} · ${e.text}`).join('\n'); const ping = c.items.some((e) => fresh.includes(`${e.t}|${e.text}`));
+    {clusters.map((c, i) => { const tip = c.items.map((e) => `${e.t} · ${e.text}`).join('\n'); const ping = c.items.some((e) => fresh.includes(evId(e)));
       const kind = c.items.find((e) => e.kind !== 'job')?.kind || 'job';
       return c.items.length > 1
-        ? <span key={i} className={`cl ${ping ? 'ping' : ''}`} style={{ left: `${(c.x + c.x2) / 2}%` }} title={tip}>{c.items.length}</span>
-        : <span key={i} className={`ev ${ping ? 'ping' : ''}`} style={{ left: `${c.x}%` }} title={tip}><i style={{ background: col[kind] || 'var(--muted)' }} /></span>; })}
-    {show && <div className="now" style={{ left: `${pctOfDay(nowT)}%` }}>{!phone && <span>now {hm(now)}</span>}</div>}
+        ? <span key={i} className={`cl ${ping ? 'ping' : ''} ${isOn(c) ? 'on' : ''}`} style={{ left: `${(c.x + c.x2) / 2}%` }} title={`${tip}\nclick: show these in Activity`} onClick={() => pick(c)}>{c.items.length}</span>
+        : <span key={i} className={`ev ${ping ? 'ping' : ''} ${isOn(c) ? 'on' : ''}`} style={{ left: `${c.x}%` }} title={`${tip}\nclick: show it in Activity`} onClick={() => pick(c)}><i style={{ background: col[kind] || 'var(--muted)' }} /></span>; })}
+    {show && <div className="now" style={{ left: `${pctOfDay(nowT)}%` }}>{!phone && <span className={pctOfDay(nowT) > 85 ? 'flip' : ''}>now {hm(now)}</span>}</div>}
+    {picked && !phone && <span className="tlf" onClick={() => onPick(null)}>showing {picked.length} event{picked.length === 1 ? '' : 's'} in Activity · ✕</span>}
   </div>;
 }
 
 function TodayCurve({ points, today }) {
   const v = (points || []).map((p) => p[1]);
-  if (v.length < 2) return <p className="muted small">The live curve draws from the open, one point a minute{today != null ? ` · now ${signed(today)}` : ''}.</p>;
+  if (v.length < 2) return <div className="hcurve-box"><p className="muted small">The live curve draws from the open, one point a minute{today != null ? ` · now ${signed(today)}` : ''}.</p></div>;
   const lo = Math.min(0, ...v), hi = Math.max(0, ...v), w = 600, h = 110;
   const y = (x) => h - 6 - ((x - lo) / (hi - lo || 1)) * (h - 12);
   const peakI = v.indexOf(Math.max(...v));
@@ -57,22 +68,42 @@ function TodayCurve({ points, today }) {
     <svg className="hcurve" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"><line x1="0" x2={w} y1={y(0)} y2={y(0)} stroke="var(--border)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
       <polyline fill="none" stroke="var(--ok)" strokeWidth="2" vectorEffect="non-scaling-stroke" points={seg(0, peakI)} />
       {peakI < v.length - 1 && <polyline fill="none" stroke="var(--bad)" strokeWidth="2" vectorEffect="non-scaling-stroke" points={seg(peakI, v.length - 1)} />}</svg>
-    <div className="muted small">{hm(points[0][0])} → {hm(points[points.length - 1][0])} · peak <b className={cls(v[peakI])}>{signed(v[peakI])}</b> at {hm(points[peakI][0])} · now <b className={cls(v[v.length - 1])}>{signed(v[v.length - 1])}</b></div></>;
+    <div className="hlegend">{hm(points[0][0])} → {hm(points[points.length - 1][0])} · peak <b className={cls(v[peakI])}>{signed(v[peakI])}</b> at {hm(points[peakI][0])} · now <b className={cls(v[v.length - 1])}>{signed(v[v.length - 1])}</b></div></>;
 }
 
-function PositionsMap({ positions, onStock }) {
-  const rows = (positions || []).filter((p) => p.entry && p.qty).map((p) => ({ ...p, value: p.entry * p.qty })).sort((a, b) => b.value - a.value);
-  if (!rows.length) return <div className="hmap"><p className="muted small">No open positions.</p></div>;
-  const total = rows.reduce((a, p) => a + p.value, 0), nRows = Math.max(1, Math.min(4, Math.ceil(rows.length / 5)));
-  const lanes = [];                                           // rows of similar total value, at most ~5 tiles each, biggest first
-  let lane = [], sum = 0;
-  rows.forEach((p) => { lane.push(p); sum += p.value; if ((sum >= total / nRows || lane.length >= Math.ceil(rows.length / nRows)) && lanes.length < nRows - 1) { lanes.push(lane); lane = []; sum = 0; } });
-  if (lane.length) lanes.push(lane);
+// Who made the day: one segment per position by |P&L| (green / red), then the top winners and the losers. Fixed height.
+function Contribution({ positions }) {
+  const rows = (positions || []).filter((p) => p.pnl).sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl));
+  const total = rows.reduce((a, p) => a + Math.abs(p.pnl), 0);
+  const byName = new Map();                                 // the legend is per name: a name held in two books is one entry
+  rows.forEach((p) => { const m = byName.get(p.symbol) || { symbol: p.symbol, pnl: 0, books: [] }; m.pnl += p.pnl; m.books.push(p.account); byName.set(p.symbol, m); });
+  const names = [...byName.values()];
+  const win = names.filter((p) => p.pnl > 0).sort((a, b) => b.pnl - a.pnl), lose = names.filter((p) => p.pnl < 0).sort((a, b) => a.pnl - b.pnl);
+  const item = (p) => <span key={p.symbol} title={`${p.symbol} · ${p.books.join(' + ')} · ${sgn(p.pnl)}`}><b>{shortName(p.symbol)}</b> <span className={cls(p.pnl)}>{sgn(p.pnl)}</span></span>;
+  return <>
+    <div className="hcontrib" aria-label="Contribution to today's P&L">{rows.filter((p) => p.pnl > 0).concat(rows.filter((p) => p.pnl < 0)).map((p) => <i key={p.book + p.symbol} className={p.pnl > 0 ? 'g' : 'r'} style={{ width: `${total ? (100 * Math.abs(p.pnl)) / total : 0}%` }} title={`${p.symbol} · ${signed(p.pnl)}`} />)}</div>
+    <div className="hcl">{win.length ? <>{win.slice(0, 4).map(item)}{win.length > 4 && <span>+{win.length - 4} more</span>}</> : <span>no winners yet</span>}</div>
+    <div className="hcl">{lose.length ? <>{lose.slice(0, 4).map(item)}{lose.length > 4 && <span>+{lose.length - 4} more</span>}</> : <span>no losers</span>}</div></>;
+}
+
+// One tile per name. A name in both Real and Paper E+ is one tile tagged R·P (value = the sum, P&L % = Real's).
+function PositionsMap({ positions, onStock, view }) {
+  const tagOf = { real: 'R', paper_E: 'P', intraday: 'I' };
+  const merged = new Map();
+  (positions || []).filter((p) => p.entry && p.qty && (view === 'both' || (view === 'real' ? p.book === 'real' : p.book === 'paper_E'))).forEach((p) => {
+    const m = merged.get(p.symbol) || { symbol: p.symbol, value: 0, books: [], pct: null, accounts: [] };
+    m.value += p.entry * p.qty; m.books.push(p.book); m.accounts.push(`${p.account} ${pct(p.pct)}`);
+    if (m.pct == null || p.book === 'real') m.pct = p.pct;
+    merged.set(p.symbol, m);
+  });
+  const rows = [...merged.values()].sort((a, b) => b.value - a.value);
+  if (!rows.length) return <div className="hmap"><p className="muted small">No open positions{view === 'both' ? '' : ` in ${view === 'real' ? 'Real' : 'Paper E+'}`}.</p></div>;
   const shade = (x) => { const a = Math.min(1, Math.abs(x || 0) / 6); return x >= 0 ? `color-mix(in srgb, var(--ok) ${25 + 65 * a}%, var(--panel))` : `color-mix(in srgb, var(--bad) ${25 + 65 * a}%, var(--panel))`; };
-  const short = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday' };
-  return <div className="hmap">{lanes.map((ps, i) => <div key={i} className="lane" style={{ flex: `${ps.reduce((a, p) => a + p.value, 0)} 1 0%` }}>
-    {ps.map((p) => <div key={p.book + p.symbol} className="tile" style={{ flex: `${p.value} 1 0%`, background: shade(p.pct) }} title={`${p.symbol} · ${p.account} · ${inr(p.value)} · ${pct(p.pct)}`} onClick={() => onStock(p.symbol)}>
-      <b>{p.symbol}</b><small>{pct(p.pct)}</small><em>{short[p.book] || p.book}</em></div>)}</div>)}</div>;
+  const order = ['real', 'paper_E', 'intraday'];
+  const MAX = 14, more = rows.length - MAX;
+  return <div className="hmap">{rows.slice(0, more > 0 ? MAX : rows.length).map((p) => <div key={p.symbol} className="tile" style={{ background: shade(p.pct) }} title={`${p.symbol} · ${p.accounts.join(' · ')} · ${inr(p.value)}`} onClick={() => onStock(p.symbol)}>
+      <b>{shortName(p.symbol)}</b><small>{pct(p.pct)}</small><em>{order.filter((b) => p.books.includes(b)).map((b) => tagOf[b]).join('·')}</em></div>)}
+    {more > 0 && <div className="tile more" title={rows.slice(MAX).map((p) => `${p.symbol} ${pct(p.pct)}`).join('\n')}><b>+{more} more</b></div>}</div>;
 }
 
 function HoverCard({ p, at }) {
@@ -92,6 +123,16 @@ function HoverCard({ p, at }) {
     <div className="muted small">last 60 sessions · click the row for the full chart</div></div>;
 }
 
+// The trail column: not armed yet → how far to arming; armed → active, and whether the stop was raised.
+const trailCell = (p) => {
+  const t = p.trail;
+  if (!t) return <span className="trail">—</span>;
+  if (t.active) return <span className="trail on" title={t.best != null ? `best ${t.best}` : undefined}>🪜 trail active{t.raised ? ' · stop raised' : ''}</span>;
+  return <span className="trail" title={`${pct(p.pct)} so far · the trail arms at +${Math.round((p.pct || 0) + (t.pct_to_arm || 0))}%`}>🪜 {pct(p.pct, 1).replace('%', '')} · arms at +{Math.round((p.pct || 0) + (t.pct_to_arm || 0))}</span>;
+};
+const FILTERS = { all: () => true, near: (p) => p.stop_dist != null && p.stop_dist <= 5, trail: (p) => p.trail?.active, results: (p) => p.results_in != null && p.results_in <= 5 };
+const SORTS = { pnl: (p) => p.pnl ?? -Infinity, pct: (p) => p.pct ?? -Infinity, stop: (p) => p.stop_dist ?? Infinity };
+
 export default function HomePage({ onGo, onStock }) {
   const o = useLive('overview');
   const stamp = useLiveStamp('overview');
@@ -100,6 +141,12 @@ export default function HomePage({ onGo, onStock }) {
   const phone = useIsPhone();
   const [hover, setHover] = useState(null);
   const [toasts, setToasts] = useState([]);
+  const [mapView, setMapViewRaw] = useState(() => remembered('bp.home.map', 'both'));
+  const setMapView = (v) => { setMapViewRaw(v); remember('bp.home.map', v); };
+  const [filter, setFilter] = useState('all');
+  const [view, setView] = useState('all');
+  const [sort, setSort] = useState({ key: 'pnl', dir: 'desc' });
+  const [picked, setPicked] = useState(null);                 // timeline events chosen for the Activity panel
   const stale = useStale(stamp, 180000, o?.feed === 'live');
   const flashMap = useMemo(() => Object.fromEntries((o?.positions || []).map((p) => [p.book + p.symbol, p.pnl])), [o]);
   const flash = useFlashKeys(flashMap);
@@ -121,90 +168,137 @@ export default function HomePage({ onGo, onStock }) {
       setToasts((t) => [...t, { id, text: `${a.account} · ${a.text}`, at: a.at }]);
     });
   }, [freshAct, o]);
-  if (!o) return <div className="v2card muted">Loading…</div>;
-  const A = o.accounts || {}, it = A.intraday || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {}, F = o.facts || {};
+  if (!o) return <div className="rd"><Panel><p className="muted small rempty">Loading…</p></Panel></div>;
+  const A = o.accounts || {}, it = A.intraday || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {}, F = o.facts || {}, D = o.drift, N = o.next_open;
   const hm24 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '');
-  const factPaper = (f) => f && <>vs NIFTY <b className={cls(f.vs_nifty)}>{f.vs_nifty != null ? `${f.vs_nifty > 0 ? '+' : ''}${f.vs_nifty} pts` : '—'}</b>{f.filter ? <> · filter <b className={/ON|FULL/.test(f.filter) ? 'up' : 'muted'}>{f.filter}</b></> : null}</>;
+  const ptsOf = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v} pts`);
+  const niftyPts = (acc) => {                                 // return since start against NIFTY rebased to the same start, in points
+    if (acc.nifty != null) return +(acc.return - acc.nifty).toFixed(1);
+    const n = acc.spark_nifty || [];
+    return n.length > 1 && acc.return != null ? +(acc.return - ((n[n.length - 1] / n[0]) - 1) * 100).toFixed(1) : null;
+  };
   const jobs = (sch?.jobs || []).filter((j) => !j.skip);
-  const groups = ['real', 'paper_E', 'intraday'].map((b) => [b, o.positions.filter((p) => p.book === b)]).filter(([, ps]) => ps.length);
-  const net = o.positions.reduce((a, p) => a + (p.pnl || 0), 0);
-  const liveNow = o.positions.some((p) => p.live) || o.feed === 'live';
-  return <>
-    <HealthStrip onGo={onGo} compact={phone} />
-    <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} />
-    <div className="kpis">
-      <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} sub={`intraday ${signed(it.day_pnl)} · swing last session ${signed((o.today || 0) - (it.day_pnl || 0))}`} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
-        fact={F.today ? <>high <b className="up">{signed(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{signed(F.today.low)}</b> {hm24(F.today.low_at)}</> : <span className="muted">high / low from the open</span>} />
+  const positions = o.positions || [];
+  const net = positions.reduce((a, p) => a + (p.pnl || 0), 0);
+  const liveNow = positions.some((p) => p.live) || o.feed === 'live';
+  const swing = (o.today || 0) - (it.day_pnl || 0);
+
+  // the positions table: view (which books), quick filter, sort inside each book
+  const realSyms = new Map(positions.filter((p) => p.book === 'real').map((p) => [p.symbol, p.qty]));
+  const paperSyms = new Map(positions.filter((p) => p.book === 'paper_E').map((p) => [p.symbol, p.qty]));
+  const differs = (p) => (p.book === 'real' ? !paperSyms.has(p.symbol) || paperSyms.get(p.symbol) !== p.qty : p.book === 'paper_E' ? !realSyms.has(p.symbol) || realSyms.get(p.symbol) !== p.qty : false);
+  const inView = (p) => (view === 'all' ? true : view === 'real' ? p.book === 'real' : view === 'paper' ? p.book === 'paper_E' : differs(p));
+  const counts = { near: positions.filter(FILTERS.near).length, trail: positions.filter(FILTERS.trail).length, results: positions.filter(FILTERS.results).length };
+  const shown = positions.filter(inView).filter(FILTERS[filter] || FILTERS.all);
+  const sorter = (a, b) => { const d = SORTS[sort.key](a) - SORTS[sort.key](b); return sort.dir === 'desc' ? -d : d; };
+  const groups = ['real', 'paper_E', 'intraday'].map((b) => [b, shown.filter((p) => p.book === b).sort(sorter)]).filter(([, ps]) => ps.length);
+  const flip = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
+  const arrow = (key) => (sort.key === key ? (sort.dir === 'desc' ? ' ▾' : ' ▴') : '');
+  const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strategy', w: 120, lo: true, ell: true }, { h: 'Qty', w: 56, n: true }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now', w: 90, n: true },
+    { h: `P&L${arrow('pnl')}`, key: 'pnl', w: 92, n: true, onClick: () => flip('pnl'), title: 'sort by P&L' }, { h: `%${arrow('pct')}`, key: 'pct', w: 76, n: true, onClick: () => flip('pct'), title: 'sort by %' },
+    { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 200, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 180, lo: true }];
+  const posRows = groups.flatMap(([b, ps]) => [
+    `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use`,
+    ...ps.map((p) => { const f = flash[p.book + p.symbol]; return { key: p.book + p.symbol, cls: f ? `row-${f}` : '', onClick: () => onStock(p.symbol), cells: [
+      <><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near stop</Tag>}{p.results_in != null && p.results_in <= 3 && <Tag c="w" title={`results on ${dayName(p.results_date)} (${p.results_in} session${p.results_in === 1 ? '' : 's'})`}>⚠ results {weekday(p.results_date)}</Tag>}{f === 'new' && <Tag c="a">new</Tag>}</>,
+      <span className="muted">{p.strategy}</span>, p.qty, p.entry,
+      <><span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span><span className={`tick ${f === 'up' ? 'up' : f === 'down' ? 'down' : ''}`}>{f === 'up' ? '▲' : f === 'down' ? '▼' : ''}</span></>,
+      <span className={`${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`}>{signed(p.pnl)}</span>, <span className={cls(p.pct)}>{pct(p.pct)}</span>,
+      p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—',
+      trailCell(p)] }; })]);
+  const hoverOn = (e, p) => !phone && setHover({ p, at: { x: Math.min(e.clientX + 12, window.innerWidth - 320), y: e.clientY + 12 } });
+
+  // activity, optionally filtered to the timeline's picked events (same minute, or the same text)
+  const pickedTimes = picked ? picked.map((e) => e.t) : null, pickedTexts = picked ? picked.map((e) => e.text) : null;
+  const activity = picked ? (o.activity || []).filter((a) => pickedTimes.includes(hm24of(a.at)) || pickedTexts.some((t) => a.text.includes(t) || t.includes(a.text))) : (o.activity || []);
+  const heldResults = S.results_held || [];
+  const closeDate = P.close_date || P.as_of;
+  const pulseWhen = P.live ? 'live' : closeDate ? `${dayName(closeDate)} close` : '';
+  const vsNifty = (f) => (f?.vs_nifty != null ? ptsOf(f.vs_nifty) : '—');
+  const cardTip = (parts) => parts.filter(Boolean).join(' · ');
+
+  return <div className="rd">
+    <HealthStrip onGo={onGo} compact />
+    <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} picked={picked ? picked.map(evId) : null} onPick={(items) => setPicked(items && items.length ? items : null)} />
+    <Cards n={A.follow && A.follow.breakouts > 0 ? 5 : 4}>
+      <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
+        sub={<>intraday <span className={cls(it.day_pnl)}>{sgn(it.day_pnl)}</span> · swing <span className={cls(swing)}>{sgn(swing)}</span></>}
+        fact={F.today ? <>high <b className="up">{sgn(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{sgn(F.today.low)}</b></> : <span className="muted">high / low from the open</span>}
+        title={cardTip([`intraday ${signed(it.day_pnl)}`, `swing last session ${signed(swing)}`, F.today && `high ${signed(F.today.high)} at ${hm24(F.today.high_at)}`, F.today && `low ${signed(F.today.low)} at ${hm24(F.today.low_at)}`])} />
       {A.real && <Card label={<>Real <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
-        sub={<><span className={cls(A.real.day_pnl)}>{signed(A.real.day_pnl)}</span> last session · {A.real.positions} positions · {pct(A.real.return)} since start</>} spark={A.real.spark} stale={stale}
-        fact={F.real && <><b>{inr(F.real.in_use)}</b> in use · {F.real.slots} of {F.real.max_pos} slots<Bar pct={F.real.capital ? 100 * F.real.in_use / F.real.capital : 0} /></>} />}
-      {A.paper_E && <Card label="Paper E+ · swing" value={pct(A.paper_E.return)} num={A.paper_E.value} k={cls(A.paper_E.return)} sub={<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{signed(A.paper_E.day_pnl)}</span> last session · {A.paper_E.positions} open</>} spark={A.paper_E.spark} fact={factPaper(F.paper_E)} />}
-      <Card label={`Intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`} value={signed(it.day_pnl)} num={it.day_pnl} k={cls(it.day_pnl)} sub={`${it.open || 0} open · ${it.trades || 0} trades · risk ${inr(it.at_risk)}`} spark={it.spark} stale={stale} live={o.feed === 'live'}
-        fact={F.intraday && <>loss limit <b>{inr(F.intraday.loss_used)}</b> / {inr(F.intraday.loss_limit)}{F.intraday.per_day ? <> · signals <b>{F.intraday.signals}</b> of {F.intraday.per_day}</> : null}<Bar pct={F.intraday.loss_limit ? 100 * F.intraday.loss_used / F.intraday.loss_limit : 0} bad /></>} />
-      {A.follow && A.follow.breakouts > 0 && <Card label="Screens · Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}% · ${inr(A.follow.per_position)} each`}
-        fact={F.follow && <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{signed(F.follow.open_pnl)}</b> · buys next open <b>{F.follow.pending ?? 0}</b></>} />}
-    </div>
+        sub={<><span className={cls(A.real.day_pnl)}>{sgn(A.real.day_pnl)}</span> last session{F.real ? <> · {F.real.slots} of {F.real.max_pos} slots</> : <> · {A.real.positions} positions</>}</>} spark={A.real.spark} spark2={A.real.spark_nifty} stale={stale}
+        fact={<>vs NIFTY <b className={cls(niftyPts(A.real))}>{ptsOf(niftyPts(A.real))}</b> since start</>}
+        title={cardTip([`${A.real.positions} positions`, `${pct(A.real.return)} since start`, F.real && `${inr(F.real.in_use)} in use of ${inr(F.real.capital)}`, F.real && `${F.real.slots} of ${F.real.max_pos} slots`, 'corner chart: Real (solid) against NIFTY (dashed) since start'])} />}
+      {A.paper_E && <Card label="Paper E+ · swing" value={pct(A.paper_E.return)} num={A.paper_E.value} k={cls(A.paper_E.return)} spark={A.paper_E.spark} spark2={A.paper_E.spark_nifty}
+        sub={<>{inr(A.paper_E.value)} · <span className={cls(A.paper_E.day_pnl)}>{sgn(A.paper_E.day_pnl)}</span> last session</>}
+        fact={<>filter <b className={/ON|FULL/.test(F.paper_E?.filter || '') ? 'up' : 'muted'}>{F.paper_E?.filter || '—'}</b> · vs NIFTY <b className={cls(F.paper_E?.vs_nifty)}>{vsNifty(F.paper_E)}</b></>}
+        title={cardTip([`${inr(A.paper_E.value)}`, `${signed(A.paper_E.day_pnl)} last session`, `${A.paper_E.positions} open`, F.paper_E?.filter && `filter ${F.paper_E.filter}`, `vs NIFTY ${vsNifty(F.paper_E)} since start`, 'corner chart: Paper E+ (solid) against NIFTY (dashed)'])} />}
+      {A.real && A.paper_E && <Card label="Real vs Paper E+" value={D && D.names ? signed(D.diff) : '—'} num={D?.diff} k={D && D.names ? cls(D.diff) : ''} spark={D?.spark}
+        sub={D && D.names ? `same ${D.names} name${D.names === 1 ? '' : 's'} · fills and slippage` : 'no name held in both books yet'}
+        fact={D && D.names && D.pct_of_paper != null ? <>drift <Bar pct={Math.abs(D.pct_of_paper)} bad={D.diff < 0} ok={D.diff >= 0} /> <b className={cls(D.diff)}>{pct(D.pct_of_paper)}</b> of paper P&amp;L</> : <span className="muted">—</span>}
+        title={D && D.names ? cardTip([`Real ${signed(D.real_pnl)} vs Paper E+ ${signed(D.paper_pnl)} on ${D.symbols.join(', ')}`, `difference ${signed(D.diff)}`, D.pct_of_paper != null && `${pct(D.pct_of_paper)} of the paper P&L`]) : 'What live execution costs: Real against Paper E+ on the names both books hold'} />}
+      {A.follow && A.follow.breakouts > 0 && <Card label="Screens · Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}%`}
+        fact={F.follow ? <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{sgn(F.follow.open_pnl)}</b> · {F.follow.pending ?? 0} pending</> : <span className="muted">—</span>}
+        title={cardTip([`${A.follow.breakouts} breakouts`, `won ${A.follow.win_rate ?? '—'}%`, `${inr(A.follow.per_position)} each`, F.follow && `${F.follow.open} open at ${signed(F.follow.open_pnl)}`, F.follow && `${F.follow.pending ?? 0} buys at the next open`, A.follow.as_of && `as of ${dayName(A.follow.as_of)}`])} />}
+    </Cards>
     {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
+      <div title={cardTip([`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`, `${it.trades || 0} trades`, F.intraday && `loss limit ${inr(F.intraday.loss_used)} / ${inr(F.intraday.loss_limit)}`])}><span className="l">Intraday · open · risk</span><b className={cls(it.day_pnl)}>{sgn(it.day_pnl)}<span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {it.open || 0} open · {inr(it.at_risk)}</span></b></div>
       <div><span className="l">Win streak</span><b className={S.win_streak ? 'up' : ''}>{S.win_streak || 0} day{S.win_streak === 1 ? '' : 's'}</b></div>
       <div><span className="l">Best day · 30 d</span><b className="up">{S.best_day ? `${signed(S.best_day.net)} · ${dayName(S.best_day.day)}` : '—'}</b></div>
       <div><span className="l">Worst day · 30 d</span><b className="down">{S.worst_day ? `${signed(S.worst_day.net)} · ${dayName(S.worst_day.day)}` : '—'}</b></div>
       <div><span className="l">Days since a loss</span><b>{S.days_since_loss ?? '—'}</b></div>
       <div><span className="l">Signals today · hit rate 30 d</span><b>{S.signals_today ?? 0} · {S.hit_rate_30d != null ? `${S.hit_rate_30d}%` : '—'}</b></div>
       <div><span className="l">Real orders this week</span><b className={S.orders_failed_week ? 'down' : ''}>{S.orders_week ?? 0} · {S.orders_failed_week ?? 0} failed</b></div>
+      <div title={`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'} · ${it.trades || 0} trades today`}><span className="l">Intraday loss limit · signals</span><b>{inr(F.intraday?.loss_used ?? R.loss_used)} / {inr(F.intraday?.loss_limit ?? it.loss_limit)}{F.intraday?.per_day ? <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {F.intraday.signals} of {F.intraday.per_day}</span> : null}</b></div>
     </div>}
     {!phone && <div className="hthree">
-      <div className="v2card"><h3>Today, live <span className="r">all books · one point a minute</span></h3><TodayCurve points={o.today_curve} today={o.today} /></div>
-      <div className="v2card"><h3>Positions map <span className="r">size = value · colour = P&amp;L</span></h3><PositionsMap positions={o.positions} onStock={onStock} /></div>
-      <div className="v2card"><h3>Market pulse <span className="r">{P.live ? 'live' : P.as_of ? `${dayName(P.as_of)} close` : ''}</span></h3>
-        <div className="hmini">
-          <div><span className="l">Regime</span><b className={P.regime === 'correction' ? 'down' : P.regime === 'uptrend' ? 'up' : ''}>{P.regime || '—'}</b></div>
-          <div><span className="l">Breadth · above 50-day</span><b>{P.breadth_50 != null ? `${P.breadth_50}%` : '—'}</b></div>
-          <div><span className="l">Distribution days</span><b className={P.dist_days >= 5 ? 'down' : ''}>{P.dist_days ?? '—'}</b></div>
-          <div><span className="l">Breakouts working</span><b>{P.breakouts?.rate != null ? `${P.breakouts.working ?? ''}/${P.breakouts.total ?? ''} · ${Math.round(P.breakouts.rate * 100)}%` : '—'}</b></div>
-          <div><span className="l">Advancing · declining</span><b>{P.advancing != null ? <><span className="up">{P.advancing}</span> · <span className="down">{P.declining}</span></> : <span className="muted">feed off</span>}</b></div>
-          <div><span className="l">Above VWAP · NIFTY</span><b>{P.above_vwap_pct != null ? `${P.above_vwap_pct}% · ` : ''}{P.nifty_vs_vwap ? <span className={P.nifty_vs_vwap === 'above' ? 'up' : 'down'}>{P.nifty_vs_vwap} VWAP</span> : <span className="muted">—</span>}</b></div>
-        </div></div>
+      <Panel title="Today, live" right="all books · one point a minute"><div className="hbody"><TodayCurve points={o.today_curve} today={o.today} /><Contribution positions={positions} /></div></Panel>
+      <Panel title="Positions map" right={<Seg small opts={[['both', 'Both'], ['real', 'Real'], ['paper', 'Paper']]} v={mapView} set={setMapView} />}>
+        <div className="hbody"><PositionsMap positions={positions} onStock={onStock} view={mapView} /><div className="hlegend" style={{ marginTop: 6 }}>biggest first · colour = P&amp;L · R·P = held in Real and Paper E+</div></div></Panel>
+      <Panel title="Market pulse" right={pulseWhen} id="pulse">
+        <div className="hbody"><div className="hmini">
+          <div title={P.proxy ? 'from the daily candles (a proxy for the live feed)' : undefined}><span className="l">Regime</span><b className={P.regime === 'correction' ? 'down' : P.regime === 'uptrend' ? 'up' : ''}>{P.regime || '—'}</b><small>{P.dist_days != null ? `${P.dist_days} distribution day${P.dist_days === 1 ? '' : 's'}` : 'distribution days —'}</small></div>
+          <div><span className="l">Breadth · above 50-day</span><b>{P.breadth_50 != null ? `${P.breadth_50}%` : '—'}</b><small>{P.breadth_50 != null ? 'share of the universe' : 'needs the evening scan'}</small></div>
+          <div><span className="l">Breakouts working</span><b>{P.breakouts?.rate != null ? `${P.breakouts.working ?? ''} / ${P.breakouts.total ?? ''} · ${Math.round(P.breakouts.rate * 100)}%` : '—'}</b><small>last sessions</small></div>
+          <div title={P.proxy ? 'proxy: from the last close, not the live feed' : undefined}><span className="l">Advancing · declining</span><b>{P.advancing != null ? <><span className="up">{P.advancing}</span> · <span className="down">{P.declining}</span></> : <span className="muted">{P.live ? '—' : 'feed off'}</span>}</b><small>{P.live ? 'live' : P.as_of_close && closeDate ? `at close ${dayName(closeDate)}` : ''}</small></div>
+          <div title={P.proxy ? 'proxy: from the last close, not the live feed' : undefined}><span className="l">Above VWAP · NIFTY</span><b>{P.above_vwap_pct != null ? `${P.above_vwap_pct}% · ` : ''}{P.nifty_vs_vwap ? <span className={P.nifty_vs_vwap === 'above' ? 'up' : 'down'}>{P.nifty_vs_vwap}</span> : <span className="muted">—</span>}</b><small>{P.live ? 'live' : P.as_of_close && closeDate ? `at close ${dayName(closeDate)}` : ''}</small></div>
+          <div title={heldResults.map((r) => `${r.symbol} · ${dayName(r.date)}`).join('\n') || 'no held name reports this week'}><span className="l">Results this week · held</span><b className={heldResults.length ? 'warn' : ''}>{heldResults.length}</b><small>{heldResults.length ? `${heldResults.slice(0, 2).map((r) => `${r.symbol} ${weekday(r.date)}`).join(' · ')}${heldResults.length > 2 ? ` · +${heldResults.length - 2}` : ''}` : 'none of the held names'}</small></div>
+        </div></div></Panel>
     </div>}
-    <div className="v2grid">
-      <div className="v2card"><h3>Open positions <span className="achip">{o.positions.length}</span>{liveNow && <span className="livedot" />}
-        <span className="r">net <b className={cls(net)}>{signed(net)}</b>{!phone && R.worst_case != null && <> · worst case to the stops <b className="down">{signed(R.worst_case)}</b></>}{!phone && R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" onClick={() => onGo('portfolio')}>Portfolio →</button></span></h3>
-        {!o.positions.length ? <p className="muted">No open positions.</p> : phone
-          ? <div className="hprows">{groups.map(([b, ps]) => <React.Fragment key={b}><div className="grp">{BOOK[b] || b} · {ps.length} · <span className={cls(ps.reduce((a, p) => a + (p.pnl || 0), 0))}>{signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}</span></div>
-            {ps.map((p) => { const f = flash[p.book + p.symbol]; return <div key={p.book + p.symbol} className={`prow ${f ? `row-${f}` : ''}`} onClick={() => onStock(p.symbol)}>
-              <div className="n"><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <span className="tag warn" style={{ marginLeft: 6 }}>near stop</span>}<small>{p.qty} @ {p.entry} · now <span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span>{f === 'up' ? ' ▲' : f === 'down' ? ' ▼' : ''}</small></div>
-              <div className="p"><b className={`mono ${cls(p.pnl)}`}>{signed(p.pnl)}</b><small className={cls(p.pct)}>{pct(p.pct)}</small></div>
-              <div>{p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : <span className="muted small">—</span>}</div></div>; })}</React.Fragment>)}</div>
-          : <div className="tablewrap"><table className="grid hpos"><colgroup><col style={{ width: 124 }} /><col style={{ width: 136 }} /><col style={{ width: 52 }} /><col style={{ width: 84 }} /><col style={{ width: 96 }} /><col style={{ width: 92 }} /><col style={{ width: 66 }} /><col /></colgroup><thead><tr><th>Stock</th><th>Strategy</th><th className="num">Qty</th><th className="num">Entry</th><th className="num">Now</th><th className="num">P&amp;L</th><th className="num">%</th><th>Stop · distance</th></tr></thead>
-            <tbody>{groups.map(([b, ps]) => <React.Fragment key={b}>
-              <tr className="grp"><td colSpan={8}>{BOOK[b] || b} · {ps.length} · <span className={cls(ps.reduce((a, p) => a + (p.pnl || 0), 0))}>{signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}</span> · {inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use</td></tr>
-              {ps.map((p) => { const f = flash[p.book + p.symbol]; return <tr key={p.book + p.symbol} className={f ? `row-${f}` : ''} style={{ cursor: 'pointer' }} onClick={() => onStock(p.symbol)}
-                onMouseEnter={(e) => setHover({ p, at: { x: Math.min(e.clientX + 12, window.innerWidth - 320), y: e.clientY + 12 } })} onMouseLeave={() => setHover(null)}>
-                <td><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <span className="tag warn" style={{ marginLeft: 6 }}>near stop</span>}{f === 'new' && <span className="tag" style={{ marginLeft: 6, color: 'var(--blue)' }}>new</span>}</td>
-                <td className="muted">{p.strategy}</td><td className="num mono">{p.qty}</td><td className="num mono">{p.entry}</td>
-                <td className="num mono"><span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span><span className={`tick ${f === 'up' ? 'up' : f === 'down' ? 'down' : ''}`}>{f === 'up' ? '▲' : f === 'down' ? '▼' : ''}</span></td>
-                <td className={`num mono ${cls(p.pnl)}`}><span className={f && f !== 'new' ? `flash-${f}` : ''}>{signed(p.pnl)}</span></td><td className={`num mono ${cls(p.pct)}`}>{pct(p.pct)}</td>
-                <td>{p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—'}</td></tr>; })}
-            </React.Fragment>)}</tbody></table></div>}
-      </div>
-      <div>
-        <div className="v2card"><h3>Needs a look {needIds.length > 0 && <span className="achip">{needIds.length}</span>}{freshNeeds.length > 0 && <span className="r warn">● {freshNeeds.length} new</span>}</h3>
-          {needRows.length ? <div className="v2list">{needRows.map((x) => <div key={x.text} className={`it hact ${freshNeeds.includes(x.text) ? 'fresh' : ''}`}>
+    <div className="two">
+      <Panel title="Open positions" meta={positions.length} right={<>{liveNow && <span className="livedot" />}net <b className={`mono ${cls(net)}`}>{signed(net)}</b>{!phone && R.worst_case != null && <> · worst case <b className="mono down">{signed(R.worst_case)}</b></>}{!phone && R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" style={{ padding: 0 }} onClick={() => onGo('portfolio')}>Portfolio →</button></>}>
+        <div className="hfilters">
+          <Seg small opts={[['all', 'All'], ['near', `Within 5% of stop (${counts.near})`], ['trail', `Trail armed (${counts.trail})`], ['results', `Results this week (${counts.results})`]]} v={filter} set={setFilter} />
+          <Seg small opts={[['all', 'Real + Paper'], ['real', 'Real'], ['paper', 'Paper'], ['diff', 'Differences', 'names held in one book but not the other, or with a different quantity']]} v={view} set={setView} />
+        </div>
+        <div onMouseLeave={() => setHover(null)} onMouseOver={(e) => { const tr = e.target.closest('tr'); const key = tr?.dataset?.key; const p = key && positions.find((x) => x.book + x.symbol === key); if (p) hoverOn(e, p); }}>
+          <FixedTable className="hpos" cols={POS_COLS} rows={posRows} empty={positions.length ? 'Nothing matches this filter.' : 'No open positions.'} /></div>
+      </Panel>
+      <div className="rd">
+        <Panel title="Needs a look" meta={needIds.length || null} right={freshNeeds.length > 0 ? <span className="warn">● {freshNeeds.length} new</span> : null}>
+          {needRows.length ? <div className="rbody"><div className="v2list">{needRows.map((x) => <div key={x.text} className={`it hact ${freshNeeds.includes(x.text) ? 'fresh' : ''}`}>
             <span className={`i ${x.level === 'warn' || x.level === 'sell' ? 'warn' : ''}`}>{x.level === 'sell' ? '↓' : x.level === 'buy' ? '↑' : x.level === 'warn' ? '!' : 'i'}</span><span style={{ flex: 1 }}>{x.text}</span>
-            {x.tabs.map((tab) => <button key={tab} className="btn ghost small" onClick={() => onGo(tab)}>{tab}</button>)}</div>)}</div> : <p className="muted small">Nothing right now.</p>}</div>
-        {!R.error && <div className="v2card"><h3>Risk now <span className="r">all books</span></h3>
+            {x.tabs.map((tab) => <button key={tab} className="btn ghost small" onClick={() => onGo(tab)}>{tab}</button>)}</div>)}</div></div> : <p className="muted small rempty">Nothing right now.</p>}</Panel>
+        {!R.error && <Panel title="Risk now" right="all books"><div className="rbody">
           <div className="hrisk"><div><b className="mono">{inr(R.in_use)}</b><div className="muted small">in open positions{R.capital ? ` · ${Math.round(100 * R.in_use / R.capital)}% of ${inr(R.capital)} capital` : ''}</div></div>
             <div className="bar"><i style={{ width: `${R.capital ? Math.min(100, 100 * R.in_use / R.capital) : 0}%` }} /></div></div>
           <div className="hmini">
             <div><span className="l">Worst case to the stops</span><b className="down mono">{signed(R.worst_case)}</b></div>
             <div><span className="l">Biggest position</span><b className="mono">{R.biggest ? `${R.biggest.symbol} ${inr(R.biggest.value)}` : '—'}</b></div>
             <div><span className="l">Real orders today</span><b className={R.orders_today?.failed ? 'down' : 'up'}>{R.orders_today?.sent ?? 0} sent · {R.orders_today?.failed ?? 0} failed</b></div>
-            <div><span className="l">Intraday loss limit</span><b className="mono">{inr(R.loss_used)} / {inr(R.loss_limit)}</b></div></div></div>}
-        <div className="v2card"><h3>Next up</h3><div className="v2list">{jobs.slice(0, 5).map((j) => <div key={j.key} className="it"><span>{j.icon}</span><span>{j.name}</span><span className="mono" style={{ marginLeft: 'auto' }}>{left(j.at, now)}</span></div>)}</div></div>
-        <div className="v2card"><h3>Activity</h3>{!o.activity.length ? <p className="muted small">Nothing yet.</p>
-          : <div className="v2list">{o.activity.map((a, i) => <div key={i} className={`it ${freshAct.includes(`${a.at}|${a.text}`) ? 'row-new' : ''}`}><span className="t">{at12(a.at)}</span><span><b>{a.account}</b> · {a.text}</span></div>)}</div>}</div>
+            <div><span className="l">Intraday loss limit</span><b className="mono">{inr(R.loss_used)} / {inr(R.loss_limit)}</b></div></div></div></Panel>}
+        <Panel title="Next up"><div className="rbody"><div className="v2list">{jobs.slice(0, 5).map((j) => <div key={j.key} className="it"><span>{j.icon}</span><span className="ell1">{j.name}</span><span className="mono" style={{ marginLeft: 'auto' }}>{left(j.at, now)}</span></div>)}</div></div></Panel>
+        {N && <Panel title={`Next open · ${(N.buys || []).length} breakout${(N.buys || []).length === 1 ? '' : 's'}`} right={N.as_of ? `plan of ${dayName(N.as_of)}` : null}>
+          <FixedTable cols={[{ h: 'Stock', ell: true }, { h: 'Qty', w: 60, n: true }, { h: 'Capital', w: 100, n: true }, { h: 'Stop', w: 76, n: true, title: 'stop below the entry' }]}
+            rows={[...(N.buys || []).slice(0, 5).map((b) => ({ key: b.symbol, onClick: () => onStock(b.symbol), cells: [<b>{b.symbol}</b>, b.qty, inr(b.value), b.stop_pct != null ? `${(+b.stop_pct).toFixed(1)}%` : '—'] })),
+              `${(N.buys || []).length > 5 ? `+${(N.buys || []).length - 5} more · ` : ''}total ${inr(N.total_value)} · fits ${N.fits ?? 0} of ${N.slots_free ?? 0} slot${N.slots_free === 1 ? '' : 's'}${N.filter ? ` · filter ${N.filter}` : ''}`]} empty="No buys for the next open." />
+          <div className="rnote">{N.fits === 0 ? 'E+ is full: these fire only if a position exits at the open' : `${N.fits} of ${(N.buys || []).length} fit the free slots at the open`}<button className="linkbtn" onClick={() => onGo('breakout')}>Breakout page →</button></div></Panel>}
+        <Panel title="Activity" meta={picked ? `${activity.length} of ${(o.activity || []).length}` : (o.activity || []).length || null} right={picked ? <Chip c="" title="click to show every event" onClick={() => setPicked(null)}>filtered by the timeline · ✕</Chip> : null}>
+          {!activity.length ? <p className="muted small rempty">{picked ? 'No activity matches these events.' : 'Nothing yet.'}</p>
+            : <div className="rbody"><div className="v2list">{activity.map((a, i) => { const trail = /stop raised|trail/i.test(a.text); return <div key={i} className={`it ${freshAct.includes(`${a.at}|${a.text}`) ? 'row-new' : ''}`}><span className="t">{at12(a.at)}</span><span><b>{a.account}</b> · {a.text}{trail && <span style={{ color: 'var(--purple)', marginLeft: 6 }} title="trailing stop">🪜</span>}</span></div>; })}</div></div>}</Panel>
       </div>
     </div>
     {hover && !phone && <HoverCard p={hover.p} at={hover.at} />}
     {toasts.length > 0 && <div className="htoasts">{toasts.slice(-3).map((t) => <div key={t.id} className="htoast"><b>{t.text}</b><span className="muted small">{at12(t.at)}</span><button className="linkbtn" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>dismiss</button></div>)}</div>}
-  </>;
+  </div>;
 }
