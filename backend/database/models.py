@@ -366,6 +366,7 @@ def init_db(path: Optional[str] = None) -> None:
         _migrate_paper(conn)
         conn.executescript(SCHEMA)
         _migrate_drop_paper_a(conn)
+        _migrate_capital_300k(conn)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _drop_track_record(conn)
         n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
@@ -430,6 +431,95 @@ def _migrate_drop_paper_a(conn) -> None:
         print("Trend Breakout A removed (E+ is the only variant): deleted "
               + ", ".join(f"{n} {t} row(s)" if not t.startswith("breakout_runs") else "the A variant from the saved backtest run"
                           for t, n in removed.items()))
+
+
+OLD_CAPITAL, NEW_CAPITAL = 200_000.0, 300_000.0
+CAPITAL_DONE_KEY = "capital.300k.done"
+
+
+def _migrate_capital_300k(conn) -> list[str]:
+    """The capital became Rs 3,00,000 everywhere (Nov 2026). Once, guarded by the app_settings key
+    `capital.300k.done`: every saved setting still at the old default is set to the new one (`breakout.capital`,
+    `paper.capital` and `real.capital` at 2,00,000; the intraday Size & risk box and its saved setups at 1,00,000 or
+    2,00,000), and a running Real / Paper account that started with 2,00,000 gets +1,00,000 through the same deposit
+    path as the capital box (cash moves, the deposit is recorded, never counted as profit). A value the owner already
+    changed is left alone; nothing else (candles, trades, curves) is touched. Returns what changed, also printed."""
+    if get_setting(conn, CAPITAL_DONE_KEY):
+        return []
+    changed = []
+    for name in ("breakout", "paper", "real"):           # the saved config sections
+        raw = get_setting(conn, f"config.{name}")
+        if not raw:
+            continue
+        try:
+            sec = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(sec, dict) and sec.get("capital") == OLD_CAPITAL:
+            sec["capital"] = NEW_CAPITAL
+            set_setting(conn, f"config.{name}", json.dumps(sec))
+            changed.append(f"{name}.capital")
+    old_flow = (100_000.0, OLD_CAPITAL)
+
+    def bump_nodes(nodes: dict) -> bool:
+        size = nodes.get("size") if isinstance(nodes, dict) else None
+        if isinstance(size, dict) and size.get("capital") in old_flow:
+            size["capital"] = NEW_CAPITAL
+            return True
+        return False
+
+    try:
+        nodes = json.loads(get_setting(conn, "flow.nodes") or "{}")
+    except (TypeError, ValueError):
+        nodes = {}
+    if bump_nodes(nodes):
+        set_setting(conn, "flow.nodes", json.dumps(nodes))
+        changed.append("flow Size & risk capital")
+    try:
+        setups = json.loads(get_setting(conn, "flow.setups") or "{}")
+    except (TypeError, ValueError):
+        setups = {}
+    bumped = [k for k, v in setups.items() if isinstance(v, dict) and bump_nodes(v.get("nodes"))]
+    if bumped:
+        set_setting(conn, "flow.setups", json.dumps(setups))
+        changed.append("flow setup(s) " + ", ".join(bumped))
+    # running accounts: +1,00,000 as a deposit (the engines' own helpers, saved on this connection)
+    from backend.engine import paper, real
+    r = conn.execute("SELECT payload FROM real_state WHERE id = 1").fetchone()
+    if r:
+        st = json.loads(r[0])
+        if st.get("capital") == OLD_CAPITAL:
+            real.apply_deposit(st, NEW_CAPITAL, _config_from(conn))
+            st["updated_at"] = now_ist()
+            conn.execute("UPDATE real_state SET payload = ? WHERE id = 1", (json.dumps(st),))
+            changed.append("Real account +1,00,000 deposit")
+    for acct, raw in conn.execute("SELECT account, payload FROM paper_state").fetchall():
+        st = json.loads(raw)
+        if st.get("capital") == OLD_CAPITAL:
+            paper.apply_deposit(st, NEW_CAPITAL)
+            conn.execute("UPDATE paper_state SET payload = ? WHERE account = ?", (json.dumps(st), acct))
+            changed.append(f"Paper {acct} +1,00,000 deposit")
+    set_setting(conn, CAPITAL_DONE_KEY, now_ist())
+    if changed:
+        print("Capital is Rs 3,00,000 everywhere now: " + "; ".join(changed))
+    return changed
+
+
+def _config_from(conn):
+    """The saved config read on this connection (load_config opens its own, which may be another file)."""
+    from dataclasses import fields
+    from backend.config import AppConfig
+    config = AppConfig()
+    for name in ("breakout", "real"):
+        raw = get_setting(conn, f"config.{name}")
+        if not raw:
+            continue
+        sec = config.section(name)
+        known = {f.name for f in fields(sec)}
+        for key, value in json.loads(raw).items():
+            if key in known:
+                setattr(sec, key, value)
+    return config
 
 
 def _migrate_orb(conn) -> bool:

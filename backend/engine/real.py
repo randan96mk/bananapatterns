@@ -194,6 +194,21 @@ def _size(st: dict, orders: list, config: AppConfig) -> list:
     return out
 
 
+def apply_deposit(st: dict, capital: float, config: AppConfig) -> float:
+    """A new capital on the running account: the difference is money added or withdrawn (cash moves, the profit so
+    far stays), recorded in `deposits`; tomorrow's unsent BUYs are re-sized. Returns the delta. The state is changed
+    in place and not saved (set_capital and the start-up migration save it)."""
+    delta = float(capital) - st["capital"]
+    if st["cash"] + delta < 0:
+        raise ValueError(f"withdrawing {-delta:,.0f} is more than the cash ({st['cash']:,.0f}); "
+                         "lower it after positions are sold")
+    st["capital"] = float(capital)
+    st["cash"] += delta
+    st.setdefault("deposits", []).append({"at": now_ist(), "amount": round(delta, 2), "capital": float(capital)})
+    st["orders"] = _size(st, st.get("orders", []), config)
+    return delta
+
+
 def set_capital(config: AppConfig, capital: float) -> dict:
     """A new capital: before the start it is simply used; afterwards the difference is money added or withdrawn
     (cash moves, the profit so far stays), and tomorrow's unsent BUYs are re-sized."""
@@ -202,15 +217,8 @@ def set_capital(config: AppConfig, capital: float) -> dict:
         if not st:
             config.real.capital = float(capital)
             return {"status": "ok", "capital": capital}
-        delta = float(capital) - st["capital"]
-        if st["cash"] + delta < 0:
-            raise ValueError(f"withdrawing {-delta:,.0f} is more than the cash ({st['cash']:,.0f}); "
-                             "lower it after positions are sold")
+        delta = apply_deposit(st, capital, config)
         config.real.capital = float(capital)
-        st["capital"] = float(capital)
-        st["cash"] += delta
-        st.setdefault("deposits", []).append({"at": now_ist(), "amount": round(delta, 2), "capital": float(capital)})
-        st["orders"] = _size(st, st.get("orders", []), config)
         _save(st)
         return {"status": "ok", "capital": capital, "delta": delta, **limits(st, config)}
 

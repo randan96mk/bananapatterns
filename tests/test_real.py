@@ -191,18 +191,18 @@ def test_capital_drives_the_sizes_and_a_change_is_money_added(monkeypatch):
     c = setup(monkeypatch)
     data, cut, end = first_day_with_buys(c)
     small = {o["symbol"]: o["qty"] for o in real.evening(c, cut)["orders"] if o["action"] == "BUY"}
-    assert real.summary(c)["limits"]["size"] == pytest.approx(20_000)
-    out = real.set_capital(c, 400_000)                                     # before sending: +2L, BUYs re-sized
-    assert out["delta"] == 200_000 and out["size"] == pytest.approx(40_000) and out["max_order"] == pytest.approx(60_000)
+    assert real.summary(c)["limits"]["size"] == pytest.approx(30_000)      # 3L / 10
+    out = real.set_capital(c, 600_000)                                     # before sending: +3L, BUYs re-sized
+    assert out["delta"] == 300_000 and out["size"] == pytest.approx(60_000) and out["max_order"] == pytest.approx(90_000)
     big = {o["symbol"]: o["qty"] for o in real.summary(c)["orders"] if o["action"] == "BUY"}
     assert all(big[k] >= 2 * small[k] - 1 for k in small)
     sm = real.summary(c)
-    assert sm["account"]["capital"] == 400_000 and sm["account"]["value"] == pytest.approx(400_000)
+    assert sm["account"]["capital"] == 600_000 and sm["account"]["value"] == pytest.approx(600_000)
     assert sm["account"]["net"] == pytest.approx(0, abs=0.01)                    # adding money is not profit
     real.send_orders(c, None, data["cal"][end + 1], Sender())               # the BUYs use most of the cash
     with pytest.raises(ValueError):
         real.set_capital(c, 10_000)                                        # can't withdraw more than the cash
-    assert c.real.capital == 400_000 and real.summary(c)["account"]["capital"] == 400_000
+    assert c.real.capital == 600_000 and real.summary(c)["account"]["capital"] == 600_000
 
 
 def test_capital_api(monkeypatch):

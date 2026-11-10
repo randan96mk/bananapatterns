@@ -110,3 +110,4 @@ export const runBreakout = () => req('POST', '/api/breakout/run');
 export const getPaper = () => req('GET', '/api/paper');
 export const startPaper = (capital) => req('POST', '/api/paper/start', { capital });
 export const resetPaper = () => req('POST', '/api/paper/reset');
+export const paperCapital = (capital) => req('POST', '/api/paper/capital', { capital });
