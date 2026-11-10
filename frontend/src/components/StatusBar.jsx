@@ -18,6 +18,7 @@ export const left = (iso, now) => {
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}:${String(x).padStart(2, '0')}`;
 };
 export const istClock = (now) => new Date(now).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+const TAB = { breakout: 'Breakout', paper: 'Paper', real: 'Real', flow: 'Intraday', screens: 'Screens', plan: 'Plan' };
 const at12 = (iso) => new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true });
 
 // The status bar on every page: Kite, market, the last evening run, real trading, the next job, attention, theme.
@@ -32,6 +33,10 @@ export default function StatusBar({ kite, onKite, onGo }) {
   const m = data?.market;
   const real = data?.real;
   const needs = att ? Object.entries(att).filter(([, a]) => a?.level && a.level !== 'running') : [];
+  const [open, setOpen] = useState(false);                // the needs-a-look list under the chip
+  useEffect(() => { if (!open) return undefined; const close = (e) => { if (!e.target.closest?.('.needwrap')) setOpen(false); }; document.addEventListener('click', close); return () => document.removeEventListener('click', close); }, [open]);
+  const rows = [];                                        // one line per message, with every page it belongs to
+  needs.forEach(([tab, a]) => (a.items || []).forEach((x) => { const r = rows.find((y) => y.text === x.text); if (r) { if (!r.tabs.includes(tab)) r.tabs.push(tab); } else rows.push({ text: x.text, level: x.level, tabs: [tab] }); }));
   const loggedIn = kite?.has_token;
   return (
     <div className="statusbar" role="status">
@@ -43,7 +48,9 @@ export default function StatusBar({ kite, onKite, onGo }) {
       {next && <span className="sb">⏱ Next: <b>{next.name}</b> in <b className="mono">{left(next.at, now)}</b>
         <span className="hide-phone muted">{later.map((j) => ` · ${j.name.toLowerCase()} ${left(j.at, now)}`).join('')}</span></span>}
       <span className="sbfill" />
-      {needs.length > 0 && <button className="sb warn" onClick={() => onGo(needs[0][0])}><i className="dot warn blinkdot" />{needs.length} needs attention</button>}
+      {needs.length > 0 && <span className="needwrap"><button className="sb warn" aria-expanded={open} onClick={() => setOpen(!open)}><i className="dot warn blinkdot" />{rows.length} need{rows.length === 1 ? 's' : ''} a look</button>
+        {open && <div className="sysdrop needdrop" role="menu">{rows.map((r) => <div key={r.text} className="needrow"><span className={`i ${r.level === 'buy' ? 'up' : r.level === 'sell' ? 'down' : 'warn'}`}>{r.level === 'buy' ? '↑' : r.level === 'sell' ? '↓' : '!'}</span>
+          <span className="t">{r.text}</span><span className="b">{r.tabs.map((t) => <button key={t} type="button" className="btn ghost small" onClick={() => { setOpen(false); onGo(t); }}>{TAB[t] || t}</button>)}</span></div>)}</div>}</span>}
       <label className="sb themepick" title="Theme">🎨
         <select value={mode} onChange={(e) => { setMode(e.target.value); applyMode(e.target.value); }} aria-label="Theme">
           {Object.entries(THEMES).map(([id, [label]]) => <option key={id} value={id}>{label}</option>)}
