@@ -1022,8 +1022,18 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   own fills are not visible; prices are the ones seen when sending, corrected to the day's open in the evening.
 - **Telegram**: always loud and labelled **💰 REAL**: tomorrow's orders (evening), orders sent (morning), stop hit ·
   exit sent, failures and "stops not watched". The 🔴 dot on the tab and a strip at its top flag what needs a look.
+- **↻ Re-evaluate** (the button on the "Orders for the next open" panel, `POST /api/real/replan`; also run by itself
+  after a capital change): the next open's plan is rebuilt from the evening's data (the stored candles, no Kite call)
+  and the account as it is **now** (capital, cash, positions, `max_pos`, the daily limit). Orders already sent or
+  failed today stay as they are and are never planned again. The panel lists every breakout with its quantity and
+  capital, or why it waits (no free slot, cash, daily limit, filter OFF, under 1 share), the idle cash, and the
+  smallest `max_pos` that would put that cash to work (size = value ÷ N); "Raise to N · plan" saves `breakout.max_pos`
+  through the settings (`{max_pos: N}` in the body) and re-plans. Nothing is sent by the panel: the orders still go
+  out at `send_time` with the enable switch, the kill switch and the daily limit as today, and the evening job keeps
+  overwriting the plan. The backtest ran with `max_pos` 10 (the default): re-run it after a change.
 - API: `GET /api/real`, `POST /api/real/settings` `{enabled, variant}` (`variant` only accepts `E`), `POST /api/real/kill?on=`,
-  `POST /api/real/reset`.
+  `POST /api/real/reset`, `POST /api/real/replan` `{max_pos?}`, `POST /api/real/capital` `{capital}` (returns the
+  re-plan under `replan`).
 
 ### 📝 Paper trading (simulated: never orders)
 
@@ -1052,7 +1062,12 @@ job on a day already processed changes nothing. Nothing is ever sent to Kite.
 - **Telegram**: a block that always starts **📝 PAPER TRADING · simulated, no real orders** (fills, closed trades with
   gross · costs · net, the next open's orders, the account before / after costs vs NIFTY 50), in the 7 PM report
   (summary style) or as its own silent message. The real-account scan stays a separate block and never says PAPER.
-- API: `GET /api/paper`, `POST /api/paper/start` `{capital}`, `POST /api/paper/capital` `{capital}`, `POST /api/paper/reset`.
+- **↻ Re-evaluate** (`POST /api/paper/replan`, the button on the orders panel; run by itself after a capital change):
+  the next open's orders decided again from the same evening data and the account as it is now; the panel shows which
+  breakouts fit the free slots and the cash and which wait (and why), the idle cash and the `max_pos` that would use
+  it (`{max_pos: N}` saves `breakout.max_pos` first, the same setting Real uses). Simulated as ever: nothing is sent.
+- API: `GET /api/paper`, `POST /api/paper/start` `{capital}`, `POST /api/paper/capital` `{capital}` (returns the re-plan
+  under `replan`), `POST /api/paper/replan` `{max_pos?}`, `POST /api/paper/reset`.
 
 ### Evening report (alert style)
 

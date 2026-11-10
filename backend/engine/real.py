@@ -10,6 +10,8 @@
                             retried, it raises a loud alert.
   market hours, every       live prices (Kite quote, read-only); a position trading at or under its stop gets an
   stop_check_min            EXIT at once (no stop-loss order is placed anywhere).
+  replan (↻ Re-evaluate)    the same plan rebuilt by hand from the evening's data and the account as it is now
+                            (after a deposit or a max_pos change); nothing is sent, sent orders are kept.
 Orders go to Tradetron (which routes them to the broker, or keeps them offline); none ever goes to Kite. config.real
 .enabled and the kill switch (app setting real.killed) both have to allow sending. Charges are Zerodha delivery
 estimates; the broker's own fills are not visible here.
@@ -223,23 +225,50 @@ def set_capital(config: AppConfig, capital: float) -> dict:
         return {"status": "ok", "capital": capital, "delta": delta, **limits(st, config)}
 
 
-def _plan(st: dict, data: dict, i: int, config: AppConfig) -> None:
+def _plan(st: dict, data: dict, i: int, config: AppConfig, keep: tuple = ()) -> dict:
+    """The next open's orders from day i's close and the account as it is now: EXIT a position that closed under
+    SMA(exit_sma); BUY the ranked breakouts into the free slots (the half filter's cap), within the cash, the daily
+    limit and max_order_pct, sized at account value / max_pos (whole shares). `keep` is today's orders already sent
+    (or failed): kept in front, untouched, never planned again. Every breakout not taken is listed in
+    st["waiting_why"] with its reason. Returns {"orders", "waiting", "idle_cash", "cap", "regime_on"}."""
     S, p, rc = data["S"], _rules(config), config.real
     regime_on, cap = tb.slots(i, data["index_ok"], data["filters"], p)
-    sells, buys, _, _ = tb.decide(i, S, {s: None for s in st["positions"] if s in S}, regime_on, p)
+    sells, ranked, _, _ = tb.decide(i, S, {s: None for s in st["positions"] if s in S}, True, p)
     ts = data.get("tradingsymbol", {})
     turn_rank = {sym: k + 1 for k, sym in enumerate(tb.ranked_by_turnover(S, i, p.min_price))}
-    orders = [{"action": "EXIT", "symbol": s, "ts": ts.get(s, s), "qty": st["positions"][s]["qty"],
-               "why": f"close under SMA{p.exit_sma}"} for s in sorted(sells)]
-    free = max(0, cap - (len(st["positions"]) - len(sells))) if regime_on else 0
-    for k, (s, stop) in enumerate(buys):
-        if sum(o["action"] == "BUY" for o in orders) >= min(free, rc.max_buys_per_day):
-            break
+    orders = list(keep)
+    done = {(o["symbol"], o["action"]) for o in orders}
+    orders += [{"action": "EXIT", "symbol": s, "ts": ts.get(s, s), "qty": st["positions"][s]["qty"],
+                "why": f"close under SMA{p.exit_sma}"} for s in sorted(sells) if (s, "EXIT") not in done]
+    lim = limits(st, config)
+    exits = [o["symbol"] for o in orders if o["action"] == "EXIT" and not o.get("sent") and o["symbol"] in st["positions"]]
+    cash = st["cash"] + sum(st["positions"][s]["qty"] * st["positions"][s]["last"] for s in exits)
+    used = len(st["positions"]) - len(exits)              # slots after the exits
+    buys = sum(o["action"] == "BUY" for o in orders)      # today's sent BUYs count toward the daily limit
+    waiting = []
+    for k, (s, stop) in enumerate(ranked):
+        if (s, "BUY") in done:
+            continue
         close = S[s]["rows"][S[s]["at"][i]]["close"]
-        orders.append({"action": "BUY", "symbol": s, "ts": ts.get(s, s), "qty": 0, "stop": stop, "close": close,
-                       "rank": k + 1, "variant": config.real.variant, "top": p.top, "turnover_rank": turn_rank.get(s),
-                       "why": f"breakout #{k + 1} · {config.real.variant} · top {p.top} · turnover rank {turn_rank.get(s)}"})
-    orders = _size(st, orders, config)
+        qty = floor(min(lim["size"], cash, lim["max_order"]) / (close * 1.0012))
+        if not regime_on:
+            why = f"filter {tb.filter_label(0.0, p.regime_mode)}"
+        elif used >= cap:
+            why = f"no free slot ({used} of {cap})" + (" · filter HALF" if cap < p.max_pos else "")
+        elif buys >= rc.max_buys_per_day:
+            why = f"daily limit ({rc.max_buys_per_day} a day)"
+        elif qty < 1:
+            why = "cash" if cash < close * 1.0012 else "under 1 share"
+        else:
+            cash -= qty * close * 1.0012
+            used += 1
+            buys += 1
+            orders.append({"action": "BUY", "symbol": s, "ts": ts.get(s, s), "qty": qty, "stop": stop, "close": close,
+                           "risk": round(qty * (close - stop), 2), "rank": k + 1, "variant": config.real.variant,
+                           "top": p.top, "turnover_rank": turn_rank.get(s),
+                           "why": f"breakout #{k + 1} · {config.real.variant} · top {p.top} · turnover rank {turn_rank.get(s)}"})
+            continue
+        waiting.append({"symbol": s, "rank": k + 1, "close": round(close, 2), "stop": round(stop, 2), "why": why})
     closes = data["index_close"]
     now = tb.filter_day(p.regime_mode, i, closes)
     before = tb.filter_day(p.regime_mode, i - 1, closes) if i else now
@@ -247,7 +276,82 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig) -> None:
               top=p.top, filter={"name": tb.variant_name(config.real.variant, p.top), "top": p.top, "state": tb.filter_label(now, p.regime_mode),
                       "prev": tb.filter_label(before, p.regime_mode), "changed": now != before,
                       "slots": cap if regime_on else 0},
-              waiting=len(buys) - sum(o["action"] == "BUY" for o in orders))
+              waiting=len(waiting), waiting_why=waiting)
+    return {"orders": orders, "waiting": waiting, "idle_cash": round(cash, 2), "cap": cap, "regime_on": bool(regime_on),
+            "slots_used": used}
+
+
+def suggest(value: float, idle: float, cur: int, cap: int, waiting: list, max_order: float, room: int,
+            price_mult: float = 1.0012) -> Optional[dict]:
+    """↑ The max_pos that puts the idle cash to work: today's size (value / cur) funds k more positions, so N = cur +
+    k, capped at cur + the waiting breakouts; the first k waiting breakouts are then sized at value / N (whole
+    shares, within max_order and the cash). `cap` is today's slot cap (half of cur under the HALF filter), `room` the
+    daily limit left. None when nothing waits or nothing fits."""
+    if not waiting or cur < 1 or value <= 0:
+        return None
+    k = min(len(waiting), int(idle // (value / cur)))
+    if k < 1:
+        return None
+    n = cur + k
+    new_cap = n if cap >= cur else n // 2                # the filter's half cap moves with max_pos
+    size, cash, taken, used = value / n, idle, [], 0.0
+    for w in waiting:
+        if len(taken) >= min(new_cap - cap, room):
+            break
+        qty = floor(min(size, cash, max_order) / (w["close"] * price_mult))
+        if qty < 1:
+            continue
+        cost = qty * w["close"] * price_mult
+        cash -= cost
+        used += cost
+        taken.append({"symbol": w["symbol"], "qty": qty, "capital": round(qty * w["close"], 2)})
+    if not taken:
+        return None
+    return {"max_pos": n, "size": round(size, 2), "fits": len(taken), "used": round(used, 2), "left": round(idle - used, 2),
+            "symbols": [t["symbol"] for t in taken], "taken": taken}
+
+
+def _bt_max_pos() -> Optional[int]:
+    """The max_pos the saved backtest ran with (its numbers are not the new value's)."""
+    run = tb.saved()
+    return ((run or {}).get("settings") or {}).get("max_pos")
+
+
+def replan(config: AppConfig, data: Optional[dict] = None) -> dict:
+    """↻ Re-evaluate: the next open's plan rebuilt from the evening's data (the stored candles, no Kite call) and the
+    account as it is NOW (capital, cash, positions, max_pos, the daily limit). Nothing is sent: only st["orders"]
+    changes (today's sent and failed orders stay as they are and are not planned again), with decided, filter and
+    waiting. Returns the report: before / after, added / removed, every waiting breakout with its reason, the idle
+    cash and the max_pos suggestion that would put it to work."""
+    with _lock:
+        st = _state()
+        if not st:
+            return {"status": "not_started"}
+        data = data or tb.load(config)
+        if "error" in data:
+            return {"status": "no_data", "error": data["error"]}
+        cal = data["cal"]
+        i = cal.index(st["decided"]) if st.get("decided") in cal else len(cal) - 1
+        before = list(st.get("orders", []))
+        keep = tuple(o for o in before if o.get("sent"))
+        out = _plan(st, data, i, config, keep)
+        _save(st)
+    key = lambda o: (o["symbol"], o["action"])
+    after = st["orders"]
+    was = {key(o) for o in before}
+    now = {key(o) for o in after}
+    value = _value(st)
+    lim = limits(st, config)
+    room = max(0, config.real.max_buys_per_day - sum(o["action"] == "BUY" for o in after))
+    sug = suggest(value, out["idle_cash"], config.breakout.max_pos, out["cap"] if out["regime_on"] else 0,
+                  out["waiting"], lim["max_order"], room) if out["regime_on"] else None
+    return {"status": "ok", "at": now_ist(), "before": before, "after": after,
+            "added": [o for o in after if key(o) not in was], "removed": [o for o in before if key(o) not in now],
+            "waiting": out["waiting"], "idle_cash": out["idle_cash"], "size": lim["size"], "max_order": lim["max_order"],
+            "max_pos": config.breakout.max_pos, "slots_used": out["slots_used"], "slots": out["cap"] if out["regime_on"] else 0,
+            "capital": st["capital"], "cash": round(st["cash"], 2), "value": round(value, 2), "decided": st["decided"],
+            "filter": st["filter"], "max_buys_per_day": config.real.max_buys_per_day, "send_time": config.real.send_time,
+            "preview_time": config.real.preview_time, "bt_max_pos": _bt_max_pos(), "suggestion": sug}
 
 
 # --- sending ---------------------------------------------------------------------------------------
@@ -486,6 +590,7 @@ def summary(config: AppConfig) -> dict:
     return {"started": True, **base, "log": log, "start_date": st["started"], "as_of": st.get("as_of"),
             "updated_at": st.get("updated_at"), "orders": st.get("orders", []), "decided": st.get("decided"),
             "filter": st.get("filter"), "cap": st.get("cap"), "allowed": st.get("allowed"), "waiting": st.get("waiting", 0),
+            "waiting_why": st.get("waiting_why", []),
             "limits": limits(st, config), "deposits": deposits,
             "account": {"capital": cap, "value": round(value, 2), "cash": round(st["cash"], 2), "positions": len(positions),
                         "gross": round(value + st["charges"] - cap, 2), "costs": round(st["charges"], 2),

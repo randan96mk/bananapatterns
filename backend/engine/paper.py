@@ -9,6 +9,8 @@ Each evening (after the daily sync), for every new session since the last one pr
      qty = floor(min(account value / max_pos, cash) / (fill x 1.0012)); skipped when no slot or under 1 share;
   3. a day's low at or under a position's stop sells it at min(open, stop); otherwise it is marked at the close;
   4. at the close: a close under SMA(exit_sma) queues a SELL; the day's breakouts queue BUYs (filter permitting).
+replan (↻ Re-evaluate on the tab) runs step 4 again by hand from the same data and the account as it is now (after a
+deposit or a max_pos change) and reports which breakouts fit and which wait, and why.
 Fills, trades and the daily account are appended and never rewritten; a session already processed is skipped, so
 running the job twice changes nothing. Gross (price move), charges and slippage are kept apart. Stops are checked on
 the daily low after the close (no live intraday price), as in the backtest.
@@ -158,6 +160,73 @@ def _decide(st: dict, data: dict, i: int, p) -> None:
     st["filter"] = {"name": st["name"], "top": p.top, "state": tb.filter_label(now, p.regime_mode),
                     "prev": tb.filter_label(before, p.regime_mode), "changed": now != before,
                     "slots": cap if regime_on else 0}
+
+
+def _taken(st: dict, p) -> dict:
+    """What the next open will do with st["orders"] (simulate's step 2, run ahead on the signal closes): the BUYs
+    that fit the free slots and the cash, the ones waiting with their reason, the cash left idle."""
+    cap = st.get("cap", p.max_pos) if st.get("allowed", True) else 0
+    orders = st.get("orders", [])
+    sells = [o for o in orders if o["action"] == "SELL" and o["symbol"] in st["positions"]]
+    cash = st["cash"] + sum(st["positions"][o["symbol"]]["qty"] * st["positions"][o["symbol"]]["last"] for o in sells)
+    value = st["cash"] + sum(x["qty"] * x["last"] for x in st["positions"].values())
+    used, taken, waiting = len(st["positions"]) - len(sells), [], []
+    for o in orders:
+        if o["action"] != "BUY":
+            continue
+        px = o["close"] * (1 + p.slippage_pct / 100) * 1.0012
+        qty = floor(min(value / p.max_pos, cash) / px)
+        if not st.get("allowed", True):
+            why = "filter OFF"
+        elif used >= cap:
+            why = f"no free slot ({used} of {cap})" + (" · filter HALF" if cap < p.max_pos else "")
+        elif qty < 1:
+            why = "cash" if cash < px else "under 1 share"
+        else:
+            cash -= qty * px
+            used += 1
+            taken.append({**o, "qty": qty, "capital": round(qty * o["close"], 2)})
+            continue
+        waiting.append({"symbol": o["symbol"], "rank": o.get("rank"), "close": round(o["close"], 2), "stop": round(o["stop"], 2),
+                        "why": why})
+    return {"taken": taken, "waiting": waiting, "idle_cash": round(cash, 2), "cap": cap, "slots_used": used,
+            "value": round(value, 2), "size": round(value / p.max_pos, 2)}
+
+
+def replan(config: AppConfig, data: Optional[dict] = None) -> dict:
+    """↻ Re-evaluate: every account's next-open orders decided again from the evening's data (the stored candles, no
+    Kite call) and the account as it is NOW (capital, cash, positions, max_pos). Simulated as ever: nothing is sent.
+    Returns the first account's report (before / after, added / removed, the waiting breakouts with reasons, the idle
+    cash, the max_pos suggestion), with every account's under "accounts"."""
+    from backend.engine.real import suggest
+    with _lock:
+        states = _states()
+        if not states:
+            return {"status": "not_started"}
+        data = data or tb.load(config)
+        if "error" in data:
+            return {"status": "no_data", "error": data["error"]}
+        cal, reports = data["cal"], {}
+        for key, st in sorted(states.items()):
+            p = _rules(config, key)
+            i = cal.index(st["decided"]) if st.get("decided") in cal else cal.index(st["as_of"]) if st.get("as_of") in cal else len(cal) - 1
+            before = list(st.get("orders", []))
+            _decide(st, data, i, p)
+            st["updated_at"] = now_ist()
+            _save(key, st, [], [], [])
+            t = _taken(st, p)
+            k = lambda o: (o["symbol"], o["action"])
+            was, now = {k(o) for o in before}, {k(o) for o in st["orders"]}
+            sug = suggest(t["value"], t["idle_cash"], p.max_pos, t["cap"], t["waiting"], t["value"], len(t["waiting"]),
+                          price_mult=(1 + p.slippage_pct / 100) * 1.0012) if st.get("allowed", True) else None
+            reports[key] = {"status": "ok", "account": key, "at": now_ist(), "before": before, "after": st["orders"],
+                            "added": [o for o in st["orders"] if k(o) not in was], "removed": [o for o in before if k(o) not in now],
+                            "taken": t["taken"], "waiting": t["waiting"], "idle_cash": t["idle_cash"], "size": t["size"],
+                            "max_pos": p.max_pos, "slots_used": t["slots_used"], "slots": t["cap"], "capital": st["capital"],
+                            "cash": round(st["cash"], 2), "value": t["value"], "decided": st["decided"], "filter": st.get("filter"),
+                            "bt_max_pos": ((tb.saved() or {}).get("settings") or {}).get("max_pos"), "suggestion": sug}
+    first = reports[next(iter(reports))]
+    return {**first, "accounts": reports}
 
 
 def _step(st: dict, data: dict, i: int, p) -> tuple[list, list]:
