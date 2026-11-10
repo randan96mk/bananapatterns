@@ -1175,7 +1175,37 @@ def real_capital(req: RealCapital):
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     save_config(st.config)
-    return res
+    return {**res, "replan": real.replan(st.config)}      # the new money re-planned at once (nothing is sent)
+
+
+class Replan(BaseModel):
+    max_pos: Optional[int] = None
+
+
+def _set_max_pos(n: Optional[int]) -> None:
+    """breakout.max_pos saved through the settings path (Settings shows it; the change is logged)."""
+    if n is None:
+        return
+    if not 1 <= n <= 50:
+        raise HTTPException(422, "max_pos must be between 1 and 50")
+    st = S()
+    before = st.config.breakout.max_pos
+    st.config.update_section("breakout", {"max_pos": n})
+    save_config(st.config)
+    if before != n:
+        with get_db() as conn:
+            log = json.loads(get_setting(conn, "config.changes") or "[]")
+            log.insert(0, {"at": now_ist(), "section": "breakout", "what": [f"max_pos: {before} → {n}"]})
+            set_setting(conn, "config.changes", json.dumps(log[:100]))
+
+
+@router.post("/real/replan")
+def real_replan(req: Optional[Replan] = None):
+    """↻ Re-evaluate the next open's real orders from the evening's data and the account as it is now; with
+    `max_pos`, breakout.max_pos is saved first. Nothing is sent; sent orders are kept."""
+    from backend.engine import real
+    _set_max_pos(req.max_pos if req else None)
+    return real.replan(S().config)
 
 
 @router.post("/real/retry")
@@ -1257,7 +1287,16 @@ def paper_capital(req: PaperCapital):
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     save_config(st.config)
-    return res
+    return {**res, "replan": paper.replan(st.config)}
+
+
+@router.post("/paper/replan")
+def paper_replan(req: Optional[Replan] = None):
+    """↻ Re-evaluate the paper account's next-open orders from the evening's data and the account as it is now; with
+    `max_pos`, breakout.max_pos is saved first. Simulated: nothing is sent."""
+    from backend.engine import paper
+    _set_max_pos(req.max_pos if req else None)
+    return paper.replan(S().config)
 
 
 @router.post("/paper/reset")

@@ -106,8 +106,10 @@ export const realRetry = (symbol, action) => req('POST', '/api/real/retry', { sy
 export const realKill = (on) => req('POST', `/api/real/kill?on=${on}`);
 export const realReset = () => req('POST', '/api/real/reset');
 export const realCapital = (capital) => req('POST', '/api/real/capital', { capital });
+export const realReplan = (maxPos) => req('POST', '/api/real/replan', maxPos ? { max_pos: maxPos } : {});
 export const runBreakout = () => req('POST', '/api/breakout/run');
 export const getPaper = () => req('GET', '/api/paper');
 export const startPaper = (capital) => req('POST', '/api/paper/start', { capital });
 export const resetPaper = () => req('POST', '/api/paper/reset');
 export const paperCapital = (capital) => req('POST', '/api/paper/capital', { capital });
+export const paperReplan = (maxPos) => req('POST', '/api/paper/replan', maxPos ? { max_pos: maxPos } : {});

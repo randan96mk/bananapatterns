@@ -5,6 +5,7 @@ import { inr, rs, signed, pct, cls } from '../fmt';
 import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
+import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { useIsPhone } from '../useMedia';
 import { Head, Chip, Tag, Cards, Card, Bar, Panel, FixedTable, LineChart, Act } from './ui2';
@@ -22,7 +23,7 @@ const Trail = ({ x }) => (x.trail_active || x.trailed ? <Tag c="ok" title={`E+ l
 const filterText = (f) => (f ? `${f.state}${f.state === 'HALF' ? ` (${f.slots} slots)` : ''}${f.changed ? ` · was ${f.prev}` : ''}` : '—');
 
 const POS_COLS = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 150, lo: true }, { h: 'SMA50', w: 86, n: true, lo: true }, { h: 'Last', w: 90, n: true },
-  { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
+  { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 270, ell: true }, { h: 'Days', w: 56, n: true, lo: true }];
 const ORD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 58 }, { h: 'Side', w: 58 }, { h: 'Qty', w: 50, n: true }, { h: 'Stop', w: 80, n: true }, { h: 'Risk', w: 72, n: true, lo: true }];
 const TRD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 62 }, { h: 'Closed', w: 150, lo: true }, { h: 'Days', w: 56, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110, lo: true }];
 
@@ -34,6 +35,13 @@ export default function PaperPage() {
   const [cap, setCap] = useState('');
   const [tick, setTick] = useState(0);
   const [how, setHow] = useState(false);
+  const [rp, setRp] = useState(null);                      // the last ↻ Re-evaluate report (shown under the orders)
+  const [replanning, setReplanning] = useState(false);
+  // ↻ Re-evaluate: the next open's orders decided again from the evening's data and the account as it is now
+  const replan = (n) => {
+    setReplanning(true);
+    api.paperReplan(n).then((x) => { setRp(x); setTick((t) => t + 1); }).catch((e) => setErr(e.message)).finally(() => setReplanning(false));
+  };
   const phone = useIsPhone();                              // a phone card is narrow: plain-text sub-lines and facts, no bars
   const P = (rich, plain) => (phone ? plain : rich);
 
@@ -50,7 +58,7 @@ export default function PaperPage() {
     if (!(v >= 10000) || v === now) return;
     const msg = `Change the paper capital from ${inr(now)} to ${inr(v)}? This counts as ${v > now ? 'adding' : 'withdrawing'} ${inr(Math.abs(v - now))}: `
       + 'cash changes, the profit so far stays, and the next BUY quantities follow the new value.';
-    if (window.confirm(msg)) api.paperCapital(v).then(() => setTick((t) => t + 1)).catch((e) => setErr(e.message));
+    if (window.confirm(msg)) api.paperCapital(v).then((res) => { if (res.replan?.status === 'ok') setRp(res.replan); setTick((t) => t + 1); }).catch((e) => setErr(e.message));
   };
   const reset = () => {
     if (window.confirm('Reset paper trading? The paper account and all its trades are deleted.')) {
@@ -153,9 +161,11 @@ export default function PaperPage() {
         </Panel>
       </div>
       <div className="rd" style={COL}>
-        <Panel title="Orders for the next open" meta={nOrders} right={<Meta>decided {day(a0.decided)}</Meta>}>
+        <Panel title="Orders for the next open" meta={nOrders} right={<><Meta>decided {day(a0.decided)}</Meta>
+          <button type="button" className="btn primary small" disabled={replanning} onClick={() => replan()} title="decide the next open's orders again from the evening's data and the account as it is now · simulated, nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button></>}>
           <FixedTable cols={ORD_COLS} rows={ordRows} empty="None." />
         </Panel>
+        <ReplanPanel r={rp} paper busy={replanning} onRaise={(n) => replan(n)} onKeep={() => setRp(null)} />
         <Panel title="Accounts" meta={keys.length} right={<Meta>capital <b className="mono">{inr(a0.account.capital)}</b></Meta>}>
           {keys.map((k) => { const A = accts[k].account; return <Act key={k} icon={k} cls={cls(A.net)} text={<><b className={`v${k}`}>{NAME[k]}</b> · {signed(A.gross)} − {inr(A.costs)} = <b className={cls(A.net)}>{signed(A.net)}</b></>}
             meta={`capital ${inr(A.capital)} · deposits ${(A.deposited || 0) < 0 ? '−' : '+'}${inr(Math.abs(A.deposited || 0))} · charges ${inr(A.charges)} · slippage ${inr(A.slippage)} · realised ${signed(A.realised)} · unrealised ${signed(A.unrealised)} · won ${accts[k].won} of ${accts[k].closed}`} />; })}

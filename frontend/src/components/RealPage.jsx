@@ -4,6 +4,7 @@ import { stamp, ampm } from '../timefmt';
 import { inr, rs, signed, pct, cls } from '../fmt';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
+import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
 
@@ -37,7 +38,14 @@ export default function RealPage() {
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
   const [cap, setCap] = useState('');
+  const [rp, setRp] = useState(null);                      // the last ↻ Re-evaluate report (shown under the orders)
+  const [replanning, setReplanning] = useState(false);
   const reload = () => setTick((t) => t + 1);
+  // ↻ Re-evaluate: the plan rebuilt from the evening's data and the account as it is now; with n, max open is saved first
+  const replan = (n) => {
+    setReplanning(true);
+    api.realReplan(n).then((x) => { setRp(x); reload(); }).catch((e) => setErr(e.message)).finally(() => setReplanning(false));
+  };
 
   useEffect(() => {
     api.getReal().then((x) => { setD(x); setErr(''); setCap(String(x.started ? x.account.capital : x.settings.capital)); })
@@ -49,7 +57,7 @@ export default function RealPage() {
     if (!(v >= 10000) || v === now) return;
     const msg = d.started ? `Change the capital from ${inr(now)} to ${inr(v)}? This counts as ${v > now ? 'adding' : 'withdrawing'} ${inr(Math.abs(v - now))}: `
       + 'cash changes, the profit so far stays, and tomorrow\'s BUY quantities are re-sized.' : `Start with ${inr(v)}?`;
-    if (window.confirm(msg)) api.realCapital(v).then(reload).catch((e) => setErr(e.message));
+    if (window.confirm(msg)) api.realCapital(v).then((res) => { if (res.replan?.status === 'ok') setRp(res.replan); reload(); }).catch((e) => setErr(e.message));
   };
 
   const set = (body) => api.realSettings(body).then(reload).catch((e) => setErr(e.message));
@@ -90,7 +98,7 @@ export default function RealPage() {
   const orderRows = (d.orders || []).map((o) => ({ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.stop ? rs(o.stop) : '—',
     o.close ? inr(o.qty * o.close) : '—', o.risk ? inr(o.risk) : '—', <span className="muted">{o.why}</span>,
     <Tag c={o.sent === 'sent' ? 'ok' : o.sent === 'failed' ? 'bad' : live ? 'a' : 'w'}>{o.sent || (live ? `queued · ${ampm(s.send_time)}` : 'not sending')}</Tag>] }));
-  const posCols = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 180, lo: true }, { h: 'Last', w: 90, n: true }, { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 230 }, { h: 'Days', w: 56, n: true, lo: true }];
+  const posCols = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 180, lo: true }, { h: 'Last', w: 90, n: true }, { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 310, ell: true }, { h: 'Days', w: 56, n: true, lo: true }];
   const posRows = (d.positions || []).map((x) => ({ key: x.symbol, title: `before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}`,
     cells: [<><b>{x.symbol}</b>{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>, <span className={`v${x.variant}`}>{x.variant === 'E' ? 'E+' : x.variant}</span>, x.qty,
       <>{day(x.in)} · {rs(x.buy)}{x.est && <small> (est.)</small>}</>, rs(x.last), <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
@@ -164,10 +172,12 @@ export default function RealPage() {
 
     {d.started ? <div className="two">
       <div className="rd" style={COL}>
-        <Panel title="Orders for the next open" meta={(d.orders || []).length} right={<Meta>decided {day(d.decided)} · sent {ampm(s.send_time)} · {live ? <b className="up">sending</b> : <b className="down">not sending</b>}</Meta>}>
+        <Panel title="Orders for the next open" meta={(d.orders || []).length} right={<><Meta>decided {day(d.decided)} · sent {ampm(s.send_time)} · {live ? <b className="up">sending</b> : <b className="down">not sending</b>}</Meta>
+          <button type="button" className="btn primary small" disabled={replanning} onClick={() => replan()} title="rebuild the plan from the evening's data and the account as it is now · nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button></>}>
           <FixedTable cols={orderCols} rows={orderRows} empty="None." />
-          {d.waiting > 0 && <div className="rnote">{d.waiting} more breakout(s) without a free slot / over the daily limit.</div>}
+          {d.waiting > 0 && <div className="rnote">{d.waiting} more breakout(s) without a free slot / over the daily limit{d.waiting_why?.length ? `: ${d.waiting_why.slice(0, 6).map((w) => `${w.symbol} (${w.why})`).join(' · ')}${d.waiting_why.length > 6 ? ' · …' : ''}` : ''}.</div>}
         </Panel>
+        <ReplanPanel r={rp} send={s} busy={replanning} onRaise={(n) => replan(n)} onKeep={() => setRp(null)} />
         <Panel title="Open positions" meta={`${d.positions.length} of ${d.allowed ? d.cap : d.max_pos}`} right={<Meta>stop check every {s.stop_check_min} min · at risk <b className="mono down">{inr(risk)}</b></Meta>}>
           <FixedTable cols={posCols} rows={posRows} empty="None." />
           {d.checks?.length > 0 && <div className="rbanner warn" style={{ margin: '8px 14px' }}>⚠️ Position checks (warnings only, nothing is traded): {d.checks.join(' · ')}</div>}

@@ -73,7 +73,8 @@ def test_paper_capital_api(monkeypatch):
     from backend import main
     with TestClient(main.app) as tc:
         assert tc.post("/api/paper/capital", json={"capital": 5000}).status_code == 422
-        assert tc.post("/api/paper/capital", json={"capital": 350000}).json() == {"status": "ok", "capital": 350000}
+        out = tc.post("/api/paper/capital", json={"capital": 350000}).json()
+        assert out == {"status": "ok", "capital": 350000, "replan": {"status": "not_started"}}   # replan runs after a deposit
         assert tc.get("/api/paper").json()["capital"] == 350000
         with get_db() as conn:                                                       # saved for the next start
             assert json.loads(get_setting(conn, "config.paper"))["capital"] == 350000
