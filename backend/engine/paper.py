@@ -96,6 +96,47 @@ def reset() -> None:
             conn.execute(f"DELETE FROM {t}")
 
 
+def first_capital(st: dict) -> float:
+    """The capital the account started with: today's capital less the money added / withdrawn since."""
+    return st["capital"] - sum(x["amount"] for x in st.get("deposits", []))
+
+
+def apply_deposit(st: dict, capital: float) -> float:
+    """A new capital on a running account: the difference is money added or withdrawn (cash moves, the profit so far
+    stays) and is recorded in `deposits`, so the report never counts it as profit. Returns the delta. The state is
+    changed in place and not saved (set_capital and the start-up migration save it)."""
+    delta = float(capital) - st["capital"]
+    if st["cash"] + delta < 0:
+        raise ValueError(f"withdrawing {-delta:,.0f} is more than the cash ({st['cash']:,.0f}); "
+                         "lower it after positions are sold")
+    st["capital"] = float(capital)
+    st["cash"] += delta
+    st.setdefault("deposits", []).append({"at": now_ist(), "amount": round(delta, 2), "capital": float(capital)})
+    st["updated_at"] = now_ist()
+    return delta
+
+
+def set_capital(config: AppConfig, capital: float) -> dict:
+    """A new paper capital: before the start it is simply the setting; afterwards every account gets the difference
+    as money added / withdrawn (like the real account), and the next BUYs are sized from the new value."""
+    with _lock:
+        states = _states()
+        config.paper.capital = float(capital)
+        if not states:
+            return {"status": "ok", "capital": capital}
+        deltas = {}
+        for key, st in states.items():                    # check every account before changing any
+            if st["cash"] + float(capital) - st["capital"] < 0:
+                raise ValueError(f"withdrawing {st['capital'] - float(capital):,.0f} is more than the cash "
+                                 f"({st['cash']:,.0f}); lower it after positions are sold")
+        for key, st in states.items():
+            deltas[key] = apply_deposit(st, capital)
+            _save(key, st, [], [], [])
+        logger.info("Paper capital set to Rs %.0f (%s)", float(capital),
+                    ", ".join(f"{k} {d:+,.0f}" for k, d in deltas.items()))
+        return {"status": "ok", "capital": capital, "delta": deltas[next(iter(deltas))], "deltas": deltas}
+
+
 def _decide(st: dict, data: dict, i: int, p) -> None:
     """At the close of calendar day i: the orders for the next open (simulate's step 4) and the filter state."""
     S = data["S"]
@@ -322,7 +363,10 @@ def account(key: str, st: dict) -> dict:
             "SELECT payload FROM paper_trades WHERE account = ?", (key,)))
     nifty = round((rows[-1][0] / rows[0][0] - 1) * 100, 2) if len(rows) > 1 and rows[0][0] else 0.0
     cap = st["capital"]
-    return {"capital": cap, "value": round(value, 2), "cash": round(st["cash"], 2), "positions": len(held),
+    deposits = st.get("deposits", [])
+    return {"capital": cap, "first_capital": round(first_capital(st), 2), "deposits": deposits,
+            "deposited": round(sum(x["amount"] for x in deposits), 2),
+            "value": round(value, 2), "cash": round(st["cash"], 2), "positions": len(held),
             "gross": round(value + costs - cap, 2), "charges": round(st["charges"], 2),
             "slippage": round(st["slippage"], 2), "costs": round(costs, 2), "net": round(value - cap, 2),
             "realised": round(realised, 2), "unrealised": round(value - cap - realised, 2),
@@ -337,7 +381,12 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
             "SELECT payload FROM paper_trades WHERE account = ? ORDER BY id DESC", (key,))]
         eq = [dict(r) for r in conn.execute(
             "SELECT day, equity, gross, nifty FROM paper_equity WHERE account = ? ORDER BY day", (key,))]
-    peak, dd = st["capital"], 0.0
+    deposits, first_cap = st.get("deposits", []), first_capital(st)
+    for e in eq:                                          # the curve without the money added / withdrawn
+        added = sum(x["amount"] for x in deposits if x["at"][:10] <= e["day"])
+        e["equity"] -= added
+        e["gross"] -= added
+    peak, dd = first_cap, 0.0
     for e in eq:
         peak = max(peak, e["equity"])
         dd = max(dd, (peak - e["equity"]) / peak * 100)
@@ -359,14 +408,14 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
     won = [t for t in trades if t["net"] > 0]
     gain, loss = sum(t["net"] for t in won), -sum(t["net"] for t in trades if t["net"] <= 0)
     return {"name": st["name"], "start_date": st["started"], "as_of": st["as_of"], "updated_at": st.get("updated_at"),
-            "account": account(key, st), "drawdown": round(dd, 2), "positions": positions,
+            "account": account(key, st), "deposits": deposits, "drawdown": round(dd, 2), "positions": positions,
             "orders": st.get("orders", []), "skipped": st.get("skipped", []), "cap": st.get("cap", p.max_pos),
             "allowed": st.get("allowed"), "filter": st.get("filter"), "decided": st.get("decided"),
             "trades": trades, "won": len(won), "closed": len(trades), "notes": st.get("notes", []), "top": st.get("top"),
             "profit_factor": round(gain / loss, 2) if loss else None,
             "trade_totals": {k: round(sum(t[k] for t in trades), 2) for k in ("gross", "charges", "slippage", "costs", "net")},
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq], "gross": [e["gross"] for e in eq],
-                      "nifty": [round(e["nifty"] / eq[0]["nifty"] * st["capital"], 2) if eq and eq[0]["nifty"] else None
+                      "nifty": [round(e["nifty"] / eq[0]["nifty"] * first_cap, 2) if eq and eq[0]["nifty"] else None
                                 for e in eq]},
             "compare": st.get("compare") or {}}
 

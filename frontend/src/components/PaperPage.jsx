@@ -38,11 +38,20 @@ export default function PaperPage() {
   const P = (rich, plain) => (phone ? plain : rich);
 
   useEffect(() => {
-    api.getPaper().then((x) => { setD(x); setErr(''); if (!x.started) setCap(String(x.capital)); }).catch((e) => setErr(e.message));
+    api.getPaper().then((x) => { setD(x); setErr(''); setCap(String(x.started ? Object.values(x.accounts)[0]?.account.capital ?? x.capital : x.capital)); }).catch((e) => setErr(e.message));
     api.getBreakout().then((b) => setRules(b.rules)).catch(() => {});
   }, [tick]);
 
   const start = () => api.startPaper(Number(cap)).then(() => setTick((t) => t + 1)).catch((e) => setErr(e.message));
+  // the capital box after the start: like Real's, a change is money added / withdrawn on every paper account
+  const saveCap = () => {
+    const v = Number(cap);
+    const now = Object.values(d.accounts)[0]?.account.capital ?? d.capital;
+    if (!(v >= 10000) || v === now) return;
+    const msg = `Change the paper capital from ${inr(now)} to ${inr(v)}? This counts as ${v > now ? 'adding' : 'withdrawing'} ${inr(Math.abs(v - now))}: `
+      + 'cash changes, the profit so far stays, and the next BUY quantities follow the new value.';
+    if (window.confirm(msg)) api.paperCapital(v).then(() => setTick((t) => t + 1)).catch((e) => setErr(e.message));
+  };
   const reset = () => {
     if (window.confirm('Reset paper trading? The paper account and all its trades are deleted.')) {
       api.resetPaper().then(() => setTick((t) => t + 1)).catch((e) => setErr(e.message));
@@ -147,9 +156,12 @@ export default function PaperPage() {
         <Panel title="Orders for the next open" meta={nOrders} right={<Meta>decided {day(a0.decided)}</Meta>}>
           <FixedTable cols={ORD_COLS} rows={ordRows} empty="None." />
         </Panel>
-        <Panel title="Accounts" meta={keys.length}>
+        <Panel title="Accounts" meta={keys.length} right={<Meta>capital <b className="mono">{inr(a0.account.capital)}</b></Meta>}>
           {keys.map((k) => { const A = accts[k].account; return <Act key={k} icon={k} cls={cls(A.net)} text={<><b className={`v${k}`}>{NAME[k]}</b> · {signed(A.gross)} − {inr(A.costs)} = <b className={cls(A.net)}>{signed(A.net)}</b></>}
-            meta={`charges ${inr(A.charges)} · slippage ${inr(A.slippage)} · realised ${signed(A.realised)} · unrealised ${signed(A.unrealised)} · won ${accts[k].won} of ${accts[k].closed}`} />; })}
+            meta={`capital ${inr(A.capital)} · deposits ${(A.deposited || 0) < 0 ? '−' : '+'}${inr(Math.abs(A.deposited || 0))} · charges ${inr(A.charges)} · slippage ${inr(A.slippage)} · realised ${signed(A.realised)} · unrealised ${signed(A.unrealised)} · won ${accts[k].won} of ${accts[k].closed}`} />; })}
+          <div className="rform"><div className="fr"><span>Capital<small>size = account value ÷ {d.max_pos} · a change counts as money added / withdrawn, not profit</small></span>
+            <span style={{ whiteSpace: 'nowrap' }}>₹<input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />{' '}
+              <button type="button" className="btn small" onClick={saveCap} disabled={!(Number(cap) >= 10000) || Number(cap) === a0.account.capital}>Save</button></span></div></div>
         </Panel>
         <NextUp />
       </div>

@@ -170,11 +170,11 @@ def test_daily_loss_limit_blocks_new_entries(monkeypatch):
     loose()
     c = AppConfig()
     c.flow.mode = "paper"
-    p = pos.open_new(DAY, {"symbol": "L", "token": 9, "side": "long", "qty": 2000, "entry": 100, "sl": 99, "target": None},
+    p = pos.open_new(DAY, {"symbol": "L", "token": 9, "side": "long", "qty": 6000, "entry": 100, "sl": 99, "target": None},
                      "09:40", {"squareoff": "15:15"})
     pos.step(p, {"t": "09:41", "o": 100, "h": 100, "l": 97, "c": 97, "v": 1}, None, {"squareoff": "15:15"})
     pos._save(p)
-    assert pos.day_stats(DAY)["realised"] < -1500
+    assert pos.day_stats(DAY)["realised"] < -4500                                    # 1.5% of the 3L capital
     res = flow.run_now(c, feed_with(stocks), now=at(10, 10))
     assert res["nodes"]["size"]["drops"] == {"daily loss limit hit": 6} and res["signals"] == 0
 

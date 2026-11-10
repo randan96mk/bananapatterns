@@ -1240,6 +1240,26 @@ def paper_start(req: PaperStart):
     return r
 
 
+class PaperCapital(BaseModel):
+    capital: float
+
+
+@router.post("/paper/capital")
+def paper_capital(req: PaperCapital):
+    """Set the paper capital. After the start, the change is money added / withdrawn on every paper account: cash
+    moves, the profit so far stays, and the next BUYs are sized from the new value."""
+    from backend.engine import paper
+    if req.capital < 10_000:
+        raise HTTPException(422, "capital must be at least Rs 10,000")
+    st = S()
+    try:
+        res = paper.set_capital(st.config, req.capital)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    save_config(st.config)
+    return res
+
+
 @router.post("/paper/reset")
 def paper_reset():
     """Clear the paper account and its record."""

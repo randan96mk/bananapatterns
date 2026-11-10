@@ -304,7 +304,7 @@ class BreakoutConfig:
     test_years: float = 6.0                # sessions tested (after warm-up), ending at the latest NIFTY 50 candle
     warmup_years: float = 1.2              # history loaded before them (the first warmup_sessions are warm-up)
     warmup_sessions: int = 260
-    capital: float = 200_000.0
+    capital: float = 300_000.0
     max_pos: int = 10                      # equal weight: equity / max_pos
     top: int = 300                         # universe: the most traded N (20-day average turnover)
     min_price: float = 100.0
@@ -327,7 +327,7 @@ class BreakoutConfig:
 class PaperConfig:
     """Paper trading of the Trend Breakout rules (simulated, never orders). The capital is used when paper trading
     starts (or restarts after a reset); sizes, quantities and cash follow from it and from the account's value."""
-    capital: float = 200_000.0             # per account
+    capital: float = 300_000.0             # per account
     variants: list = field(default_factory=lambda: ["E"])        # E+ is the only variant (A removed Nov 2026);
                                                                  # unknown entries in a saved config are ignored
 
@@ -338,7 +338,7 @@ class RealConfig:
     trading. Prices come from Kite (read-only); no order ever goes to Kite."""
     enabled: bool = True                   # send orders (the kill switch on the tab overrides it)
     variant: str = "E"                     # strategy for NEW buys: E (E+, the only variant since Nov 2026)
-    capital: float = 200_000.0             # set on the tab; a later change counts as money added / withdrawn
+    capital: float = 300_000.0             # set on the tab; a later change counts as money added / withdrawn
     preview_time: str = "09:00"            # a Telegram line listing the day's orders before they go ("" = off)
     send_time: str = "09:16"               # the day's orders (EXITs, then BUYs) go out from here...
     send_until: str = "09:30"              # ...until here (missed: not sent that day, with an alert)
@@ -347,7 +347,7 @@ class RealConfig:
     send_stop: bool = False                # also send each BUY's stop to Tradetron (sig_stop) so Tradetron can exit on its
                                            # own; turn on once the Tradetron strategy reads sig_stop
     nologin_alarm_min: int = 30            # positions open, no Kite login in market hours: a loud alarm every N minutes
-    max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 2L = 30,000)
+    max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 3L = 45,000)
 
 
 @dataclass

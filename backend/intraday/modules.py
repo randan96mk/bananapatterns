@@ -499,7 +499,7 @@ class StopTarget(Module):
 @module("size")
 class SizeRisk(Module):
     title, icon = "Size & risk", "📏"
-    fields = [("capital", "Capital ₹", "number", 100000, {"min": 10000, "max": 100000000, "step": 10000}),
+    fields = [("capital", "Capital ₹", "number", 300000, {"min": 10000, "max": 100000000, "step": 10000}),
               ("risk_pct", "Risk a trade (% of capital)", "number", 0.5, {"min": 0.05, "max": 5, "step": 0.05}),
               ("max_pos_pct", "Max position (% of capital)", "number", 50, {"min": 1, "max": 500, "step": 1}),
               ("max_open", "Max open positions", "number", 2, {"min": 1, "max": 20}),

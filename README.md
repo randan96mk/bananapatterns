@@ -1017,7 +1017,7 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   withdrawal can't exceed the cash), and tomorrow's unsent BUYs are re-sized at once. The tab shows what it means
   now: size per stock = account value ÷ 10, largest order = 15% of the value; quantity = size ÷ price, whole shares,
   within the cash left.
-- **Tracking**: capital `real.capital` (₹2,00,000), before costs · charges · after costs, realised / unrealised,
+- **Tracking**: capital `real.capital` (₹3,00,000), before costs · charges · after costs, realised / unrealised,
   positions, the trade log and the **order log** (every webhook with Tradetron's reply, never deleted). The broker's
   own fills are not visible; prices are the ones seen when sending, corrected to the day's open in the evening.
 - **Telegram**: always loud and labelled **💰 REAL**: tomorrow's orders (evening), orders sent (morning), stop hit ·
@@ -1035,10 +1035,12 @@ unrealised, won, profit factor, max drawdown, positions with stop and SMA50, tom
 ₹ at risk. (Paper A, the second account until 2026-11-06, was deleted on upgrade.) Re-running the evening
 job on a day already processed changes nothing. Nothing is ever sent to Kite.
 
-- **Capital**: the `paper.capital` setting (default ₹2,00,000), or the amount typed next to Start. Everything follows
+- **Capital**: the `paper.capital` setting (default ₹3,00,000), or the amount typed next to Start. Everything follows
   from it: position size = account value (cash + positions at the last close) ÷ `max_pos`, quantity =
-  ⌊min(size, cash) / (open × (1 + slippage) × 1.0012)⌋, skipped under one share. Changing the capital applies from
-  the next Reset.
+  ⌊min(size, cash) / (open × (1 + slippage) × 1.0012)⌋, skipped under one share. The capital box on the tab
+  (`POST /api/paper/capital`) works like Real's: before the start it is the setting; afterwards a change counts as
+  money added / withdrawn on every paper account (cash moves, the profit so far and the curve stay, recorded in the
+  account's `deposits`, never counted as return).
 - **Each evening** (after the sync, every new session): yesterday's SELL orders, then BUY orders (best 6-month return
   first, while slots are free) fill at the day's open from the daily candle with slippage and delivery charges; a low
   at or under a stop sells at min(open, stop); a close under SMA50 queues a SELL and the day's breakouts (market filter
@@ -1050,7 +1052,7 @@ job on a day already processed changes nothing. Nothing is ever sent to Kite.
 - **Telegram**: a block that always starts **📝 PAPER TRADING · simulated, no real orders** (fills, closed trades with
   gross · costs · net, the next open's orders, the account before / after costs vs NIFTY 50), in the 7 PM report
   (summary style) or as its own silent message. The real-account scan stays a separate block and never says PAPER.
-- API: `GET /api/paper`, `POST /api/paper/start` `{capital}`, `POST /api/paper/reset`.
+- API: `GET /api/paper`, `POST /api/paper/start` `{capital}`, `POST /api/paper/capital` `{capital}`, `POST /api/paper/reset`.
 
 ### Evening report (alert style)
 
@@ -1257,7 +1259,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `alert_style` | summary | summary: the evening's alerts in one 7 PM report (charts on tap); every: each alert its own message |
 | `a_min_rs` / `a_min_trend` / `a_top_industry_frac` | 85 / 7 / 0.33 | what makes an A setup |
 | `market_line` / `market_sizing` | true / true | market line on alerts; size by market status |
-| `breakout.*`: `test_years` / `warmup_years` / `warmup_sessions` / `capital` / `max_pos` / `top` / `min_price` / `vol_mult` / `stop_pct` / `atr_mult` / `hi_window` / `exit_sma` / `regime` / `slippage_pct` / `stress_slippage_pct` / `sell_pct` | 6 / 1.2 / 260 / 2,00,000 / 10 / 200 / 100 / 1.5 / 8 / 2 / 20 / 50 / on / 0.10 / 0.25 / 8 | Trend Breakout backtest and evening scan |
+| `breakout.*`: `test_years` / `warmup_years` / `warmup_sessions` / `capital` / `max_pos` / `top` / `min_price` / `vol_mult` / `stop_pct` / `atr_mult` / `hi_window` / `exit_sma` / `regime` / `slippage_pct` / `stress_slippage_pct` / `sell_pct` | 6 / 1.2 / 260 / 3,00,000 / 10 / 200 / 100 / 1.5 / 8 / 2 / 20 / 50 / on / 0.10 / 0.25 / 8 | Trend Breakout backtest and evening scan |
 | `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
@@ -1877,8 +1879,8 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **Score & rank** (RVOL, relative strength, RSI weights; top K). **Stop & target**: stop from ORB / ATR / signal bar /
   VWAP / %, min–max stop %, target in R, partial booking, trailing (off / breakeven / previous bar / ATR / %, after N·R),
   time stop, square-off time.
-- **Size & risk** from the configured capital (default ₹1,00,000): risk % per trade (0.5% = ₹500), max position %,
-  max open, max 6 trades a day, daily loss limit % (1.5% = ₹1,500). Change the capital and every limit follows.
+- **Size & risk** from the configured capital (default ₹3,00,000): risk % per trade (0.5% = ₹1,500), max position %,
+  max open, max 6 trades a day, daily loss limit % (1.5% = ₹4,500). Change the capital and every limit follows.
 - **📝 Paper mode**: fills at the next 1-minute open + 0.05% slippage, Zerodha intraday charges, positions managed at
   every 1-minute close (restart-safe, `flow_positions`). Telegram: entries, exits, loss-limit hit, day summary.
   Sub-tabs **Flow · Positions · Journal** (by side, setup, time of day; equity curve). No order is ever sent.

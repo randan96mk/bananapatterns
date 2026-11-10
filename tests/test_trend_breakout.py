@@ -226,7 +226,8 @@ def test_old_orb_and_track_tables_are_dropped(tmp_path):
     conn = sqlite3.connect(path)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert not tables & {"orb_signals", "candles_5m", "track_signals"} and "breakout_runs" in tables
-    assert [r[0] for r in conn.execute("SELECT key FROM app_settings")] == ["keep"]
+    keys = [r[0] for r in conn.execute("SELECT key FROM app_settings")]
+    assert keys == ["capital.300k.done", "keep"]                      # only the capital migration's own flag is added
 
 
 # --- E: the half filter ---------------------------------------------------------------------------
