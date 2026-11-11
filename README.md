@@ -1003,6 +1003,7 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   the daily candle) and tomorrow's orders are planned with the E+ rules (`real.variant` is `E`, the only value since A
   was removed): EXIT on a close under SMA50; BUY the ranked breakouts into the free slots under the half filter at
   account value ÷ 10, within `max_order_pct` (15%) of the account value and `max_buys_per_day` (5).
+- **`send_gap_s`** (5 s): the pause between two order webhooks, so Tradetron finishes one entry before the next arrives.
 - **`send_time`–`send_until`** (9:16–9:30 AM): EXITs, then BUYs, **each sent once** (one key per day, stock and
   action); a failure is logged and alerted, never retried.
 - **Stops**: no stop-loss orders. Every `stop_check_min` (5) minutes in market hours the app reads live prices and

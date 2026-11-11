@@ -36,22 +36,22 @@ def public(b: dict) -> dict:
     return {k: v for k, v in b.items() if k != "auth-token"}
 
 
-PACE_S = 1.5                       # at least this long between two webhooks (Tradetron answers 429 to bursts)
+PACE_S = 1.5                       # the floor between two webhooks (Tradetron answers 429 to bursts); real.send_gap_s raises it
 RETRY_429 = (2, 4, 8)              # waits before the retries of a "429 Too Many Requests" (or Retry-After, if longer)
 _pace_lock = threading.Lock()
 _last_sent = [0.0]
 last_retries = 0                   # how many 429 retries the latest send() needed (for the order log and Telegram)
 
 
-def _pace() -> None:
+def _pace(gap: float = PACE_S) -> None:
     with _pace_lock:
-        wait = _last_sent[0] + PACE_S - time.monotonic()
+        wait = _last_sent[0] + max(PACE_S, float(gap or 0)) - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         _last_sent[0] = time.monotonic()
 
 
-def send(symbol: str, action: str, qty=None, stop=None, opener=None) -> str:
+def send(symbol: str, action: str, qty=None, stop=None, opener=None, gap: float = PACE_S) -> str:
     """One webhook; raises on a network or HTTP error, or when no token is configured. Webhooks are spaced PACE_S
     apart. Only a 429 "Too Many Requests" is retried (Tradetron refuses those before taking the order, so a retry
     can't place it twice); every other error is raised at once and never retried (the order may have gone in)."""
@@ -63,7 +63,7 @@ def send(symbol: str, action: str, qty=None, stop=None, opener=None) -> str:
     opener = opener or urllib.request.urlopen
     last_retries = 0
     for attempt in range(len(RETRY_429) + 1):
-        _pace()
+        _pace(gap)
         req = urllib.request.Request(URL, data, {"Content-Type": "application/json", "User-Agent": "tt-webhook/1.0"})
         try:
             return opener(req, timeout=15).read().decode()

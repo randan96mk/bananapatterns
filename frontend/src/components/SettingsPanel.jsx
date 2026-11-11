@@ -4,6 +4,7 @@ import { Head, Chip, Panel, Act } from './ui2';
 import * as api from '../services/api';
 
 const HELP = {
+  send_gap_s: 'Seconds between two order webhooks at 9:16 (1–30); a 429 back-off adds to it',
   history_years: 'Backfill depth in years (8 ≈ 2 Kite calls per symbol)',
   hist_rate_per_sec: 'Historical API rate (Kite limit 3/s)',
   max_retries: 'Retries for network / 429 / 5xx errors',

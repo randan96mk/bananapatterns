@@ -389,9 +389,17 @@ def _close(st: dict, sym: str, px: float, day: str, why: str, est: bool) -> dict
     return t
 
 
+def _gap(config: AppConfig) -> float:
+    """Seconds between two webhooks: real.send_gap_s, clamped to 1–30."""
+    try:
+        return min(30.0, max(1.0, float(getattr(config.real, "send_gap_s", 5.0) or 5.0)))
+    except (TypeError, ValueError):
+        return 5.0
+
+
 def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable] = None) -> dict:
     """The planned orders (EXITs, then BUYs), each sent once. Returns {status, sent, failed}."""
-    sender = sender or tradetron.send
+    sender = sender or (lambda *a, **k: tradetron.send(*a, gap=_gap(config), **k))
     with _lock:
         st = _state()
         if not st or not st.get("orders"):
@@ -448,7 +456,7 @@ def retry_order(config: AppConfig, client, today: str, symbol: str, action: str,
     """↻ A FAILED order of today's plan sent again, by hand, once per press: only while real trading is on (not
     killed) and the market is open, only if it is still marked failed. On success it is booked like any sent order."""
     from backend.config import IST
-    sender = sender or tradetron.send
+    sender = sender or (lambda *a, **k: tradetron.send(*a, gap=_gap(config), **k))
     now = now or datetime.now(IST)
     if not active(config):
         return {"status": "error", "error": "real trading is off or the kill switch is on"}
@@ -494,7 +502,7 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
     """Live prices of the open positions: an EXIT once one has traded at or under its stop today (once per stock).
     The day's low is checked too, so a stop touched between checks, or while the app had no Kite login (caught up
     at the first check after the login), still exits, as in the backtest (a day's low at or under the stop)."""
-    sender = sender or tradetron.send
+    sender = sender or (lambda *a, **k: tradetron.send(*a, gap=_gap(config), **k))
     with _lock:
         st = _state()
         if not st or not st["positions"]:

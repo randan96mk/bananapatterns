@@ -279,3 +279,23 @@ def test_routes_including_the_dry_run(monkeypatch):
         assert r["position"]["symbol"] == new and r["position"]["manual"] is True
         assert tc.post("/api/real/trade/999", json={"exit": 1}).status_code == 400
         assert json.dumps(tc.get("/api/real").json()).count('"EDIT"') >= 1
+
+
+def test_send_gap_setting_spaces_the_webhooks(monkeypatch):
+    """real.send_gap_s is the pause between two webhooks (floor 1 s, cap 30 s)."""
+    from backend.config import AppConfig
+    from backend.broker import tradetron
+    from backend.engine import real
+    cfg = AppConfig()
+    cfg.real.send_gap_s = 7
+    assert real._gap(cfg) == 7.0
+    cfg.real.send_gap_s = 0.2
+    assert real._gap(cfg) == 1.0
+    cfg.real.send_gap_s = 99
+    assert real._gap(cfg) == 30.0
+    waits = []
+    monkeypatch.setattr(tradetron.time, "sleep", lambda s: waits.append(s))
+    monkeypatch.setattr(tradetron.time, "monotonic", lambda: 100.0)
+    tradetron._last_sent[0] = 100.0
+    tradetron._pace(7)
+    assert waits == [7.0]
