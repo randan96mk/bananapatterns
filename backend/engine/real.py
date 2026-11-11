@@ -392,9 +392,9 @@ def _close(st: dict, sym: str, px: float, day: str, why: str, est: bool) -> dict
 def _gap(config: AppConfig) -> float:
     """Seconds between two webhooks: real.send_gap_s, clamped to 1–30."""
     try:
-        return min(30.0, max(1.0, float(getattr(config.real, "send_gap_s", 5.0) or 5.0)))
+        return min(30.0, max(1.0, float(getattr(config.real, "send_gap_s", 10.0) or 10.0)))
     except (TypeError, ValueError):
-        return 5.0
+        return 10.0
 
 
 def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable] = None) -> dict:
