@@ -1033,7 +1033,21 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   overwriting the plan. The backtest ran with `max_pos` 10 (the default): re-run it after a change.
 - API: `GET /api/real`, `POST /api/real/settings` `{enabled, variant}` (`variant` only accepts `E`), `POST /api/real/kill?on=`,
   `POST /api/real/reset`, `POST /api/real/replan` `{max_pos?}`, `POST /api/real/capital` `{capital}` (returns the
-  re-plan under `replan`).
+  re-plan under `replan`). Corrections: `POST /api/real/position/{symbol}` `{qty?, entry?, stop?, note}` (`?dry=1` for the
+  effects only), `DELETE /api/real/position/{symbol}` `{note}`, `POST /api/real/position` `{symbol, qty, entry, day,
+  stop?, note}`, `POST /api/real/trade/{id}` `{exit?, qty?}` (`?dry=1`).
+- **Correcting a position** (✎ on a row of Open positions, "+ Add a position", ✎ on a trade): the broker's fills are
+  not visible, so a webhook BUY is booked at an estimated entry ("est. entry") and a trade placed by hand is not
+  known at all. Edit the quantity, entry or stop (Save… first shows the effects: P&L before and after, the cash,
+  the EXIT quantity, the stop distance): cash and charges move exactly like the evening's correction, `est` is
+  cleared (the evening no longer touches it), the first entry is kept, and every rule follows the new values (the
+  EXIT sends the new quantity, the 5-minute check uses the new stop, the E+ trail arms at +100% from the new entry
+  and only ever raises an edited stop). "Remove from tracking…" drops a position whose order never filled (cash and
+  charges back, as if never bought). "+ Add a position" tracks a hand-placed trade (stock in the universe, a free
+  slot and the cash; the stop defaults to the strategy's rule: ATR × atr_mult or stop_pct under the entry). Trade
+  log ✎ corrects a closed trade's exit price / quantity (net and cash follow). Every correction is a line in the
+  order log ("edited X: entry 2,435.10 → 2,441.50 · by you") and in the row's "edited" tag; nothing is sent to the
+  broker and the switches are untouched. Paper has no edits.
 
 ### 📝 Paper trading (simulated: never orders)
 

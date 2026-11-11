@@ -107,6 +107,11 @@ export const realKill = (on) => req('POST', `/api/real/kill?on=${on}`);
 export const realReset = () => req('POST', '/api/real/reset');
 export const realCapital = (capital) => req('POST', '/api/real/capital', { capital });
 export const realReplan = (maxPos) => req('POST', '/api/real/replan', maxPos ? { max_pos: maxPos } : {});
+// corrections by hand (nothing is sent): dry = the effects only, nothing saved
+export const realEditPosition = (symbol, body, dry = false) => req('POST', `/api/real/position/${encodeURIComponent(symbol)}${dry ? '?dry=1' : ''}`, body);
+export const realRemovePosition = (symbol, note) => req('DELETE', `/api/real/position/${encodeURIComponent(symbol)}`, { note });
+export const realAddPosition = (body) => req('POST', '/api/real/position', body);
+export const realEditTrade = (id, body, dry = false) => req('POST', `/api/real/trade/${id}${dry ? '?dry=1' : ''}`, body);
 export const runBreakout = () => req('POST', '/api/breakout/run');
 export const getPaper = () => req('GET', '/api/paper');
 export const startPaper = (capital) => req('POST', '/api/paper/start', { capital });

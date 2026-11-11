@@ -72,12 +72,21 @@ const schedule = { now: now.toISOString(), jobs: [{ key: 'real_stops', name: 'Re
     const m = document.querySelector('.hmap');
     if (m) document.querySelectorAll('.hmap .tile').forEach((t) => { if (R(t).right > R(m).right + 0.5 || R(t).bottom > R(m).bottom + 0.5) out.push(`map tile spills: ${t.textContent}`); });
     document.querySelectorAll('.hpos .stopmeter').forEach((sm) => { const cell = sm.closest('td'); if (cell && R(sm).right > R(cell).right + 0.5) out.push('stop meter wider than its cell'); });
+    document.querySelectorAll('.hpos tr:not(.grp) td:first-child').forEach((td) => { if (td.scrollWidth > td.clientWidth + 1) out.push(`stock cell clipped: ${td.textContent.trim()}`); });
     document.querySelectorAll('.hpos td .trail').forEach((t) => { const cell = t.closest('td'); if (cell && t.scrollWidth > cell.clientWidth + 1) out.push(`trail text clipped: ${t.textContent}`); });
     document.querySelectorAll('.hcontrib').forEach((c) => { if (Math.abs(R(c).height - 14) > 0.5) out.push('contribution bar is not 14 px'); });
     if (!document.querySelector('.rpanel .ftab')) out.push('no Next open / positions table rendered');
     if (m && !m.querySelector('.tile em')) out.push('no R·P tag on the map');
     const tl = document.querySelector('.htl');
     if (tl) tl.querySelectorAll('.cl, .ev').forEach((e) => { if (R(e).right > R(tl).right + 0.5 || R(e).left < R(tl).left - 0.5) out.push('timeline dot outside the bar'); });
+    if (window.innerWidth <= 760) {                        // the phone list: 46 px rows, Paper folded by default
+      const rows = document.querySelectorAll('.ppr');
+      if (!rows.length) out.push('no phone position rows');
+      rows.forEach((r) => { if (Math.abs(R(r).height - 46) > 0.5) out.push(`phone position row is ${R(r).height} px, not 46`); });
+      const paper = document.querySelector('.pfold[data-book="paper_E"]');
+      if (!paper || paper.dataset.open !== '0') out.push('the Paper fold is not closed by default');
+      if (document.querySelector('.pfold[data-book="real"]')?.dataset.open !== '1') out.push('the Real fold is not open by default');
+    }
     if (document.documentElement.scrollWidth > window.innerWidth + 1) out.push(`horizontal page overflow: ${document.documentElement.scrollWidth} > ${window.innerWidth}`);
     return out;
   });

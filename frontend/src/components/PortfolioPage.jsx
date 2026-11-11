@@ -29,8 +29,10 @@ function csv(rows) {
   a.click();
 }
 
-const POS_COLS = [{ h: 'Stock' }, { h: 'Strategy', w: 130, lo: true }, { h: 'Qty', w: 60, n: true, lo: true }, { h: 'Entry', w: 86, n: true, lo: true },
-  { h: 'Now', w: 90, n: true }, { h: 'P&L', w: 90, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 210 }, { h: 'Days', w: 56, n: true, lo: true }];
+// Strategy is the short tag ("E+" / "Flow") at 60 px; under 1440 px Entry and Days are dropped (nw) so Stock keeps 140 px+
+const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true, title: 'strategy' }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 80, n: true, lo: true, nw: true },
+  { h: 'Now', w: 86, n: true }, { h: 'P&L', w: 86, n: true }, { h: '%', w: 60, n: true, lo: true }, { h: 'Stop · distance', w: 160, ell: true }, { h: 'Days', w: 56, n: true, lo: true, nw: true }];
+const shortStrategy = (s) => (/E\+/.test(s || '') ? 'E+' : /flow/i.test(s || '') ? 'Flow' : s || '');
 
 export default function PortfolioPage({ onStock }) {
   const o = useLive('overview');                           // positions and the account cards update live; history loads once
@@ -82,7 +84,7 @@ export default function PortfolioPage({ onStock }) {
   const posRows = groups.flatMap(([b, ps]) => [
     `${BOOK[b] || names[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))}${b === 'intraday' ? ' · out by 3:15 PM' : ` · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use`}`,
     ...ps.map((p) => ({ key: p.book + p.symbol, onClick: () => onStock(p.symbol), title: `${p.side} · opened ${p.opened} · value ${inr((p.now || p.entry) * p.qty)}`,
-      cells: [<><b>{p.symbol}</b>{p.side === 'short' && <span className="rtag bad">short</span>}{p.stop_dist != null && p.stop_dist < 2 && <span className="rtag w">near stop</span>}</>, <span className="muted">{p.strategy}</span>, p.qty, p.entry,
+      cells: [<><b>{p.symbol}</b>{p.side === 'short' && <span className="rtag bad">short</span>}{p.stop_dist != null && p.stop_dist < 2 && <span className="rtag w">near stop</span>}</>, <span className={/E\+/.test(p.strategy || '') ? 'vE' : 'muted'} title={p.strategy}>{shortStrategy(p.strategy)}</span>, p.qty, p.entry,
         <>{p.now ?? '—'}{p.live && <span className="livedot" />}</>, <span className={cls(p.pnl)}>{signed(p.pnl)}</span>, <span className={cls(p.pct)}>{pct(p.pct)}</span>,
         p.now && p.stop ? <><StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> <span className="mono">{p.stop}</span></> : <span className="muted">{p.stop ?? '—'}</span>, daysHeld(p)] }))]);
 
