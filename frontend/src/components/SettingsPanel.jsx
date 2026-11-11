@@ -73,8 +73,13 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
-const NAMES = { vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
+const SECTIONS = ['real', 'paper', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
+const NAMES = { real: 'Real trading', paper: 'Paper trading', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
+// Set on their own pages (switches, confirms, deposits): not editable here.
+const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'] };
+const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
+  max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this' };
+Object.assign(HELP, HELP2);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
 function useNarrow() {
@@ -120,7 +125,7 @@ export default function SettingsPanel() {
         </Panel>
         <Panel title={NAMES[section]} meta={vals ? Object.keys(vals).length : null} right={dirty ? <span className="warn">unsaved changes</span> : 'saved to config'}>
           {!vals ? <p className="muted small rempty">{msg || 'Loading…'}</p>
-            : <div className="rform">{Object.entries(draft).map(([k, v]) => (
+            : <div className="rform">{Object.entries(draft).filter(([k]) => !(HIDE[section] || []).includes(k)).map(([k, v]) => (
               <div key={k} className="fr">
                 <div><code>{k}</code><small>{HELP[k] || ''}{/^\d{1,2}:\d{2}$/.test(String(v)) && ` (= ${ampm(String(v))} IST)`}</small></div>
                 <div style={{ textAlign: 'right' }}>{Array.isArray(v)
