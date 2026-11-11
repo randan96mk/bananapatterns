@@ -22,8 +22,9 @@ const Trail = ({ x }) => (x.trail_active || x.trailed ? <Tag c="ok" title={`E+ l
   : x.best ? <Tag title="best close so far">best {rs(x.best)}</Tag> : null);
 const filterText = (f) => (f ? `${f.state}${f.state === 'HALF' ? ` (${f.slots} slots)` : ''}${f.changed ? ` · was ${f.prev}` : ''}` : '—');
 
-const POS_COLS = [{ h: 'Stock' }, { h: 'Strategy', w: 86, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Bought', w: 150, lo: true }, { h: 'SMA50', w: 86, n: true, lo: true }, { h: 'Last', w: 90, n: true },
-  { h: 'After costs', w: 104, n: true }, { h: '%', w: 64, n: true, lo: true }, { h: 'Stop · distance', w: 270, ell: true }, { h: 'Days', w: 56, n: true, lo: true }];
+// Strategy is the short tag at 60 px; under 1440 px SMA50, % and Days are dropped (nw) so the Stock column keeps 140 px+
+const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true, title: 'strategy' }, { h: 'Qty', w: 50, n: true, lo: true }, { h: 'Bought', w: 130, lo: true }, { h: 'SMA50', w: 80, n: true, lo: true, nw: true }, { h: 'Last', w: 84, n: true },
+  { h: 'After costs', w: 96, n: true }, { h: '%', w: 60, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: 180, ell: true }, { h: 'Days', w: 56, n: true, lo: true, nw: true }];
 const ORD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 58 }, { h: 'Side', w: 58 }, { h: 'Qty', w: 50, n: true }, { h: 'Stop', w: 80, n: true }, { h: 'Risk', w: 72, n: true, lo: true }];
 const TRD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 62 }, { h: 'Closed', w: 150, lo: true }, { h: 'Days', w: 56, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110, lo: true }];
 

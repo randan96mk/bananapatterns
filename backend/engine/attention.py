@@ -78,7 +78,7 @@ def _real(config, kite: bool) -> list:
         out.append(("warn", "Kite not logged in: stops are NOT watched"))
     today = date.today().isoformat()
     with get_db() as conn:
-        bad = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status != 'sent'", (today,))]
+        bad = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status != 'sent' AND action IN ('BUY', 'EXIT')", (today,))]
         stops = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status = 'sent' AND "
                                             "reason LIKE 'stop%'", (today,))]
     if bad:

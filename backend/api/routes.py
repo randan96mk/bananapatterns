@@ -1242,6 +1242,75 @@ def real_reset():
     return {"status": "ok"}
 
 
+# Corrections by hand: a fill the webhook could only estimate, a trade placed by hand, an order that never filled.
+# None of these touches the enable switch or the kill switch; nothing is sent to the broker.
+
+class PositionEdit(BaseModel):
+    qty: Optional[float] = None
+    entry: Optional[float] = None
+    stop: Optional[float] = None
+    note: str = ""
+
+
+class PositionRemove(BaseModel):
+    note: str = ""
+
+
+class PositionAdd(BaseModel):
+    symbol: str
+    qty: float
+    entry: float
+    day: str
+    stop: Optional[float] = None
+    note: str = ""
+
+
+class TradeEdit(BaseModel):
+    exit: Optional[float] = None
+    qty: Optional[float] = None
+    note: str = ""
+
+
+@router.post("/real/position/{symbol}")
+def real_position_edit(symbol: str, req: PositionEdit, dry: bool = False):
+    """✎ Correct an open position's qty / entry / stop; `?dry=1` returns the effects without saving."""
+    from backend.engine import real
+    try:
+        return real.edit_position(S().config, symbol.upper(), req.qty, req.entry, req.stop, req.note, dry=dry)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.delete("/real/position/{symbol}")
+def real_position_remove(symbol: str, req: Optional[PositionRemove] = None):
+    """Drop a position from tracking without any order (a webhook BUY the broker never filled)."""
+    from backend.engine import real
+    try:
+        return real.remove_position(S().config, symbol.upper(), (req.note if req else ""))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/real/position")
+def real_position_add(req: PositionAdd):
+    """Track a trade placed by hand (exited by the app's rules); the stop defaults to the strategy's rule."""
+    from backend.engine import real
+    try:
+        return real.add_position(S().config, req.symbol.strip().upper(), req.qty, req.entry, req.day, req.stop, req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/real/trade/{trade_id}")
+def real_trade_edit(trade_id: int, req: TradeEdit, dry: bool = False):
+    """✎ Correct a closed trade's exit price / qty; `?dry=1` returns the effects without saving."""
+    from backend.engine import real
+    try:
+        return real.edit_trade(S().config, trade_id, req.exit, req.qty, req.note, dry=dry)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 # --- Paper trading (simulated: never orders) ---
 
 class PaperStart(BaseModel):

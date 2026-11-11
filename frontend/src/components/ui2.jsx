@@ -1,6 +1,7 @@
 import React from 'react';
 import { useBeat } from '../heartbeat';
 import { signed } from '../fmt';
+import { useNarrow } from '../useMedia';
 
 // 🧱 Redesign building blocks (every page after Home). Wrap a page in <div className="rd"> so redesign.css applies.
 // Rules baked in: a card is a fixed-height grid (label · value · sub-line · fact | corner chart); a table has fixed
@@ -40,14 +41,21 @@ export function Panel({ title, meta, right, children, className = '', id }) {
     {children}</div>;
 }
 
-// Fixed-width table. cols: [{h, w, n (number, right-aligned), lo (hidden on a phone), ell (free text: an ellipsis is
+// Fixed-width table. cols: [{h, w, n (number, right-aligned), lo (hidden on a phone), nw (dropped with its cells on a
+// desktop window under 1440 px, so the first column keeps its room), ell (free text: an ellipsis is
 // expected), key, onClick (a sortable header)}]; the first column takes
-// the remaining width. rows: [{key, cells: [...], cls, onClick, title}] or a string for a group row.
-export function FixedTable({ cols, rows, empty, className = '' }) {
+// the remaining width. rows: [{key, cells: [...], cls, onClick, title}], a string for a group row, or {key, span}
+// for one full-width row whose content wraps (an inline editor under the row above it).
+export function FixedTable({ cols: allCols, rows: allRows, empty, className = '' }) {
+  const narrow = useNarrow();
+  const drop = narrow && allCols.some((c) => c.nw);
+  const cols = drop ? allCols.filter((c) => !c.nw) : allCols;
+  const rows = drop ? (allRows || []).map((r) => (typeof r === 'string' || r.span ? r : { ...r, cells: r.cells.filter((_, i) => !allCols[i]?.nw) })) : allRows;
   if (!rows?.length) return empty ? <p className="muted small rempty">{empty}</p> : null;
   return <table className={`ftab ${className}`}><colgroup>{cols.map((c, i) => <col key={c.key || c.h || i} style={i ? { width: c.w } : undefined} className={c.lo ? 'lo' : ''} />)}</colgroup>
     <thead><tr>{cols.map((c, i) => <th key={c.key || c.h || i} className={`${c.n ? 'n' : ''} ${c.lo ? 'lo' : ''} ${c.onClick ? 'sort' : ''}`} title={c.title} onClick={c.onClick}>{c.h}</th>)}</tr></thead>
     <tbody>{rows.map((r, i) => (typeof r === 'string' ? <tr key={`g${i}`} className="grp"><td colSpan={cols.length}>{r}</td></tr>
+      : r.span ? <tr key={r.key ?? i} className={`span ${r.cls || ''}`}><td colSpan={cols.length} style={{ height: 'auto', whiteSpace: 'normal', padding: '10px 14px', overflow: 'visible' }}>{r.span}</td></tr>
       : <tr key={r.key ?? i} data-key={r.key} className={`${r.cls || ''} ${r.onClick ? 'click' : ''}`} onClick={r.onClick} title={r.title}>
         {r.cells.map((v, j) => <td key={j} data-h={cols[j]?.h} className={`${cols[j]?.n ? 'n' : ''} ${cols[j]?.lo ? 'lo' : ''} ${cols[j]?.ell ? 'ell' : ''}`} title={cols[j]?.ell && typeof v === 'string' ? v : undefined}>{v}</td>)}</tr>))}</tbody></table>;
 }

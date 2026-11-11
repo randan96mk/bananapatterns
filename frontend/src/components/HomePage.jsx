@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLive, useLiveStamp } from '../services/live';
 import { useSchedule, left } from './StatusBar';
 import { useAttention } from './AttentionStrip';
@@ -8,6 +8,7 @@ import { useIsPhone } from '../useMedia';
 import { useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
 import * as api from '../services/api';
 import HealthStrip from './HealthStrip';
+import PhonePositions from './PhonePositions';
 import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, Chip } from './ui2';
 
 // 🏠 Home: the day on one screen. Timeline (click a dot: Activity filters to it), account cards with sparklines (Real
@@ -106,17 +107,24 @@ function PositionsMap({ positions, onStock, view }) {
     {more > 0 && <div className="tile more" title={rows.slice(MAX).map((p) => `${p.symbol} ${pct(p.pct)}`).join('\n')}><b>+{more} more</b></div>}</div>;
 }
 
+// The card opens to the right of the pointer (to its left at the window's edge) and under the hovered row, or
+// above the row when there is no room below: never over the row under the pointer.
+const shortStrategy = (s) => (/E\+/.test(s || '') ? 'E+' : /flow/i.test(s || '') ? 'Flow' : s || '');
 function HoverCard({ p, at }) {
   const [c, setC] = useState(null);
+  const ref = useRef(null);
+  const [h, setH] = useState(190);
   useEffect(() => { let on = true; api.getCandles(p.symbol, 60).then((d) => on && setC(d.candles || [])).catch(() => on && setC([])); return () => { on = false; }; }, [p.symbol]);
+  useLayoutEffect(() => { if (ref.current) setH(ref.current.offsetHeight); });
   const v = (c || []).map((x) => x.close);
   const all = [...v, p.entry, p.stop].filter((x) => x != null);
-  const lo = Math.min(...all), hi = Math.max(...all), w = 280, h = 80;
-  const y = (x) => h - 4 - ((x - lo) / (hi - lo || 1)) * (h - 8);
-  return <div className="hhover" style={{ left: at.x, top: at.y }}>
+  const lo = Math.min(...all), hi = Math.max(...all), w = 280, h80 = 80;
+  const y = (x) => h80 - 4 - ((x - lo) / (hi - lo || 1)) * (h80 - 8);
+  const top = at.below + 6 + h <= window.innerHeight ? at.below + 6 : Math.max(4, at.above - 6 - h);
+  return <div ref={ref} className="hhover" style={{ left: at.x, top }}>
     <div className="t"><b>{p.symbol}</b> <span className="muted small">{p.account}</span><span className={`mono ${cls(p.pnl)}`} style={{ marginLeft: 'auto' }}>{signed(p.pnl)}</span></div>
     <div className="muted small">{p.side} {p.qty} @ {p.entry} · since {p.opened} · stop {p.stop ?? '—'}{p.stop_dist != null ? ` (${p.stop_dist}% away)` : ''}</div>
-    {v.length > 1 ? <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"><polyline fill="none" stroke="var(--muted)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={v.map((x, i) => `${(i / (v.length - 1)) * w},${y(x)}`).join(' ')} />
+    {v.length > 1 ? <svg viewBox={`0 0 ${w} ${h80}`} preserveAspectRatio="none"><polyline fill="none" stroke="var(--muted)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={v.map((x, i) => `${(i / (v.length - 1)) * w},${y(x)}`).join(' ')} />
       {p.entry && <><line x1="0" x2={w} y1={y(p.entry)} y2={y(p.entry)} stroke="var(--blue)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" /><text x="4" y={y(p.entry) - 3} fill="var(--blue)" fontSize="9">entry {p.entry}</text></>}
       {p.stop && <><line x1="0" x2={w} y1={y(p.stop)} y2={y(p.stop)} stroke="var(--bad)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" /><text x="4" y={y(p.stop) + 10} fill="var(--bad)" fontSize="9">stop {p.stop}</text></>}</svg>
       : <div className="muted small" style={{ height: 80 }}>{c ? 'no candles' : 'loading…'}</div>}
@@ -127,8 +135,8 @@ function HoverCard({ p, at }) {
 const trailCell = (p) => {
   const t = p.trail;
   if (!t) return <span className="trail">—</span>;
-  if (t.active) return <span className="trail on" title={t.best != null ? `best ${t.best}` : undefined}>🪜 trail active{t.raised ? ' · stop raised' : ''}</span>;
-  return <span className="trail" title={`${pct(p.pct)} so far · the trail arms at +${Math.round((p.pct || 0) + (t.pct_to_arm || 0))}%`}>🪜 {pct(p.pct, 1).replace('%', '')} · arms at +{Math.round((p.pct || 0) + (t.pct_to_arm || 0))}</span>;
+  if (t.active) return <span className="trail on" title={`E+ late trail active${t.raised ? ' · the stop was raised' : ''}${t.best != null ? ` · best ${t.best}` : ''}`}>🪜 active{t.raised ? ' · raised' : ''}</span>;
+  return <span className="trail" title={`${pct(p.pct)} so far · the trail arms at +${Math.round((p.pct || 0) + (t.pct_to_arm || 0))}%`}>🪜 arms at +{Math.round((p.pct || 0) + (t.pct_to_arm || 0))}%</span>;
 };
 const FILTERS = { all: () => true, near: (p) => p.stop_dist != null && p.stop_dist <= 5, trail: (p) => p.trail?.active, results: (p) => p.results_in != null && p.results_in <= 5 };
 const SORTS = { pnl: (p) => p.pnl ?? -Infinity, pct: (p) => p.pct ?? -Infinity, stop: (p) => p.stop_dist ?? Infinity };
@@ -194,19 +202,21 @@ export default function HomePage({ onGo, onStock }) {
   const groups = ['real', 'paper_E', 'intraday'].map((b) => [b, shown.filter((p) => p.book === b).sort(sorter)]).filter(([, ps]) => ps.length);
   const flip = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
   const arrow = (key) => (sort.key === key ? (sort.dir === 'desc' ? ' ▾' : ' ▴') : '');
-  const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strategy', w: 120, lo: true, ell: true }, { h: 'Qty', w: 56, n: true }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now', w: 90, n: true },
-    { h: `P&L${arrow('pnl')}`, key: 'pnl', w: 92, n: true, onClick: () => flip('pnl'), title: 'sort by P&L' }, { h: `%${arrow('pct')}`, key: 'pct', w: 76, n: true, onClick: () => flip('pct'), title: 'sort by %' },
-    { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 200, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 180, lo: true }];
+  // Strategy is the short tag at 60 px; under 1440 px Entry and Trail are dropped (nw) so the Stock column keeps 140 px+
+  const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true, title: 'strategy' }, { h: 'Qty', w: 46, n: true }, { h: 'Entry', w: 80, n: true, lo: true, nw: true }, { h: 'Now', w: 84, n: true },
+    { h: `P&L${arrow('pnl')}`, key: 'pnl', w: 86, n: true, onClick: () => flip('pnl'), title: 'sort by P&L' }, { h: `%${arrow('pct')}`, key: 'pct', w: 60, n: true, onClick: () => flip('pct'), title: 'sort by %' },
+    { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 150, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 150, lo: true, nw: true }];
   const posRows = groups.flatMap(([b, ps]) => [
     `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} in use`,
     ...ps.map((p) => { const f = flash[p.book + p.symbol]; return { key: p.book + p.symbol, cls: f ? `row-${f}` : '', onClick: () => onStock(p.symbol), cells: [
       <><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near stop</Tag>}{p.results_in != null && p.results_in <= 3 && <Tag c="w" title={`results on ${dayName(p.results_date)} (${p.results_in} session${p.results_in === 1 ? '' : 's'})`}>⚠ results {weekday(p.results_date)}</Tag>}{f === 'new' && <Tag c="a">new</Tag>}</>,
-      <span className="muted">{p.strategy}</span>, p.qty, p.entry,
+      <span className={/E\+/.test(p.strategy || '') ? 'vE' : 'muted'} title={p.strategy}>{shortStrategy(p.strategy)}</span>, p.qty, p.entry,
       <><span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span><span className={`tick ${f === 'up' ? 'up' : f === 'down' ? 'down' : ''}`}>{f === 'up' ? '▲' : f === 'down' ? '▼' : ''}</span></>,
       <span className={`${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`}>{signed(p.pnl)}</span>, <span className={cls(p.pct)}>{pct(p.pct)}</span>,
       p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—',
       trailCell(p)] }; })]);
-  const hoverOn = (e, p) => !phone && setHover({ p, at: { x: Math.min(e.clientX + 12, window.innerWidth - 320), y: e.clientY + 12 } });
+  const hoverOn = (e, p, tr) => { if (phone) return; const r = tr.getBoundingClientRect();
+    setHover({ p, at: { x: e.clientX + 16 + 300 <= window.innerWidth ? e.clientX + 16 : Math.max(4, e.clientX - 16 - 300), below: r.bottom, above: r.top } }); };
 
   // activity, optionally filtered to the timeline's picked events (same minute, or the same text)
   const pickedTimes = picked ? picked.map((e) => e.t) : null, pickedTexts = picked ? picked.map((e) => e.text) : null;
@@ -266,13 +276,16 @@ export default function HomePage({ onGo, onStock }) {
         </div></div></Panel>
     </div>}
     <div className="two">
-      <Panel title="Open positions" meta={positions.length} right={<>{liveNow && <span className="livedot" />}net <b className={`mono ${cls(net)}`}>{signed(net)}</b>{!phone && R.worst_case != null && <> · worst case <b className="mono down">{signed(R.worst_case)}</b></>}{!phone && R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" style={{ padding: 0 }} onClick={() => onGo('portfolio')}>Portfolio →</button></>}>
-        <div className="hfilters">
-          <Seg small opts={[['all', 'All'], ['near', `Within 5% of stop (${counts.near})`], ['trail', `Trail armed (${counts.trail})`], ['results', `Results this week (${counts.results})`]]} v={filter} set={setFilter} />
-          <Seg small opts={[['all', 'Real + Paper'], ['real', 'Real'], ['paper', 'Paper'], ['diff', 'Differences', 'names held in one book but not the other, or with a different quantity']]} v={view} set={setView} />
-        </div>
-        <div onMouseLeave={() => setHover(null)} onMouseOver={(e) => { const tr = e.target.closest('tr'); const key = tr?.dataset?.key; const p = key && positions.find((x) => x.book + x.symbol === key); if (p) hoverOn(e, p); }}>
-          <FixedTable className="hpos" cols={POS_COLS} rows={posRows} empty={positions.length ? 'Nothing matches this filter.' : 'No open positions.'} /></div>
+      <Panel title="Open positions" meta={positions.length} right={phone ? <>{liveNow && <span className="livedot" />}<select value={view} onChange={(e) => setView(e.target.value)} style={{ fontSize: 11.5, padding: '2px 6px', marginLeft: 'auto' }} title="which books">
+          <option value="all">Real + Paper</option><option value="real">Real</option><option value="paper">Paper</option><option value="diff">Differences</option></select></>
+        : <>{liveNow && <span className="livedot" />}net <b className={`mono ${cls(net)}`}>{signed(net)}</b>{R.worst_case != null && <> · worst case <b className="mono down">{signed(R.worst_case)}</b></>}{R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" style={{ padding: 0 }} onClick={() => onGo('portfolio')}>Portfolio →</button></>}>
+        {phone ? <PhonePositions positions={positions} groups={groups} counts={counts} filter={filter} setFilter={setFilter} sort={sort} setSort={setSort} net={net} worstCase={R.worst_case} flash={flash} onStock={onStock} onGo={onGo} differs={differs} /> : <>
+          <div className="hfilters">
+            <Seg small opts={[['all', 'All'], ['near', `Within 5% of stop (${counts.near})`], ['trail', `Trail armed (${counts.trail})`], ['results', `Results this week (${counts.results})`]]} v={filter} set={setFilter} />
+            <Seg small opts={[['all', 'Real + Paper'], ['real', 'Real'], ['paper', 'Paper'], ['diff', 'Differences', 'names held in one book but not the other, or with a different quantity']]} v={view} set={setView} />
+          </div>
+          <div onMouseLeave={() => setHover(null)} onMouseOver={(e) => { const tr = e.target.closest('tr'); const key = tr?.dataset?.key; const p = key && positions.find((x) => x.book + x.symbol === key); if (p) hoverOn(e, p, tr); }}>
+            <FixedTable className="hpos" cols={POS_COLS} rows={posRows} empty={positions.length ? 'Nothing matches this filter.' : 'No open positions.'} /></div></>}
       </Panel>
       <div className="rd">
         <Panel title="Needs a look" meta={needIds.length || null} right={freshNeeds.length > 0 ? <span className="warn">● {freshNeeds.length} new</span> : null}>

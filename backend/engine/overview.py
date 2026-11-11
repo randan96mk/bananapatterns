@@ -369,8 +369,11 @@ def timeline(today: str, config: Optional[AppConfig] = None) -> list:
     except Exception:
         pass
     with get_db() as conn:
-        for r in conn.execute("SELECT created_at, symbol, action, qty, status FROM real_orders WHERE day = ? ORDER BY id", (today,)):
-            ev.append({"t": r[0][11:16], "kind": "order" if r[4] == "sent" else "failed", "text": f"{r[2]} {r[1]} {r[3] or ''} · {r[4]}"})
+        for r in conn.execute("SELECT created_at, symbol, action, qty, status, reason FROM real_orders WHERE day = ? ORDER BY id", (today,)):
+            if r[2] in ("BUY", "EXIT"):
+                ev.append({"t": r[0][11:16], "kind": "order" if r[4] == "sent" else "failed", "text": f"{r[2]} {r[1]} {r[3] or ''} · {r[4]}"})
+            else:                                          # a correction by hand (edited / added / removed)
+                ev.append({"t": r[0][11:16], "kind": "edit", "text": r[5] or f"{r[4]} {r[1]}"})
         for at, p in conn.execute("SELECT at, payload FROM flow_signals WHERE day = ? ORDER BY at", (today,)):
             s = json.loads(p)
             ev.append({"t": at[11:16] if len(at) > 10 else at, "kind": "signal", "text": f"{s.get('signal', 'BUY')} signal {s['symbol']}"})

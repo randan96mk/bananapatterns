@@ -18,7 +18,9 @@ estimates; the broker's own fills are not visible here.
 """
 
 import json
+import re
 import threading
+import uuid
 from datetime import datetime
 from math import floor
 from typing import Callable, Optional
@@ -387,9 +389,17 @@ def _close(st: dict, sym: str, px: float, day: str, why: str, est: bool) -> dict
     return t
 
 
+def _gap(config: AppConfig) -> float:
+    """Seconds between two webhooks: real.send_gap_s, clamped to 1–30."""
+    try:
+        return min(30.0, max(1.0, float(getattr(config.real, "send_gap_s", 5.0) or 5.0)))
+    except (TypeError, ValueError):
+        return 5.0
+
+
 def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable] = None) -> dict:
     """The planned orders (EXITs, then BUYs), each sent once. Returns {status, sent, failed}."""
-    sender = sender or tradetron.send
+    sender = sender or (lambda *a, **k: tradetron.send(*a, gap=_gap(config), **k))
     with _lock:
         st = _state()
         if not st or not st.get("orders"):
@@ -446,7 +456,7 @@ def retry_order(config: AppConfig, client, today: str, symbol: str, action: str,
     """↻ A FAILED order of today's plan sent again, by hand, once per press: only while real trading is on (not
     killed) and the market is open, only if it is still marked failed. On success it is booked like any sent order."""
     from backend.config import IST
-    sender = sender or tradetron.send
+    sender = sender or (lambda *a, **k: tradetron.send(*a, gap=_gap(config), **k))
     now = now or datetime.now(IST)
     if not active(config):
         return {"status": "error", "error": "real trading is off or the kill switch is on"}
@@ -492,7 +502,7 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
     """Live prices of the open positions: an EXIT once one has traded at or under its stop today (once per stock).
     The day's low is checked too, so a stop touched between checks, or while the app had no Kite login (caught up
     at the first check after the login), still exits, as in the backtest (a day's low at or under the stop)."""
-    sender = sender or tradetron.send
+    sender = sender or (lambda *a, **k: tradetron.send(*a, gap=_gap(config), **k))
     with _lock:
         st = _state()
         if not st or not st["positions"]:
@@ -530,12 +540,240 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
         return {"status": "ok", "hits": hits}
 
 
+# --- corrections by hand (nothing is sent) --------------------------------------------------------------
+
+HAND = {"EDIT": "edited", "ADD": "added", "REMOVE": "removed"}            # the order log's hand-made lines
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _note(symbol: str, action: str, text: str, qty=None, price=None) -> None:
+    """A hand correction in the order log (never deleted, like every webhook): status edited / added / removed,
+    the reason is the plain line ("edited X: entry 1.00 → 2.00 · by you")."""
+    at = now_ist()
+    with get_db() as conn:
+        conn.execute("INSERT INTO real_orders (key, day, created_at, symbol, action, qty, reason, status, reply, payload, price) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '{}', ?)",
+                     (f"{at}|{symbol}|{action}|{uuid.uuid4().hex[:8]}", at[:10], at, symbol, action, qty, text, HAND[action], price))
+
+
+def _num(x, name: str, whole: bool = False) -> Optional[float]:
+    if x is None or x == "":
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number")
+    if not v > 0:
+        raise ValueError(f"{name} must be more than 0")
+    if whole and v != int(v):
+        raise ValueError(f"{name} must be a whole number of shares")
+    return int(v) if whole else v
+
+
+def _row(config: AppConfig, st: dict, symbol: str) -> Optional[dict]:
+    """The summary row of one position from a state (saved or not)."""
+    return _pos_row(symbol, st["positions"][symbol], tb.rules(config, "E"))[0] if symbol in st["positions"] else None
+
+
+def _effects(st: dict, pos: dict, before: dict) -> dict:
+    last = pos.get("live") or pos["last"]
+    exit_ch = tb.delivery_charges(pos["qty"] * last, True)
+    return {"pnl_before": round(before["net"], 2), "pnl_after": round((last - pos["px"]) * pos["qty"] - pos["charges"] - exit_ch, 2),
+            "cash": round(st["cash"], 2), "exit_qty": pos["qty"], "stop_pct": round((last - pos["stop"]) / last * 100, 2),
+            "charges": round(pos["charges"], 2), "est_cleared": bool(before.get("est")) and not pos.get("est"),
+            "trail_arms_at": round(pos["px"] * 2, 2)}
+
+
+def edit_position(config: AppConfig, symbol: str, qty=None, entry=None, stop=None, note: str = "", dry: bool = False) -> dict:
+    """Correct an open position by hand (a fill the webhook could only estimate, or a trade placed by hand): qty,
+    entry and / or stop. Cash and charges move exactly like the evening's est-fill correction (the cost difference
+    and the new delivery charges), `est` is cleared, the first entry is kept in px_orig, an edited stop is marked
+    manual_stop (the E+ trail may still raise it, never lower it; the 5-minute check uses it). Every change is
+    appended to pos["edits"] and written to the order log. With dry=True nothing is saved: the effects only.
+    Returns {"status", "position" (the summary row), "effects"}; raises ValueError when a value is refused."""
+    qty, entry, stop = _num(qty, "qty", whole=True), _num(entry, "entry"), _num(stop, "stop")
+    with _lock:
+        st = _state()
+        if not st or symbol not in st["positions"]:
+            raise ValueError(f"no open position in {symbol}")
+        pos = st["positions"][symbol]
+        before = _row(config, st, symbol)
+        last = pos.get("live") or pos["last"]
+        if stop is not None and stop >= last:
+            raise ValueError(f"the stop ({stop:,.2f}) must be below the last known price ({last:,.2f})")
+        if qty is None and entry is None and stop is None:
+            raise ValueError("nothing to change")
+        at, edits = now_ist(), []
+        if qty is not None or entry is not None:
+            new_q, new_px = qty if qty is not None else pos["qty"], entry if entry is not None else pos["px"]
+            diff = new_q * new_px - pos["qty"] * pos["px"]
+            new_ch = tb.delivery_charges(new_q * new_px, False)
+            st["cash"] -= diff + (new_ch - pos["charges"])
+            st["charges"] += new_ch - pos["charges"]
+            if qty is not None and qty != pos["qty"]:
+                edits.append({"at": at, "field": "qty", "from": pos["qty"], "to": qty, "note": note})
+                for o in st.get("orders", []):             # tomorrow's planned EXIT sells the corrected quantity
+                    if o["symbol"] == symbol and o["action"] == "EXIT" and not o.get("sent"):
+                        o["qty"] = qty
+            if entry is not None and round(entry, 2) != round(pos["px"], 2):
+                edits.append({"at": at, "field": "entry", "from": round(pos["px"], 2), "to": round(entry, 2), "note": note})
+            pos.setdefault("px_orig", round(pos["px"], 2))
+            pos.update(qty=new_q, px=new_px, charges=new_ch, est=False)
+            pos["best"] = max(pos.get("best") or new_px, new_px)
+        if stop is not None and round(stop, 2) != round(pos["stop"], 2):
+            edits.append({"at": at, "field": "stop", "from": round(pos["stop"], 2), "to": round(stop, 2), "note": note})
+            pos.update(stop=stop, manual_stop=True)
+        pos.setdefault("edits", []).extend(edits)
+        if not dry:
+            _save(st)
+            for e in edits:
+                _note(symbol, "EDIT", f"edited {symbol}: {e['field']} {e['from']:,.2f} → {e['to']:,.2f}"
+                      + (f" · {note}" if note else "") + " · by you", qty=pos["qty"], price=pos["px"])
+        return {"status": "ok", "dry": dry, "position": _row(config, st, symbol), "effects": _effects(st, pos, before), "edits": edits}
+
+
+def remove_position(config: AppConfig, symbol: str, note: str = "") -> dict:
+    """Drop a position from tracking without any order (a webhook BUY the broker never filled): the cash gets the
+    cost back and its charges are reversed, as if never bought. Logged "removed from tracking: <note>"."""
+    with _lock:
+        st = _state()
+        if not st or symbol not in st["positions"]:
+            raise ValueError(f"no open position in {symbol}")
+        pos = st["positions"].pop(symbol)
+        st["cash"] += pos["qty"] * pos["px"] + pos["charges"]
+        st["charges"] -= pos["charges"]
+        st["orders"] = [o for o in st.get("orders", []) if not (o["symbol"] == symbol and o["action"] == "EXIT" and not o.get("sent"))]
+        _save(st)
+        _note(symbol, "REMOVE", f"removed from tracking: {note or 'never filled'} · {pos['qty']} @ {pos['px']:,.2f} · by you",
+              qty=pos["qty"], price=pos["px"])
+        return {"status": "ok", "symbol": symbol, "cash": round(st["cash"], 2), "removed": {"qty": pos["qty"], "px": round(pos["px"], 2)}}
+
+
+def default_stop(data: dict, symbol: str, entry: float, day: str, p) -> float:
+    """The strategy's stop for a hand-placed trade: the scan's rule (stop_of: max(entry − ATR×atr_mult, entry ×
+    (1 − stop_pct%))) with the ATR14 of the bought day (the last stored session on or before it)."""
+    s = data["S"][symbol]
+    j = max((k for k, r in enumerate(s["rows"]) if r["date"] <= day), default=None)
+    atr = s["ind"]["atr"][j] if j is not None else None
+    return tb.stop_of(entry, atr, p) if atr else entry * (1 - p.stop_pct / 100)
+
+
+def add_position(config: AppConfig, symbol: str, qty, entry, day: str, stop=None, note: str = "",
+                 data: Optional[dict] = None) -> dict:
+    """A trade placed by hand that the app should track and exit by its rules. The stock must be in the universe
+    with candles; the stop defaults to the strategy's rule; refused without a free slot (breakout.max_pos) or the
+    cash. Nothing is sent to the broker; logged."""
+    qty, entry, stop = _num(qty, "qty", whole=True), _num(entry, "entry"), _num(stop, "stop")
+    if qty is None or entry is None:
+        raise ValueError("qty and entry are needed")
+    if not day or not _ISO_DAY.match(day):
+        raise ValueError("the day must be YYYY-MM-DD")
+    data = data or tb.load(config)
+    if "error" in data:
+        raise ValueError(data["error"])
+    if symbol not in data["S"]:
+        raise ValueError(f"{symbol} is not in the universe with stored candles")
+    rows = data["S"][symbol]["rows"]
+    if day > rows[-1]["date"]:
+        raise ValueError(f"the day is after the last stored session ({rows[-1]['date']})")
+    if not any(r["date"] <= day for r in rows):
+        raise ValueError(f"no candles of {symbol} on or before {day}")
+    p = _rules(config, "E")
+    with _lock:
+        st = _state()
+        if not st:
+            raise ValueError("real tracking has not started yet (the first evening run starts it)")
+        if symbol in st["positions"]:
+            raise ValueError(f"{symbol} is already an open position: edit it instead")
+        if len(st["positions"]) >= config.breakout.max_pos:
+            raise ValueError(f"no free slot ({len(st['positions'])} of {config.breakout.max_pos} open): raise max open first")
+        ch = tb.delivery_charges(qty * entry, False)
+        if qty * entry + ch > st["cash"]:
+            raise ValueError(f"not enough cash: {qty * entry + ch:,.0f} needed, {st['cash']:,.0f} free")
+        last = rows[-1]["close"]
+        given = stop is not None
+        if not given:
+            stop = default_stop(data, symbol, entry, day, p)
+        if stop >= last:
+            raise ValueError(f"the stop ({stop:,.2f}) must be below the last close ({last:,.2f})")
+        from backend.engine.paper import best_since
+        best = max(entry, best_since(data["S"], symbol, day, rows[-1]["date"]) or entry)
+        st["cash"] -= qty * entry + ch
+        st["charges"] += ch
+        st["positions"][symbol] = {"qty": qty, "px": entry, "d": day, "stop": stop, "last": last, "charges": ch,
+                                   "days": sum(r["date"] > day for r in rows), "ts": data.get("tradingsymbol", {}).get(symbol, symbol),
+                                   "variant": config.real.variant, "est": False, "best": best, "manual": True,
+                                   "manual_stop": given,
+                                   "edits": [{"at": now_ist(), "field": "added", "from": None, "to": f"{qty} @ {entry:,.2f}", "note": note}]}
+        _save(st)
+        _note(symbol, "ADD", f"added {symbol}: {qty} @ {entry:,.2f} bought {day} · stop {stop:,.2f}"
+              + (f" · {note}" if note else "") + " · by you", qty=qty, price=entry)
+    return {"status": "ok", "position": _row(config, st, symbol), "cash": round(st["cash"], 2)}
+
+
+def edit_trade(config: AppConfig, trade_id, exit=None, qty=None, note: str = "", dry: bool = False) -> dict:
+    """Correct a closed trade's exit price / quantity: gross, costs and net are recomputed, the cash moves by the
+    net difference, `est` is cleared, logged. With dry=True nothing is saved."""
+    exit, qty = _num(exit, "exit"), _num(qty, "qty", whole=True)
+    if exit is None and qty is None:
+        raise ValueError("nothing to change")
+    with _lock:
+        st = _state()
+        with get_db() as conn:
+            r = conn.execute("SELECT id, payload FROM real_trades WHERE id = ?", (int(trade_id),)).fetchone()
+        if not st or not r:
+            raise ValueError(f"no closed trade #{trade_id}")
+        t = json.loads(r[1])
+        before = dict(t)
+        new_q, new_sell = qty if qty is not None else t["qty"], exit if exit is not None else t["sell"]
+        costs = tb.delivery_charges(new_q * t["buy"], False) + tb.delivery_charges(new_q * new_sell, True)
+        gross = (new_sell - t["buy"]) * new_q
+        net = gross - costs
+        at, edits = now_ist(), []
+        if qty is not None and qty != t["qty"]:
+            edits.append({"at": at, "field": "qty", "from": t["qty"], "to": qty, "note": note})
+        if exit is not None and round(exit, 2) != round(t["sell"], 2):
+            edits.append({"at": at, "field": "exit", "from": round(t["sell"], 2), "to": round(exit, 2), "note": note})
+        t.update(qty=new_q, sell=round(new_sell, 2), gross=round(gross, 2), costs=round(costs, 2), net=round(net, 2), est=False)
+        t.setdefault("edits", []).extend(edits)
+        delta = round(net - before["net"], 2)
+        effects = {"net_before": round(before["net"], 2), "net_after": round(net, 2), "cash": round(st["cash"] + delta, 2), "delta": delta,
+                   "est_cleared": bool(before.get("est"))}
+        if not dry and edits:
+            st["cash"] += delta
+            st["charges"] += costs - before["costs"]
+            _save(st)
+            with get_db() as conn:
+                conn.execute("UPDATE real_trades SET payload = ? WHERE id = ?", (json.dumps(t), r[0]))
+            for e in edits:
+                _note(t["symbol"], "EDIT", f"edited trade {t['symbol']}: {e['field']} {e['from']:,.2f} → {e['to']:,.2f}"
+                      + (f" · {note}" if note else "") + " · by you", qty=t["qty"], price=t["sell"])
+        return {"status": "ok", "dry": dry, "trade": {**t, "id": r[0]}, "effects": effects, "edits": edits}
+
+
 # --- reading -------------------------------------------------------------------------------------
 
 def reset() -> None:
     with _lock, get_db() as conn:
         for t in ("real_state", "real_trades", "real_equity"):
             conn.execute(f"DELETE FROM {t}")
+
+
+def _pos_row(sym: str, x: dict, pe) -> tuple:
+    """One open position as the tab shows it, and a warning when its stop is under the E+ trail (a check only)."""
+    last = x.get("live") or x["last"]
+    active = bool(pe.late_at and x.get("best") and x["best"] >= x["px"] * (1 + pe.late_at / 100))
+    want = tb.late_stop(x["px"], x["best"], pe) if active else None
+    check = f"{sym}: stop {x['stop']:.2f} is under its E+ trail {want:.2f} (best close {x['best']:.2f})" if want and x["stop"] < want - 0.01 else None
+    exit_ch = tb.delivery_charges(x["qty"] * last, True)
+    gross = (last - x["px"]) * x["qty"]
+    return ({"symbol": sym, "qty": x["qty"], "in": x["d"], "buy": round(x["px"], 2), "last": round(last, 2),
+             "stop": round(x["stop"], 2), "variant": x.get("variant"), "days": x.get("days", 0),
+             "gross": round(gross, 2), "costs": round(x["charges"] + exit_ch, 2),
+             "net": round(gross - x["charges"] - exit_ch, 2), "est": x.get("est", False),
+             "best": round(x["best"], 2) if x.get("best") else None, "trailed": bool(x.get("trailed")),
+             "trail_active": active, "edits": x.get("edits", []), "manual_stop": bool(x.get("manual_stop")),
+             "manual": bool(x.get("manual")), "px_orig": x.get("px_orig")}, check)
 
 
 def summary(config: AppConfig) -> dict:
@@ -545,6 +783,7 @@ def summary(config: AppConfig) -> dict:
                                                                "max_buys_per_day", "max_order_pct", "send_stop",
                                                                "nologin_alarm_min")},
             "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token()),
+            "stop_rule": {"stop_pct": config.breakout.stop_pct, "atr_mult": config.breakout.atr_mult},
             "tops": {k: tb.rules(config, k).top for k in tb.MODES}}
     with get_db() as conn:
         log = [dict(r) for r in conn.execute("SELECT created_at, day, symbol, action, qty, reason, status, reply, price "
@@ -555,7 +794,7 @@ def summary(config: AppConfig) -> dict:
                 "limits": {"value": cap, "size": round(cap / config.breakout.max_pos, 2),
                            "max_order": round(cap * config.real.max_order_pct / 100, 2)}}
     with get_db() as conn:
-        trades = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM real_trades ORDER BY id DESC")]
+        trades = [{**json.loads(r[1]), "id": r[0]} for r in conn.execute("SELECT id, payload FROM real_trades ORDER BY id DESC")]
         eq = [dict(r) for r in conn.execute("SELECT day, equity, gross, nifty FROM real_equity ORDER BY day")]
     value = _value(st)
     cap = st["capital"]
@@ -571,19 +810,10 @@ def summary(config: AppConfig) -> dict:
     positions, checks = [], []
     pe = tb.rules(config, "E")
     for sym, x in sorted(st["positions"].items(), key=lambda kv: kv[1]["d"], reverse=True):
-        last = x.get("live") or x["last"]
-        active = bool(pe.late_at and x.get("best") and x["best"] >= x["px"] * (1 + pe.late_at / 100))
-        want = tb.late_stop(x["px"], x["best"], pe) if active else None
-        if want and x["stop"] < want - 0.01:              # a check only: warns, never trades
-            checks.append(f"{sym}: stop {x['stop']:.2f} is under its E+ trail {want:.2f} (best close {x['best']:.2f})")
-        exit_ch = tb.delivery_charges(x["qty"] * last, True)
-        gross = (last - x["px"]) * x["qty"]
-        positions.append({"symbol": sym, "qty": x["qty"], "in": x["d"], "buy": round(x["px"], 2), "last": round(last, 2),
-                          "stop": round(x["stop"], 2), "variant": x.get("variant"), "days": x.get("days", 0),
-                          "gross": round(gross, 2), "costs": round(x["charges"] + exit_ch, 2),
-                          "net": round(gross - x["charges"] - exit_ch, 2), "est": x.get("est", False),
-                          "best": round(x["best"], 2) if x.get("best") else None, "trailed": bool(x.get("trailed")),
-                          "trail_active": active})
+        row, check = _pos_row(sym, x, pe)
+        positions.append(row)
+        if check:
+            checks.append(check)
     won = [t for t in trades if t["net"] > 0]
     loss = -sum(t["net"] for t in trades if t["net"] <= 0)
     nifty = round((eq[-1]["nifty"] / eq[0]["nifty"] - 1) * 100, 2) if len(eq) > 1 and eq[0]["nifty"] else 0.0
@@ -629,7 +859,8 @@ def reconcile(config: AppConfig, days: int = 30) -> dict:
         fills = [(r[0], json.loads(r[1])) for r in conn.execute(
             "SELECT day, payload FROM paper_fills WHERE account = ? AND day >= ? ORDER BY id", (acct, since))]
         orders = {(r["day"], r["symbol"], r["action"]): dict(r) for r in conn.execute(
-            "SELECT day, created_at, symbol, action, qty, reason, status, reply, price FROM real_orders WHERE day >= ?", (since,))}
+            "SELECT day, created_at, symbol, action, qty, reason, status, reply, price FROM real_orders WHERE day >= ? "
+            "AND action IN ('BUY', 'EXIT')", (since,))}
     rows, seen = [], set()
     for day, f in fills:
         key = (day, f["symbol"], f["action"])
