@@ -1013,6 +1013,20 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   `nologin_alarm_min` (30) minutes until the login. Optional `real.send_stop` (off): each BUY also carries its stop as
   `sig_stop` so Tradetron can exit on its own (turn on once the Tradetron strategy reads it).
 - **Switches**: `real.enabled` (ON by default) and the ⛔ kill switch on the tab; both must allow sending.
+- **Morning dry run** (`real.preview_time`, 9:00 AM, until `send_until`): the Real page's "This morning · orders at
+  9:16 AM" panel (`GET /api/real/morning`, live on the stream topic `real_morning` every 30 s) shows the plan as it
+  will go out, with a countdown, the facts (capital · cash, slots, filter, gap and the estimated total, the guard),
+  and a **Send switch per BUY**: off = skipped for today only (`POST /api/real/skip {symbol, on, note}`; EXITs
+  cannot be skipped, 400); **Hold all today…** skips every BUY (`POST /api/real/hold`); **Send now…** runs the send
+  at once (`POST /api/real/send-now`; refused when off / killed, before 9:15 AM, after `send_until`). A skipped BUY
+  is logged in the order log as `skipped` with the reason, never sent and not retried that day; the evening plan
+  clears the skips. The kill switch and the enable switch are never touched by a skip. The 9:00 Telegram reminder
+  lists the same orders, the skips and the facts, and takes the replies `skip SYMBOL`, `unskip SYMBOL` and `hold`
+  (refused after `send_until`). **Results guard**: `real.results_guard_sessions` (3; 0 = off): when the plan is
+  written (evening and ↻ Re-evaluate) and again at the 9:00 reminder, a BUY whose next results date (the stored NSE
+  calendar) is within that many sessions is pre-skipped "by the results guard" (⚠ tag with the weekday); switch it
+  back on from the page or with `unskip`, and the guard leaves it alone for the day. After the send the panel is the
+  day's order log (n sent · n failed · n skipped, the send times).
 - **Capital** (`POST /api/real/capital`, the box on the tab): before the start it is simply the starting amount;
   afterwards a change counts as money added or withdrawn (cash moves, the profit so far and the curve stay, a
   withdrawal can't exceed the cash), and tomorrow's unsent BUYs are re-sized at once. The tab shows what it means
@@ -1049,20 +1063,6 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   log ✎ corrects a closed trade's exit price / quantity (net and cash follow). Every correction is a line in the
   order log ("edited X: entry 2,435.10 → 2,441.50 · by you") and in the row's "edited" tag; nothing is sent to the
   broker and the switches are untouched. Paper has no edits.
-
-- **Broker check** (the panel under Open positions, `POST /api/real/broker-check` `{text}`, `GET` for the last one):
-  the broker's own positions are never read by the app and Tradetron has no read API, so paste the deployment's
-  positions table as copied from the browser (INSTRUMENT · QTY · LTP · VALUE · P&L; tabs or spaces, the "Total"
-  row and "Hide nil qty" are skipped), a broker positions / holdings CSV export (symbol / tradingsymbol / instrument,
-  qty / net qty / quantity, avg / buy avg / average price; `-EQ` stripped) or plain `SYMBOL qty` lines, or load a CSV
-  file into the box, then Compare. The names are split three ways against the open Real positions: **Both** (qty
-  match, or "set qty N…" through the edit correction; an estimated entry with a broker price gets "entry → price…"),
-  **App only** (never filled at the broker? "Remove from tracking…"), **Broker only** (not tracked: "Add to
-  tracking…" opens the add form prefilled; qty 0 rows are empty slots and ignored; a name outside the universe is
-  tagged). The paste is kept (`real.broker_check` in app_settings) so the panel reopens with it, stamped with the
-  time and the number of differences, and Home's "Needs a look" says "Broker check: paste the positions after the
-  9:16 send" (informational, never red) when an order was sent on a day with no check on or after it. The check
-  itself changes nothing: the app's book moves only through those buttons, each with its confirm, and nothing is sent.
 
 ### 📝 Paper trading (simulated: never orders)
 

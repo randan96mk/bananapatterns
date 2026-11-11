@@ -823,24 +823,28 @@ class Scheduler:
         return int(self.notifier().send(f"{res['as_of']}|real-plan", "real", msg.real_plan(res, self.state.config.real.variant)))
 
     def run_real_preview(self, now: datetime) -> dict:
-        """The morning reminder (real.preview_time): today's queued orders, before they go out at send_time."""
+        """The morning reminder (real.preview_time): today's orders as they go out at send_time, with the skips (the
+        results guard runs once more here: the calendar may have changed since the evening)."""
         from backend.engine import real
         today, started, cfg = now.date(), now_ist(), self.state.config
+        real.guard_today(cfg, now)
+        m = real.morning(cfg, now)
         st = real._state() or {}
         orders = [o for o in st.get("orders", []) if not o.get("sent")]
         sent = False
         if orders:
             sent = self.notifier().send(f"{today}|real-preview", "real",
-                                        msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed()))
-        self.record("real_preview", today, "ok", f"{len(orders)} queued · sent {int(bool(sent))}", started)
-        return {"orders": len(orders), "sent": bool(sent)}
+                                        msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed(), m))
+        self.record("real_preview", today, "ok", f"{len(orders)} queued · {len(m['skipped'])} skipped · sent {int(bool(sent))}", started)
+        return {"orders": len(orders), "skipped": m["skipped"], "sent": bool(sent)}
 
     def run_real_send(self, now: datetime) -> dict:
         """The morning send: EXITs, then BUYs, to Tradetron (once each)."""
         from backend.engine import real
         today, started = now.date(), now_ist()
         res = real.send_orders(self.state.config, self.state.client, today.isoformat())
-        self.record("real_send", today, "ok", f"{res['status']}: sent {len(res['sent'])}, failed {len(res['failed'])}", started)
+        self.record("real_send", today, "ok", f"{res['status']}: sent {len(res['sent'])}, failed {len(res['failed'])}, "
+                    f"skipped {len(res.get('skipped') or [])}", started)
         if res["sent"] or res["failed"]:
             self.notifier().send(f"{today}|real-sent", "real", msg.real_sent(res, ampm(now.strftime('%H:%M'))))
         return res

@@ -2,6 +2,8 @@
 
   /login   fresh one-time Kite login link
   /status  is the Kite session OK, until when
+  skip SYM / unskip SYM / hold   the morning dry run: skip one planned real BUY for today, send it after all,
+                                 or hold every BUY (EXITs always go out); also with a slash; refused after send_until
 
 Only messages from the configured chat_id are answered; anyone else is ignored.
 Commands older than STALE_SEC (sent while the app was off) are skipped. The poller
@@ -20,12 +22,13 @@ from backend.alerts.telegram import TelegramClient
 from backend.config import IST
 from backend.database.models import get_candles, get_db, now_ist
 from backend.kite_api import auth
-from backend.timefmt import ampm_date
+from backend.timefmt import ampm, ampm_date
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("bot")
 
 STALE_SEC = 120
+MORNING_WORDS = ("skip", "unskip", "hold")
 
 
 class BotCommands:
@@ -66,7 +69,11 @@ class BotCommands:
                 continue
             m = u.get("message") or {}
             parts = (m.get("text") or "").strip().split()
-            if str((m.get("chat") or {}).get("id")) != notifier.chat_id or not parts or not parts[0].startswith("/"):
+            if str((m.get("chat") or {}).get("id")) != notifier.chat_id or not parts:
+                continue
+            if parts[0].lower() in MORNING_WORDS:          # the reminder's reply: "skip NRL" / "hold", no slash needed
+                parts[0] = "/" + parts[0].lower()
+            if not parts[0].startswith("/"):
                 continue
             if self.clock().timestamp() - m.get("date", 0) > STALE_SEC:
                 continue
@@ -156,8 +163,32 @@ class BotCommands:
                             "the evening guard checks your sell rules.")
         return f"✅ Following {sym}."
 
+    def morning(self, command: str, arg: str, notifier: Notifier) -> str:
+        """skip SYM / unskip SYM / hold: today's real plan changed for this morning only, then listed again as the
+        9:00 reminder does. Refused after send_until (the orders have gone out, or the window is over)."""
+        from backend.alerts.jobs import hm
+        from backend.engine import real
+        cfg, now = self.state.config, self.clock()
+        if now.time() >= hm(cfg.real.send_until):
+            return f"Too late: today's orders went out at {ampm(cfg.real.send_time)} (the window closed at {ampm(cfg.real.send_until)})."
+        if command in ("/skip", "/unskip") and not arg:
+            return f"Which stock? {command} SYMBOL"
+        try:
+            if command == "/hold":
+                m = real.hold_today(cfg, "hold all (Telegram)", now)
+            else:
+                m = real.skip_order(cfg, arg, command == "/skip", "Telegram", now)
+        except ValueError as exc:
+            return f"Not changed: {msg.escape(str(exc))}"
+        orders = [o for o in (real._state() or {}).get("orders", []) if not o.get("sent")]
+        head = {"/skip": f"⏸ {msg.escape(arg)} skipped today.", "/unskip": f"▶️ {msg.escape(arg)} goes out again.",
+                "/hold": "⏸ Every BUY held today; the EXITs still go out."}[command]
+        return head + "\n" + msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed(), m)
+
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
+        if command in ("/skip", "/unskip", "/hold"):
+            return self._say(notifier, self.morning(command, arg, notifier))
         if command == "/login":
             if send_login_link(st, notifier, "requested", f"bot-login|{uuid.uuid4().hex}", now):
                 return True
@@ -189,6 +220,6 @@ class BotCommands:
             return self._say(notifier, "📌 Watching: " + (", ".join(names) if names else "nothing yet"))
         if command in ("/start", "/help"):
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
-                                       "/unwatch SYM · /mute SYM · /chart SYM. Buttons under alerts: Watch, Mute, "
-                                       "Chart, I bought.")
+                                       "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold (today's real "
+                                       "BUYs, before the send). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

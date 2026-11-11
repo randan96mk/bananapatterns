@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
-import { stamp, ampm } from '../timefmt';
+import { stamp, ampm, clock } from '../timefmt';
 import { inr, rs, signed, pct, cls } from '../fmt';
+import { useLive, push } from '../services/live';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
 import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
-import { useNarrow } from '../useMedia';
+import { useNarrow, useIsPhone } from '../useMedia';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const STATUS = { sent: 'ok', failed: 'bad', skipped: 'w', added: 'a', removed: 'w', edited: '' };
@@ -123,8 +124,8 @@ function TradeEditor({ t, onDone, onErr }) {
 }
 
 // + Add a position: a trade placed by hand that the app should track and exit by its rules. Nothing is sent.
-function AddPosition({ d, init, onDone, onErr }) {
-  const [f, setF] = useState({ symbol: '', qty: '', entry: '', day: todayIso(), stop: '', note: '', ...(init || {}) });
+function AddPosition({ d, onDone, onErr }) {
+  const [f, setF] = useState({ symbol: '', qty: '', entry: '', day: todayIso(), stop: '', note: '' });
   const [busy, setBusy] = useState(false);
   const set = (k) => (ev) => setF({ ...f, [k]: k === 'symbol' ? ev.target.value.toUpperCase() : ev.target.value });
   const ok = f.symbol.trim() && Number(f.qty) >= 1 && Number(f.entry) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(f.day);
@@ -152,88 +153,78 @@ function AddPosition({ d, init, onDone, onErr }) {
 
 // Broker check: the positions pasted from the deployment's table / a CSV export, three ways against the app's book.
 // A check only: the book moves only through the existing corrections (edit / remove / add), each with its confirm.
-const TA = { display: 'block', width: '100%', boxSizing: 'border-box', height: 92, resize: 'vertical', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre', overflow: 'auto' };
-const SAMPLE = 'INSTRUMENT\tQTY\tLTP\tVALUE\tP&L\nRELIANCE\t8\t1,337.60\t₹10.70 k\t+₹346.40\n…  (or a positions CSV, or "RELIANCE 8" lines)';
-const B2 = { fontSize: 11, padding: '2px 7px', whiteSpace: 'nowrap' };   // a button in a broker-check cell
-const SHOW = 8;                                            // Both rows shown before "+N more · all match"
-function BrokerCheck({ d, tick, onChanged, onAdd, onErr }) {
-  const [text, setText] = useState('');
-  const [r, setR] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [all, setAll] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    api.realBrokerCheckLast().then((x) => { setR(x); if (!loaded && x.text) setText(x.text); setLoaded(true); }).catch(() => setLoaded(true));
-  }, [tick]);
-  const compare = () => {
-    if (!text.trim()) return;
-    setBusy(true);
-    api.realBrokerCheck(text).then((x) => { setR(x); setAll(false); }).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+const TILE = { background: 'var(--bg)', borderRadius: 8, padding: '7px 10px', height: 56, overflow: 'hidden', minWidth: 0 };
+const TL = { fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+const TV = { display: 'block', fontSize: 14.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: '24px' };
+const SEND_W = 150;                                        // the Send column: a switch and a short word
+const wday = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }) : '');
+const mmss = (s) => { const t = Math.max(0, s); const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60; return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(x).padStart(2, '0')}`; };
+const Fact = ({ l, v, c, phone }) => <div style={TILE}><div style={TL}>{l}</div><b className={`mono ${c || ''}`} style={phone ? { ...TV, fontSize: 12.5 } : TV}>{v}</b></div>;
+const Sw = ({ children }) => <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>{children}</span>;
+
+function MorningPanel({ live, onReplan, replanning, onErr, onChanged }) {
+  const streamed = useLive('real_morning');
+  const [m, setM] = useState(null);
+  const [got, setGot] = useState(0);                       // when `m` arrived: the countdown ticks from there
+  const [now, setNow] = useState(Date.now());
+  const [busy, setBusy] = useState('');
+  const phone = useIsPhone();
+  useEffect(() => { api.realMorning().then((x) => { setM(x); setGot(Date.now()); }).catch(() => {}); }, []);
+  useEffect(() => { if (streamed) { setM(streamed); setGot(Date.now()); } }, [streamed]);
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  if (!m || !m.visible) return null;
+  const gone = Math.round((now - got) / 1000);
+  const left = m.seconds_to_send - gone, toOpen = m.seconds_to_open - gone;
+  const before = m.phase === 'before', after = m.phase === 'after';
+  const send = ampm(m.send_at.slice(11, 16)), until = ampm(m.send_until.slice(11, 16));
+  const set = (x) => { setM(x); setGot(Date.now()); push('real_morning', x); };
+  const act = (p, key) => { setBusy(key); p.then(set).catch((e) => onErr(e.message)).finally(() => setBusy('')); };
+  const go = m.orders.filter((o) => !o.skip && o.status !== 'skipped');
+  const buys = go.filter((o) => o.action === 'BUY'), exits = go.filter((o) => o.action === 'EXIT');
+  const line = (o) => `${o.action} ${o.symbol} ${o.qty}${o.action === 'BUY' ? ` · stop ${rs(o.stop)} · ≈ ${inr(o.value)}` : ''}`;
+  const toggle = (o, on) => act(api.realSkip(o.symbol, !on, on ? '' : 'Real page'), o.symbol);
+  const hold = () => {
+    if (!buys.length) return;
+    if (window.confirm(`Hold every BUY today?\n\n${buys.map(line).join('\n')}\n\n${exits.length ? `The ${exits.length} EXIT${exits.length > 1 ? 's' : ''} still go${exits.length > 1 ? '' : 'es'} out at ${send}. ` : ''}A hold is for today only: tomorrow's plan is not affected. The kill switch and the enable switch stay as they are.`)) act(api.realHold(), 'hold');
   };
-  const file = (ev) => {
-    const f = ev.target.files?.[0];
-    if (!f) return;
-    const rd = new window.FileReader();
-    rd.onload = () => setText(String(rd.result || ''));
-    rd.readAsText(f);
-    ev.target.value = '';
+  const sendNow = () => {
+    if (window.confirm(`Send the orders now instead of at ${send}?\n\n${go.map(line).join('\n') || 'nothing'}\n\n${m.skipped.length ? `Skipped today: ${m.skipped.join(', ')}. ` : ''}Each order goes out once, ${m.gap_s} s apart (≈ ${m.est_total_s} s). This is the real send.`)) {
+      act(api.realSendNow().then((r) => { if (r.failed?.length) onErr(`${r.failed.length} order(s) failed: ${r.failed.map((o) => `${o.symbol} (${o.error})`).join(' · ')}`); onChanged(); return r.morning; }), 'send');
+    }
   };
-  // a correction through the edit endpoint: the dry run's effects go in the confirm, then it is saved
-  const edit = (sym, body, what) => {
-    setBusy(true);
-    api.realEditPosition(sym, { ...body, note: 'broker check' }, true).then((x) => {
-      const e = x.effects;
-      const lines = [what, `P&L ${signed(e.pnl_before)} → ${signed(e.pnl_after)}`, `cash ${inr(e.cash)}`, `EXIT will send ${e.exit_qty} shares`, `stop check at ${n2(x.position?.stop)} (${e.stop_pct}% away)`, e.est_cleared ? 'est. cleared' : null, 'logged as "edited by you"'].filter(Boolean);
-      if (!window.confirm(`Save the correction to ${sym}?\n\n${lines.join('\n')}\n\nNothing is sent to the broker.`)) return null;
-      return api.realEditPosition(sym, { ...body, note: 'broker check' }).then(() => onChanged());
-    }).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+  const cols = [{ h: 'Stock' }, { h: 'Side', w: 62 }, { h: 'Qty', w: 56, n: true }, { h: '≈ Price', w: 90, n: true, lo: true }, { h: 'Capital', w: 96, n: true }, { h: 'Stop', w: 90, n: true, lo: true },
+    { h: 'Results', w: 84 }, { h: 'Why', w: 170, lo: true, ell: true }, { h: after ? 'Sent' : 'Send', w: SEND_W }];
+  const sendCell = (o) => {
+    if (o.status || after) {
+      return o.status ? <><Tag c={STATUS[o.status] || ''}>{o.status}</Tag>{o.at && <span className="mono small"> {clock(o.at, true)}</span>}</> : <span className="small">not sent</span>;
+    }
+    if (o.action === 'EXIT') return <Sw><Switch on disabled title="an exit always goes out" /><span className="small">exits always</span></Sw>;
+    return <Sw><Switch on={!o.skip} disabled={!!busy} title={o.skip ? `skipped today by ${o.skip.by}${o.skip.note ? ` · ${o.skip.note}` : ''} · switch on to send it after all` : 'switch off to skip this BUY today only'} onChange={(on) => toggle(o, on)} />
+      {o.skip ? <span className="small" style={{ color: 'var(--warn)' }}>{o.skip.by === 'you' ? 'skipped today' : 'results guard'}</span> : null}</Sw>;
   };
-  const remove = (sym, qty, entry) => {
-    if (!window.confirm(`Remove ${sym} from tracking?\n\nUse this only when the order never filled at the broker: the cash gets the cost (${inr(qty * entry)}) back and the charges are reversed, as if never bought. No order is sent.`)) return;
-    setBusy(true);
-    api.realRemovePosition(sym, 'never filled (broker check)').then(() => onChanged()).catch((e) => onErr(e.message)).finally(() => setBusy(false));
-  };
-  const c = r?.counts || {};
-  const stampLine = r?.at ? <Meta>last check <b>{stamp(r.at)}</b> · {c.differences ?? 0} difference{c.differences === 1 ? '' : 's'}</Meta> : <Meta>no check yet</Meta>;
-  const appPos = Object.fromEntries((d.positions || []).map((x) => [x.symbol, x]));
-  const bothCols = [{ h: 'Stock', ell: true }, { h: 'App', w: 56, n: true }, { h: 'Broker', w: 72, n: true }, { h: '', w: 146, key: 'act' }];
-  const bothAll = r?.both || [];
-  const shown = all ? bothAll : bothAll.slice(0, SHOW);
-  const rest = bothAll.slice(shown.length);
-  const bothRows = shown.map((x) => ({ key: x.symbol, cells: [<><b>{x.symbol}</b>{x.est && <Tag c="w" title="estimated entry: the price seen when sending">est. entry</Tag>}</>, x.app_qty, x.broker_qty,
-    x.empty ? <button type="button" className="btn ghost small" style={{ ...B2, color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={busy} title="the broker shows an empty slot for it" onClick={() => remove(x.symbol, x.app_qty, x.app_entry)}>Remove from tracking…</button>
-      : !x.match ? (x.est && x.broker_price ? <button type="button" className="btn ghost small" style={B2} disabled={busy} title={`the app's entry is estimated (${n2(x.app_entry)}); the broker's price ${n2(x.broker_price)} is used with the quantity`} onClick={() => edit(x.symbol, { qty: x.broker_qty, entry: x.broker_price }, `qty ${x.app_qty} → ${x.broker_qty} · entry ${n2(x.app_entry)} → ${n2(x.broker_price)}`)}>set qty {x.broker_qty}, entry…</button>
-        : <button type="button" className="btn ghost small" style={B2} disabled={busy} onClick={() => edit(x.symbol, { qty: x.broker_qty }, `qty ${x.app_qty} → ${x.broker_qty}`)}>set qty {x.broker_qty}…</button>)
-        : x.est && x.broker_price && Math.abs(x.broker_price - x.app_entry) >= 0.005 ? <button type="button" className="btn ghost small" style={B2} disabled={busy} title={`the app's entry is estimated (${n2(x.app_entry)}); use the broker's price`} onClick={() => edit(x.symbol, { entry: x.broker_price }, `entry ${n2(x.app_entry)} → ${n2(x.broker_price)}`)}>entry → {n2(x.broker_price)}…</button>
-          : <Tag c="ok">match</Tag>] }));
-  if (rest.length) bothRows.push(rest.every((x) => x.match) ? `+${rest.length} more · all match` : `+${rest.length} more`);
-  const appCols = [{ h: 'Stock', ell: true }, { h: 'App', w: 56, n: true }, { h: '', w: 164, key: 'act' }];
-  const appRows = (r?.app_only || []).map((x) => ({ key: x.symbol, cells: [<b>{x.symbol}</b>, x.qty,
-    appPos[x.symbol] ? <button type="button" className="btn ghost small" style={{ ...B2, color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={busy} onClick={() => remove(x.symbol, x.qty, x.entry)}>Remove from tracking…</button> : <span className="muted">gone</span>] }));
-  const brkCols = [{ h: 'Stock', ell: true }, { h: 'Broker', w: 72, n: true }, { h: '', w: 134, key: 'act' }];
-  const brkRows = (r?.broker_only || []).map((x) => ({ key: x.symbol, cells: [<><b>{x.symbol}</b>{x.unknown && <Tag c="w" title="not in the stored universe: the app cannot track it (no candles)">not in universe</Tag>}</>, x.qty,
-    x.empty ? <span className="muted">empty slot · ignore</span> : <button type="button" className="btn ghost small" style={B2} disabled={busy} onClick={() => onAdd({ symbol: x.symbol, qty: String(x.qty), entry: x.price ? String(x.price) : '' })}>Add to tracking…</button>] }));
-  const warn = (n) => (n ? { borderColor: 'var(--warn)' } : undefined);
-  return <Panel id="brokercheck" title="Broker check" meta="paste" right={<>{stampLine}
-    <label className="btn small" style={{ cursor: 'pointer', alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 4 }} title="load a positions / holdings CSV export into the box">⬆ CSV<input type="file" accept=".csv,.txt,text/csv,text/plain" onChange={file} style={{ display: 'none' }} /></label></>}>
-    <div style={{ padding: '12px 14px 6px' }}><textarea className="input" style={TA} value={text} onChange={(ev) => setText(ev.target.value)} placeholder={SAMPLE} spellCheck={false} /></div>
-    <div className="rnote" style={{ paddingTop: 0 }}>Paste the deployment's positions table or the broker's positions export as copied (symbol and quantity are enough; price columns are used for fill prices when present).</div>
-    <div style={{ ...F, padding: '0 14px 12px', gap: 8 }}>
-      <button type="button" className="btn primary small" style={{ alignSelf: 'center' }} disabled={busy || !text.trim()} onClick={compare}>{busy ? 'Working…' : 'Compare'}</button>
-      <span className="muted" style={{ fontSize: 11 }}>nothing is sent · the app's book changes only through the buttons below, each with a confirm</span></div>
-    {r?.at && <div className="cols c3" style={{ padding: '0 14px 12px' }}>
-      <Panel title="Both" meta={bothAll.length} right={<Meta>qty match {c.match ?? 0} · differs {c.differ ?? 0}</Meta>}>
-        <FixedTable cols={bothCols} rows={bothRows} empty="No name is in both lists." />
-        {rest.length > 0 && !all && <div className="rnote"><button type="button" className="linkbtn" onClick={() => setAll(true)}>show all</button></div>}
-      </Panel>
-      <div className="rpanel" style={warn(appRows.length)}><div className="ph"><b>App only</b><span className="n">{appRows.length}</span><span className="r"><Meta>never filled at the broker?</Meta></span></div>
-        <FixedTable cols={appCols} rows={appRows} empty="None: every app position is at the broker." />
-        <div className="rnote">removing restores cash and charges · no order goes out</div></div>
-      <div className="rpanel" style={warn(c.broker_only)}><div className="ph"><b>Broker only</b><span className="n">{c.broker_only ?? 0}</span><span className="r"><Meta>not tracked by the app</Meta></span></div>
-        <FixedTable cols={brkCols} rows={brkRows} empty="None: every broker position is tracked." />
-        <div className="rnote">adding asks for the fill price and bought day; the app then exits it by its rules</div></div>
-    </div>}
-    <div className="rnote">Home › Needs a look says "Broker check: paste the positions after the 9:16 send" until you paste again after a send.</div>
+  const rows = m.orders.map((o) => ({ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.close ? n2(o.close) : '—', inr(o.value),
+    o.stop ? n2(o.stop) : '—', o.results_date ? <Tag c="w" title={`results ${day(o.results_date)} · in ${o.results_in} session${o.results_in === 1 ? '' : 's'}${o.skip?.by === 'results guard' ? ' · skipped by the results guard (settable: real.results_guard_sessions)' : ''}`}>⚠ {wday(o.results_date)}</Tag> : '—',
+    <span className="muted">{o.why}</span>, sendCell(o)] }));
+  rows.push(after ? `${m.counts.sent} sent · ${m.counts.failed} failed · ${m.counts.skipped} skipped${m.first_sent ? ` · ${clock(m.first_sent, true)} → ${clock(m.last_sent, true)}` : ''}`
+    : `going out: ${exits.length} EXIT${exits.length === 1 ? '' : 's'} · ${buys.length} BUY${buys.length === 1 ? '' : 's'} · ${inr(m.going_out.value)}${m.skipped.length ? ` · ${m.skipped.length} skipped today (${m.skipped.join(', ')})` : ''}${m.waiting ? ` · ${m.waiting} waiting (no slot)` : ''}`);
+  const right = after ? <Meta>{send} · <b className="mono">{m.counts.sent}</b> sent · <b className="mono">{m.counts.failed}</b> failed · <b className="mono">{m.counts.skipped}</b> skipped</Meta>
+    : before ? <><Meta>{!phone && <>now <b className="mono">{clock(new Date(now).toISOString())}</b> · </>}sends in <b className="mono" style={{ fontSize: 14, color: 'var(--text)' }}>{mmss(left)}</b></Meta><Switch on disabled title="always: the reminder lists the orders; nothing is auto-retried" label="confirm before sending" /></>
+    : <Meta>sending now · <b className="mono">{m.counts.sent}</b> sent · window closes {until}</Meta>;
+  return <Panel id="morning" title={`This morning · orders at ${send}`} meta={after ? `${m.counts.sent} sent` : `${go.length} go out`} right={right} className={before ? 'morning' : ''}>
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${phone ? 2 : 5}, minmax(0, 1fr))`, gap: 8, padding: '10px 14px' }}>
+      {phone ? <><Fact phone l="Capital" v={inr(m.capital)} /><Fact phone l="Cash" v={inr(m.cash)} /></> : <Fact l="Capital · cash" v={`${inr(m.capital)} · ${inr(m.cash)}`} />}
+      <Fact phone={phone} l="Slots" v={`${m.slots_used} of ${m.slots} · ${m.free} free`} />
+      <Fact phone={phone} l="Filter" v={m.filter ? `E+ ${m.filter}` : '—'} c={m.filter === 'OFF' ? 'down' : m.filter ? 'up' : ''} />
+      <Fact phone={phone} l="Gap between orders" v={`${m.gap_s} s · ~${m.est_total_s} s total`} />
+      <Fact phone={phone} l="Guard" v={m.guard.killed ? 'kill switch ON' : m.guard.enabled ? 'kill off · enabled' : 'disabled'} c={m.guard.killed || !m.guard.enabled ? 'down' : 'up'} />
+    </div>
+    <FixedTable cols={cols} rows={rows} empty="No orders today." />
+    {!after && <div style={{ display: 'flex', gap: 8, padding: '10px 14px', alignItems: 'center', flexWrap: 'wrap' }}>
+      <button type="button" className="btn primary small" disabled={!!busy || !live || toOpen > 0 || !go.length} title={!live ? 'real trading is off or the kill switch is on' : toOpen > 0 ? `from 9:15 AM (the market opens in ${mmss(toOpen)})` : 'run the send now · each order once'} onClick={sendNow}>{busy === 'send' ? 'Sending…' : 'Send now (skip the wait)…'}</button>
+      <button type="button" className="btn ghost small" disabled={replanning || !!busy} onClick={onReplan} title="rebuild the plan from the evening's data and the account as it is now · nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button>
+      <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={!!busy || !buys.length} onClick={hold}>{busy === 'hold' ? 'Holding…' : 'Hold all today…'}</button>
+      <span className="muted" style={{ fontSize: 11, marginLeft: 'auto', minWidth: 0 }}>a skip is for today only · the kill switch and enable switch stay as they are · after {send} this panel becomes the order log</span></div>}
+    {after && <div className="rnote">the day's send{m.first_sent ? ` · ${m.gap_s} s apart · ${clock(m.first_sent, true)} → ${clock(m.last_sent, true)}` : ''} · a skipped BUY was never sent and is not retried today · tomorrow's plan comes at the evening run</div>}
   </Panel>;
 }
 
@@ -305,7 +296,7 @@ export default function RealPage() {
   const orderCols = [{ h: 'Stock' }, { h: 'Side', w: 62 }, { h: 'Qty', w: 56, n: true }, { h: 'Stop', w: 90, n: true, lo: true }, { h: '≈ Value', w: 90, n: true }, { h: '₹ at risk', w: 86, n: true, lo: true }, { h: 'Why', w: 170, lo: true, ell: true }, { h: 'Status', w: 128 }];
   const orderRows = (d.orders || []).map((o) => ({ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.stop ? rs(o.stop) : '—',
     o.close ? inr(o.qty * o.close) : '—', o.risk ? inr(o.risk) : '—', <span className="muted">{o.why}</span>,
-    <Tag c={o.sent === 'sent' ? 'ok' : o.sent === 'failed' ? 'bad' : live ? 'a' : 'w'}>{o.sent || (live ? `queued · ${ampm(s.send_time)}` : 'not sending')}</Tag>] }));
+    <Tag c={o.sent === 'sent' ? 'ok' : o.sent === 'failed' ? 'bad' : o.sent === 'skipped' ? 'w' : live ? 'a' : 'w'}>{o.sent || (live ? `queued · ${ampm(s.send_time)}` : 'not sending')}</Tag>] }));
   const done = (changed) => { setEdit(null); setTedit(null); setAdding(false); if (changed) reload(); };
   // Strategy is the short tag at 60 px; under 1440 px % and Days are dropped (nw: the row title keeps them) so Stock keeps 140 px+
   const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 170 : 240, ell: true }, { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: '', w: 50, key: 'edit' }];
@@ -386,22 +377,22 @@ export default function RealPage() {
 
     {d.started ? <div className="two">
       <div className="rd" style={COL}>
+        <MorningPanel live={live} onReplan={() => replan()} replanning={replanning} onErr={setErr} onChanged={reload} />
         <Panel title="Orders for the next open" meta={(d.orders || []).length} right={<><Meta>decided {day(d.decided)} · sent {ampm(s.send_time)} · {live ? <b className="up">sending</b> : <b className="down">not sending</b>}</Meta>
           <button type="button" className="btn primary small" disabled={replanning} onClick={() => replan()} title="rebuild the plan from the evening's data and the account as it is now · nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button></>}>
           <FixedTable cols={orderCols} rows={orderRows} empty="None." />
           {d.waiting > 0 && <div className="rnote">{d.waiting} more breakout(s) without a free slot / over the daily limit{d.waiting_why?.length ? `: ${d.waiting_why.slice(0, 6).map((w) => `${w.symbol} (${w.why})`).join(' · ')}${d.waiting_why.length > 6 ? ' · …' : ''}` : ''}.</div>}
         </Panel>
         <ReplanPanel r={rp} send={s} busy={replanning} onRaise={(n) => replan(n)} onKeep={() => setRp(null)} />
-        <Panel id="positions" title="Open positions" meta={`${d.positions.length} of ${d.allowed ? d.cap : d.max_pos}`} right={<><Meta>stop check every {s.stop_check_min} min · at risk <b className="mono down">{inr(risk)}</b></Meta>
+        <Panel title="Open positions" meta={`${d.positions.length} of ${d.allowed ? d.cap : d.max_pos}`} right={<><Meta>stop check every {s.stop_check_min} min · at risk <b className="mono down">{inr(risk)}</b></Meta>
           <button type="button" className={`btn small ${adding ? 'primary' : ''}`} title="track a trade placed by hand · nothing is sent" onClick={() => { setAdding(!adding); setEdit(null); }}>+ Add a position</button></>}>
-          {adding && <AddPosition key={typeof adding === 'object' ? adding.symbol : 'new'} d={d} init={typeof adding === 'object' ? adding : null} onDone={done} onErr={setErr} />}
+          {adding && <AddPosition d={d} onDone={done} onErr={setErr} />}
           <FixedTable cols={posCols} rows={posRows} empty="None." />
           {d.checks?.length > 0 && <div className="rbanner warn" style={{ margin: '8px 14px' }}>⚠️ Position checks (warnings only, nothing is traded): {d.checks.join(' · ')}</div>}
           {d.notes?.length > 0 && <div className="rnote">{d.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</div>}
           <div className="rnote">E+ positions: once the best close is +100% over the entry, the stop is raised to 25% under it after the close (never lowered) and watched from the next session like any stop; a stop sent with the BUY is not moved.
             {' '}No stop-loss orders: the app checks live prices every {s.stop_check_min} min and sends EXIT when a stop is reached (needs the daily Kite login). Prices are what the app saw when sending (est.), corrected to the day's open in the evening; your broker's fills may differ: ✎ sets the real fill, quantity or stop (every rule then follows the new values), "Remove from tracking…" drops an order that never filled, "+ Add a position" tracks a trade placed by hand. Nothing here sends an order.</div>
         </Panel>
-        <BrokerCheck d={d} tick={tick} onChanged={reload} onErr={setErr} onAdd={(init) => { setAdding(init); setEdit(null); scrollTo('positions'); }} />
         <Panel id="tradelog" title="Trade log" meta={(d.trades || []).length}><FixedTable cols={tradeCols} rows={tradeRows} empty="None yet." /></Panel>
       </div>
       <div className="rd" style={COL}>
