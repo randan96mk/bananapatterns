@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from backend.timefmt import ampm_date
+from backend.timefmt import ampm, ampm_date
 from backend.config import IST, PERSISTED_SECTIONS, AppConfig, save_config
 from backend.database.models import get_candles, get_db, get_logs, get_runs, get_setting, now_ist, set_setting
 from backend.engine.bases import detect_bases
@@ -1226,6 +1226,66 @@ def real_retry(req: dict):
     return res
 
 
+# --- the morning dry run: today's plan with a per-order skip ---
+
+class Skip(BaseModel):
+    symbol: str
+    on: bool = True
+    note: str = ""
+
+
+@router.get("/real/morning")
+def real_morning():
+    """☀️ The morning dry run: today's orders as they go out at send_time, each with its skip, results date and sent
+    state, the clock to the send, the account facts. Read-only."""
+    from backend.engine import real
+    return real.morning(S().config)
+
+
+@router.post("/real/skip")
+def real_skip(req: Skip):
+    """Skip one planned BUY for today (on) or send it after all (off). EXITs cannot be skipped (400). Nothing is sent;
+    a skipped BUY is logged at the send as `skipped` and is not retried that day."""
+    from backend.engine import real
+    try:
+        return real.skip_order(S().config, req.symbol, req.on, req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/real/hold")
+def real_hold():
+    """Hold every planned BUY today (the EXITs still go out). The kill switch and the enable switch are not touched."""
+    from backend.engine import real
+    try:
+        return real.hold_today(S().config)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/real/send-now")
+def real_send_now():
+    """Run the morning send at once (the confirm is on the page). Refused when off / killed, outside market hours or
+    after send_until; otherwise exactly the scheduled send, recorded and alerted like it."""
+    from backend.alerts import messages as msg
+    from backend.alerts.jobs import Scheduler
+    from backend.engine import real
+    st = S()
+    now = datetime.now(IST)
+    started = now_ist()
+    res = real.send_now(st.config, st.client, now)
+    if res["status"] == "error":
+        raise HTTPException(400, res["error"])
+    Scheduler.record("real_send", now.date(), "ok", f"{res['status']}: sent {len(res['sent'])}, failed {len(res['failed'])}, "
+                     f"skipped {len(res.get('skipped') or [])} · by hand (Send now)", started)
+    if (res["sent"] or res["failed"]) and st.scheduler:
+        try:
+            st.scheduler.notifier().send(f"{now.date()}|real-sent", "real", msg.real_sent(res, ampm(now.strftime("%H:%M"))))
+        except Exception:
+            pass
+    return {**res, "morning": real.morning(st.config)}
+
+
 @router.post("/real/kill")
 def real_kill(on: bool = True):
     """The kill switch: nothing is sent while it is on."""
@@ -1629,6 +1689,8 @@ def _stream_topics() -> dict:
         "flow_live": (flow.live, lambda d: 3 if live_feed(d) else 30),
         "overview": (overview_view, lambda d: 5 if (d or {}).get("feed") == "live" else 30),
         "backtest": (bt.status, lambda d: 2 if (d or {}).get("state") == "running" else 5),
+        "real_morning": (lambda: __import__("backend.engine.real", fromlist=["morning"]).morning(S().config),
+                         lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
     }
 
 

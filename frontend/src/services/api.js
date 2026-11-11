@@ -113,6 +113,11 @@ export const realRemovePosition = (symbol, note) => req('DELETE', `/api/real/pos
 export const realAddPosition = (body) => req('POST', '/api/real/position', body);
 export const realBrokerCheck = (text) => req('POST', '/api/real/broker-check', { text });
 export const realBrokerCheckLast = () => req('GET', '/api/real/broker-check');
+// ☀️ the morning dry run: today's plan with a per-order skip (for today only); send-now runs the send at once
+export const realMorning = () => req('GET', '/api/real/morning');
+export const realSkip = (symbol, on, note = '') => req('POST', '/api/real/skip', { symbol, on, note });
+export const realHold = () => req('POST', '/api/real/hold');
+export const realSendNow = () => req('POST', '/api/real/send-now');
 export const realEditTrade = (id, body, dry = false) => req('POST', `/api/real/trade/${id}${dry ? '?dry=1' : ''}`, body);
 export const runBreakout = () => req('POST', '/api/breakout/run');
 export const getPaper = () => req('GET', '/api/paper');

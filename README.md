@@ -1013,6 +1013,20 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   `nologin_alarm_min` (30) minutes until the login. Optional `real.send_stop` (off): each BUY also carries its stop as
   `sig_stop` so Tradetron can exit on its own (turn on once the Tradetron strategy reads it).
 - **Switches**: `real.enabled` (ON by default) and the ⛔ kill switch on the tab; both must allow sending.
+- **Morning dry run** (`real.preview_time`, 9:00 AM, until `send_until`): the Real page's "This morning · orders at
+  9:16 AM" panel (`GET /api/real/morning`, live on the stream topic `real_morning` every 30 s) shows the plan as it
+  will go out, with a countdown, the facts (capital · cash, slots, filter, gap and the estimated total, the guard),
+  and a **Send switch per BUY**: off = skipped for today only (`POST /api/real/skip {symbol, on, note}`; EXITs
+  cannot be skipped, 400); **Hold all today…** skips every BUY (`POST /api/real/hold`); **Send now…** runs the send
+  at once (`POST /api/real/send-now`; refused when off / killed, before 9:15 AM, after `send_until`). A skipped BUY
+  is logged in the order log as `skipped` with the reason, never sent and not retried that day; the evening plan
+  clears the skips. The kill switch and the enable switch are never touched by a skip. The 9:00 Telegram reminder
+  lists the same orders, the skips and the facts, and takes the replies `skip SYMBOL`, `unskip SYMBOL` and `hold`
+  (refused after `send_until`). **Results guard**: `real.results_guard_sessions` (3; 0 = off): when the plan is
+  written (evening and ↻ Re-evaluate) and again at the 9:00 reminder, a BUY whose next results date (the stored NSE
+  calendar) is within that many sessions is pre-skipped "by the results guard" (⚠ tag with the weekday); switch it
+  back on from the page or with `unskip`, and the guard leaves it alone for the day. After the send the panel is the
+  day's order log (n sent · n failed · n skipped, the send times).
 - **Capital** (`POST /api/real/capital`, the box on the tab): before the start it is simply the starting amount;
   afterwards a change counts as money added or withdrawn (cash moves, the profit so far and the curve stay, a
   withdrawal can't exceed the cash), and tomorrow's unsent BUYs are re-sized at once. The tab shows what it means

@@ -651,17 +651,42 @@ def real_plan(res: dict, variant: str) -> str:
     return "\n".join(lines)
 
 
-def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: bool) -> str:
-    """The morning reminder: the orders that go out at send_at, and the one-line way to hold them."""
+def _wday(d: Optional[str]) -> str:
+    try:
+        return datetime.fromisoformat(d).strftime("%a") if d else ""
+    except ValueError:
+        return d or ""
+
+
+def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: bool, m: Optional[dict] = None) -> str:
+    """The morning reminder (and the reply to skip / unskip / hold): the orders that go out at send_at, the ones
+    skipped today and why, the account facts, and the one-line way to skip or hold before the send. `m` is the
+    morning view (real.morning); without it only the orders are listed."""
+    skips = {o["symbol"]: o["skip"] for o in (m or {}).get("orders") or [] if o.get("skip")}
+    results = {o["symbol"]: o for o in (m or {}).get("orders") or [] if o.get("results_date")}
+    going = [o for o in orders if o["action"] == "EXIT" or o["symbol"] not in skips]
+    n = len(going)
     state = "🔴 kill switch ON: nothing goes out" if killed else "OFF: nothing goes out" if not on else f"go out at {ampm(send_at)}"
-    lines = [f"{REAL} · {len(orders)} order{'s' if len(orders) != 1 else ''} {state} · {escape(tb_name(variant, None))}"]
-    for o in orders:
+    lines = [f"☀️ {REAL} · {n} order{'s' if n != 1 else ''} {state} · {escape(tb_name(variant, None))}"]
+    for o in going:
         if o["action"] == "EXIT":
             lines.append(f"🔴 EXIT <b>{escape(o['symbol'])}</b> {o['qty']} · {escape(o.get('why') or '')}")
         else:
-            lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {o['qty']} · ~{_rup(o['qty'] * o['close'])} · stop {_rup(o['stop'])}")
+            r = results.get(o["symbol"])
+            tag = f" · ⚠️ results {_wday(r['results_date'])}" if r else ""
+            lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {o['qty']} · stop {_rup(o['stop'])} · ~{_rup(o['qty'] * o['close'])}{tag}")
+    if not going:
+        lines.append("Nothing goes out today.")
+    if skips:
+        why = lambda s, k: f"results {_wday(k.get('results_date'))}" if k.get("results_date") else (k.get("note") or f"by {k['by']}")
+        lines.append("<i>skipped today: " + " · ".join(f"{escape(s)} ({escape(why(s, k))})" for s, k in skips.items()) + "</i>")
+    if m and m.get("started"):
+        facts = [f"cash {_rup(m['cash'])}" if m.get("cash") is not None else "", f"{m.get('free', 0)} free slot{'s' if m.get('free') != 1 else ''}",
+                 f"filter {escape(m['filter'])}" if m.get("filter") else "", f"gap {m['gap_s']:g} s" if m.get("gap_s") else ""]
+        lines.append("<i>" + " · ".join(x for x in facts if x) + "</i>")
     if on and not killed:
-        lines.append("<i>To hold them: Real page → Stop all · kill switch, before the send time.</i>")
+        lines.append(f"\nReply <b>skip SYMBOL</b> or <b>hold</b> before {ampm(send_at)} · or open the Real page. "
+                     "The kill switch and the enable switch stay as they are.")
     return "\n".join(lines)
 
 

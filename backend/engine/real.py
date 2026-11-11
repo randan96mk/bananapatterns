@@ -12,6 +12,10 @@
   stop_check_min            EXIT at once (no stop-loss order is placed anywhere).
   replan (↻ Re-evaluate)    the same plan rebuilt by hand from the evening's data and the account as it is now
                             (after a deposit or a max_pos change); nothing is sent, sent orders are kept.
+  preview_time .. send_time the morning dry run: the plan as it will go out, with a per-order skip for today (by you,
+                            from the Real page or Telegram, or by the results guard: a BUY whose results are within
+                            real.results_guard_sessions sessions); a skipped BUY is logged, never sent, and the skip
+                            dies with the day. EXITs cannot be skipped.
 Orders go to Tradetron (which routes them to the broker, or keeps them offline); none ever goes to Kite. config.real
 .enabled and the kill switch (app setting real.killed) both have to allow sending. Charges are Zerodha delivery
 estimates; the broker's own fills are not visible here.
@@ -21,7 +25,7 @@ import json
 import re
 import threading
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from math import floor
 from typing import Callable, Optional
 
@@ -131,6 +135,7 @@ def evening(config: AppConfig, data: Optional[dict] = None) -> dict:
         raised = late_trail(st, data, day, _rules(config, "E"))
         with get_db() as conn:                            # the last evening's raises, for Home's timeline
             set_setting(conn, "real.trail_raised", json.dumps({"day": day, "raised": raised}))
+        st["skips"], st["unskipped"] = {}, {}             # a skip is for one morning only
         _plan(st, data, i, config)
         st["as_of"] = day
         eq = _value(st)
@@ -279,6 +284,7 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig, keep: tuple = ()) -> 
                       "prev": tb.filter_label(before, p.regime_mode), "changed": now != before,
                       "slots": cap if regime_on else 0},
               waiting=len(waiting), waiting_why=waiting)
+    results_guard(st, config, next_session(data["cal"][i]))
     return {"orders": orders, "waiting": waiting, "idle_cash": round(cash, 2), "cap": cap, "regime_on": bool(regime_on),
             "slots_used": used}
 
@@ -408,12 +414,19 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
             return {"status": "off", "sent": [], "failed": []}
         orders = sorted(st["orders"], key=lambda o: o["action"] != "EXIT")
         px = _quotes(client, [o["ts"] for o in orders])
-        sent, failed = [], []
+        sent, failed, skipped = [], [], []
+        skips = _skips(st, today)
         for o in orders:
             key = f"{today}|{o['symbol']}|{o['action']}"
             if o.get("sent") or _sent(key):
                 continue
             if o["action"] == "EXIT" and o["symbol"] not in st["positions"]:
+                continue
+            if o["action"] == "BUY" and o["symbol"] in skips:  # skipped for today: logged, never sent, not retried
+                sk = skips[o["symbol"]]
+                _log(key, today, o, "skipped", f"skipped today · by {sk['by']}" + (f" · {sk['note']}" if sk.get("note") else ""))
+                o["sent"] = "skipped"
+                skipped.append({**o, "skip": sk})
                 continue
             price = px.get(o["ts"]) or (st["positions"][o["symbol"]]["last"] if o["action"] == "EXIT" else o["close"])
             if o["action"] == "BUY" and o["qty"] * price * 1.0012 > st["cash"]:
@@ -435,7 +448,7 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
             sent.append({**o, "price": price, "reply": reply[:120], "retries": getattr(tradetron, "last_retries", 0)
                          if sender is tradetron.send else 0})
         _save(st)
-        return {"status": "ok", "sent": sent, "failed": failed}
+        return {"status": "ok", "sent": sent, "failed": failed, "skipped": skipped}
 
 
 def _book(st: dict, o: dict, price: float, today: str) -> None:
@@ -538,6 +551,203 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
             hits.append({**o, "price": ltp, "net": t["net"]})
         _save(st)
         return {"status": "ok", "hits": hits}
+
+
+# --- the morning dry run: today's plan with a per-order skip -----------------------------------------------
+
+RESULTS_HORIZON_DAYS = 45                 # how far ahead a BUY's next results date is looked up (calendar days)
+
+
+def next_session(day: str) -> str:
+    """The first trading day after `day`: the session a plan decided on `day` goes out on."""
+    from backend.ingest.holidays import is_trading_day
+    d = date.fromisoformat(day)
+    for _ in range(14):
+        d += timedelta(days=1)
+        if is_trading_day(d):
+            return d.isoformat()
+    return d.isoformat()
+
+
+def _skips(st: dict, day: str) -> dict:
+    return (st.get("skips") or {}).get(day) or {}
+
+
+def _results_for(symbols, day: str) -> dict:
+    """{symbol: {date, sessions}} of the next results meeting (from the stored NSE calendar) per BUY symbol."""
+    from backend.ingest import events
+    try:
+        return events.upcoming_results(day, sorted(symbols), horizon_days=RESULTS_HORIZON_DAYS) if symbols else {}
+    except Exception as exc:
+        logger.warning("results lookup failed: %s", exc)
+        return {}
+
+
+def results_guard(st: dict, config: AppConfig, day: str) -> list:
+    """The results guard on the plan for `day`: a BUY (not sent) whose next results date is within
+    real.results_guard_sessions sessions is skipped for that day, by "results guard". A BUY the owner switched back
+    on (st["unskipped"][day]) is left alone, so a replan or the 9:00 preview does not skip it again. Changes the
+    state in place (the caller saves). Returns the symbols skipped now."""
+    n = int(getattr(config.real, "results_guard_sessions", 0) or 0)
+    if n <= 0:
+        return []
+    buys = [o for o in st.get("orders", []) if o["action"] == "BUY" and not o.get("sent")]
+    res = _results_for({o["symbol"] for o in buys}, day)
+    skips = st.setdefault("skips", {}).setdefault(day, {})
+    free = set((st.get("unskipped") or {}).get(day) or [])
+    out = []
+    for o in buys:
+        r = res.get(o["symbol"])
+        if not r or r["sessions"] > n or o["symbol"] in skips or o["symbol"] in free:
+            continue
+        skips[o["symbol"]] = {"by": "results guard", "at": now_ist(), "note": f"results {r['date']} (in {r['sessions']} session"
+                              f"{'s' if r['sessions'] != 1 else ''})", "results_date": r["date"], "results_in": r["sessions"]}
+        out.append(o["symbol"])
+    return out
+
+
+def _day(now: Optional[datetime]) -> str:
+    from backend.config import IST
+    return (now or datetime.now(IST)).date().isoformat()
+
+
+def skip_order(config: AppConfig, symbol: str, on: bool, note: str = "", now: Optional[datetime] = None) -> dict:
+    """Skip (on) or send again (off) one planned BUY for today, by you. An EXIT, an order not in the plan, or one
+    already sent / skipped / failed today is refused (ValueError). Returns the morning view."""
+    symbol = (symbol or "").strip().upper()
+    today = _day(now)
+    with _lock:
+        st = _state()
+        if not st:
+            raise ValueError("real tracking has not started yet")
+        o = next((x for x in st.get("orders", []) if x["symbol"] == symbol), None)
+        if not o:
+            raise ValueError(f"{symbol} is not in today's plan")
+        if o["action"] == "EXIT":
+            raise ValueError("EXITs cannot be skipped: an exit always goes out")
+        if o.get("sent") or _sent(f"{today}|{symbol}|BUY"):
+            raise ValueError(f"{symbol} is already {o.get('sent') or 'logged'} today")
+        skips = st.setdefault("skips", {}).setdefault(today, {})
+        free = st.setdefault("unskipped", {}).setdefault(today, [])
+        if on:
+            skips[symbol] = {"by": "you", "at": now_ist(), "note": (note or "").strip()[:120]}
+            if symbol in free:
+                free.remove(symbol)
+        else:
+            skips.pop(symbol, None)
+            if symbol not in free:
+                free.append(symbol)
+        _save(st)
+    return morning(config, now)
+
+
+def hold_today(config: AppConfig, note: str = "hold all", now: Optional[datetime] = None) -> dict:
+    """Skip every planned BUY for today (the EXITs still go out). Returns the morning view."""
+    today = _day(now)
+    with _lock:
+        st = _state()
+        if not st:
+            raise ValueError("real tracking has not started yet")
+        skips = st.setdefault("skips", {}).setdefault(today, {})
+        for o in st.get("orders", []):
+            if o["action"] == "BUY" and not o.get("sent") and not _sent(f"{today}|{o['symbol']}|BUY") and o["symbol"] not in skips:
+                skips[o["symbol"]] = {"by": "you", "at": now_ist(), "note": note}
+        st.setdefault("unskipped", {})[today] = []
+        _save(st)
+    return morning(config, now)
+
+
+def guard_today(config: AppConfig, now: Optional[datetime] = None) -> list:
+    """The results guard run again for today (the 9:00 preview): the results calendar may have changed since the
+    evening. Returns the symbols skipped now."""
+    with _lock:
+        st = _state()
+        if not st or not st.get("orders"):
+            return []
+        out = results_guard(st, config, _day(now))
+        if out:
+            _save(st)
+        return out
+
+
+def morning(config: AppConfig, now: Optional[datetime] = None) -> dict:
+    """The morning dry run, read-only: the plan as it goes out at send_time, with the clock, the account facts and
+    every order's skip / results / sent state. `phase` is before (until send_time), sending (the send window, an
+    order still to go) or after. `visible` says whether the Real page shows the panel (from preview_time on; after
+    the send it is the day's order log)."""
+    from backend.alerts.jobs import hm
+    from backend.config import IST
+    from backend.ingest.holidays import is_trading_day
+    now = now or datetime.now(IST)
+    rc = config.real
+    today = now.date().isoformat()
+    send_at = datetime.combine(now.date(), hm(rc.send_time), tzinfo=IST)
+    send_until = datetime.combine(now.date(), hm(rc.send_until), tzinfo=IST)
+    preview_at = datetime.combine(now.date(), hm(rc.preview_time), tzinfo=IST) if rc.preview_time else send_at
+    st = _state() or {}
+    with get_db() as conn:
+        log = {(r["symbol"], r["action"]): dict(r) for r in conn.execute(
+            "SELECT symbol, action, status, created_at, reply, price FROM real_orders WHERE day = ? "
+            "AND action IN ('BUY', 'EXIT') ORDER BY id", (today,))}
+    skips = _skips(st, today)
+    plan = sorted(st.get("orders", []), key=lambda o: o["action"] != "EXIT")
+    res = _results_for({o["symbol"] for o in plan if o["action"] == "BUY"}, today)
+    orders = []
+    for o in plan:
+        row = log.get((o["symbol"], o["action"]))
+        status = (row or {}).get("status") or (o.get("sent") if o.get("sent") in ("sent", "failed", "skipped") else None)
+        close = o.get("close") if o["action"] == "BUY" else (st.get("positions", {}).get(o["symbol"]) or {}).get("last")
+        r = res.get(o["symbol"]) if o["action"] == "BUY" else None
+        sk = skips.get(o["symbol"]) if o["action"] == "BUY" else None
+        orders.append({"symbol": o["symbol"], "action": o["action"], "qty": o.get("qty"), "close": round(close, 2) if close else None,
+                       "value": round(o["qty"] * close, 2) if close and o.get("qty") else None,
+                       "stop": round(o["stop"], 2) if o.get("stop") else None, "why": o.get("why"),
+                       "results_date": r["date"] if r else None, "results_in": r["sessions"] if r else None,
+                       "skip": sk, "status": status, "sent": status == "sent", "failed": status == "failed",
+                       "at": (row or {}).get("created_at"), "price": (row or {}).get("price"), "reply": (row or {}).get("reply")})
+    pending = [o for o in orders if not o["status"] and not o["skip"]]
+    phase = "before" if now < send_at else "sending" if now < send_until and pending else "after"
+    going = [o for o in orders if not o["skip"] and o["status"] != "skipped"]
+    exits = [o for o in going if o["action"] == "EXIT"]
+    buys = [o for o in going if o["action"] == "BUY"]
+    skipped = [o["symbol"] for o in orders if o["skip"] or o["status"] == "skipped"]
+    sent_at = [o["at"] for o in orders if o["at"]]
+    cap = st.get("cap") if st.get("allowed") else 0
+    used = len(st.get("positions") or {})
+    gap = _gap(config)
+    return {"now": now.isoformat(timespec="seconds"), "today": today, "preview_at": preview_at.isoformat(timespec="seconds"),
+            "send_at": send_at.isoformat(timespec="seconds"), "send_until": send_until.isoformat(timespec="seconds"),
+            "seconds_to_send": int((send_at - now).total_seconds()), "seconds_to_open": int((datetime.combine(now.date(), hm("09:15"), tzinfo=IST) - now).total_seconds()),
+            "phase": phase, "visible": bool(st) and now >= preview_at and bool(orders) and is_trading_day(now.date()),
+            "started": bool(st), "capital": st.get("capital"), "cash": round(st["cash"], 2) if st else None,
+            "slots_used": used, "slots": cap or 0, "free": max(0, (cap or 0) - used),
+            "filter": (st.get("filter") or {}).get("state"), "filter_name": (st.get("filter") or {}).get("name"),
+            "gap_s": gap, "est_total_s": round(gap * len(going)),
+            "guard": {"enabled": bool(rc.enabled), "killed": killed(), "results_guard_sessions": int(rc.results_guard_sessions or 0)},
+            "orders": orders, "going_out": {"exits": len(exits), "buys": len(buys), "value": round(sum(o["value"] or 0 for o in buys), 2)},
+            "skipped": skipped, "waiting": int(st.get("waiting") or 0),
+            "counts": {"sent": sum(o["sent"] for o in orders), "failed": sum(o["failed"] for o in orders),
+                       "skipped": sum(o["status"] == "skipped" for o in orders)},
+            "first_sent": min(sent_at) if sent_at else None, "last_sent": max(sent_at) if sent_at else None}
+
+
+def send_now(config: AppConfig, client, now: Optional[datetime] = None, sender: Optional[Callable] = None) -> dict:
+    """The morning send run at once instead of at send_time (the confirm is on the page). Refused when real trading
+    is off or killed, outside market hours (9:15 AM – 3:30 PM), on a day that is not a trading day, or after
+    send_until (the window is over: nothing goes out by hand). Otherwise exactly send_orders."""
+    from backend.alerts.jobs import hm
+    from backend.config import IST
+    from backend.ingest.holidays import is_trading_day
+    now = now or datetime.now(IST)
+    if not active(config):
+        return {"status": "error", "error": "real trading is off or the kill switch is on"}
+    if not is_trading_day(now.date()):
+        return {"status": "error", "error": "not a trading day"}
+    if not ("09:15" <= now.strftime("%H:%M") < "15:30"):
+        return {"status": "error", "error": "the market is closed (9:15 AM – 3:30 PM)"}
+    if now.time() >= hm(config.real.send_until):
+        return {"status": "error", "error": f"the send window closed at {config.real.send_until}: nothing goes out by hand"}
+    return send_orders(config, client, now.date().isoformat(), sender)
 
 
 # --- corrections by hand (nothing is sent) --------------------------------------------------------------
@@ -781,7 +991,7 @@ def summary(config: AppConfig) -> dict:
     base = {"enabled": bool(config.real.enabled), "killed": killed(), "variant": config.real.variant,
             "settings": {k: getattr(config.real, k) for k in ("capital", "preview_time", "send_time", "send_until", "stop_check_min",
                                                                "max_buys_per_day", "max_order_pct", "send_stop",
-                                                               "nologin_alarm_min")},
+                                                               "nologin_alarm_min", "results_guard_sessions")},
             "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token()),
             "stop_rule": {"stop_pct": config.breakout.stop_pct, "atr_mult": config.breakout.atr_mult},
             "tops": {k: tb.rules(config, k).top for k in tb.MODES}}

@@ -349,6 +349,8 @@ class RealConfig:
                                            # own; turn on once the Tradetron strategy reads sig_stop
     nologin_alarm_min: int = 30            # positions open, no Kite login in market hours: a loud alarm every N minutes
     max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 3L = 45,000)
+    results_guard_sessions: int = 3        # a planned BUY whose results date is within N sessions is pre-skipped for the
+                                           # morning (switch it back on from the Real page or Telegram); 0 = off
 
 
 @dataclass
