@@ -344,7 +344,7 @@ class RealConfig:
     send_until: str = "09:30"              # ...until here (missed: not sent that day, with an alert)
     stop_check_min: int = 5                # stops watched with live prices every N minutes in market hours
     max_buys_per_day: int = 5
-    send_gap_s: float = 5.0                # seconds between two webhooks (1–30); a 429 back-off adds to it
+    send_gap_s: float = 10.0               # seconds between two webhooks (1–30): one engine cycle apart, so none is overwritten
     send_stop: bool = False                # also send each BUY's stop to Tradetron (sig_stop) so Tradetron can exit on its
                                            # own; turn on once the Tradetron strategy reads sig_stop
     nologin_alarm_min: int = 30            # positions open, no Kite login in market hours: a loud alarm every N minutes
