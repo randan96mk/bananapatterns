@@ -1361,25 +1361,6 @@ def real_position_add(req: PositionAdd):
         raise HTTPException(400, str(exc))
 
 
-class BrokerCheck(BaseModel):
-    text: str
-
-
-@router.post("/real/broker-check")
-def real_broker_check(req: BrokerCheck):
-    """Paste the broker's positions (the deployment table, a CSV export or `SYMBOL qty` lines): the three-way
-    compare with the open Real positions; the paste is kept as the last check. Nothing is changed or sent."""
-    from backend.engine import broker_check
-    return broker_check.check(S().config, req.text)
-
-
-@router.get("/real/broker-check")
-def real_broker_check_last():
-    """The last broker check, compared again with the book as it is now."""
-    from backend.engine import broker_check
-    return broker_check.last(S().config)
-
-
 @router.post("/real/trade/{trade_id}")
 def real_trade_edit(trade_id: int, req: TradeEdit, dry: bool = False):
     """✎ Correct a closed trade's exit price / qty; `?dry=1` returns the effects without saving."""
