@@ -72,6 +72,10 @@ def _real(config, kite: bool) -> list:
         out.append(("warn", "Kill switch ON: nothing is sent"))
     if s["enabled"] and not s["token_set"]:
         out.append(("warn", "TRADETRON_TOKEN missing in .env: orders can't be sent"))
+    if s.get("started"):
+        from backend.engine import broker_check
+        if broker_check.stale_since():                       # a send went out and no positions paste since: informational
+            out.append(("filter", "Broker check: paste the positions after the 9:16 send"))
     if not s["enabled"]:
         return out
     if s.get("positions") and not kite:

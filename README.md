@@ -1050,6 +1050,20 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   order log ("edited X: entry 2,435.10 → 2,441.50 · by you") and in the row's "edited" tag; nothing is sent to the
   broker and the switches are untouched. Paper has no edits.
 
+- **Broker check** (the panel under Open positions, `POST /api/real/broker-check` `{text}`, `GET` for the last one):
+  the broker's own positions are never read by the app and Tradetron has no read API, so paste the deployment's
+  positions table as copied from the browser (INSTRUMENT · QTY · LTP · VALUE · P&L; tabs or spaces, the "Total"
+  row and "Hide nil qty" are skipped), a broker positions / holdings CSV export (symbol / tradingsymbol / instrument,
+  qty / net qty / quantity, avg / buy avg / average price; `-EQ` stripped) or plain `SYMBOL qty` lines, or load a CSV
+  file into the box, then Compare. The names are split three ways against the open Real positions: **Both** (qty
+  match, or "set qty N…" through the edit correction; an estimated entry with a broker price gets "entry → price…"),
+  **App only** (never filled at the broker? "Remove from tracking…"), **Broker only** (not tracked: "Add to
+  tracking…" opens the add form prefilled; qty 0 rows are empty slots and ignored; a name outside the universe is
+  tagged). The paste is kept (`real.broker_check` in app_settings) so the panel reopens with it, stamped with the
+  time and the number of differences, and Home's "Needs a look" says "Broker check: paste the positions after the
+  9:16 send" (informational, never red) when an order was sent on a day with no check on or after it. The check
+  itself changes nothing: the app's book moves only through those buttons, each with its confirm, and nothing is sent.
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;

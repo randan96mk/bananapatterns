@@ -111,6 +111,8 @@ export const realReplan = (maxPos) => req('POST', '/api/real/replan', maxPos ? {
 export const realEditPosition = (symbol, body, dry = false) => req('POST', `/api/real/position/${encodeURIComponent(symbol)}${dry ? '?dry=1' : ''}`, body);
 export const realRemovePosition = (symbol, note) => req('DELETE', `/api/real/position/${encodeURIComponent(symbol)}`, { note });
 export const realAddPosition = (body) => req('POST', '/api/real/position', body);
+export const realBrokerCheck = (text) => req('POST', '/api/real/broker-check', { text });
+export const realBrokerCheckLast = () => req('GET', '/api/real/broker-check');
 export const realEditTrade = (id, body, dry = false) => req('POST', `/api/real/trade/${id}${dry ? '?dry=1' : ''}`, body);
 export const runBreakout = () => req('POST', '/api/breakout/run');
 export const getPaper = () => req('GET', '/api/paper');
