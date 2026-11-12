@@ -24,6 +24,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--names", type=int, default=12, help="how many stocks (by futures OI) to probe")
     ap.add_argument("--years", type=int, default=3, help="years of continuous history to request")
+    ap.add_argument("--list", type=float, default=0, help="only print the eligible underlyings: lot value <= this many rupees (e.g. 600000), by OI")
     a = ap.parse_args()
     cfg = load_config()
     kc = KiteClient(cfg.kite, cfg.ingest)
@@ -61,6 +62,14 @@ def main() -> int:
         px = q.get("last_price") or 0
         rows.append((n, c, px, q.get("oi") or 0, px * c["lot_size"]))
     rows.sort(key=lambda r: -r[3])
+    if a.list:                                             # the names to put in the Tradetron list, one per line
+        ok = [r for r in rows if 0 < r[4] <= a.list and r[3] > 0]
+        print(f"\nEligible underlyings (near-month lot value <= Rs {a.list:,.0f}, with open interest): {len(ok)} of {len(rows)}")
+        print(f"{'stock':<14}{'contract':<22}{'lot':>6}{'lot value':>12}{'OI':>14}")
+        for n, c, px, oi, lv in ok:
+            print(f"{n:<14}{c['tradingsymbol']:<22}{c['lot_size']:>6}{lv:>12,.0f}{oi:>14,}")
+        print("\nComma-separated (underlying names):\n" + ",".join(n for n, *_ in ok))
+        return 0
     print(f"\nTop {a.names} by futures OI (near month {rows[0][1]['expiry'] if rows else '?'}):")
     print(f"{'stock':<14}{'contract':<22}{'lot':>6}{'price':>10}{'lot value':>14}{'OI':>12}{'margin~20%':>12}")
     cash = {}
