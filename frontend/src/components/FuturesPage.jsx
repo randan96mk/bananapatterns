@@ -340,7 +340,7 @@ export default function FuturesPage() {
           {!phone && <NextUp />}
         </div>
       </div>
-      <div className="rnote">Signals on the cash candles; execution, stops, MTM and the trail on the near-month future. Orders go by webhook to the futures deployment (the sender is step 4; until then every real order is logged as failed). The app never places an order in Kite; Kite is used only for quotes. Past results don't guarantee future returns.</div>
+      <div className="rnote">Signals on the cash candles; execution, stops, MTM and the trail on the near-month future. Orders go by webhook to the futures deployment. The app never places an order in Kite; Kite is used only for quotes. Past results don't guarantee future returns.</div>
     </>}
   </div>;
 }
