@@ -1,7 +1,7 @@
 """📐 The futures book on Backtest F's synthetic world: the evening plan with eligibility reasons and `waiting`, the
 paper fill at the next futures open with lots and margin, stops on the futures low (the trail only ever raises), the
 roll at T-2 (exit + re-entry on the next month, cost logged, never into expiry), the guards (daily loss, notional, cash
-floor, heat, margin 80%), the kill switch (the stub records kill_switch=1), short_real refused without a passing
+floor, heat, margin 80%), the kill switch (kill_switch=1 through the sender), short_real refused without a passing
 backtest, the switches, replan / morning / skip / hold shapes, hand corrections with lots, deposits, the overview
 account and the attention items, the alert texts, the routes and the stream topics."""
 
@@ -345,11 +345,12 @@ def test_real_send_books_the_fill_and_the_stub_refuses(monkeypatch):
     F = [b for b in __import__("backend.futures.candles", fromlist=["get"]).get("UP") if b["date"] == cal[i + 1]][0]
     assert not pos["est"] and pos["entry"] == F["open"]
     assert "UP" in book._state()["accounts"]["paper_long"]["positions"]                                 # paper filled from the same plan
-    # the stub sender refuses: a failed order, logged, never retried
+    # the real sender without its token refuses: a failed order, logged, never retried
+    monkeypatch.delenv(sender.ENV_TOKEN, raising=False)
     book.reset()
     book.evening(cfg, cut(data, i), today=cal[i])
     out = book.send_orders(cfg, None, cal[i + 2])                     # (cal[i + 1]'s keys are already in the log: once a day)
-    assert out["sent"] == [] and len(out["failed"]) == 2 and "step 4" in out["failed"][0]["error"]
+    assert out["sent"] == [] and len(out["failed"]) == 2 and "TRADETRON_FUTURES_TOKEN" in out["failed"][0]["error"]
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM futures_orders WHERE status = 'failed' AND account = 'real_long'").fetchone()[0] == 2
     # off / killed: nothing goes out
@@ -374,10 +375,11 @@ def test_kill_switch_asks_the_sender_once_and_the_stub_records_it(monkeypatch):
     assert book.set_killed(True, cfg, kill_sender=s.kill)["sent"] is False and len(s.kills) == 1     # once
     book.set_killed(False, cfg)
     sender.sent_kills.clear()
-    out = book.set_killed(True, cfg)                                                                 # the stub records it
-    assert out["sent"] and sender.sent_kills and sender.sent_kills[0]["note"] == "futures kill switch" and "stub" in out["reply"]
-    assert book.summary(cfg)["guards"]["kill"] and book.summary(cfg)["kills"]
-    with pytest.raises(NotImplementedError):
+    monkeypatch.delenv(sender.ENV_TOKEN, raising=False)
+    out = book.set_killed(True, cfg)                                                                 # the real sender, no token: refused
+    assert not out["sent"] and "TRADETRON_FUTURES_TOKEN" in out["error"] and not sender.sent_kills and book.killed()
+    assert book.summary(cfg)["guards"]["kill"] and book.summary(cfg)["kills"] == []
+    with pytest.raises(RuntimeError):
         sender.send("UP", "BUY", 1)
 
 

@@ -1,7 +1,7 @@
 """📐 The stock futures book: the Trend Breakout signals traded on the near-month future, one lot a name, in four
 virtual accounts that share one capital setting (`futures.capital`): paper_long, real_long, paper_short, real_short.
 Paper and Real of a side run from the SAME plan; a side's Paper switch fills it from the daily futures candles, its
-Real switch sends it through backend/futures/sender.py (a stub until step 4) and books the fill like the cash Real.
+Real switch sends it through backend/futures/sender.py (the futures deployment's webhook) and books the fill like the cash Real.
 
   evening (after the futures data step)  each account is marked at the futures close (paper fills the plan at the
                       day's open from candles_fut_daily, checks stops on the day's low / high, counts the short time
@@ -13,7 +13,8 @@ Real switch sends it through backend/futures/sender.py (a stub until step 4) and
                       kill, filter); a rejected signal is kept in `waiting` with its reasons.
   preview_time        the morning dry run (same shapes as real.morning): the plan with per-order skips (you, the
                       results guard, Telegram `fut skip SYM` / `fut hold`), EXITs cannot be skipped.
-  send_time           the real sides' orders go through the sender once each (a failure is logged, never retried).
+  send_time           the real sides' orders go through the sender once each (a failure is logged, never retried; a
+                      timeout is logged `unknown · check`: the order may have gone in, it is never re-sent).
   every 5 min         stops on the futures quote (NFO:<contract>): a long at or under its stop (or the day's low), a
                       short at or over it (or the day's high) exits; paper closes at the price, real sends EXIT.
   roll day (T-2)      9:20: EXIT the near month, then (after the exit is booked) the entry on the next month, logged as
@@ -754,7 +755,7 @@ def morning(config: AppConfig, now: Optional[datetime] = None) -> dict:
         books = [m for m in MODES if switch(config, s, m)]
         for o in sorted(st.get("plan", {}).get(s, []), key=lambda o: o["action"] != "EXIT"):
             row = log.get((o["symbol"], o["action"]))
-            status = (row or {}).get("status") or (o.get("sent") if o.get("sent") in ("sent", "failed", "skipped") else None)
+            status = (row or {}).get("status") or (o.get("sent") if o.get("sent") in ("sent", "failed", "skipped", "unknown") else None)
             sk = skips.get(o["symbol"]) if o["action"] != "EXIT" else None
             r = eligibility.results_within(o["symbol"], 10, today) if o["action"] != "EXIT" else None
             pk = primary(config, s)
@@ -823,9 +824,24 @@ def _gap(config: AppConfig) -> float:
         return 10.0
 
 
+UNKNOWN = "unknown · check"           # the order log status of a webhook that got no answer: it may have gone in
+
+
+def _send_fail(exc: Exception) -> tuple[str, str]:
+    """(status, text) of a sender exception for the order log. A timeout (sender.SendUnknown) is `unknown · check`:
+    the signal may have gone in, so the order is logged under its key (never re-sent) and left for the owner to
+    check at the deployment and correct by hand. REJECTED_ALREADY_HELD (sender.AlreadyHeld) is logged as "already
+    held at the deployment": the plan stays unfilled, nothing is re-sent. Anything else is a failed order."""
+    if isinstance(exc, sender.SendUnknown):
+        return UNKNOWN, f"{UNKNOWN}: {exc}"
+    if isinstance(exc, sender.AlreadyHeld):
+        return "failed", f"already held at the deployment: {exc}"
+    return "failed", str(exc)
+
+
 def send_orders(config: AppConfig, client, today: str, send: Optional[Callable] = None) -> dict:
-    """The real sides' planned orders (EXITs, then entries), each once, through the sender (the stub refuses: a
-    failed order, never retried). Booked at the quote (or the plan's estimate), corrected to the open in the
+    """The real sides' planned orders (EXITs, then entries), each once, through the sender (a failure is a failed
+    order, never retried; a timeout is logged `unknown · check` and never re-sent either). Booked at the quote (or the plan's estimate), corrected to the open in the
     evening. Returns {status, sent, failed, skipped}."""
     _use(config)
     send = send or (lambda sym, action, lots=None: sender.send(sym, action, lots, gap=_gap(config)))
@@ -864,9 +880,10 @@ def send_orders(config: AppConfig, client, today: str, send: Optional[Callable] 
                 try:
                     reply = send(o["symbol"], o["action"], None if o["action"] == "EXIT" else o["lots"])
                 except Exception as exc:
-                    _log(k, today, o["symbol"], o["action"], "failed", o["lots"], o.get("contract"), o.get("why", ""), str(exc))
-                    failed.append({**o, "account": k, "error": str(exc)[:120]})
-                    o["sent"] = "failed"
+                    status, text = _send_fail(exc)
+                    _log(k, today, o["symbol"], o["action"], status, o["lots"], o.get("contract"), o.get("why", ""), text)
+                    failed.append({**o, "account": k, "error": text[:120], "unknown": status == UNKNOWN})
+                    o["sent"] = "unknown" if status == UNKNOWN else "failed"
                     continue
                 _log(k, today, o["symbol"], o["action"], "sent", o["lots"], o.get("contract"), o.get("why", ""), str(reply), price)
                 o["sent"] = "sent"
@@ -938,8 +955,11 @@ def watch_stops(config: AppConfig, client, today: str, send: Optional[Callable] 
                     try:
                         reply = send(sym, "EXIT", None)
                     except Exception as exc:
-                        _log(k, today, sym, "EXIT", "failed", pos["lots"], c, why, str(exc), ltp)
-                        hits.append({**h, "error": str(exc)[:120]})
+                        status, text = _send_fail(exc)
+                        _log(k, today, sym, "EXIT", status, pos["lots"], c, why, text, ltp)
+                        if status == UNKNOWN:
+                            pos["check"] = f"{today}: EXIT {UNKNOWN}"          # the lot stays until the owner checks
+                        hits.append({**h, "error": text[:120], "unknown": status == UNKNOWN})
                         continue
                     _log(k, today, sym, "EXIT", "sent", pos["lots"], c, why, str(reply), ltp)
                 else:
@@ -1044,8 +1064,11 @@ def roll(config: AppConfig, client, today: str, send: Optional[Callable] = None,
                         try:
                             reply = send(sym, "EXIT", None)
                         except Exception as exc:
-                            _log(k, today, sym, "EXIT", "failed", pos["lots"], c, f"roll: {why}", str(exc), px, key=key)
-                            failed.append({"account": k, "tag": TAG[k], "symbol": sym, "error": str(exc)[:120], "step": "exit"})
+                            status, text = _send_fail(exc)
+                            _log(k, today, sym, "EXIT", status, pos["lots"], c, f"roll: {why}", text, px, key=key)
+                            if status == UNKNOWN:
+                                pos["check"] = f"{today}: EXIT {UNKNOWN}"
+                            failed.append({"account": k, "tag": TAG[k], "symbol": sym, "error": text[:120], "step": "exit", "unknown": status == UNKNOWN})
                             continue
                         _log(k, today, sym, "EXIT", "sent", pos["lots"], c, f"roll: {why}", str(reply), px, key=key)
                     else:
@@ -1059,8 +1082,11 @@ def roll(config: AppConfig, client, today: str, send: Optional[Callable] = None,
                     try:
                         reply = send(sym, "EXIT", None)
                     except Exception as exc:
-                        _log(k, today, sym, "ROLL", "failed", pos["lots"], c, f"roll → {nxt['tradingsymbol']}: exit refused", str(exc), px, key=key)
-                        failed.append({"account": k, "tag": TAG[k], "symbol": sym, "error": str(exc)[:120], "step": "exit"})
+                        status, text = _send_fail(exc)
+                        _log(k, today, sym, "ROLL", status, pos["lots"], c, f"roll → {nxt['tradingsymbol']}: exit refused", text, px, key=key)
+                        if status == UNKNOWN:
+                            pos["check"] = f"{today}: roll EXIT {UNKNOWN}"
+                        failed.append({"account": k, "tag": TAG[k], "symbol": sym, "error": text[:120], "step": "exit", "unknown": status == UNKNOWN})
                         continue
                 t = _close(st, k, sym, px, today, "roll", est=False)      # the exit is booked first
                 entry = px_next or px
@@ -1070,8 +1096,10 @@ def roll(config: AppConfig, client, today: str, send: Optional[Callable] = None,
                     try:
                         reply2 = send(sym, ENTRY[side], pos["lots"])
                     except Exception as exc:
-                        _log(k, today, sym, "ROLL", "failed", pos["lots"], c, f"roll → {nxt['tradingsymbol']}: exit sent, entry refused", str(exc), px, key=key)
-                        failed.append({"account": k, "tag": TAG[k], "symbol": sym, "error": str(exc)[:120], "step": "entry", "exited": True})
+                        status, text = _send_fail(exc)
+                        _log(k, today, sym, "ROLL", status, pos["lots"], c, f"roll → {nxt['tradingsymbol']}: exit sent, entry refused", text, px, key=key)
+                        failed.append({"account": k, "tag": TAG[k], "symbol": sym, "error": text[:120], "step": "entry", "exited": True,
+                                       "unknown": status == UNKNOWN})
                         continue
                     reply = f"{reply} / {reply2}"
                 else:
@@ -1395,7 +1423,7 @@ def summary(config: AppConfig) -> dict:
                      "stop_check_min": config.real.stop_check_min, "gap_s": _gap(config), "roll_time": ROLL_TIME},
             "universe_count": len(instruments.universe()), "eligible_count": len(uni),
             "next_expiry": exp[0]["expiry"] if exp else None, "backtest": {"built": bool(bt), "verdict": verdict, "ran_at": (bt or {}).get("ran_at")},
-            "log": orders_log(120), "kills": list(sender.sent_kills)}
+            "log": orders_log(120), "kills": list(sender.sent_kills), "sender": sender.check(gap=_gap(config))}
     if not st:
         return {**base, "cash": float(cfg.capital), "margin_used": 0.0, "margin_pct": 0.0, "mtm_today": 0.0, "value": float(cfg.capital), "net": 0.0,
                 "return": 0.0, "guards": {"kill": sw["killed"], "enabled": sw["enabled"], "daily_loss": {"used": 0.0, "limit": round(cfg.daily_loss_pct / 100 * cfg.capital, 2), "hit": False},

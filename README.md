@@ -1202,9 +1202,8 @@ Real's, `suggestion` null).
 **Morning**: `book.morning` has the same keys as `real.morning` plus `side`, `books`, `lots`, `margin`, `contract`;
 `skip_order` / `hold_today` / the results guard work like Real's (EXITs cannot be skipped; a skip stops both the paper
 fill and the real send of that side; Telegram `fut skip SYM`, `fut unskip SYM`, `fut hold`). `send_orders` sends the real
-sides' orders through `backend/futures/sender.py` (`send(symbol, action, lots)`, a stub until step 4: it raises
-NotImplementedError, logged as a failed order and never retried) and books the fill at the NFO quote (est. until the
-evening). `watch_stops` every `real.stop_check_min` in market hours quotes `NFO:<contract>`: a long at or under its stop
+sides' orders through `backend/futures/sender.py` (`send(symbol, action, lots)`, below; a failure is logged as a
+failed order and never retried) and books the fill at the NFO quote (est. until the evening). `watch_stops` every `real.stop_check_min` in market hours quotes `NFO:<contract>`: a long at or under its stop
 (or the day's low), a short at or over it (or the day's high) exits once per account, stock and day (paper at the price,
 real through the sender). **Rolls** (`book.roll`, 9:20 on a roll day = `roll_days` sessions before a held expiry): EXIT the
 near month, then, once the exit is booked, the entry on the next month at the same stop, logged as one roll with its
@@ -1212,7 +1211,8 @@ cost (both charges + the basis between the two quotes); a lot whose exit rule fi
 at T-1 a lot that could not roll is exited (never held into expiry). **Guards**: daily loss limit (used = day_start −
 value; no new entries once hit), notional ≤ 2.5× capital, free cash ≥ `cash_floor`, heat ≤ `heat_pct`, margin 70%
 warn / 80% block, the enable switch (`futures.enabled` app setting) and the kill switch (`futures.killed`: flipped on
-with a real side on, `sender.kill_switch()` is asked once — the stub records it in `sender.sent_kills`). Hand
+with a real side on, `sender.kill_switch()` sends kill_switch=1 once; every kill that went out is kept in
+`sender.sent_kills`). Hand
 corrections (`edit_position` with lots / entry / stop, `remove_position`, `add_position` with side and book) and deposits
 (`set_capital`: the difference moves every account's cash) mirror Real and Paper.
 
@@ -1241,6 +1241,36 @@ the futures trades and orders in Portfolio, attention items for the `futures` ta
 orders sent, a stop hit on the futures price, the daily loss limit, margin over 70%, the held-name warnings (ban,
 results, lot size change), the short side's paper signals, the roll notice at T-3 and the roll lines on the roll day,
 the raised trail stops. Tests: `tests/test_futures_book.py`.
+
+#### Stock futures — the real sender
+
+Step 4 (`backend/futures/sender.py`): the webhook to the Tradetron deployment "Stock Futures Webhook Long Short"
+(current-month stock futures, quantities in **lots**, only the stocks in the strategy's lists trade).
+
+- **Token**: `TRADETRON_FUTURES_TOKEN` in `.env` (its own token, not the cash `TRADETRON_TOKEN`); never in git, the logs,
+  the order log, the API or the screen (`sender.public(body)` strips it; `GET /api/futures` only says whether one is set).
+  Without it every send and the kill switch refuse (`RuntimeError`, logged as a failed order).
+- **Endpoint**: POST JSON to `TRADETRON_URL` (default `https://api.tradetron.tech/api?`, the trailing `?` matters) with
+  `User-Agent: tt-webhook/1.0`, one signal per call, key/value pairs applied in order with `sig_action` **last**; the
+  symbol is the NSE name exactly (`M&M` stays `M&M` in the JSON):
+  - BUY / SELL: `{"auth-token": T, "key": "sig_symbol", "value": "RELIANCE", "key1": "sig_qty", "value1": "2", "key2": "sig_action", "value2": "BUY"}`
+  - EXIT: `{"auth-token": T, "key": "sig_symbol", "value": "RELIANCE", "key1": "sig_action", "value1": "EXIT"}` (no quantity: the whole lot closes)
+  - kill: `{"auth-token": T, "key": "kill_switch", "value": "1"}` (closes everything at the deployment, stops its entries)
+- **Pacing**: at least `real.send_gap_s` apart (default 10 s, floor 10 s, clamped to 30) on the clock shared with the
+  cash sender (a cash webhook just before makes the futures one wait too); the kill switch only waits the shared 1.5 s
+  floor. The deployment's own limits (3/s, 30/min, 250/hour → HTTP 429) sit far above this.
+- **Errors**: a 429 is retried after 2, 4, 8 s (or `Retry-After`, 30 s at most; `sender.last_retries` counts them); any
+  other HTTP error is raised at once and the order is logged `failed`, never retried. A **timeout** (or a connection lost
+  after the request went out) raises `SendUnknown`: the signal *may* have gone in, so the book logs the order
+  **`unknown · check`** under its day key (never re-sent, the morning line shows the status, `skip_order` refuses it),
+  books nothing and leaves the lot or the entry for the owner to check at the deployment and correct by hand
+  (`edit_position` / `add_position` / `remove_position`); a stop EXIT that timed out flags the lot (`check`). A reply
+  with **`REJECTED_ALREADY_HELD`** raises `AlreadyHeld`: the order is logged `failed` with "already held at the
+  deployment", the plan stays unfilled, nothing is re-sent (a flip is EXIT first, then the entry once closed).
+- **Market hours**: the sender refuses (`MarketClosed`) outside 09:15–15:30 IST or on a non-trading day of the NSE
+  calendar the book uses (`backend/ingest/holidays.py`): the deployment rejects (never queues) those anyway.
+- **Check**: `sender.check()` → `{token_set, url_host, gap_s, window: {open, close, state: open|closed|holiday, ok},
+  user_agent}`, in the summary as `GET /api/futures` → `sender`. Tests: `tests/test_futures_sender.py`.
 
 ### 📝 Paper trading (simulated: never orders)
 

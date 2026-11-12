@@ -949,7 +949,7 @@ class Scheduler:
             return {"status": "failed", "error": str(exc)}
 
     def run_futures_send(self, now: datetime) -> dict:
-        """The real sides' futures orders through the sender (the stub until step 4), once each."""
+        """The real sides' futures orders through the sender (the futures sender), once each."""
         from backend.futures import book
         today, started = now.date(), now_ist()
         try:
