@@ -58,7 +58,66 @@ def signals(config, kite: bool) -> dict:
                                        "(data or rules drifted)"))
         except Exception:
             pass
-    return {"breakout": _pack(bt), "paper": _pack(pp), "real": _pack(_real(config, kite))}
+    out = {"breakout": _pack(bt), "paper": _pack(pp), "real": _pack(_real(config, kite))}
+    try:
+        out["futures"] = _pack(_futures(config, kite))
+    except Exception:
+        out["futures"] = _pack([])
+    return out
+
+
+def _futures(config, kite: bool) -> list:
+    """📐 The futures tab: the plan for the next open, the morning dry run, a roll day, margin over 70%, the daily
+    loss limit, the kill switch, held-name warnings, the short side's paper signals."""
+    from datetime import datetime
+
+    from backend.config import IST
+    from backend.futures import book
+    out = []
+    if not book.has_account():
+        return out
+    cfg = config.futures
+    s = book.summary(config)
+    g = s.get("guards") or {}
+    if g.get("kill"):
+        out.append(("warn", "Futures kill switch ON: nothing is sent"))
+    if any(s["sides"][x]["real"] for x in ("long", "short")) and s.get("positions") and not kite:
+        out.append(("warn", "Kite not logged in: futures stops are NOT watched"))
+    if g.get("margin", {}).get("warn"):
+        out.append(("warn", f"Futures margin {g['margin']['pct']:.0f}% of capital (warn at {g['margin']['warn_at']:.0f}%)"))
+    if g.get("daily_loss", {}).get("hit"):
+        out.append(("sell", "Futures daily loss limit reached: no new lots today"))
+    w = s.get("warnings") or {}
+    if w.get("ban"):
+        out.append(("warn", "MWPL ban on a held futures name: " + ", ".join(w["ban"])))
+    if w.get("results"):
+        out.append(("warn", "Results soon on a held futures name: " + ", ".join(r["symbol"] for r in w["results"])))
+    if w.get("lot_change"):
+        out.append(("warn", "Lot size change on a held futures name: " + ", ".join(c["symbol"] for c in w["lot_change"])))
+    today = datetime.now(IST).date().isoformat()
+    if s.get("roll_day") == today and (s.get("rolls") or {}).get("items"):
+        out.append(("sell", f"Futures roll day (T-{cfg.roll_days}): {len(s['rolls']['items'])} lot(s) roll or exit at 9:20"))
+    try:
+        m = book.morning(config)
+        if m.get("visible") and m.get("phase") != "after":
+            out.append(("buy", f"Futures dry run: {m['going_out']['buys']} entr{'y' if m['going_out']['buys'] == 1 else 'ies'} · "
+                               f"{m['going_out']['exits']} exit(s) · margin {m['going_out']['margin']:,.0f}"))
+    except Exception:
+        pass
+    exits = [o for o in s.get("plan") or [] if o["action"] == "EXIT" and not o.get("sent")]
+    entries = [o for o in s.get("plan") or [] if o["action"] != "EXIT" and not o.get("sent")]
+    if exits:
+        out.append(("sell", "Futures EXIT at the next open: " + ", ".join(o["symbol"] for o in exits)))
+    if entries:
+        out.append(("buy", f"{len(entries)} futures lot(s) for the next open: " + ", ".join(f"{o['symbol']} {o['side']}" for o in entries)))
+    sp = s.get("short_paper") or {}
+    if cfg.short_paper and sp.get("signals"):
+        recent = [x for x in sp["signals"] if x["day"] == s.get("as_of")]
+        if recent:
+            out.append(("buy", f"paper · short: {len(recent)} E− signal(s) today"))
+    if (s.get("filter") or {}).get("changed"):
+        out.append(("filter", f"Filter {s['filter']['prev']} → {s['filter']['state']}"))
+    return out
 
 
 def _real(config, kite: bool) -> list:

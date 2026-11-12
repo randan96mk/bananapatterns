@@ -19,6 +19,8 @@ const positions = [
   pos('paper_E', 'Paper E+', 'Trend Breakout E+', 'DIVISLAB', 2, 9965, 10168, 9394.36, true), pos('paper_E', 'Paper E+', 'Trend Breakout E+', 'PHOENIXLTD', 9, 2027, 2111.3, 1897.03, true),
   pos('paper_E', 'Paper E+', 'Trend Breakout E+', 'GAIL', 112, 177.03, 184.89, 167.39, true), pos('paper_E', 'Paper E+', 'Trend Breakout E+', 'GLENMARK', 8, 2393.8, 2549.7, 2261.17, true),
   pos('paper_E', 'Paper E+', 'Trend Breakout E+', 'WELSPUNLIV', 79, 253, 244.51, 231.2, true), pos('paper_E', 'Paper E+', 'Trend Breakout E+', 'NAVINFLUOR', 9, 4210, 4288.4, 3980.2, true),
+  { ...pos('futures', 'Futures · paper', 'Futures E+ long', 'HDFCBANK', 650, 806.4, 811.2, 773.5, true), lots: 1, contract: 'HDFCBANK26NOVFUT' },
+  { ...pos('futures', 'Futures · paper', 'Futures E+ long', 'ITC', 1725, 284.7, 284.65, 271.0, true), lots: 1, contract: 'ITC26NOVFUT' },
   pos('intraday', 'Intraday · signals (tracked)', 'Intraday Flow', 'GLENMARK', 39, 2525, 2549.7, 2500, true), pos('intraday', 'Intraday · signals (tracked)', 'Intraday Flow', 'M&M', 30, 3310, 3300, 3280, true),
 ];
 const now = new Date();
@@ -26,9 +28,10 @@ const iso = (h, m) => { const d = new Date(now); d.setHours(h, m, 0, 0); return 
 const overview = { at: now.toISOString(), today: -1202, feed: 'live', positions,
   accounts: { real: { name: 'Real', value: 202070, net: 2070, return: 1.0, last_day: '2026-11-05', day_pnl: -529, positions: 8, on: true, variant: 'E', spark: sp(200000, 202070), spark_nifty: sp(200000, 201100) },
     paper_E: { name: 'Paper E+', value: 202656, net: 2656, return: 1.3, nifty: 0.55, day_pnl: -528, positions: 6, spark: sp(199000, 202656), spark_nifty: sp(199000, 200100) },
+    futures: { name: 'Futures', value: 512400, net: 12400, return: 2.5, day_pnl: 3150, positions: 2, margin_pct: 48, mode: 'paper', killed: false, spark: sp(500000, 512400), spark_nifty: sp(500000, 507000) },
     intraday: { name: 'Intraday · paper', day_pnl: -145, realised: 1000, open_pnl: -1145, trades: 3, open: 2, at_risk: 1793, loss_limit: 3000, capital: 200000, mode: 'signals', spark: sp(2000, 500) },
     follow: { name: 'Screens · Follow', net: 504329, open_pnl: 137270, open: 33, breakouts: 540, win_rate: 30.6, per_position: 100000 } },
-  facts: { today: { high: 2140, high_at: '09:27', low: -969, low_at: '10:22' }, real: { in_use: 156842, slots: 8, max_pos: 10, capital: 202070 }, paper_E: { vs_nifty: -3.4, filter: 'FULL', open: 5 }, intraday: { loss_used: 86, loss_limit: 3000, signals: 3, per_day: 6 }, follow: { open: 33, open_pnl: 137270, pending: 3 } },
+  facts: { today: { high: 2140, high_at: '09:27', low: -969, low_at: '10:22' }, real: { in_use: 156842, slots: 8, max_pos: 10, capital: 202070 }, paper_E: { vs_nifty: -3.4, filter: 'FULL', open: 5 }, intraday: { loss_used: 86, loss_limit: 3000, signals: 3, per_day: 6 }, futures: { lots: 2, max_pos: 2, margin_pct: 48, mode: 'paper', killed: false }, follow: { open: 33, open_pnl: 137270, pending: 3 } },
   activity: [{ at: iso(10, 12), account: 'Real', text: 'stop raised GLENMARK 2,261 → 2,480' }, { at: iso(9, 40), account: 'Intraday', text: 'BUY signal GLENMARK' }, { at: iso(9, 16), account: 'Real', text: 'BUY MOTHERSON 121 · sent' }, { at: iso(9, 16), account: 'Real', text: 'BUY HEGAM 69 · sent' }],
   stats: { win_streak: 0, best_day: { day: '2026-11-04', net: 4989 }, worst_day: { day: '2026-11-05', net: -1405 }, days_since_loss: 0, signals_today: 3, hit_rate_30d: 42.9, closed_30d: 7, orders_week: 10, orders_failed_week: 0,
     results_held: [{ symbol: 'DIVISLAB', date: '2026-11-10' }, { symbol: 'GAIL', date: '2026-11-12' }, { symbol: 'PHOENIXLTD', date: '2026-11-13' }] },

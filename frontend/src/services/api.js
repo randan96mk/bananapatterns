@@ -123,3 +123,22 @@ export const startPaper = (capital) => req('POST', '/api/paper/start', { capital
 export const resetPaper = () => req('POST', '/api/paper/reset');
 export const paperCapital = (capital) => req('POST', '/api/paper/capital', { capital });
 export const paperReplan = (maxPos) => req('POST', '/api/paper/replan', maxPos ? { max_pos: maxPos } : {});
+
+// 📐 the futures book and Backtest F
+export const getFutures = () => req('GET', '/api/futures');
+export const futuresSettings = (body) => req('POST', '/api/futures/settings', body);
+export const futuresKill = (on) => req('POST', `/api/futures/kill?on=${on}`);
+export const futuresCapital = (capital) => req('POST', '/api/futures/capital', { capital });
+export const futuresReplan = () => req('POST', '/api/futures/replan');
+export const futuresMorning = () => req('GET', '/api/futures/morning');
+export const futuresSkip = (symbol, on, note = '') => req('POST', '/api/futures/skip', { symbol, on, note });
+export const futuresHold = () => req('POST', '/api/futures/hold');
+export const futuresEditPosition = (symbol, body, dry = false) => req('POST', `/api/futures/position/${encodeURIComponent(symbol)}${dry ? '?dry=1' : ''}`, body);
+export const futuresRemovePosition = (symbol, note, account) => req('DELETE', `/api/futures/position/${encodeURIComponent(symbol)}`, { note, account });
+export const futuresAddPosition = (body) => req('POST', '/api/futures/position', body);
+export const futuresOrders = (limit = 200) => req('GET', `/api/futures/orders?limit=${limit}`);
+export const futuresTrades = (account) => req('GET', `/api/futures/trades${account ? `?account=${account}` : ''}`);
+export const futuresRollNow = () => req('POST', '/api/futures/roll');
+export const getFuturesBacktest = () => req('GET', '/api/futures/backtest');
+export const runFuturesBacktest = () => req('POST', '/api/futures/backtest/run');
+export const getFuturesBacktestTrades = (side = 'long', limit = 200, offset = 0) => req('GET', `/api/futures/backtest/trades?side=${side}&limit=${limit}&offset=${offset}`);

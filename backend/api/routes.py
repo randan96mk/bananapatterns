@@ -1085,6 +1085,173 @@ def futures_backtest_csv(side: str = "long"):
                     headers={"Content-Disposition": f'attachment; filename="backtest_f_{side}.csv"'})
 
 
+# --- 📐 the futures book -------------------------------------------------------------------------------------
+
+class FuturesSettings(BaseModel):
+    long_paper: Optional[bool] = None
+    long_real: Optional[bool] = None
+    short_paper: Optional[bool] = None
+    short_real: Optional[bool] = None
+    enabled: Optional[bool] = None
+
+
+class FuturesSkip(BaseModel):
+    symbol: str
+    on: bool = True
+    note: str = ""
+
+
+class FuturesPositionEdit(BaseModel):
+    lots: Optional[float] = None
+    entry: Optional[float] = None
+    stop: Optional[float] = None
+    note: str = ""
+    account: Optional[str] = None
+
+
+class FuturesPositionRemove(BaseModel):
+    note: str = ""
+    account: Optional[str] = None
+
+
+class FuturesPositionAdd(BaseModel):
+    symbol: str
+    lots: float
+    entry: float
+    day: str
+    side: str = "long"
+    book: str = "paper"
+    stop: Optional[float] = None
+    note: str = ""
+
+
+@router.get("/futures")
+def futures_summary():
+    """📐 The futures book: switches, guards, margin, positions (paper and real of both sides), the plan, the waiting
+    signals, the roll queue, the short paper book, deposits, the order log."""
+    from backend.futures import book
+    return book.summary(S().config)
+
+
+@router.post("/futures/settings")
+def futures_settings(req: FuturesSettings):
+    """The side switches (Paper / Real per side) and the enable switch. short_real is refused (400) while the
+    short backtest verdict is False."""
+    from backend.futures import book
+    try:
+        return book.set_switches(S().config, **req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/futures/kill")
+def futures_kill(on: bool = True):
+    """The futures kill switch: with a real side on, the sender is asked for kill_switch=1 once."""
+    from backend.futures import book
+    return book.set_killed(on, S().config)
+
+
+class FuturesCapital(BaseModel):
+    capital: float
+
+
+@router.post("/futures/capital")
+def futures_capital(req: FuturesCapital):
+    """The futures capital; after the start the change is money added / withdrawn on every account."""
+    from backend.futures import book
+    if req.capital < 10_000:
+        raise HTTPException(422, "capital must be at least Rs 10,000")
+    st = S()
+    try:
+        res = book.set_capital(st.config, req.capital)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    save_config(st.config)
+    return {**res, "replan": book.replan(st.config)}
+
+
+@router.post("/futures/replan")
+def futures_replan():
+    """↻ Re-evaluate the next open's futures plan from the evening's data and the accounts as they are now."""
+    from backend.futures import book
+    return book.replan(S().config)
+
+
+@router.get("/futures/morning")
+def futures_morning():
+    """☀️ The futures dry run: today's plan with lots, margin, skips and sent state (read-only)."""
+    from backend.futures import book
+    return book.morning(S().config)
+
+
+@router.post("/futures/skip")
+def futures_skip(req: FuturesSkip):
+    from backend.futures import book
+    try:
+        return book.skip_order(S().config, req.symbol, req.on, req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/futures/hold")
+def futures_hold():
+    from backend.futures import book
+    try:
+        return book.hold_today(S().config)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/futures/position/{symbol}")
+def futures_position_edit(symbol: str, req: FuturesPositionEdit, dry: bool = False):
+    """✎ Correct an open lot's lots / entry / stop; `?dry=1` returns the effects without saving."""
+    from backend.futures import book
+    try:
+        return book.edit_position(S().config, symbol.upper(), req.lots, req.entry, req.stop, req.note, dry=dry, account=req.account)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.delete("/futures/position/{symbol}")
+def futures_position_remove(symbol: str, req: Optional[FuturesPositionRemove] = None):
+    from backend.futures import book
+    try:
+        return book.remove_position(S().config, symbol.upper(), (req.note if req else ""), account=(req.account if req else None))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/futures/position")
+def futures_position_add(req: FuturesPositionAdd):
+    from backend.futures import book
+    try:
+        return book.add_position(S().config, req.symbol, req.lots, req.entry, req.day, req.side, req.book, req.stop, req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.get("/futures/orders")
+def futures_orders(limit: int = Query(200, le=1000)):
+    from backend.futures import book
+    return {"rows": book.orders_log(limit)}
+
+
+@router.get("/futures/trades")
+def futures_trades(account: Optional[str] = None):
+    from backend.futures import book
+    if account is not None and account not in book.ACCOUNTS:
+        raise HTTPException(422, f"account must be one of {', '.join(book.ACCOUNTS)}")
+    return {"rows": book._trades(account)}
+
+
+@router.post("/futures/roll")
+def futures_roll_now():
+    """Run the roll now (the roll day's job by hand; nothing rolls before T-2)."""
+    from backend.futures import book
+    st = S()
+    return book.roll(st.config, st.client, datetime.now(IST).date().isoformat())
+
+
 @router.get("/corp-actions")
 def corp_actions_list():
     """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""
@@ -1693,7 +1860,7 @@ def jobs_list(limit: int = Query(50, le=500)):
 def jobs_run(job: str):
     sch = S().scheduler
     if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check", "top_setups",
-                                    "morning_plan", "gap_check", "guard"):
+                                    "morning_plan", "gap_check", "guard", "futures_preview", "futures_stops", "futures_roll"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
     forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True),
@@ -1755,6 +1922,8 @@ def _stream_topics() -> dict:
         "backtest": (bt.status, lambda d: 2 if (d or {}).get("state") == "running" else 5),
         "real_morning": (lambda: __import__("backend.engine.real", fromlist=["morning"]).morning(S().config),
                          lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
+        "futures": (futures_summary, lambda d: 30 if __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
+        "futures_morning": (futures_morning, lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
     }
 
 

@@ -354,6 +354,18 @@ CREATE TABLE IF NOT EXISTS candles_fut_daily (
 CREATE TABLE IF NOT EXISTS fo_ban (date TEXT NOT NULL, symbol TEXT NOT NULL, PRIMARY KEY (date, symbol));
 -- Backtest F runs (backend/futures/backtest.py): the latest row is the one shown.
 CREATE TABLE IF NOT EXISTS futures_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, ran_at TEXT NOT NULL);
+-- The futures book (backend/futures/book.py): one state (four accounts: paper / real x long / short), every order
+-- (sent, failed, skipped, filled on paper, rolls, hand corrections; never deleted), closed trades, equity per account.
+CREATE TABLE IF NOT EXISTS futures_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS futures_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,              -- day|account|symbol|action: each order once
+    day TEXT NOT NULL, created_at TEXT NOT NULL, account TEXT NOT NULL, symbol TEXT NOT NULL, action TEXT NOT NULL,
+    lots INTEGER, contract TEXT, reason TEXT, status TEXT NOT NULL, reply TEXT, price REAL
+);
+CREATE TABLE IF NOT EXISTS futures_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS futures_equity (account TEXT NOT NULL, day TEXT NOT NULL, equity REAL NOT NULL, gross REAL NOT NULL,
+                                           nifty REAL, PRIMARY KEY (account, day));
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

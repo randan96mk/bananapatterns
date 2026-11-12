@@ -1167,6 +1167,81 @@ rules}`; `POST /api/futures/backtest/run` (background; 409 while running); `GET 
 side backtest has not passed"** while the latest run's `verdict.short` is not True. The evening job re-runs the backtest
 in the background after the futures data step when the futures candles advanced (or the saved run is behind them).
 
+### Stock futures — book, page, alerts
+
+Step 3 of the futures module (`backend/futures/book.py`, `frontend/src/components/FuturesPage.jsx`, `FuturesBacktest.jsx`):
+one futures book under Strategies › 📐 Futures, four virtual accounts that share one capital (`futures.capital`,
+₹5,00,000): `paper_long`, `real_long`, `paper_short`, `real_short`. Each side has a **Paper** and a **Real** switch
+(`futures.long_paper` … `futures.short_real`); Paper and Real of a side run from the **same plan**. The short Real
+switch is refused (API 400, book ValueError) while Backtest F's short verdict is False.
+
+| Table | Rows |
+|---|---|
+| `futures_state` | one JSON state: capital, deposits, the four accounts (cash, charges, positions, day_start), the plan per side, `waiting` per side (every rejected signal with its reasons), skips, rolls, short signals, held-name warnings |
+| `futures_orders` | every order, fill, roll and hand correction, keyed `day|account|symbol|action` (each once; never deleted) |
+| `futures_trades` | closed trades per account (`{symbol, side, lots, lot_size, qty, in, out, entry, exit, stop, days, best, rolls, contract, gross, costs, net, why}`) |
+| `futures_equity` | equity per account and day (`gross` before charges, NIFTY 50 close) |
+
+A position is `{symbol, side, lots, lot_size, contract, token, expiry, entry, stop, best, last, margin_est, est, manual_stop,
+edits, d, days, charges, rolls, trailed}`; margin = `futures.margin_pct` × lot value (an estimate), reserved from the
+account's cash; value = cash + margin + unrealised.
+
+**Evening** (`book.evening`, in `_run_eod` after the futures backtest step): each account is marked at the futures close
+from `candles_fut_daily`; paper accounts fill the previous evening's plan at the day's open (honouring the morning's
+skips and the guards at the fill), exit on the day's low (long) / high (short) at or past the stop, count the short time
+stop; real accounts have their estimated morning fills and exits corrected to the open. The E+ late trail raises long
+stops from the best futures close (never lowered, a hand-set stop too). Held-name warnings (MWPL ban, results within
+`results_guard_sessions`, a lot size change) are kept for the page and the alerts. Then the next open's plan per side:
+long = `trend_breakout.decide` on the cash candles under the half filter, short = Backtest F's E− signals under the
+inverted filter (NIFTY under its 50-day); EXITs for a long that closed under SMA(exit_sma) and a short past
+`SHORT_TIME_STOP`; every entry candidate (entry = last futures close, stop = ATR × atr_mult in futures points capped at
+`max_stop_pct`) through `eligibility.check` plus the book's guards (filter off, daily loss limit, kill switch); one lot a
+name; the rest wait with their reasons. `replan` rebuilds it from the accounts as they are now (the same report shape as
+Real's, `suggestion` null).
+
+**Morning**: `book.morning` has the same keys as `real.morning` plus `side`, `books`, `lots`, `margin`, `contract`;
+`skip_order` / `hold_today` / the results guard work like Real's (EXITs cannot be skipped; a skip stops both the paper
+fill and the real send of that side; Telegram `fut skip SYM`, `fut unskip SYM`, `fut hold`). `send_orders` sends the real
+sides' orders through `backend/futures/sender.py` (`send(symbol, action, lots)`, a stub until step 4: it raises
+NotImplementedError, logged as a failed order and never retried) and books the fill at the NFO quote (est. until the
+evening). `watch_stops` every `real.stop_check_min` in market hours quotes `NFO:<contract>`: a long at or under its stop
+(or the day's low), a short at or over it (or the day's high) exits once per account, stock and day (paper at the price,
+real through the sender). **Rolls** (`book.roll`, 9:20 on a roll day = `roll_days` sessions before a held expiry): EXIT the
+near month, then, once the exit is booked, the entry on the next month at the same stop, logged as one roll with its
+cost (both charges + the basis between the two quotes); a lot whose exit rule fired, or without a next month, is exited;
+at T-1 a lot that could not roll is exited (never held into expiry). **Guards**: daily loss limit (used = day_start −
+value; no new entries once hit), notional ≤ 2.5× capital, free cash ≥ `cash_floor`, heat ≤ `heat_pct`, margin 70%
+warn / 80% block, the enable switch (`futures.enabled` app setting) and the kill switch (`futures.killed`: flipped on
+with a real side on, `sender.kill_switch()` is asked once — the stub records it in `sender.sent_kills`). Hand
+corrections (`edit_position` with lots / entry / stop, `remove_position`, `add_position` with side and book) and deposits
+(`set_capital`: the difference moves every account's cash) mirror Real and Paper.
+
+**API** (`/api/futures`): `GET /api/futures` (the summary: `{capital, cash, margin_used, margin_pct, mtm_today, value,
+net, return, sides: {long: {paper, real, verdict, robust, real_allowed}, short: {...}}, guards: {kill, enabled,
+daily_loss: {used, limit, hit}, notional: {used, cap}, cash_floor: {free, floor, ok}, heat: {pct, rs, cap}, margin:
+{used, pct, warn, block}}, positions, waiting: [{symbol, side, reasons, why}], plan, rolls: {day, items}, roll_day,
+eligible_count, universe_count, next_expiry, short_paper: {open, signals_month, net, trades, verdict, robust}, deposits,
+accounts, trades, log, settings, send}`; the headline figures are the long side's primary account — real when the long
+side is real, else paper), `POST /api/futures/settings {long_paper, long_real, short_paper, short_real, enabled}`,
+`POST /api/futures/kill?on=`, `POST /api/futures/capital`, `POST /api/futures/replan`, `GET /api/futures/morning`,
+`POST /api/futures/skip`, `POST /api/futures/hold`, `POST /api/futures/position/{symbol}[?dry=1]` (lots / entry / stop /
+note / account), `DELETE /api/futures/position/{symbol}`, `POST /api/futures/position` (symbol, lots, entry, day, side,
+book, stop, note), `GET /api/futures/orders`, `GET /api/futures/trades[?account=]`, `POST /api/futures/roll`. Stream
+topics `futures` (every 30 s in market hours, else 120 s) and `futures_morning`. Jobs: `futures_preview` at
+`real.preview_time`, `futures_send` at `real.send_time` (real sides only), `futures_stops` every `stop_check_min` from
+9:15, `futures_roll` on a roll day from 9:20 (`book.due`), each with a job record and its own try/except.
+
+**Home**: `overview.accounts.futures` (`{name, value, net, return, day_pnl, positions, margin_pct, mode, spark}`), the
+"Futures · paper/real" card, positions with book `futures` (account "Futures · paper" / "Futures · real", side, lots),
+the futures trades and orders in Portfolio, attention items for the `futures` tab (plan, dry run, roll day, margin >
+70%, daily loss hit, kill, held-name warnings, short paper signals).
+
+**Alerts** (Telegram, tagged "paper · long" / "real · long" / "paper · short"; `backend/alerts/messages.py`
+`futures_*`): the evening plan with the waiting reasons, the 9:00 dry run (lots, margin needed, the skip reply), the
+orders sent, a stop hit on the futures price, the daily loss limit, margin over 70%, the held-name warnings (ban,
+results, lot size change), the short side's paper signals, the roll notice at T-3 and the roll lines on the roll day,
+the raised trail stops. Tests: `tests/test_futures_book.py`.
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;

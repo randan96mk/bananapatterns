@@ -780,3 +780,156 @@ def trail_raised(where: str, sym: str, stop: float, best: float, entry: float) -
             f"+{(best / entry - 1) * 100:.0f}% over the entry {_rup(entry)}) · from the next session"
             + ("\nWatched by the app like any stop: an EXIT goes to Tradetron automatically if it is hit (while real "
                "trading is on). A stop sent to Tradetron with the BUY is not moved." if where == REAL else ""))
+
+
+# --- 📐 stock futures (the book: paper · long / real · long / paper · short) -------------------------------------
+
+FUT = "📐 <b>FUTURES</b>"
+
+
+def _fut_tag(tag: str) -> str:
+    return f"<i>{escape(tag)}</i>"
+
+
+def _lots(o: dict) -> str:
+    return f"{o.get('lots', 1)} lot{'s' if (o.get('lots') or 1) != 1 else ''} ({(o.get('lots') or 1) * (o.get('lot_size') or 0):,})"
+
+
+def futures_plan(res: dict, tags: dict) -> str:
+    """The evening: the next open's futures orders per side, the waiting signals with their reasons."""
+    lines = [f"{FUT} · plan for the next open"]
+    plan = res.get("plan") or {}
+    for side in ("long", "short"):
+        for o in plan.get(side, []):
+            tag = " / ".join(tags.get(side) or []) or "off"
+            if o["action"] == "EXIT":
+                lines.append(f"🔴 EXIT <b>{escape(o['symbol'])}</b> {_lots(o)} · {escape(o.get('why') or '')} · {_fut_tag(tag)}")
+            else:
+                lines.append(f"{'🟢 BUY' if o['action'] == 'BUY' else '🔻 SELL'} <b>{escape(o['symbol'])}</b> {_lots(o)} · ~{_rup(o['entry'])} · "
+                             f"stop {_rup(o['stop'])} ({o.get('stop_pct', 0):.1f}%) · margin {_rup(o.get('margin_est') or 0)} · {_fut_tag(tag)}")
+    if not any(plan.get(s) for s in ("long", "short")):
+        lines.append("No futures orders for tomorrow.")
+    waiting = [w for s in ("long", "short") for w in (res.get("waiting") or {}).get(s, [])]
+    if waiting:
+        lines.append("<i>waiting: " + " · ".join(f"{escape(w['symbol'])} {w['side']} ({escape(' · '.join(w['reasons']))})" for w in waiting[:6])
+                     + (" · …" if len(waiting) > 6 else "") + "</i>")
+    for o in res.get("missed") or []:
+        lines.append(f"⚠️ Not sent today: {o['action']} <b>{escape(o['symbol'])}</b>")
+    if res.get("roll_day"):
+        lines.append(f"<i>next roll day {_wday(res['roll_day'])} {res['roll_day'][8:]}/{res['roll_day'][5:7]} (T-2)</i>")
+    return "\n".join(lines)
+
+
+def futures_preview(m: dict, send_at: str) -> str:
+    """☀️ The 9:00 dry run: lots and margin per order, the skips, the one-line way to skip or hold (`fut skip SYM`,
+    `fut hold`) before the send. Each order carries its tags (paper · long, real · long, paper · short)."""
+    g = m.get("guard") or {}
+    orders = [o for o in m.get("orders") or [] if not o.get("skip") and o.get("status") != "skipped"]
+    n = len(orders)
+    real_on = bool(g.get("real_sides")) and g.get("enabled") and not g.get("killed")
+    state = "🔴 kill switch ON: nothing goes out" if g.get("killed") else "OFF: paper only" if not g.get("enabled") else \
+        (f"real sides go out at {ampm(send_at)} · paper fills at the open" if real_on else "paper only · fills at the open")
+    lines = [f"☀️ {FUT} · {n} order{'s' if n != 1 else ''} · {state}"]
+    for o in orders:
+        tags = " / ".join(f"{b} · {o['side']}" for b in o.get("books") or []) or "off"
+        if o["action"] == "EXIT":
+            lines.append(f"🔴 EXIT <b>{escape(o['symbol'])}</b> {_lots(o)} · {escape(o.get('why') or '')} · {_fut_tag(tags)}")
+        else:
+            tag = f" · ⚠️ results {_wday(o['results_date'])}" if o.get("results_date") else ""
+            lines.append(f"{'🟢 BUY' if o['action'] == 'BUY' else '🔻 SELL'} <b>{escape(o['symbol'])}</b> {_lots(o)} · stop {_rup(o['stop'])} · "
+                         f"margin {_rup(o.get('margin') or 0)} · ≈ {_rup(o.get('value') or 0)}{tag} · {_fut_tag(tags)}")
+    if not orders:
+        lines.append("Nothing goes out today.")
+    skips = {o["symbol"]: o["skip"] for o in m.get("orders") or [] if o.get("skip")}
+    if skips:
+        why = lambda k: f"results {_wday(k.get('results_date'))}" if k.get("results_date") else (k.get("note") or f"by {k['by']}")
+        lines.append("<i>skipped today: " + " · ".join(f"{escape(s)} ({escape(why(k))})" for s, k in skips.items()) + "</i>")
+    if m.get("started"):
+        facts = [f"cash {_rup(m['cash'])}" if m.get("cash") is not None else "", f"margin used {_rup(m['margin_used'])}" if m.get("margin_used") is not None else "",
+                 f"{m.get('free', 0)} free slot{'s' if m.get('free') != 1 else ''}", f"filter {escape(m['filter'])}" if m.get("filter") else "",
+                 f"margin needed {_rup((m.get('going_out') or {}).get('margin') or 0)}"]
+        lines.append("<i>" + " · ".join(x for x in facts if x) + "</i>")
+    lines.append(f"\nReply <b>fut skip SYMBOL</b> or <b>fut hold</b> before {ampm(send_at)} · or open the Futures page. "
+                 "The kill switch and the enable switch stay as they are.")
+    return "\n".join(lines)
+
+
+def futures_sent(res: dict, at: str) -> str:
+    lines = [f"{FUT} · ORDERS SENT · {at}"]
+    for o in res.get("sent") or []:
+        lines.append(f"{'🔴 EXIT' if o['action'] == 'EXIT' else '🟢 BUY' if o['action'] == 'BUY' else '🔻 SELL'} <b>{escape(o['symbol'])}</b> {_lots(o)}"
+                     + (f" · stop {_rup(o['stop'])}" if o.get("stop") and o["action"] != "EXIT" else "") + f" · ~{_rup(o['price'])} · {_fut_tag(o.get('tag') or 'real')}")
+    for o in res.get("failed") or []:
+        lines.append(f"⚠️ FAILED {o['action']} <b>{escape(o['symbol'])}</b>: {escape(str(o['error']))} (not retried)")
+    lines.append(f"accepted {len(res.get('sent') or [])} of {len(res.get('sent') or []) + len(res.get('failed') or [])}")
+    return "\n".join(lines)
+
+
+def futures_stop(h: dict, at: str) -> str:
+    """A stop hit on the futures price (paper closes, real sends EXIT)."""
+    tag = _fut_tag(h.get("tag") or "")
+    if h.get("error"):
+        return (f"{FUT} · ⚠️ STOP HIT, EXIT FAILED · {at}\n<b>{escape(h['symbol'])}</b> {h.get('lots', 1)} lot at {_rup(h['price'])}: "
+                f"{escape(h['error'])}. Exit it yourself. {tag}")
+    return (f"{FUT} · STOP HIT · {at}\n🛑 <b>{escape(h['symbol'])}</b> {h['side']} {h.get('lots', 1)} lot · futures {_rup(h['price'])} · "
+            f"{escape(h['why'])} · net {_signed(h.get('net') or 0)} · {tag}")
+
+
+def futures_roll_notice(items: list, roll_day: str, when: str) -> str:
+    """T-3: the roll notice (what rolls or exits at T-2); the roll day: the lines of what was done."""
+    head = f"{FUT} · ↻ roll {'notice' if when == 'notice' else 'done'} · {_wday(roll_day)} {roll_day[8:]}/{roll_day[5:7]} (T-2)"
+    lines = [head]
+    for it in items:
+        tag = _fut_tag(it.get("tag") or TAG_OF.get(it.get("account"), ""))
+        if when == "notice":
+            what = f"EXIT {escape(it.get('contract') or '')} + {'BUY' if it['side'] == 'long' else 'SELL'} {escape(it.get('next') or '?')}" if it["action"] == "roll" \
+                else f"EXIT {escape(it.get('contract') or '')} ({escape(it.get('why') or '')})"
+            lines.append(f"<b>{escape(it['symbol'])}</b> {it['side']} · {what} · est. cost {_rup(it.get('est_cost') or 0)} · {tag}")
+        else:
+            lines.append(f"<b>{escape(it['symbol'])}</b> {it['side']} · {escape(it['from'])} → {escape(it['to'])} · {_rup(it['px'])} → {_rup(it['px_next'])} · "
+                         f"basis {it.get('basis_pct') if it.get('basis_pct') is not None else '—'}% · cost {_rup(it['cost'])} · {tag}")
+    if not items:
+        lines.append("Nothing to roll.")
+    lines.append("<i>never held into expiry · a lot whose rule fired is exited instead of rolled</i>")
+    return "\n".join(lines)
+
+
+TAG_OF = {"paper_long": "paper · long", "real_long": "real · long", "paper_short": "paper · short", "real_short": "real · short"}
+
+
+def futures_daily_loss(tag: str, used: float, limit: float) -> str:
+    return (f"{FUT} · 🛑 daily loss limit reached · {_fut_tag(tag)}\n{_signed(-used)} today (limit −{_rup(limit)}). "
+            "No new lots today; stops keep running.")
+
+
+def futures_margin(tag: str, pct: float, used: float, warn_at: float = 70.0, block_at: float = 80.0) -> str:
+    return (f"{FUT} · ⚠️ margin {pct:.0f}% of capital · {_fut_tag(tag)}\nmargin used {_rup(used)}. "
+            f"Warned at {warn_at:.0f}%; no new lots at {block_at:.0f}%.")
+
+
+def futures_held_warnings(w: dict) -> Optional[str]:
+    """Daily: an MWPL ban on a held name, results within 3 sessions, a lot size change."""
+    lines = []
+    if w.get("ban"):
+        lines.append("⛔ in the MWPL ban list: " + ", ".join(f"<b>{escape(s)}</b>" for s in w["ban"]) + " · no new positions; exits still allowed")
+    for r in w.get("results") or []:
+        lines.append(f"📊 results {_wday(r['date'])} (in {r['sessions']} session{'s' if r['sessions'] != 1 else ''}): <b>{escape(r['symbol'])}</b> · gap risk")
+    for c in w.get("lot_change") or []:
+        lines.append(f"📦 lot size change <b>{escape(c['symbol'])}</b>: {c['from']:,} → {c['to']:,} · the open lot keeps {c['from']:,}; the next entry uses {c['to']:,}")
+    if not lines:
+        return None
+    return f"{FUT} · held names · {_wday(w.get('day'))}\n" + "\n".join(lines)
+
+
+def futures_short_signals(sigs: list, plan: list, waiting: list) -> Optional[str]:
+    """The short side's paper signals of the evening, tagged paper · short."""
+    if not sigs:
+        return None
+    taken = {o["symbol"] for o in plan if o["action"] == "SELL"}
+    why = {w["symbol"]: " · ".join(w["reasons"]) for w in waiting}
+    lines = [f"{FUT} · E− signals · {_fut_tag('paper · short')}"]
+    for s in sigs[:8]:
+        state = "SELL at the next open (paper)" if s["symbol"] in taken else f"waits: {escape(why.get(s['symbol'], 'not eligible'))}"
+        lines.append(f"🔻 <b>{escape(s['symbol'])}</b> · swing high {_rup(s['hint'])} · {state}")
+    lines.append("<i>shorts stay paper until Backtest F's short verdict passes</i>")
+    return "\n".join(lines)

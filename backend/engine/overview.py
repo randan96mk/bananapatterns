@@ -13,8 +13,31 @@ from typing import Optional
 from backend.config import IST, AppConfig
 from backend.database.models import get_db, get_setting
 
-NAMES = {"real": "Real", "paper_E": "Paper E+", "intraday": "Intraday"}
+NAMES = {"real": "Real", "paper_E": "Paper E+", "intraday": "Intraday", "futures": "Futures"}
 STRATEGY = {"E": "Trend Breakout E+"}
+FUT_STRATEGY = {"long": "Futures E+ long", "short": "Futures E− short"}
+
+
+def _futures_summary(config: AppConfig) -> Optional[dict]:
+    """The futures book's summary (None when it has not started or fails: Home never blanks for it)."""
+    try:
+        from backend.futures import book
+        s = book.summary(config)
+        return s if s.get("started") else None
+    except Exception:
+        return None
+
+
+def _futures_rows(fs: Optional[dict]) -> list:
+    """The futures book's open lots as Home position rows (book 'futures', account 'Futures · paper' / 'Futures · real')."""
+    out = []
+    for x in (fs or {}).get("positions") or []:
+        now, entry, qty = x["last"], x["entry"], x["qty"]
+        out.append({"book": "futures", "account": f"Futures · {x['book']}", "strategy": FUT_STRATEGY.get(x["side"], "Futures"),
+                    "symbol": x["symbol"], "side": x["side"], "qty": qty, "lots": x["lots"], "entry": entry, "now": now, "pnl": x["net"],
+                    "pct": _pct(x["net"], entry * qty), "stop": x["stop"], "stop_dist": _stop_dist(now, x["stop"], x["side"]), "opened": x["in"],
+                    "contract": x.get("contract"), "expiry": x.get("expiry"), "live": bool(x.get("live"))})
+    return out
 
 
 def _pct(pnl, value):
@@ -39,7 +62,7 @@ def _mark_live(rows: list, quote) -> None:
     (the stored price is the previous close, refreshed by the stop watch only every few minutes); each marked row
     gets live=True."""
     from backend.engine import trend_breakout as tb
-    swing = [r for r in rows if r["book"] != "intraday"]
+    swing = [r for r in rows if r["book"] not in ("intraday", "futures")]
     if not swing or quote is None or not market_open():
         return
     try:
@@ -56,9 +79,9 @@ def _mark_live(rows: list, quote) -> None:
 
 
 def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optional[dict] = None,
-              live: Optional[dict] = None, quote=None) -> list:
+              live: Optional[dict] = None, quote=None, fut_s: Optional[dict] = None) -> list:
     """Every open position, P&L after the costs an exit would take. quote: a Kite quote function (keys -> quotes) to
-    mark the swing rows live in market hours."""
+    mark the swing rows live in market hours. The futures lots come marked by their own stop watch."""
     from backend.engine import paper, real
     from backend.intraday import flow
     from backend.intraday import positions as ipos
@@ -90,6 +113,7 @@ def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optiona
                     "opened": f"{today} {p.get('entry_t', '')}".strip()})
     _mark_live(out, quote)
     _add_trail(config, out, real_s, paper_s)
+    out += _futures_rows(fut_s if fut_s is not None else _futures_summary(config))
     _add_results(out, today)
     return sorted(out, key=lambda x: (x["book"] != "intraday", x["opened"]), reverse=False)
 
@@ -215,6 +239,12 @@ def curves(config: AppConfig) -> dict:
         eq += daily[d]
         pts.append((d, round(eq, 2)))
     out["intraday"] = pts
+    try:                                                    # 📐 the futures book: its long side's primary account
+        from backend.futures import book
+        if book.has_account():
+            out["futures"] = _equity("futures_equity", book.primary(config, "long"))
+    except Exception:
+        pass
     return {k: v for k, v in out.items() if v}
 
 
@@ -245,6 +275,12 @@ def trades(config: AppConfig, days: int = 365) -> list:
                             "strategy": STRATEGY.get(acct, acct), "symbol": t["symbol"], "side": "long", "qty": t["qty"],
                             "opened": t["in"], "closed": t["out"], "entry": t["buy"], "exit": t["sell"], "gross": t["gross"],
                             "costs": t["costs"], "net": t["net"], "reason": t.get("why")})
+        for acct, p in conn.execute("SELECT account, payload FROM futures_trades"):
+            t = json.loads(p)
+            if t["out"] >= since:
+                out.append({"book": "futures", "account": f"Futures · {acct.split('_')[0]}", "strategy": FUT_STRATEGY.get(t["side"], "Futures"),
+                            "symbol": t["symbol"], "side": t["side"], "qty": t["qty"], "opened": t["in"], "closed": t["out"], "entry": t["entry"],
+                            "exit": t["exit"], "gross": t["gross"], "costs": t["costs"], "net": t["net"], "reason": t.get("why")})
         for day, p in conn.execute("SELECT day, payload FROM flow_positions WHERE status = 'closed' AND day >= ?", (since,)):
             t = json.loads(p)
             sold = sum(e["price"] * e["qty"] for e in t.get("exits", []))
@@ -272,6 +308,10 @@ def orders(config: AppConfig, limit: int = 200) -> list:
             out.append({"book": f"paper_{acct}", "account": NAMES.get(f"paper_{acct}", f"Paper {acct}"), "at": day,
                         "symbol": f["symbol"], "action": f["action"], "qty": f["qty"], "price": f.get("price"),
                         "status": "filled (simulated)", "note": f.get("why") or ""})
+        for r in conn.execute("SELECT created_at, account, symbol, action, lots, reason, status, price FROM futures_orders "
+                              "WHERE action IN ('BUY', 'SELL', 'EXIT', 'ROLL') ORDER BY id DESC LIMIT ?", (limit,)):
+            out.append({"book": "futures", "account": f"Futures · {r[1].replace('_', ' · ')}", "at": r[0], "symbol": r[2], "action": r[3],
+                        "qty": r[4], "price": r[7], "status": r[6], "note": r[5] or ""})
     return sorted(out, key=lambda o: o["at"] or "", reverse=True)[:limit]
 
 
@@ -525,6 +565,11 @@ def facts(config: AppConfig, accts: dict, pos: list, curve: list, n_signals: int
     f = accts.get("follow")
     if f:
         out["follow"] = {"open": f.get("open"), "open_pnl": f.get("open_pnl"), "pending": f.get("pending")}
+    fu = accts.get("futures")
+    if fu:
+        fut = [p for p in pos if p["book"] == "futures"]
+        out["futures"] = {"lots": sum(p.get("lots") or 0 for p in fut), "max_pos": config.futures.max_pos, "margin_pct": fu.get("margin_pct"),
+                          "mode": fu.get("mode"), "killed": fu.get("killed")}
     return out
 
 
@@ -534,6 +579,7 @@ def overview(config: AppConfig, quote=None) -> dict:
     from backend.engine import paper, real
     from backend.intraday import flow
     real_s, paper_s, live = real.summary(config), paper.summary(config), flow.live()
+    fut_s = _futures_summary(config)
     cv = curves(config)
     dp = daily_pnl(cv)
     accts = {}
@@ -561,6 +607,18 @@ def overview(config: AppConfig, quote=None) -> dict:
             accts[b]["spark_nifty"] = spark_nifty("paper_equity", k, a["account"].get("capital") or 0)
         except Exception:
             pass
+    if fut_s:                                               # 📐 the futures book (its long side's primary account)
+        last = cv.get("futures", [])[-1][0] if cv.get("futures") else None
+        accts["futures"] = {"name": "Futures", "value": fut_s["value"], "net": fut_s["net"], "return": fut_s["return"], "last_day": last,
+                            "day_pnl": fut_s.get("mtm_today") or (dp.get("futures", {}).get(last, 0.0) if last else 0.0),
+                            "positions": len(fut_s.get("positions") or []), "margin_pct": fut_s.get("margin_pct"),
+                            "mode": "real" if fut_s["sides"]["long"]["real"] else "paper", "sides": fut_s["sides"], "killed": fut_s["guards"]["kill"],
+                            "spark": [e for _, e in cv.get("futures", [])[-30:]], "spark_nifty": []}
+        try:
+            first_cap = fut_s["capital"] - sum(x["amount"] for x in fut_s.get("deposits") or [])
+            accts["futures"]["spark_nifty"] = spark_nifty("futures_equity", fut_s.get("primary"), first_cap)
+        except Exception:
+            pass
     st = live.get("stats") or {}
     accts["intraday"] = {"name": "Intraday · paper", "day_pnl": round((st.get("realised") or 0) + (st.get("unrealised") or 0), 2),
                          "realised": st.get("realised"), "open_pnl": st.get("unrealised"), "trades": st.get("trades"),
@@ -580,7 +638,7 @@ def overview(config: AppConfig, quote=None) -> dict:
             act.append({"at": at, "account": "Intraday", "text": f"{s.get('signal', 'BUY')} signal {s['symbol']}"})
     act.sort(key=lambda x: x["at"] or "", reverse=True)
     now = datetime.now(IST)
-    pos = positions(config, real_s, paper_s, live, quote)
+    pos = positions(config, real_s, paper_s, live, quote, fut_s)
     today_pnl = round(sum(a.get("day_pnl") or 0 for a in accts.values()), 2)
     extra = {}
     for name, fn in (("stats", lambda: stats(config, dp, today)), ("risk", lambda: risk(config, accts, pos)),
