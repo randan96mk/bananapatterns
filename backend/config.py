@@ -386,6 +386,33 @@ def check_alert_times(sec: "AlertsConfig") -> None:
             raise ValueError(f"login time {t} is before 06:00: a session from then dies at 06:00")
 
 
+@dataclass
+class FuturesConfig:
+    """Stock futures book (separate from the cash books): the data layer's universe cap, the eligibility rules and the
+    guards. Long = E+ rules; short = E-. Real switches live on the Futures page (hidden in Settings); shorts cannot go
+    real until their backtest passes."""
+    capital: float = 500000.0              # the futures book's own capital (deposits like Real / Paper)
+    max_pos: int = 2                       # active futures positions at most ...
+    small_lot_value: float = 450000.0      # ... a third is allowed when every open lot is under this lot value
+    max_lot_value: float = 600000.0        # eligibility: near-month lot value at most this
+    max_risk_pct: float = 6.0              # eligibility: 1-lot risk at the planned stop, % of capital
+    max_stop_pct: float = 5.0              # the ATR stop is capped at this % of the entry
+    top_oi: int = 100                      # eligibility: futures OI rank within the top N
+    margin_pct: float = 20.0               # margin estimate = this % of the lot value (shown as an estimate)
+    max_notional_x: float = 2.5            # guard: open notional at most this x capital
+    cash_floor: float = 150000.0           # guard: free cash after margin at least this
+    daily_loss_pct: float = 3.0            # guard: no new entries once the day's loss reaches this % of capital
+    heat_pct: float = 12.0                 # guard: sum of risk to stops at most this % of capital
+    roll_days: int = 2                     # roll (or exit) T-N sessions before expiry; never hold into expiry day
+    results_guard_sessions: int = 3        # no entry with results within this many sessions
+    long_paper: bool = True                # the long side on paper
+    long_real: bool = False                # the long side for real (switch on the Futures page)
+    short_paper: bool = True               # the short side on paper
+    short_real: bool = False               # shorts for real: blocked while the short backtest verdict is False
+    universe_lot_cap: float = 600000.0     # data layer: sync futures candles for underlyings with lot value <= this
+    history_years: int = 3                 # continuous futures history depth (Kite keeps about 3 years)
+
+
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
 # Keys of a saved section from before A was removed (E's own settings): read into the field they became, once.
 LEGACY_KEYS = {"breakout": {"top_e": "top", "late_at_e": "late_at", "late_pct_e": "late_pct"}}
@@ -395,7 +422,7 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "vcp": VcpConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
-                      "flow": FlowConfig}
+                      "flow": FlowConfig, "futures": FuturesConfig}
 
 
 @dataclass
@@ -413,6 +440,7 @@ class AppConfig:
     paper: PaperConfig = field(default_factory=PaperConfig)
     real: RealConfig = field(default_factory=RealConfig)
     flow: FlowConfig = field(default_factory=FlowConfig)
+    futures: FuturesConfig = field(default_factory=FuturesConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

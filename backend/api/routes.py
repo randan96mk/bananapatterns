@@ -1002,6 +1002,33 @@ def health():
     return {"at": now_ist(), "checks": cs, "red": sum(not c["ok"] for c in cs), "amber": sum(c["warn"] and c["ok"] for c in cs)}
 
 
+@router.get("/futures/data")
+def futures_data():
+    """Stock futures data layer: contracts (as_of), continuous candles (to), the ban list and the eligible universe."""
+    from backend.futures import data as fdata
+    return fdata.summary(S().config)
+
+
+@router.post("/futures/data/refresh")
+def futures_data_refresh(force: bool = False):
+    """Run the futures data step now (contracts, candles, ban list), in the background like the other jobs."""
+    _require_token()
+    st = S()
+
+    def work():
+        try:
+            if st.scheduler is not None:
+                st.scheduler.run_futures_data(datetime.now(IST).date(), force=force)
+            else:
+                from backend.futures import data as fdata
+                fdata.run(st.client, st.config, datetime.now(IST).date(), force=force)
+        except Exception:
+            logger.exception("Futures data refresh failed")
+
+    threading.Thread(target=work, name="futures-data", daemon=True).start()
+    return {"status": "started", "job": "futures_data"}
+
+
 @router.get("/corp-actions")
 def corp_actions_list():
     """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""

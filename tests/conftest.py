@@ -22,6 +22,7 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.ingest.events.refresh_from_nse", _offline)     # tests never call NSE
     monkeypatch.setattr("backend.ingest.filings.refresh_from_nse", _offline)
     monkeypatch.setattr("backend.ingest.holders.refresh_from_nse", _offline)
+    monkeypatch.setattr("backend.futures.ban._fetch", _offline)                  # the ban list fetch keeps the last list
     from backend.database.models import init_db
     init_db()
     return db

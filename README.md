@@ -1064,6 +1064,53 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   order log ("edited X: entry 2,435.10 → 2,441.50 · by you") and in the row's "edited" tag; nothing is sent to the
   broker and the switches are untouched. Paper has no edits.
 
+### Stock futures — data layer
+
+The first step of the stock futures module (`backend/futures/`): the data every later step (backtest, book, sender)
+reads. Kite stays login + market data only; nothing here orders, and no holdings or positions are read.
+
+**Tables** (`backend/database/models.py`; downloaded data is never deleted):
+
+| Table | Columns | Notes |
+|---|---|---|
+| `futures_contracts` | **PK (as_of, underlying, month)**, tradingsymbol, token, expiry, lot_size, lot_value, oi, oi_rank | NFO stock futures (segment `NFO-FUT`, index names excluded): the near and next month per underlying, per day. Expired rows stay as history; the latest `as_of` wins. `lot_value` = last price × lot and `oi_rank` (1 = most open interest) come from quotes; without quotes the lot value falls back to the stored futures close. |
+| `candles_fut_daily` | **PK (underlying, date)**, open, high, low, close, volume, oi | Continuous daily series of the near month (`historical_data(..., continuous=True, oi=True)`), incremental from the last stored date − 5 days, 3 years back the first time (`futures.history_years`). Not back-adjusted: `candles.roll_jump(underlying)` lists the jump at each expiry (first bar after the expiry vs the expiry-day close) for the backtest's roll cost. Expiry days = stored contract expiries, else the exchange rule (last Thursday; last Tuesday from Sep 2025; previous session on a holiday). |
+| `fo_ban` | **PK (date, symbol)** | NSE's MWPL ban list (`fo_secban.csv`, browser User-Agent, 10 s timeout). A failed fetch keeps the last good day (`stale_days` says how old); an empty day is valid (`app_settings` `futures.ban_date`). |
+
+**Modules**: `instruments.py` (`refresh(client)` once a day, `contracts / near / universe(lot_cap) / expiry_calendar`,
+`sessions_to_expiry(expiry, today)` on the NSE holiday calendar), `candles.py` (`sync(client, underlyings, years)`,
+`get`, `roll_jump`, `status`), `ban.py` (`refresh`, `banned(symbol, date)`, `stale_days`, `summary`),
+`eligibility.py` (`check(config, symbol, side, entry, stop, held_cash, held_fut, open_lots)` → `{ok, reasons,
+lot_size, lot_value, risk, risk_pct, margin_est, contract}`; reasons are the short strings the page shows: `no future`,
+`lot too big ₹9.0 L > ₹6 L`, `risk 6.4% > 6%`, `OI rank 140 > 100`, `in ban`, `results Thu`, `held in cash`,
+`held in futures`, `slots full` (a third slot only when every open lot and this one are under `small_lot_value`),
+`notional ₹12.0 L > ₹10 L`, `cash ₹1.2 L < ₹1.5 L`, `margin 84% ≥ 80%`, `heat 14% > 12%`; the margin estimate is
+`margin_pct` × lot value), `data.py` (the job step and the API summary).
+
+**Evening job**: after the candle sync, `_run_eod` runs the **futures data** step (contracts → futures candles for the
+eligible universe = lot value ≤ `futures.universe_lot_cap` → ban list) with its own `job_runs` record
+(`futures_data`: ok / partial / failed / waiting); it never fails the evening job. The Data page's health gains three
+rows: **Futures contracts** (as-of age; amber over 4 days), **Futures candles** (to date; amber when behind the cash
+candles) and **F&O ban list** (date, count; amber when the last good list is over 3 days old).
+
+**API**: `GET /api/futures/data` → `{contracts, as_of, candles: {underlyings, to, bars}, ban: {date, symbols,
+stale_days}, universe: [{symbol, lot_size, lot_value, expiry, oi_rank}], universe_lot_cap}`;
+`POST /api/futures/data/refresh[?force=true]` runs the step now in the background (needs the Kite login).
+
+**Settings** (`futures.*`, section "Stock futures"; `long_real` / `short_real` are switched on the Futures page, not here):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `capital` | 500000 | the futures book's own capital |
+| `max_pos` / `small_lot_value` | 2 / 450000 | open lots at most; a third when every open lot is under this lot value |
+| `max_lot_value` / `max_risk_pct` / `top_oi` | 600000 / 6.0 / 100 | eligibility: lot value cap, 1-lot risk at the stop (% of capital), OI rank |
+| `max_stop_pct` | 5.0 | the ATR stop is capped here |
+| `margin_pct` | 20.0 | margin estimate, % of lot value |
+| `max_notional_x` / `cash_floor` / `daily_loss_pct` / `heat_pct` | 2.0 / 150000 / 3.0 / 12.0 | guards |
+| `roll_days` / `results_guard_sessions` | 2 / 3 | roll T-N sessions before expiry; no entry with results within N sessions |
+| `long_paper` / `long_real` / `short_paper` / `short_real` | on / off / on / off | per-side switches (short real stays blocked until its backtest passes) |
+| `universe_lot_cap` / `history_years` | 600000 / 3 | which underlyings get futures candles; how deep |
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;

@@ -286,6 +286,11 @@ class Scheduler:
             failed = ", ".join(e["symbol"] for e in snap["errors"][:10])
             notifier.system(f"{today}|eod-partial", f"Evening sync partial: {snap['failed']} symbols failed ({failed}).")
 
+        try:                                       # stock futures data: contracts, continuous candles, ban list
+            self.run_futures_data(today)
+        except Exception:
+            logger.exception("Futures data step failed")
+
         with get_db() as conn:
             as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
         if as_of != today.isoformat() and not force:
@@ -336,6 +341,26 @@ class Scheduler:
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
+
+    def run_futures_data(self, today: Optional[date] = None, force: bool = False) -> dict:
+        """The futures data layer's refresh (NFO contracts, continuous candles for the eligible universe, ban list), with
+        its own job run record. Needs the Kite login; never fails the evening job."""
+        from backend.futures import data as fdata
+        today, started = today or datetime.now(IST).date(), now_ist()
+        if not self.state.token_valid():
+            self.record("futures_data", today, "waiting", "Kite login missing", started)
+            return {"status": "waiting_login"}
+        try:
+            out = fdata.run(self.state.client, self.state.config, today, force=force)
+        except Exception as exc:
+            self.record("futures_data", today, "failed", str(exc)[:300], started)
+            raise
+        c, k, b = out.get("contracts") or {}, out.get("candles") or {}, out.get("ban") or {}
+        msg = (f"contracts {c.get('contracts', '?')} (as of {c.get('as_of', '?')}); candles {k.get('synced', '?')}/"
+               f"{k.get('underlyings', '?')} +{k.get('added', '?')} bars to {k.get('to', '?')}; ban {b.get('date', '?')} "
+               f"{len(b.get('symbols') or [])}" + (f"; {'; '.join(out['errors'])}" if out.get("errors") else ""))
+        self.record("futures_data", today, out["status"], msg[:500], started)
+        return out
 
     def run_filings(self, now: datetime) -> dict:
         """Fetch new NSE filings; push the important ones on stocks you watch, hold or have in the plan."""
