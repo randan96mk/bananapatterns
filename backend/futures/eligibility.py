@@ -38,9 +38,12 @@ def results_within(symbol: str, sessions: int, today: Optional[str] = None) -> O
 
 def check(config, symbol: str, side: str, entry: float, stop: float, held_cash: set, held_fut: set,
           open_lots: list, today: Optional[str] = None, cash: Optional[float] = None,
-          contract: Optional[dict] = None) -> dict:
+          contract: Optional[dict] = None, banned: Optional[bool] = None, results: Optional[dict] = None,
+          lots: int = 1) -> dict:
     """Can this signal take one lot? config: AppConfig or FuturesConfig. entry / stop are futures prices; open_lots are
     the book's open positions [{symbol, lot_value, margin, risk}]; cash overrides capital − margin used as free cash.
+    `banned` / `results` override the ban-list and results-calendar lookups (the backtest passes what it knows for the
+    day: False = rule known clear, None = look it up); `lots` sizes the position (the book always uses 1).
     Returns {ok, reasons, lot_size, lot_value, risk, risk_pct, margin_est, contract}."""
     cfg: FuturesConfig = config.futures if isinstance(config, AppConfig) else config
     symbol = symbol.upper()
@@ -52,23 +55,24 @@ def check(config, symbol: str, side: str, entry: float, stop: float, held_cash: 
     if not contract:
         reasons.append("no future")
         return out
-    lot = int(contract["lot_size"] or 0)
+    one_lot = int(contract["lot_size"] or 0)
+    lot = one_lot * max(1, int(lots))
     lot_value = round(entry * lot, 2)
     risk = round(abs(entry - stop) * lot, 2)
     risk_pct = round(risk / cfg.capital * 100, 2) if cfg.capital else 0.0
     margin = margin_estimate(cfg, lot_value)
     out.update({"lot_size": lot, "lot_value": lot_value, "risk": risk, "risk_pct": risk_pct, "margin_est": margin})
 
-    if lot_value > cfg.max_lot_value:
-        reasons.append(f"lot too big {lakh(lot_value)} > {lakh(cfg.max_lot_value, True)}")
+    if entry * one_lot > cfg.max_lot_value:                   # the cap is on one lot's value
+        reasons.append(f"lot too big {lakh(entry * one_lot)} > {lakh(cfg.max_lot_value, True)}")
     if risk_pct > cfg.max_risk_pct:
         reasons.append(f"risk {pct(risk_pct)} > {pct(cfg.max_risk_pct)}")
     rank = contract.get("oi_rank")
     if rank is not None and cfg.top_oi and rank > cfg.top_oi:
         reasons.append(f"OI rank {rank} > {cfg.top_oi}")
-    if ban.banned(symbol, today):
+    if ban.banned(symbol, today) if banned is None else banned:
         reasons.append("in ban")
-    r = results_within(symbol, cfg.results_guard_sessions, today)
+    r = results_within(symbol, cfg.results_guard_sessions, today) if results is None else (results or None)
     if r:
         reasons.append(f"results {date.fromisoformat(r['date']).strftime('%a')}")
     if symbol in {s.upper() for s in held_cash}:

@@ -352,6 +352,8 @@ CREATE TABLE IF NOT EXISTS candles_fut_daily (
     close REAL NOT NULL, volume INTEGER NOT NULL DEFAULT 0, oi INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (underlying, date)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS fo_ban (date TEXT NOT NULL, symbol TEXT NOT NULL, PRIMARY KEY (date, symbol));
+-- Backtest F runs (backend/futures/backtest.py): the latest row is the one shown.
+CREATE TABLE IF NOT EXISTS futures_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, ran_at TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

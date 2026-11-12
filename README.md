@@ -1111,6 +1111,62 @@ stale_days}, universe: [{symbol, lot_size, lot_value, expiry, oi_rank}], univers
 | `long_paper` / `long_real` / `short_paper` / `short_real` | on / off / on / off | per-side switches (short real stays blocked until its backtest passes) |
 | `universe_lot_cap` / `history_years` | 600000 / 3 | which underlyings get futures candles; how deep |
 
+### Stock futures — Backtest F
+
+Step 2 of the stock futures module: `backend/futures/backtest.py` trades the Trend Breakout signals on stock futures,
+one lot a name, from the stored cash and continuous futures candles (no Kite calls, never orders). It is the gate for
+the short side: `futures.short_real` cannot be switched on until the latest run's short verdict is True.
+
+**Signals** (decided on the cash close, filled at the next session's *futures* open):
+
+| Side | Rule |
+|---|---|
+| **Long = E+** | `trend_breakout.decide` on the cash candles, exactly the cash backtest (trend template, breakout over the 20-day high on 1.5× volume, the half market filter: 2 slots over NIFTY's 200-day average, 1 between the averages, none under the 50-day; the same top-N turnover universe), kept to the underlyings with a stored future whose lot value is ≤ `futures.universe_lot_cap`. Exit on a close under SMA50 (next open); the E+ late trail (25% under the best close once +100%) on the futures closes. |
+| **Short = E−** | close under the previous 20-day low, a lower-high structure (the last 5-bar pivot high under the one before, both known without look-ahead), close under SMA50 and SMA200, the market filter inverted (NIFTY 50 under its 50-day average); weakest 6-month return first. No short within 2 sessions before results (when the results calendar has the date; else the rule is skipped and noted). Time stop after 10 sessions; no late trail. |
+
+**Execution**: stop = `breakout.atr_mult` × ATR(14, futures) under / over the entry, capped at `futures.max_stop_pct`
+(a short's stop also never sits over its swing high); a day's low (high) through the stop exits at min(open, stop)
+(max(open, stop)), from the entry day on. Every entry goes through `eligibility.check` with the backtest's own held
+set and open lots: 2 slots (a third when every open lot and this one are under `small_lot_value`), lot cap, 1-lot risk
+cap, OI rank (ranked each day on the stored futures OI), ban list and results when the data exists (else skipped and
+noted), notional ≤ 2.5× capital, cash floor after margin, margin < 80%, heat. Margin = `margin_pct` × notional is
+reserved from cash; equity is marked to the futures close every day; a day's loss of `daily_loss_pct` of capital
+blocks the next session's entries (`skipped.daily_loss`). The current contract's lot size is used for the whole
+history (historical lot sizes are not stored; said in `run.notes`).
+
+**Rolls**: `roll_days` (2) sessions before each monthly expiry (`candles.expiry_days`: stored contract expiries, else
+the exchange rule) an open position rolls: an exit's and an entry's charges and slippage are booked that day, and the
+basis — the continuous series' jump after the expiry (`candles.roll_jump`) net of the cash candle's overnight move —
+is booked on the first session after the expiry while the position is still held (the continuous series is not
+back-adjusted, so without it a long would be credited the basis for free). A position whose exit is already due is not
+rolled (`exits.roll_exit`); one entered from the roll session on is already on the next month (`contract: next`).
+Nothing is ever held into expiry day on the old contract. `rolls: {n, cost, basis}` in the report.
+
+**Costs** per order on the notional: STT 0.02% on sells, exchange 0.00173%, SEBI 0.0001%, GST 18% on brokerage +
+exchange + SEBI, stamp 0.002% on buys, brokerage ₹20; slippage 0.05% a fill (stressed 0.15%). `futures_charges(value,
+sell)`.
+
+**Report** (`futures_runs`, the latest row; `saved()`): `{run: {from, to, sessions, capital, names, settings, notes,
+missing}, long: SIDE, short: SIDE, cash_same_signals: {cagr, drawdown, trades, net, costs, worst_month, no_slot_days,
+note} (E+ in the cash book at the futures capital on the futures names), nifty: {cagr, drawdown, return, curve},
+verdict: {long, short, reasons: {long: [...], short: [...]}}, ran_at}` with SIDE = `{cagr, net, gross, costs, rolls:
+{n, cost, basis}, trades, win_rate, avg_win, avg_loss, profit_factor, drawdown, worst_month, margin_worst_pct,
+cash_floor_held, skipped: {lot, risk, slots, ban, results, notional, cash, heat, oi, held, margin, daily_loss,
+no_bar}, no_slot_days, loss_days, curve: {dates, net, stress}, splits: [{name, from, to, net, stress, nifty}] (dev /
+val / OOS), years: [{year, net, nifty}], robust: [{label, counted, cagr, stress_cagr, drawdown, periods,
+stress_periods, trades, ok}], robust_pass, robust_of, exits: {stop, trail, time, rule, roll_exit, end}, stress: {cagr,
+net, costs, drawdown, trades}, ok_splits, beats_nifty, verdict, reasons, trades_rows, roll_rows}`. Robustness
+neighbours: stop cap 4% / 6%, lot cap ₹5 L / ₹7 L, roll T-1 / T-3, slippage +0.3% (the 7 counted), plus "3 lots" and
+"walk-forward (years)" shown for information. **Verdict** per side: profitable after costs in every split (normal and
+stressed), CAGR over NIFTY 50's, drawdown ≤ 15% (long) / 20% (short), `robust_pass` ≥ 5 of 7; `reasons` lists what
+failed.
+
+**API**: `GET /api/futures/backtest` → `{built, progress: {state, message, at}, run (without trades_rows / roll_rows),
+rules}`; `POST /api/futures/backtest/run` (background; 409 while running); `GET /api/futures/backtest/trades?side=long|short&limit=&offset=`
+(newest first); `GET /api/futures/backtest/csv?side=`. `PUT /api/config/futures {short_real: true}` answers **400 "short
+side backtest has not passed"** while the latest run's `verdict.short` is not True. The evening job re-runs the backtest
+in the background after the futures data step when the futures candles advanced (or the saved run is behind them).
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -1225,6 +1281,7 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
 | GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
 | GET | `/api/breakout` · `/api/breakout/trades?scenario=normal\|stress&limit=&offset=` · `/api/breakout/scan` · POST `/api/breakout/run` | Trend Breakout: the latest run (splits, years, robustness, curves), its trades, the evening scan; re-run |
+| GET | `/api/futures/backtest` · `/api/futures/backtest/trades?side=long\|short&limit=&offset=` · `/api/futures/backtest/csv?side=` · POST `/api/futures/backtest/run` | Backtest F (E+ long / E− short on stock futures): the latest run, its trades, CSV; re-run. `PUT /api/config/futures {short_real: true}` is 400 until the short verdict passes |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |

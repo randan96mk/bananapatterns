@@ -250,12 +250,20 @@ def get_config(section: str):
     return asdict(S().config.section(section))
 
 
+def _truthy(v) -> bool:
+    return v.strip().lower() in ("1", "true", "yes", "on") if isinstance(v, str) else bool(v)
+
+
 @router.put("/config/{section}")
 def put_config(section: str, values: dict):
     if section not in PERSISTED_SECTIONS:
         raise HTTPException(404, f"Unknown section; have {list(PERSISTED_SECTIONS)}")
     from dataclasses import asdict
     before = asdict(S().config.section(section))
+    if section == "futures" and _truthy(values.get("short_real")) and not before.get("short_real"):
+        from backend.futures import backtest as fb
+        if not fb.short_passed():                    # shorts stay paper-only until Backtest F passes them
+            raise HTTPException(400, "short side backtest has not passed")
     try:
         out = S().config.update_section(section, values)
     except (ValueError, TypeError) as exc:
@@ -1027,6 +1035,54 @@ def futures_data_refresh(force: bool = False):
 
     threading.Thread(target=work, name="futures-data", daemon=True).start()
     return {"status": "started", "job": "futures_data"}
+
+
+# --- Stock futures: Backtest F ---
+
+@router.get("/futures/backtest")
+def futures_backtest():
+    """Backtest F (E+ long / E- short on stock futures): the latest run without its trade lists, the progress, the rules."""
+    from backend.futures import backtest as fb
+    return fb.summary(S().config)
+
+
+@router.post("/futures/backtest/run")
+def futures_backtest_run():
+    """Re-run Backtest F in the background (stored cash and futures candles only)."""
+    from backend.futures import backtest as fb
+    st = S()
+    if fb.status()["state"] != "idle":
+        raise HTTPException(409, "Backtest F is already running")
+    threading.Thread(target=fb.run, args=(st.config,), name="futures-backtest", daemon=True).start()
+    return {"status": "started"}
+
+
+def _fut_side(side: str) -> str:
+    if side not in ("long", "short"):
+        raise HTTPException(422, "side must be long or short")
+    return side
+
+
+@router.get("/futures/backtest/trades")
+def futures_backtest_trades(side: str = "long", limit: int = 200, offset: int = 0):
+    """One side's trades, newest first."""
+    from backend.futures import backtest as fb
+    rs = fb.trades(_fut_side(side))
+    return {"total": len(rs), "rows": rs[offset:offset + max(1, min(limit, 1000))]}
+
+
+@router.get("/futures/backtest/csv")
+def futures_backtest_csv(side: str = "long"):
+    import csv
+    from io import StringIO
+    from backend.futures import backtest as fb
+    side = _fut_side(side)
+    buf = StringIO()
+    w = csv.writer(buf)
+    w.writerow(fb.CSV_COLUMNS)
+    w.writerows(fb.csv_rows(side))
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="backtest_f_{side}.csv"'})
 
 
 @router.get("/corp-actions")

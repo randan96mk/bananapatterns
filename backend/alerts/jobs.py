@@ -287,7 +287,10 @@ class Scheduler:
             notifier.system(f"{today}|eod-partial", f"Evening sync partial: {snap['failed']} symbols failed ({failed}).")
 
         try:                                       # stock futures data: contracts, continuous candles, ban list
+            from backend.futures import candles as fcandles
+            fut_before = fcandles.status()["to"]
             self.run_futures_data(today)
+            self._rerun_futures_backtest(fut_before)
         except Exception:
             logger.exception("Futures data step failed")
 
@@ -894,6 +897,21 @@ class Scheduler:
             return
         # (a run made before a rule change, e.g. E -> E+, is "stale" and is simply replaced by this one)
         threading.Thread(target=tb.run, args=(self.state.config,), name="breakout-daily", daemon=True).start()
+
+    def _rerun_futures_backtest(self, before_to: Optional[str]) -> None:
+        """Re-run Backtest F in the background when the futures candles advanced (a saved run exists, none running)."""
+        try:
+            from backend.futures import backtest as fb
+            from backend.futures import candles as fcandles
+            now_to = fcandles.status()["to"]
+            run = fb.saved()
+            if run is None or fb.status()["state"] != "idle" or not now_to:
+                return
+            if now_to == before_to and run.get("run", {}).get("to") == now_to:
+                return
+            threading.Thread(target=fb.run, args=(self.state.config,), name="futures-backtest-daily", daemon=True).start()
+        except Exception:
+            logger.exception("Backtest F re-run failed")
 
     def run_morning_plan(self, now: datetime) -> dict:
         today, started = now.date(), now_ist()
