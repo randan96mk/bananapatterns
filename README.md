@@ -1106,7 +1106,7 @@ stale_days}, universe: [{symbol, lot_size, lot_value, expiry, oi_rank}], univers
 | `max_lot_value` / `max_risk_pct` / `top_oi` | 600000 / 6.0 / 100 | eligibility: lot value cap, 1-lot risk at the stop (% of capital), OI rank |
 | `max_stop_pct` | 5.0 | the ATR stop is capped here |
 | `margin_pct` | 20.0 | margin estimate, % of lot value |
-| `max_notional_x` / `cash_floor` / `daily_loss_pct` / `heat_pct` | 2.0 / 150000 / 3.0 / 12.0 | guards |
+| `max_notional_x` / `cash_floor` / `daily_loss_pct` / `heat_pct` | 2.5 / 150000 / 3.0 / 12.0 | guards (2.5× lets two ₹6 L lots sit in a ₹5 L book) |
 | `roll_days` / `results_guard_sessions` | 2 / 3 | roll T-N sessions before expiry; no entry with results within N sessions |
 | `long_paper` / `long_real` / `short_paper` / `short_real` | on / off / on / off | per-side switches (short real stays blocked until its backtest passes) |
 | `universe_lot_cap` / `history_years` | 600000 / 3 | which underlyings get futures candles; how deep |

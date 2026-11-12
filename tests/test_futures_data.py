@@ -293,7 +293,7 @@ def test_eligibility_ok_and_every_reason():
     assert r(open_lots=[small, dict(small, symbol="HAL"), dict(small, symbol="X")], **e3) == ["slots full"]
     cfg.futures.max_pos = 5
     lots = [dict(small, symbol=f"S{i}", lot_value=400000, margin=80000, risk=5000) for i in range(4)]
-    assert r(open_lots=lots) == ["notional ₹21.0 L > ₹10 L", "cash ₹0.8 L < ₹1.5 L", "margin 84% ≥ 80%"]
+    assert r(open_lots=lots) == ["notional ₹21.0 L > ₹12.5 L", "cash ₹0.8 L < ₹1.5 L", "margin 84% ≥ 80%"]
     cfg.futures.max_notional_x = 10
     assert r(open_lots=lots[:3]) == []                                                   # 1.6 L free, 68% margin
     assert r(open_lots=lots[:3], cash=200000.0) == ["cash ₹1.0 L < ₹1.5 L"]
@@ -316,7 +316,7 @@ def test_futures_config_defaults_and_section():
     f = FuturesConfig()
     assert (f.capital, f.max_pos, f.small_lot_value, f.max_lot_value, f.max_risk_pct, f.max_stop_pct, f.top_oi) == \
         (500000, 2, 450000, 600000, 6.0, 5.0, 100)
-    assert (f.margin_pct, f.max_notional_x, f.cash_floor, f.daily_loss_pct, f.heat_pct, f.roll_days) == (20.0, 2.0, 150000, 3.0, 12.0, 2)
+    assert (f.margin_pct, f.max_notional_x, f.cash_floor, f.daily_loss_pct, f.heat_pct, f.roll_days) == (20.0, 2.5, 150000, 3.0, 12.0, 2)
     assert (f.long_paper, f.long_real, f.short_paper, f.short_real) == (True, False, True, False)
     assert f.universe_lot_cap == 600000 and f.history_years == 3 and f.results_guard_sessions == 3
     assert PERSISTED_SECTIONS["futures"] is FuturesConfig and AppConfig().section("futures").capital == 500000
