@@ -15,6 +15,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from backend.config import load_config
+from backend.database.models import get_db
+from backend.kite_api.auth import load_fresh_token
 from backend.kite_api.client import KiteClient
 
 
@@ -25,6 +27,11 @@ def main() -> int:
     a = ap.parse_args()
     cfg = load_config()
     kc = KiteClient(cfg.kite, cfg.ingest)
+    if not kc.has_token:                                   # the dashboard login keeps the token in the database
+        with get_db() as conn:
+            tok = load_fresh_token(conn)
+        if tok:
+            kc.set_access_token(tok)
     if not kc.has_token:
         print("Kite: not logged in (log in from the dashboard first)")
         return 1
