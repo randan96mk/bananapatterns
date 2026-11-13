@@ -264,6 +264,8 @@ def put_config(section: str, values: dict):
         from backend.futures import backtest as fb
         if not fb.short_passed():                    # shorts stay paper-only until Backtest F passes them
             raise HTTPException(400, "short side backtest has not passed")
+    if section == "futures" and "roll_mode" in values and values["roll_mode"] not in ("always", "never", "winners"):
+        raise HTTPException(422, "roll_mode must be always, never or winners")
     try:
         out = S().config.update_section(section, values)
     except (ValueError, TypeError) as exc:

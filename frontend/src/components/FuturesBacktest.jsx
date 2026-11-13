@@ -17,21 +17,25 @@ const day = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { 
 const mon = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '');
 const IN = { fontSize: 12, padding: '3px 6px', textAlign: 'right' };
 
+const ROLL = [['always', '↻ always roll'], ['never', '⏹ close at T-2'], ['winners', '🏆 roll winners only']];
+const ROLL_LABEL = { always: 'roll T-2', never: 'close at T-2 · no roll', winners: 'roll winners only' };
+
 function ReportAsIf({ rules, onDone, onErr }) {
-  const [f, setF] = useState({ capital: String(rules.capital), lot: String(rules.max_lot_value) });
+  const [f, setF] = useState({ capital: String(rules.capital), lot: String(rules.max_lot_value), roll: rules.roll_mode || 'always' });
   const [busy, setBusy] = useState(false);
   const ok = Number(f.capital) >= 100000 && Number(f.lot) >= 100000;
   const go = () => {
-    if (!ok || !window.confirm(`Save capital ${inr(Number(f.capital))} and lot cap ${lakh(Number(f.lot))} to the futures settings and re-run Backtest F?\n\nThese are the live book's limits too (eligibility and sizing); the report then runs with them.`)) return;
+    if (!ok || !window.confirm(`Save capital ${inr(Number(f.capital))}, lot cap ${lakh(Number(f.lot))} and roll "${ROLL_LABEL[f.roll]}" to the futures settings and re-run Backtest F?\n\nCapital and lot cap are the live book's limits too (eligibility and sizing). The roll choice is for the report only for now: the live book always rolls.`)) return;
     setBusy(true);
-    api.putConfig('futures', { capital: Number(f.capital), max_lot_value: Number(f.lot) }).then(() => api.runFuturesBacktest()).then(() => onDone()).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+    api.putConfig('futures', { capital: Number(f.capital), max_lot_value: Number(f.lot), roll_mode: f.roll }).then(() => api.runFuturesBacktest()).then(() => onDone()).catch((e) => onErr(e.message)).finally(() => setBusy(false));
   };
   return <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '10px 14px', fontSize: 12, color: 'var(--muted)' }}>
     <b style={{ color: 'var(--text)' }}>⚙ Report as if</b>
     <span style={{ whiteSpace: 'nowrap' }}>capital ₹ <input className="input" type="number" min="100000" step="50000" value={f.capital} onChange={(e) => setF({ ...f, capital: e.target.value })} style={{ ...IN, width: 110 }} /></span>
     <span style={{ whiteSpace: 'nowrap' }}>lot cap ₹ <input className="input" type="number" min="100000" step="50000" value={f.lot} onChange={(e) => setF({ ...f, lot: e.target.value })} style={{ ...IN, width: 110 }} /></span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>at expiry <Seg opts={ROLL} v={f.roll} set={(v) => setF({ ...f, roll: v })} small /></span>
     <button type="button" className="btn primary small" disabled={!ok || busy} onClick={go}>{busy ? 'Starting…' : '▷ Run with these'}</button>
-    <span className="small">saves to the futures settings first (max 2 lots, stop cap, roll T-2 stay)</span></div>;
+    <span className="small">saves to the futures settings first (max 2 lots and the stop cap stay) · the roll choice changes the report only; the live book always rolls</span></div>;
 }
 
 export default function FuturesBacktest({ onBook }) {
@@ -61,7 +65,7 @@ export default function FuturesBacktest({ onBook }) {
     : <button type="button" className="btn primary small" onClick={run}>{d.built ? '▷ Re-run' : '▷ Run Backtest F'}</button>;
   const head = <div className="rhead" style={{ marginTop: 0 }}><h1 style={{ fontSize: 15 }}>Backtest F · E+ long / E− short on stock futures</h1>
     {d.built && <Chip>{mon(d.run.run.from)} → {mon(d.run.run.to)} · <b>{d.run.run.sessions}</b> sessions · {d.run.run.names} futures names · signals on cash candles</Chip>}
-    <Chip>{inr(Rf.capital)} · max {Rf.max_pos} lots · lot ≤ {lakh(Rf.max_lot_value)} · stop ATR cap {Rf.max_stop_pct}% · roll T-{Rf.roll_days}</Chip>
+    <Chip>{inr(Rf.capital)} · max {Rf.max_pos} lots · lot ≤ {lakh(Rf.max_lot_value)} · stop ATR cap {Rf.max_stop_pct}% · {Rf.roll_mode === 'never' ? `close at T-${Rf.roll_days}` : Rf.roll_mode === 'winners' ? `roll winners only (T-${Rf.roll_days})` : `roll T-${Rf.roll_days}`}</Chip>
     {d.built && <Chip>updated <b>{stamp(d.run.ran_at)}</b></Chip>}
     <span className="r"><button type="button" className={`btn small ${asIf ? 'primary' : ''}`} onClick={() => setAsIf(!asIf)}>⚙ Report as if…</button>{runBtn}{onBook && <button type="button" className="btn small" onClick={onBook}>← Book</button>}</span></div>;
   if (!d.built) {
