@@ -414,6 +414,37 @@ class FuturesConfig:
     history_years: int = 3                 # continuous futures history depth (Kite keeps about 3 years)
 
 
+@dataclass
+class OptionsConfig:
+    """🧩 NIFTY weekly options book (paper only): a credit spread sold on the opening-range bias, confirmed by the option
+    chain. The Real switch exists but cannot be turned on (no webhook yet: the API answers 400 "not wired")."""
+    capital: float = 300000.0              # the options book's own capital (deposits like the other books)
+    capital_per_lot: float = 150000.0      # size: 1 lot per this much capital ...
+    max_lots: int = 2                      # ... at most this many lots
+    hedge_points: int = 250                # the bought leg this many points further out (200 when its premium < Rs 2)
+    max_delta: float = 0.30                # the sold strike: the first with |delta| at most this
+    min_premium: float = 20.0              # the sold premium must be at least this (else one strike nearer, delta 0.35 at most)
+    otm_pct: float = 1.0                   # the sold strike: at least this % out of the money (50-strike grid)
+    stop_pct: float = 50.0                 # stop when the sold premium rises this % over the entry ...
+    stop_pct_expiry: float = 35.0          # ... this on expiry day
+    be_after_pct: float = 40.0             # after the sold premium has decayed this %, the stop becomes breakeven
+    target_pct: float = 60.0               # target: the spread's value down this % from the entry credit
+    time_exit: str = "15:10"               # the time exit (a hard exit at 15:20 if it failed; nothing is held overnight)
+    window_start: str = "09:45"            # the bias is looked for on 5-minute closes from ...
+    window_end: str = "11:00"              # ... to this; no break by then = no trade today
+    max_trades_day: int = 2                # one re-entry at most (only on a flipped bias inside the window)
+    daily_loss_pct: float = 1.5            # no new entries once the day's realised + open loss reaches this % of capital
+    vix_half: float = 20.0                 # India VIX over this halves the size (1 lot at least)
+    pcr_bull: float = 1.1                  # chain score: PCR over this confirms a bullish bias ...
+    pcr_bear: float = 0.9                  # ... under this a bearish one (over 1.5 / under 0.6 = crowded, size halves)
+    max_gap_pct: float = 1.0               # no entry when the open gapped more than this % from the previous close
+    margin_per_lot: float = 52000.0        # the margin estimate shown per lot
+    event_days: str = ""                   # comma-separated ISO dates with no entries (RBI policy, budget, ...)
+    paper: bool = True                     # the paper book runs
+    real: bool = False                     # the Real switch: cannot be set (no webhook yet)
+    enabled: bool = True                   # the enable switch (off: no new entries; an open spread still exits)
+
+
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
 # Keys of a saved section from before A was removed (E's own settings): read into the field they became, once.
 LEGACY_KEYS = {"breakout": {"top_e": "top", "late_at_e": "late_at", "late_pct_e": "late_pct"}}
@@ -423,7 +454,7 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "vcp": VcpConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
-                      "flow": FlowConfig, "futures": FuturesConfig}
+                      "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig}
 
 
 @dataclass
@@ -442,6 +473,7 @@ class AppConfig:
     real: RealConfig = field(default_factory=RealConfig)
     flow: FlowConfig = field(default_factory=FlowConfig)
     futures: FuturesConfig = field(default_factory=FuturesConfig)
+    options: OptionsConfig = field(default_factory=OptionsConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

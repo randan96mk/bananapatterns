@@ -131,6 +131,7 @@ class Scheduler:
         self.hold: Optional[str] = None                   # summary style: the batch the evening job is holding
         self.last_real_stops: Optional[datetime] = None   # 💰 real trading: the last stop watch
         self.last_futures_stops: Optional[datetime] = None  # 📐 futures: the last stop watch on the futures quotes
+        self.last_options_tick: Optional[datetime] = None   # 🧩 options: the last minute the options book ticked
 
     # --- loop ---
 
@@ -177,6 +178,11 @@ class Scheduler:
                 jobs += book.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_futures_stops)
         except Exception:
             logger.exception("Futures due check failed")
+        try:                                               # 🧩 the options book: one tick a minute 9:15-15:40
+            from backend.options import book as obook
+            jobs += obook.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_options_tick)
+        except Exception:
+            logger.exception("Options due check failed")
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -1009,6 +1015,19 @@ class Scheduler:
         except Exception as exc:
             logger.exception("Futures roll failed")
             self.record("futures_roll", today, "failed", str(exc)[:300], started)
+            return {"status": "failed", "error": str(exc)}
+
+    # --- 🧩 the options book ---
+
+    def run_options_tick(self, now: datetime) -> dict:
+        """The options book's minute: range at 9:30, bias on 5-minute closes, MTM and exits while open, the time and
+        hard exits, the close snapshot, the day summary (see backend/options/book.py). Alerts come in step 3."""
+        from backend.options import book as obook
+        self.last_options_tick = now
+        try:
+            return obook.tick(self.state.config, self.state.client, now)
+        except Exception as exc:
+            logger.exception("Options tick failed")
             return {"status": "failed", "error": str(exc)}
 
     def _rerun_breakout(self) -> None:

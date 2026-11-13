@@ -266,6 +266,8 @@ def put_config(section: str, values: dict):
             raise HTTPException(400, "short side backtest has not passed")
     if section == "futures" and "roll_mode" in values and values["roll_mode"] not in ("always", "never", "winners"):
         raise HTTPException(422, "roll_mode must be always, never or winners")
+    if section == "options" and _truthy(values.get("real")):
+        raise HTTPException(400, "not wired")             # the options Real switch: no webhook yet, stays off
     try:
         out = S().config.update_section(section, values)
     except (ValueError, TypeError) as exc:
@@ -1254,6 +1256,94 @@ def futures_roll_now():
     return book.roll(st.config, st.client, datetime.now(IST).date().isoformat())
 
 
+# --- 🧩 the options book (paper only) ----------------------------------------------------------------------------
+
+class OptionsSettings(BaseModel):
+    paper: Optional[bool] = None
+    real: Optional[bool] = None
+    enabled: Optional[bool] = None
+
+
+class OptionsCapital(BaseModel):
+    capital: float
+
+
+@router.get("/options")
+def options_summary():
+    """🧩 The options book: switches, today's timeline, guards, margin, cards, the open spread, the bias steps, the chain,
+    the rules, recent days, trades, alerts."""
+    from backend.options import book as obook
+    obook.start(S().config)                           # the page opened once: the book exists and ticks from now on
+    return obook.summary(S().config)
+
+
+@router.put("/options/settings")
+def options_settings(req: OptionsSettings):
+    """paper / enabled; real=true is refused (400 "not wired": no webhook yet)."""
+    from backend.options import book as obook
+    try:
+        return obook.set_switches(S().config, **req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/options/kill")
+def options_kill(on: bool = True):
+    """The options kill switch: on, an open spread is closed at once."""
+    from backend.options import book as obook
+    st = S()
+    return obook.set_killed(on, st.config, st.client)
+
+
+@router.post("/options/close")
+def options_close():
+    """Close the open spread now (the page confirms first)."""
+    from backend.options import book as obook
+    st = S()
+    try:
+        return obook.close_now(st.config, st.client)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/options/hold")
+def options_hold():
+    """No new entries today (an open spread keeps its exits)."""
+    from backend.options import book as obook
+    return obook.hold_today(S().config)
+
+
+@router.post("/options/capital")
+def options_capital(req: OptionsCapital):
+    """The options capital; after the start the change is money added / withdrawn."""
+    from backend.options import book as obook
+    if req.capital < 10_000:
+        raise HTTPException(422, "capital must be at least Rs 10,000")
+    try:
+        return obook.set_capital(S().config, req.capital)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.get("/options/days")
+def options_days(limit: int = Query(30, le=1000)):
+    from backend.options import book as obook
+    return {"rows": obook.days(limit)}
+
+
+@router.get("/options/trades")
+def options_trades(limit: int = Query(100, le=1000)):
+    from backend.options import book as obook
+    return {"rows": obook.trades(limit)}
+
+
+@router.get("/options/chain")
+def options_chain():
+    """Today's option chain block (else the last snapshot read back)."""
+    from backend.options import book as obook
+    return obook.chain_view()
+
+
 @router.get("/corp-actions")
 def corp_actions_list():
     """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""
@@ -1862,7 +1952,7 @@ def jobs_list(limit: int = Query(50, le=500)):
 def jobs_run(job: str):
     sch = S().scheduler
     if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check", "top_setups",
-                                    "morning_plan", "gap_check", "guard", "futures_preview", "futures_stops", "futures_roll"):
+                                    "morning_plan", "gap_check", "guard", "futures_preview", "futures_stops", "futures_roll", "options_tick"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
     forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True),
@@ -1926,6 +2016,7 @@ def _stream_topics() -> dict:
                          lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
         "futures": (futures_summary, lambda d: 30 if __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
         "futures_morning": (futures_morning, lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
+        "options": (options_summary, lambda d: 15 if (d or {}).get("open") or __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
     }
 
 

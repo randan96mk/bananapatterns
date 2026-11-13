@@ -95,6 +95,13 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
                     if date.fromisoformat(rd) >= now.date() else None)
     except Exception:
         pass
+    try:                                                   # 🧩 the options book: one tick a minute
+        from backend.options import book as obook
+        if obook.active(config):
+            add("options_tick", "🧩", "Options book", "every minute 9:15-15:40 · range 9:30, bias on 5-minute closes, exits, 15:35 summary",
+                _next_every(now, time(9, 15), time(15, 41), 1, getattr(sch, "last_options_tick", None)), 1)
+    except Exception:
+        pass
     if a.intraday:
         add("intraday", "⚡", "Intraday scan", f"every {a.intraday_interval_min} min · watched stocks over their pivot",
             _next_every(now, _hm(a.intraday_start), _hm(a.intraday_end), a.intraday_interval_min,
