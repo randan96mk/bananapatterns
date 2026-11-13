@@ -35,6 +35,10 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
         since = (datetime.now(IST) - timedelta(hours=24)).isoformat(timespec="seconds")
         errs = one("SELECT COUNT(*) FROM system_logs WHERE level = 'ERROR' AND timestamp >= ?", since)
         last_err = conn.execute("SELECT timestamp, source, message FROM system_logs WHERE level = 'ERROR' ORDER BY id DESC LIMIT 1").fetchone()
+        fut_as_of = one("SELECT MAX(as_of) FROM futures_contracts")
+        n_fut = one("SELECT COUNT(*) FROM futures_contracts WHERE as_of = ?", fut_as_of) if fut_as_of else 0
+        fut_day = one("SELECT MAX(date) FROM candles_fut_daily")
+        n_fut_c = one("SELECT COUNT(DISTINCT underlying) FROM candles_fut_daily")
     today = now_ist()[:10]
     stale_days = (datetime.fromisoformat(today) - datetime.fromisoformat(day)).days if day else None
     out.append({"key": "kite", "name": "Kite", "ok": has_token, "warn": False,
@@ -62,6 +66,21 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
                     "detail": f"database {db_path().stat().st_size / 1e6:.0f} MB" if db_path().exists() else "", "at": None})
     except OSError:
         pass
+    _days = lambda d: (datetime.fromisoformat(today) - datetime.fromisoformat(d)).days if d else None
+    fut_age = _days(fut_as_of)
+    out.append({"key": "fut_contracts", "name": "Futures contracts", "ok": True, "warn": bool(fut_age is not None and fut_age > 4),
+                "state": f"as of {fut_as_of}" + (f" · {fut_age} d old" if fut_age else "") if fut_as_of else "none yet",
+                "detail": f"{n_fut} NFO stock futures rows (near / next month)" if fut_as_of else "filled by the evening job's futures data step", "at": None})
+    out.append({"key": "fut_candles", "name": "Futures candles", "ok": True, "warn": bool(fut_day and day and fut_day < day),
+                "state": f"to {fut_day}" if fut_day else "none yet", "detail": f"{n_fut_c} underlyings · continuous near month with OI", "at": None})
+    try:
+        from backend.futures import ban as fo_ban
+        b = fo_ban.summary(today)
+    except Exception:
+        b = {"date": None, "symbols": [], "stale_days": None}
+    out.append({"key": "fo_ban", "name": "F&O ban list", "ok": True, "warn": bool(b["stale_days"] is not None and b["stale_days"] > 3),
+                "state": (f"{b['date']} · {len(b['symbols'])} in ban" + (" · stale" if b["stale_days"] and b["stale_days"] > 3 else "")) if b["date"] else "none yet",
+                "detail": "NSE MWPL ban list; a failed fetch keeps the last good day", "at": None})
     out.append({"key": "follow", "name": "Follow book", "ok": True, "warn": bool(follow_as_of and day and follow_as_of < day),
                 "state": f"as of {follow_as_of}" if follow_as_of else "not built", "detail": "steps after the evening scan", "at": None})
     return out

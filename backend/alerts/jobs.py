@@ -130,6 +130,7 @@ class Scheduler:
         self.lock = threading.Lock()
         self.hold: Optional[str] = None                   # summary style: the batch the evening job is holding
         self.last_real_stops: Optional[datetime] = None   # 💰 real trading: the last stop watch
+        self.last_futures_stops: Optional[datetime] = None  # 📐 futures: the last stop watch on the futures quotes
 
     # --- loop ---
 
@@ -170,6 +171,12 @@ class Scheduler:
         from backend.engine import real
         if real.has_account():                             # 💰 only once real trading has started
             jobs += real.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_real_stops)
+        try:                                               # 📐 the futures book: preview, send, stops, roll
+            from backend.futures import book
+            if book.has_account():
+                jobs += book.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_futures_stops)
+        except Exception:
+            logger.exception("Futures due check failed")
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -286,6 +293,14 @@ class Scheduler:
             failed = ", ".join(e["symbol"] for e in snap["errors"][:10])
             notifier.system(f"{today}|eod-partial", f"Evening sync partial: {snap['failed']} symbols failed ({failed}).")
 
+        try:                                       # stock futures data: contracts, continuous candles, ban list
+            from backend.futures import candles as fcandles
+            fut_before = fcandles.status()["to"]
+            self.run_futures_data(today)
+            self._rerun_futures_backtest(fut_before)
+        except Exception:
+            logger.exception("Futures data step failed")
+
         with get_db() as conn:
             as_of = conn.execute("SELECT MAX(as_of) FROM scan_runs").fetchone()[0]
         if as_of != today.isoformat() and not force:
@@ -320,6 +335,10 @@ class Scheduler:
             sent["real"] = self.run_real_evening()
         except Exception:
             logger.exception("Real trading evening update failed")
+        try:                                       # 📐 the futures book: mark the day, plan the next open, alerts
+            sent["futures"] = self.run_futures_evening()
+        except Exception:
+            logger.exception("Futures book evening update failed")
         try:                                       # 📈 Follow: the blind book's buys and sells at the next open
             from backend.engine import follow
             line = follow.evening_line(as_of)
@@ -336,6 +355,26 @@ class Scheduler:
         status = "partial" if snap["status"] == "partial" else "ok"
         self.record("eod", today, status, f"scan {as_of}; alerts {sent}", started)
         return {"status": status, "as_of": as_of, "alerts": sent}
+
+    def run_futures_data(self, today: Optional[date] = None, force: bool = False) -> dict:
+        """The futures data layer's refresh (NFO contracts, continuous candles for the eligible universe, ban list), with
+        its own job run record. Needs the Kite login; never fails the evening job."""
+        from backend.futures import data as fdata
+        today, started = today or datetime.now(IST).date(), now_ist()
+        if not self.state.token_valid():
+            self.record("futures_data", today, "waiting", "Kite login missing", started)
+            return {"status": "waiting_login"}
+        try:
+            out = fdata.run(self.state.client, self.state.config, today, force=force)
+        except Exception as exc:
+            self.record("futures_data", today, "failed", str(exc)[:300], started)
+            raise
+        c, k, b = out.get("contracts") or {}, out.get("candles") or {}, out.get("ban") or {}
+        msg = (f"contracts {c.get('contracts', '?')} (as of {c.get('as_of', '?')}); candles {k.get('synced', '?')}/"
+               f"{k.get('underlyings', '?')} +{k.get('added', '?')} bars to {k.get('to', '?')}; ban {b.get('date', '?')} "
+               f"{len(b.get('symbols') or [])}" + (f"; {'; '.join(out['errors'])}" if out.get("errors") else ""))
+        self.record("futures_data", today, out["status"], msg[:500], started)
+        return out
 
     def run_filings(self, now: datetime) -> dict:
         """Fetch new NSE filings; push the important ones on stocks you watch, hold or have in the plan."""
@@ -862,6 +901,116 @@ class Scheduler:
             n.send(f"{now.date()}|real-nologin|{slot}", "real", msg.real_nologin(now.strftime('%H:%M')))
         return res
 
+    # --- 📐 the futures book ---
+
+    def run_futures_evening(self) -> int:
+        """Mark the futures book and plan the next open; the plan (tagged per side), the held-name warnings, the
+        short side's paper signals, the roll notice at T-3 and the raised stops go to Telegram."""
+        from backend.futures import book
+        cfg = self.state.config
+        res = book.evening(cfg)
+        if res["status"] != "ok":
+            return 0
+        n, day = self.notifier(), res["as_of"]
+        sent = 0
+        for r in res.get("raised") or []:
+            sent += int(n.send(f"{day}|fut-trail|{r['account']}|{r['symbol']}", "real", msg.trail_raised(f"{msg.FUT} · {msg.TAG_OF[r['account']]}", r["symbol"], r["stop"], r["best"], r["entry"])))
+        tags = {s: [f"{m} · {s}" for m in ("paper", "real") if getattr(cfg.futures, f"{s}_{m}")] for s in ("long", "short")}
+        if any(res["plan"].get(s) for s in ("long", "short")) or res.get("missed"):
+            sent += int(n.send(f"{day}|fut-plan", "real", msg.futures_plan(res, tags)))
+        w = msg.futures_held_warnings(res.get("warnings") or {})
+        if w:
+            sent += int(n.send(f"{day}|fut-held", "real", w))
+        if cfg.futures.short_paper:
+            t = msg.futures_short_signals(res.get("short_signals") or [], res["plan"].get("short", []), res["waiting"].get("short", []))
+            if t:
+                sent += int(n.send(f"{day}|fut-short", "real", t))
+        rd = res.get("roll_day")
+        if rd and rd == book.next_session(day):              # T-3: tomorrow is the roll day
+            q = book.roll_queue(book._state(), cfg, day)
+            if q["items"]:
+                sent += int(n.send(f"{day}|fut-roll-notice", "real", msg.futures_roll_notice(q["items"], rd, "notice")))
+        return sent
+
+    def run_futures_preview(self, now: datetime) -> dict:
+        """The 9:00 futures dry run: lots, margin needed, the skips (the results guard runs once more)."""
+        from backend.futures import book
+        today, started, cfg = now.date(), now_ist(), self.state.config
+        try:
+            book.guard_today(cfg, now)
+            m = book.morning(cfg, now)
+            orders = [o for o in m["orders"] if not o["status"]]
+            sent = bool(orders) and self.notifier().send(f"{today}|fut-preview", "real", msg.futures_preview(m, cfg.real.send_time))
+            self.record("futures_preview", today, "ok", f"{len(orders)} queued · {len(m['skipped'])} skipped · sent {int(bool(sent))}", started)
+            return {"orders": len(orders), "skipped": m["skipped"], "sent": bool(sent)}
+        except Exception as exc:
+            logger.exception("Futures preview failed")
+            self.record("futures_preview", today, "failed", str(exc)[:300], started)
+            return {"status": "failed", "error": str(exc)}
+
+    def run_futures_send(self, now: datetime) -> dict:
+        """The real sides' futures orders through the sender (the futures sender), once each."""
+        from backend.futures import book
+        today, started = now.date(), now_ist()
+        try:
+            res = book.send_orders(self.state.config, self.state.client, today.isoformat())
+            self.record("futures_send", today, "ok", f"{res['status']}: sent {len(res['sent'])}, failed {len(res['failed'])}, "
+                        f"skipped {len(res.get('skipped') or [])}", started)
+            if res["sent"] or res["failed"]:
+                self.notifier().send(f"{today}|fut-sent", "real", msg.futures_sent(res, ampm(now.strftime('%H:%M'))))
+            return res
+        except Exception as exc:
+            logger.exception("Futures send failed")
+            self.record("futures_send", today, "failed", str(exc)[:300], started)
+            return {"status": "failed", "error": str(exc)}
+
+    def run_futures_stops(self, now: datetime) -> dict:
+        """Every stop_check_min in market hours: stops on the futures quote; then the daily loss limit and the
+        margin warning on the live marks (each alert once a day per account)."""
+        from backend.futures import book
+        self.last_futures_stops = now
+        cfg, n, d = self.state.config, self.notifier(), now.date()
+        try:
+            res = book.watch_stops(cfg, self.state.client, d.isoformat())
+            for h in res["hits"]:
+                n.send(f"{d}|fut-stop|{h['account']}|{h['symbol']}", "real", msg.futures_stop(h, ampm(now.strftime('%H:%M'))))
+            st = book._state()
+            if st:
+                for k in book.ACCOUNTS:
+                    if not book.switch(cfg, book.side_of(k), book.mode_of(k)):
+                        continue
+                    g = book.guards(st, cfg, k)
+                    if g["daily_loss"]["hit"]:
+                        n.send(f"{d}|fut-loss|{k}", "real", msg.futures_daily_loss(book.TAG[k], g["daily_loss"]["used"], g["daily_loss"]["limit"]))
+                    if g["margin"]["warn"]:
+                        n.send(f"{d}|fut-margin|{k}", "real", msg.futures_margin(book.TAG[k], g["margin"]["pct"], g["margin"]["used"]))
+            return res
+        except Exception as exc:
+            logger.exception("Futures stop watch failed")
+            return {"status": "failed", "error": str(exc)}
+
+    def run_futures_roll(self, now: datetime) -> dict:
+        """The roll day (T-2) at 9:20: EXIT the near month, then the entry on the next, logged as one roll."""
+        from backend.futures import book
+        today, started = now.date(), now_ist()
+        try:
+            res = book.roll(self.state.config, self.state.client, today.isoformat())
+            self.record("futures_roll", today, "ok", f"{res['status']}: rolled {len(res.get('rolls') or [])}, exited {len(res.get('exits') or [])}, "
+                        f"failed {len(res.get('failed') or [])}", started)
+            items = list(res.get("rolls") or [])
+            if items or res.get("exits") or res.get("failed"):
+                text = msg.futures_roll_notice(items, today.isoformat(), "done")
+                for e in res.get("exits") or []:
+                    text += f"\n🔴 EXIT <b>{msg.escape(e['symbol'])}</b> {e['side']} · {msg.escape(e['why'])} · net {msg._signed(e['net'])} · <i>{msg.escape(e['tag'])}</i>"
+                for f in res.get("failed") or []:
+                    text += f"\n⚠️ <b>{msg.escape(f['symbol'])}</b> roll {f['step']} failed: {msg.escape(f['error'])}" + (" · the lot is CLOSED, re-enter by hand" if f.get("exited") else "")
+                self.notifier().send(f"{today}|fut-roll", "real", text)
+            return res
+        except Exception as exc:
+            logger.exception("Futures roll failed")
+            self.record("futures_roll", today, "failed", str(exc)[:300], started)
+            return {"status": "failed", "error": str(exc)}
+
     def _rerun_breakout(self) -> None:
         """Re-run the Trend Breakout backtest each evening so its results run to the latest day."""
         from backend.engine import trend_breakout as tb
@@ -869,6 +1018,21 @@ class Scheduler:
             return
         # (a run made before a rule change, e.g. E -> E+, is "stale" and is simply replaced by this one)
         threading.Thread(target=tb.run, args=(self.state.config,), name="breakout-daily", daemon=True).start()
+
+    def _rerun_futures_backtest(self, before_to: Optional[str]) -> None:
+        """Re-run Backtest F in the background when the futures candles advanced (a saved run exists, none running)."""
+        try:
+            from backend.futures import backtest as fb
+            from backend.futures import candles as fcandles
+            now_to = fcandles.status()["to"]
+            run = fb.saved()
+            if run is None or fb.status()["state"] != "idle" or not now_to:
+                return
+            if now_to == before_to and run.get("run", {}).get("to") == now_to:
+                return
+            threading.Thread(target=fb.run, args=(self.state.config,), name="futures-backtest-daily", daemon=True).start()
+        except Exception:
+            logger.exception("Backtest F re-run failed")
 
     def run_morning_plan(self, now: datetime) -> dict:
         today, started = now.date(), now_ist()

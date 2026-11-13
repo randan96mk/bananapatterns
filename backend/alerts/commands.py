@@ -4,6 +4,7 @@
   /status  is the Kite session OK, until when
   skip SYM / unskip SYM / hold   the morning dry run: skip one planned real BUY for today, send it after all,
                                  or hold every BUY (EXITs always go out); also with a slash; refused after send_until
+  fut skip SYM / fut unskip SYM / fut hold   the same for the futures book's plan (paper fill and real send)
 
 Only messages from the configured chat_id are answered; anyone else is ignored.
 Commands older than STALE_SEC (sent while the app was off) are skipped. The poller
@@ -71,6 +72,8 @@ class BotCommands:
             parts = (m.get("text") or "").strip().split()
             if str((m.get("chat") or {}).get("id")) != notifier.chat_id or not parts:
                 continue
+            if parts[0].lower() == "fut" and len(parts) > 1 and parts[1].lower() in MORNING_WORDS:   # "fut skip NRL" / "fut hold"
+                parts = ["/fut" + parts[1].lower()] + parts[2:]
             if parts[0].lower() in MORNING_WORDS:          # the reminder's reply: "skip NRL" / "hold", no slash needed
                 parts[0] = "/" + parts[0].lower()
             if not parts[0].startswith("/"):
@@ -185,10 +188,33 @@ class BotCommands:
                 "/hold": "⏸ Every BUY held today; the EXITs still go out."}[command]
         return head + "\n" + msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed(), m)
 
+    def futures(self, command: str, arg: str) -> str:
+        """fut skip SYM / fut unskip SYM / fut hold: the futures plan changed for this morning only (the paper fill
+        and the real send of that side both honour it), then the dry run listed again."""
+        from backend.alerts.jobs import hm
+        from backend.futures import book
+        cfg, now = self.state.config, self.clock()
+        if now.time() >= hm(cfg.real.send_until):
+            return f"Too late: today's futures orders went out at {ampm(cfg.real.send_time)} (the window closed at {ampm(cfg.real.send_until)})."
+        if command in ("/futskip", "/futunskip") and not arg:
+            return f"Which stock? fut {command[4:]} SYMBOL"
+        try:
+            if command == "/futhold":
+                m = book.hold_today(cfg, "hold all (Telegram)", now)
+            else:
+                m = book.skip_order(cfg, arg, command == "/futskip", "Telegram", now)
+        except ValueError as exc:
+            return f"Not changed: {msg.escape(str(exc))}"
+        head = {"/futskip": f"⏸ {msg.escape(arg)} skipped today (futures).", "/futunskip": f"▶️ {msg.escape(arg)} goes out again (futures).",
+                "/futhold": "⏸ Every futures entry held today; the EXITs still go out."}[command]
+        return head + "\n" + msg.futures_preview(m, cfg.real.send_time)
+
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
         if command in ("/skip", "/unskip", "/hold"):
             return self._say(notifier, self.morning(command, arg, notifier))
+        if command in ("/futskip", "/futunskip", "/futhold"):
+            return self._say(notifier, self.futures(command, arg))
         if command == "/login":
             if send_login_link(st, notifier, "requested", f"bot-login|{uuid.uuid4().hex}", now):
                 return True
@@ -221,5 +247,5 @@ class BotCommands:
         if command in ("/start", "/help"):
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold (today's real "
-                                       "BUYs, before the send). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "BUYs, before the send) · fut skip SYM / fut hold (the futures plan). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

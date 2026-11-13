@@ -7,7 +7,7 @@ import { Tag } from './ui2';
 // fold state is remembered), and inside it one fixed 46 px row per stock: name + "qty · now" | P&L + % | a 56 px
 // stop meter + distance. 10 rows then "show n more"; tapping a row opens a details block (entry, stop, days, trail,
 // results) with chart / ✎ edit (Real) / page buttons. Styles are inline: nothing here depends on a number's length.
-const BOOKS = [['real', 'Real', 'real'], ['paper_E', 'Paper E+', 'paper'], ['intraday', 'Intraday', 'flow']];
+const BOOKS = [['real', 'Real', 'real'], ['paper_E', 'Paper E+', 'paper'], ['futures', 'Futures', 'futures'], ['intraday', 'Intraday', 'flow']];
 const FOLDS = 'bp.home.folds';
 const readFolds = () => { try { return { real: true, paper_E: false, intraday: false, ...JSON.parse(localStorage.getItem(FOLDS) || '{}') }; } catch { return { real: true, paper_E: false, intraday: false }; } };
 const dayName = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—');

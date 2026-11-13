@@ -82,6 +82,19 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
             r.stop_check_min, True)
         add("real_send", "🚀", "Real orders sent", "the planned EXITs, then BUYs → Tradetron", _next_at(now, _hm(r.send_time)),
             None, True)
+    try:                                                   # 📐 the futures book's own clock
+        from backend.futures import book
+        if book.has_account():
+            add("futures_stops", "📐", "Futures stop check", f"every {r.stop_check_min} min · futures quotes",
+                _next_every(now, time(9, 15), MARKET_CLOSE, r.stop_check_min, getattr(sch, "last_futures_stops", None)), r.stop_check_min)
+            if any(book.real_live(config, s) for s in book.SIDES):
+                add("futures_send", "📐", "Futures orders sent", "the real sides' EXITs, then entries", _next_at(now, _hm(r.send_time)), None, True)
+            rd = (book._state() or {}).get("roll_day")
+            if rd:
+                add("futures_roll", "↻", "Futures roll (T-2)", "EXIT the near month, then the next", datetime.combine(date.fromisoformat(rd), time(9, 20), tzinfo=IST)
+                    if date.fromisoformat(rd) >= now.date() else None)
+    except Exception:
+        pass
     if a.intraday:
         add("intraday", "⚡", "Intraday scan", f"every {a.intraday_interval_min} min · watched stocks over their pivot",
             _next_every(now, _hm(a.intraday_start), _hm(a.intraday_end), a.intraday_interval_min,

@@ -341,6 +341,32 @@ CREATE TABLE IF NOT EXISTS breakout_runs (
     payload TEXT NOT NULL
 );
 
+-- Stock futures data layer (backend/futures): NFO contracts per underlying and day (history kept: the latest as_of
+-- wins), continuous daily futures candles with OI (never deleted), the MWPL F&O ban list per day.
+CREATE TABLE IF NOT EXISTS futures_contracts (
+    underlying TEXT NOT NULL, month TEXT NOT NULL, tradingsymbol TEXT NOT NULL, token INTEGER NOT NULL,
+    expiry TEXT NOT NULL, lot_size INTEGER NOT NULL, lot_value REAL, oi INTEGER, oi_rank INTEGER, as_of TEXT NOT NULL,
+    PRIMARY KEY (as_of, underlying, month));
+CREATE TABLE IF NOT EXISTS candles_fut_daily (
+    underlying TEXT NOT NULL, date TEXT NOT NULL, open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL,
+    close REAL NOT NULL, volume INTEGER NOT NULL DEFAULT 0, oi INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (underlying, date)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS fo_ban (date TEXT NOT NULL, symbol TEXT NOT NULL, PRIMARY KEY (date, symbol));
+-- Backtest F runs (backend/futures/backtest.py): the latest row is the one shown.
+CREATE TABLE IF NOT EXISTS futures_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, ran_at TEXT NOT NULL);
+-- The futures book (backend/futures/book.py): one state (four accounts: paper / real x long / short), every order
+-- (sent, failed, skipped, filled on paper, rolls, hand corrections; never deleted), closed trades, equity per account.
+CREATE TABLE IF NOT EXISTS futures_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS futures_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,              -- day|account|symbol|action: each order once
+    day TEXT NOT NULL, created_at TEXT NOT NULL, account TEXT NOT NULL, symbol TEXT NOT NULL, action TEXT NOT NULL,
+    lots INTEGER, contract TEXT, reason TEXT, status TEXT NOT NULL, reply TEXT, price REAL
+);
+CREATE TABLE IF NOT EXISTS futures_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS futures_equity (account TEXT NOT NULL, day TEXT NOT NULL, equity REAL NOT NULL, gross REAL NOT NULL,
+                                           nifty REAL, PRIMARY KEY (account, day));
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

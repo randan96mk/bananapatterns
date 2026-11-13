@@ -15,6 +15,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from backend.config import load_config
+from backend.database.models import get_db
+from backend.kite_api.auth import load_fresh_token
 from backend.kite_api.client import KiteClient
 
 
@@ -22,9 +24,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--names", type=int, default=12, help="how many stocks (by futures OI) to probe")
     ap.add_argument("--years", type=int, default=3, help="years of continuous history to request")
+    ap.add_argument("--list", type=float, default=0, help="only print the eligible underlyings: lot value <= this many rupees (e.g. 600000), by OI")
     a = ap.parse_args()
     cfg = load_config()
     kc = KiteClient(cfg.kite, cfg.ingest)
+    if not kc.has_token:                                   # the dashboard login keeps the token in the database
+        with get_db() as conn:
+            tok = load_fresh_token(conn)
+        if tok:
+            kc.set_access_token(tok)
     if not kc.has_token:
         print("Kite: not logged in (log in from the dashboard first)")
         return 1
@@ -54,6 +62,14 @@ def main() -> int:
         px = q.get("last_price") or 0
         rows.append((n, c, px, q.get("oi") or 0, px * c["lot_size"]))
     rows.sort(key=lambda r: -r[3])
+    if a.list:                                             # the names to put in the Tradetron list, one per line
+        ok = [r for r in rows if 0 < r[4] <= a.list and r[3] > 0]
+        print(f"\nEligible underlyings (near-month lot value <= Rs {a.list:,.0f}, with open interest): {len(ok)} of {len(rows)}")
+        print(f"{'stock':<14}{'contract':<22}{'lot':>6}{'lot value':>12}{'OI':>14}")
+        for n, c, px, oi, lv in ok:
+            print(f"{n:<14}{c['tradingsymbol']:<22}{c['lot_size']:>6}{lv:>12,.0f}{oi:>14,}")
+        print("\nComma-separated (underlying names):\n" + ",".join(n for n, *_ in ok))
+        return 0
     print(f"\nTop {a.names} by futures OI (near month {rows[0][1]['expiry'] if rows else '?'}):")
     print(f"{'stock':<14}{'contract':<22}{'lot':>6}{'price':>10}{'lot value':>14}{'OI':>12}{'margin~20%':>12}")
     cash = {}
