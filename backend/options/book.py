@@ -146,14 +146,16 @@ def _tl(st: dict, now: datetime, text: str, key: Optional[str] = None) -> None:
     d["timeline"].append({"t": ampm(now), "hm": now.strftime("%H:%M"), "text": text, "key": key})
 
 
-def _alert(st: dict, now: datetime, kind: str, text: str, key: Optional[str] = None) -> None:
-    """An alert the API lists (and step 3 sends): once per key a day."""
+def _alert(st: dict, now: datetime, kind: str, text: str, key: Optional[str] = None, data: Optional[dict] = None) -> None:
+    """An alert the API lists and the scheduler sends to Telegram (alerts/jobs.py `run_options_tick`, once per key):
+    `data` carries what the message builder needs (the spread, the trade, the day row); `key` is unique for the day."""
     day = now.date().isoformat()
     k = f"{day}|{key or kind}"
     if k in st.setdefault("alerted", {}):
         return
     st["alerted"][k] = now_ist()
-    st.setdefault("alerts", []).append({"at": now.isoformat(timespec="seconds"), "t": ampm(now), "day": day, "kind": kind, "text": text, "tag": TAG})
+    st.setdefault("alerts", []).append({"at": now.isoformat(timespec="seconds"), "t": ampm(now), "day": day, "kind": kind, "text": text, "tag": TAG,
+                                        "key": key or kind, "data": data})
     st["alerts"] = st["alerts"][-60:]
     if len(st["alerted"]) > 400:                              # the once-a-day keys: keep the last week's
         keep = (date.fromisoformat(day) - timedelta(days=7)).isoformat()
@@ -335,7 +337,23 @@ def _no_data(st: dict, now: datetime, why: str) -> None:
     d = st["day"]
     d["no_data"], d["status"], d["why"] = True, "no_data", f"no data · {why}"
     _tl(st, now, f"no data · {why}", key="no_data")
-    _alert(st, now, "no_data", f"no data · {why}", key="no_data")
+    _alert(st, now, "no_data", f"no data · {why}", key="no_data", data={"why": why})
+
+
+def _no_trade_data(d: dict, config: AppConfig, now: datetime) -> dict:
+    """What the 11:00 "no trade today" message says: the range, where VWAP sits against it, the next look."""
+    from backend.ingest.holidays import is_trading_day
+    rng, vw = d.get("range") or {}, d.get("vwap")
+    where = None
+    if rng and vw:
+        where = "in the middle" if rng["low"] <= vw <= rng["high"] else ("over the range" if vw > rng["high"] else "under the range")
+    nxt = now.date() + timedelta(days=1)
+    for _ in range(10):
+        if is_trading_day(nxt):
+            break
+        nxt += timedelta(days=1)
+    return {"range": rng or None, "vwap": vw, "vwap_where": where, "window_end": config.options.window_end, "window_start": config.options.window_start,
+            "next": nxt.isoformat(), "checks": len(d.get("checked") or [])}
 
 
 class _Steps:
@@ -439,8 +457,9 @@ class _Steps:
         if why:
             _exit(st, config, client, now, why)
         elif o is not None and _daily_loss(st, config.options)["hit"]:
-            _alert(st, now, "daily_loss", f"daily loss limit reached · {_daily_loss(st, config.options)['used']:,.0f} of "
-                   f"{_daily_loss(st, config.options)['limit']:,.0f} · no new entries today · the open spread keeps its stops", key="daily_loss")
+            dl = _daily_loss(st, config.options)
+            _alert(st, now, "daily_loss", f"daily loss limit reached · {dl['used']:,.0f} of {dl['limit']:,.0f} · no new entries today · "
+                   "the open spread keeps its stops", key="daily_loss", data=dl)
 
     @staticmethod
     def kill_exit(st, config, client, now):
@@ -461,7 +480,7 @@ class _Steps:
         d["done"].append("no_trade")
         d["status"], d["why"] = "no_trade", f"no break by {ampm(config.options.window_end)}"
         _tl(st, now, "no trade today · no bias by " + ampm(config.options.window_end), key="no_trade")
-        _alert(st, now, "no_trade", f"no trade today · no bias by {ampm(config.options.window_end)}", key="no_trade")
+        _alert(st, now, "no_trade", f"no trade today · no bias by {ampm(config.options.window_end)}", key="no_trade", data=_no_trade_data(d, config, now))
 
     @staticmethod
     def close_snap(st, config, client, now):
@@ -536,28 +555,28 @@ def _bias_found(st, config, client, now, slot, res, bar, vw, q, sc) -> None:
                 loud = [r for r in reasons if not r.startswith(("re-entry only", f"{c.max_trades_day} trades"))]
                 if loud:                                           # the day's own limits are not news; the guards are
                     kind = "event_day" if "event day" in reasons else "skipped"
-                    _alert(st, now, kind, f"{bias} found · no entry · {' · '.join(reasons)}", key=key)
+                    _alert(st, now, kind, f"{bias} found · no entry · {' · '.join(reasons)}", key=key, data={"bias": bias, "reasons": reasons})
         return
     if not q or not sc:
         _tl(st, now, f"{bias} · chain not available · no entry", key=f"nochain|{slot}")
         return
     if sc["score"] == 0:
         _tl(st, now, f"{bias} · chain disagrees ({sc['line']})", key=f"disagree|{bias}")
-        _alert(st, now, "chain_disagrees", f"bias found · chain disagrees · {bias} · {sc['line']}", key=f"disagree|{bias}")
+        _alert(st, now, "chain_disagrees", f"bias found · chain disagrees · {bias} · {sc['line']}", key=f"disagree|{bias}", data={"bias": bias, "line": sc["line"], "score": 0})
         return
     lots, notes = lots_for(c, st["capital"], q.get("vix"), sc["score"], sc["crowded"])
     d["size_note"] = " · ".join(notes) if notes else None
     for n in notes:
         if n.startswith("VIX"):
-            _alert(st, now, "vix_half", n, key="vix_half")
+            _alert(st, now, "vix_half", n, key="vix_half", data={"vix": q.get("vix"), "half_at": c.vix_half, "lots": lots})
     if lots < 1:
         _tl(st, now, f"{bias} · no trade · " + (" · ".join(notes) or "0 lots"), key=f"nolots|{bias}")
-        _alert(st, now, "no_trade_size", f"{bias} · no trade · " + (" · ".join(notes) or "0 lots"), key=f"nolots|{bias}")
+        _alert(st, now, "no_trade_size", f"{bias} · no trade · " + (" · ".join(notes) or "0 lots"), key=f"nolots|{bias}", data={"bias": bias, "notes": notes})
         return
     sel = ch.select_strikes(bias, q["rows"], q["spot"], sc["walls"], c.otm_pct, c.max_delta, c.min_premium, c.hedge_points)
     if not sel["ok"]:
         _tl(st, now, f"{bias} · no trade · {sel['why']}", key=f"nostrike|{bias}")
-        _alert(st, now, "no_trade_strikes", f"{bias} · no trade · {sel['why']}", key=f"nostrike|{bias}")
+        _alert(st, now, "no_trade_strikes", f"{bias} · no trade · {sel['why']}", key=f"nostrike|{bias}", data={"bias": bias, "why": sel["why"]})
         return
     _enter(st, config, now, bias, q, sc, sel, lots)
 
@@ -593,7 +612,9 @@ def _enter(st: dict, config: AppConfig, now: datetime, bias: str, q: dict, sc: d
     _tl(st, now, f"{'re-entry · ' if o['n'] > 1 else ''}sold {s['strike']:,.0f} {s['type']} @ {s['entry']:.2f} · bought {h['strike']:,.0f} {h['type']} @ {h['entry']:.2f} · "
         f"credit {credit:.2f} x {qty} = ₹{credit * qty:,.0f} · {lots} lot{'s' if lots != 1 else ''} · stop {o['stop_premium']:.2f} · target {o['target_value']:.2f}", key=f"entry|{o['n']}")
     _alert(st, now, "entry", f"{bias} · sold {s['strike']:,.0f} {s['type']} / bought {h['strike']:,.0f} {h['type']} · credit ₹{credit * qty:,.0f} · "
-           f"stop {o['stop_premium']:.2f} · target {o['target_value']:.2f} · worst case ₹{o['worst_case']:,.0f} · {sc['line']}", key=f"entry|{o['n']}")
+           f"stop {o['stop_premium']:.2f} · target {o['target_value']:.2f} · worst case ₹{o['worst_case']:,.0f} · {sc['line']}", key=f"entry|{o['n']}",
+           data={**o, "range": d.get("range"), "prev": d.get("prev"), "vix": d.get("vix"), "close": (d.get("checks") or [{}])[-1].get("close") if d.get("checks") else None,
+                 "window": {"start": c.window_start, "end": c.window_end}, "target_pct": c.target_pct})
     return o
 
 
@@ -628,7 +649,7 @@ def _mark(st: dict, config: AppConfig, client, now: datetime) -> Optional[str]:
     o["pnl"] = _open_pnl(o)
     o["marked_at"] = now.isoformat(timespec="seconds")
     if s["mid"] <= o["be_at"] and not o["be_active"]:
-        o["be_active"] = True
+        o["be_active"], o["be_t"] = True, ampm(now)
         _tl(st, now, f"sold premium {s['mid']:.2f} · decayed {c.be_after_pct:g}% · stop now breakeven", key=f"be|{o['n']}")
     if s["mid"] >= o["stop_premium"]:
         return "premium stop"
@@ -687,7 +708,7 @@ def _exit(st: dict, config: AppConfig, client, now: datetime, why: str, force: b
          "sold": {**o["sold"], "exit": sold_px}, "hedge": {**o["hedge"], "exit": hedge_px}, "credit": o["credit"], "cost": cost,
          "credit_rs": o["credit_rs"], "gross": round((o["credit"] - cost) * qty, 2), "charges": round(o["charges_in"] + ch_out, 2), "net": net,
          "in": o["opened_t"], "out": ampm(now), "opened_at": o["opened_at"], "closed_at": now.isoformat(timespec="seconds"), "why": why,
-         "label": EXIT_LABEL.get(why, why), "est": est, "score": o["score"], "chain_line": o["chain_line"], "be_active": o["be_active"],
+         "label": EXIT_LABEL.get(why, why), "est": est, "score": o["score"], "chain_line": o["chain_line"], "be_active": o["be_active"], "be_t": o.get("be_t"),
          "spot_in": o.get("spot_at_entry"), "spot_out": q["spot"] if q else o.get("spot"), "book": TAG}
     with get_db() as conn:
         conn.execute("INSERT INTO options_trades (day, payload) VALUES (?, ?)", (d["date"], json.dumps(t)))
@@ -699,7 +720,7 @@ def _exit(st: dict, config: AppConfig, client, now: datetime, why: str, force: b
     _tl(st, now, f"{EXIT_LABEL.get(why, why)} · bought back {o['sold']['strike']:,.0f} {o['sold']['type']} @ {sold_px:.2f} · sold hedge @ {hedge_px:.2f} · "
         f"net {net:+,.0f}" + (" · at the last known mid" if est else ""), key=f"exit|{o['n']}")
     _alert(st, now, "exit", f"{EXIT_LABEL.get(why, why)} · {o['bias']} {o['sold']['strike']:,.0f} {o['sold']['type']} spread · net ₹{net:+,.0f}"
-           + (" · closed at the last known mid (no quote)" if est else ""), key=f"exit|{o['n']}")
+           + (" · closed at the last known mid (no quote)" if est else ""), key=f"exit|{o['n']}", data=t)
     return t
 
 
@@ -727,7 +748,11 @@ def _summarise(st: dict, config: AppConfig, now: datetime) -> dict:
                      (d["date"], eq, round(eq + st["charges"], 2), (d.get("chain") or {}).get("spot")))
     st["last_day"] = row
     _tl(st, now, f"day summary · {row['result']} · P&L {row['pnl']:+,.0f}", key="summary")
-    _alert(st, now, "summary", f"day summary · {row['result']} · P&L ₹{row['pnl']:+,.0f} · equity ₹{eq:,.0f}", key="summary")
+    dl = days(10000)
+    traded = [x for x in dl if x.get("trades")]
+    _alert(st, now, "summary", f"day summary · {row['result']} · P&L ₹{row['pnl']:+,.0f} · equity ₹{eq:,.0f}", key="summary",
+           data={"row": row, "book": {"equity": eq, "capital": st["capital"], "started": st.get("started"), "days": len(dl), "traded": len(traded),
+                                      "won": sum(1 for x in traded if (x.get("pnl") or 0) > 0), "return": round((eq - st["capital"]) / st["capital"] * 100, 2) if st["capital"] else 0.0}})
     return row
 
 
@@ -917,7 +942,7 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
                                    {"t": ampm(c.time_exit), "text": "time exit"}, {"t": ampm("15:20"), "text": "hard exit"}, {"t": ampm("15:30"), "text": "close snapshot"},
                                    {"t": ampm("15:35"), "text": "day summary"}]},
             "guards": guards, "margin": margin, "cards": _cards(st, c, dl, eq, open_pnl), "open": _open_view(o, c), "bias": _bias_steps(d, c),
-            "chain": chain_view(st, today), "rules": RULES, "days": dl, "trades": trades(50), "alerts": list(reversed((st or {}).get("alerts") or []))[:30],
+            "chain": chain_view(st, today), "rules": RULES, "days": dl, "trades": trades(50), "alerts": [{k: v for k, v in a.items() if k != "data"} for a in reversed((st or {}).get("alerts") or [])][:30],
             "deposits": (st or {}).get("deposits") or [], "curve": _curve(), "notes": (st or {}).get("notes") or [], "last_day": (st or {}).get("last_day"),
             "contracts": oi.status(), "updated_at": (st or {}).get("updated_at"), "now": now.isoformat(timespec="seconds")}
     return base

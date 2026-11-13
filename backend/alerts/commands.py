@@ -5,6 +5,8 @@
   skip SYM / unskip SYM / hold   the morning dry run: skip one planned real BUY for today, send it after all,
                                  or hold every BUY (EXITs always go out); also with a slash; refused after send_until
   fut skip SYM / fut unskip SYM / fut hold   the same for the futures book's plan (paper fill and real send)
+  opt / opt close / opt hold   the options book: today's status and the open spread; close the spread now; no new
+                               entries today
 
 Only messages from the configured chat_id are answered; anyone else is ignored.
 Commands older than STALE_SEC (sent while the app was off) are skipped. The poller
@@ -30,6 +32,7 @@ logger = setup_logger("bot")
 
 STALE_SEC = 120
 MORNING_WORDS = ("skip", "unskip", "hold")
+OPTIONS_WORDS = ("close", "hold")
 
 
 class BotCommands:
@@ -74,6 +77,8 @@ class BotCommands:
                 continue
             if parts[0].lower() == "fut" and len(parts) > 1 and parts[1].lower() in MORNING_WORDS:   # "fut skip NRL" / "fut hold"
                 parts = ["/fut" + parts[1].lower()] + parts[2:]
+            if parts[0].lower() in ("opt", "/opt"):                                                # "opt" / "opt close" / "opt hold"
+                parts = ["/opt" + (parts[1].lower() if len(parts) > 1 and parts[1].lower() in OPTIONS_WORDS else "")] + parts[2:]
             if parts[0].lower() in MORNING_WORDS:          # the reminder's reply: "skip NRL" / "hold", no slash needed
                 parts[0] = "/" + parts[0].lower()
             if not parts[0].startswith("/"):
@@ -209,12 +214,30 @@ class BotCommands:
                 "/futhold": "⏸ Every futures entry held today; the EXITs still go out."}[command]
         return head + "\n" + msg.futures_preview(m, cfg.real.send_time)
 
+    def options(self, command: str) -> str:
+        """opt: today's status and the open spread · opt close: close the open spread now (the result) · opt hold: no
+        new entries today (an open spread keeps its exits). Paper only, like the book."""
+        from backend.options import book
+        cfg, now = self.state.config, self.clock()
+        if command == "/optclose":
+            try:
+                res = book.close_now(cfg, self.state.client, now)
+            except ValueError as exc:
+                return f"Not changed: {msg.escape(str(exc))}."
+            return msg.options_exit("closed by you", res["trade"])
+        if command == "/opthold":
+            book.hold_today(cfg, now, "hold today (Telegram)")
+            return "⏸ No new options entries today; an open spread keeps its exits.\n" + msg.options_status(book.summary(cfg, now))
+        return msg.options_status(book.summary(cfg, now))
+
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
         if command in ("/skip", "/unskip", "/hold"):
             return self._say(notifier, self.morning(command, arg, notifier))
         if command in ("/futskip", "/futunskip", "/futhold"):
             return self._say(notifier, self.futures(command, arg))
+        if command in ("/opt", "/optclose", "/opthold"):
+            return self._say(notifier, self.options(command))
         if command == "/login":
             if send_login_link(st, notifier, "requested", f"bot-login|{uuid.uuid4().hex}", now):
                 return True
@@ -247,5 +270,6 @@ class BotCommands:
         if command in ("/start", "/help"):
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold (today's real "
-                                       "BUYs, before the send) · fut skip SYM / fut hold (the futures plan). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
+                                       "book). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

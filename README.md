@@ -337,6 +337,7 @@ bananapatterns/
 │  │  ├─ login.py             Kite login-link alert, session check (profile), login confirmation
 │  │  ├─ commands.py          Telegram /login and /status (long-poll getUpdates, own chat only)
 │  │  └─ jobs.py              scheduler: login reminder, evening job, intraday heads-up, weekly refresh
+│  ├─ options/          🧩 NIFTY weekly options book (paper): instruments, chain, greeks, bias, book, data
 │  └─ engine/
 │     ├─ indicators.py        causal SMA, trailing stats
 │     ├─ bases.py             base (consolidation box) detector + breakout metrics
@@ -1272,6 +1273,124 @@ Step 4 (`backend/futures/sender.py`): the webhook to the Tradetron deployment "S
 - **Check**: `sender.check()` → `{token_set, url_host, gap_s, window: {open, close, state: open|closed|holiday, ok},
   user_agent}`, in the summary as `GET /api/futures` → `sender`. Tests: `tests/test_futures_sender.py`.
 
+### 🧩 NIFTY options — book, page, alerts
+
+The options module (`backend/options/`, `frontend/src/components/OptionsPage.jsx` under Strategies › 🧩 Options, shortcut
+g+o): one **paper** book (`options.capital`, ₹3,00,000, deposits like the other books) that sells **one NIFTY weekly credit
+spread a day** (two at most) on the opening-range bias, confirmed by the option chain, and is flat by 15:10. NIFTY weekly
+options only; no backtest (Kite keeps no history for expired options). The **Real switch exists but cannot be turned on**:
+"no webhook yet · stays off" (`PUT /api/options/settings {real: true}` and `PUT /api/config/options {real: true}` answer
+400 "not wired"; there is no sender and no token). Kite is used for quotes and 1-minute candles only; nothing reads broker
+positions, and a chain fetch for ±12 strikes is one quote call.
+
+**Contracts** (`instruments.py`): the NIFTY option rows of the NFO dump once a day (`options_contracts`, near and next
+weekly expiry, the lot size from the dump, never hard-coded); the nearest expiry is the day's; sessions to expiry are shown
+everywhere; expiry day is traded with the tighter stop.
+
+**Bias** (`bias.py`, 9:45–11:00 on 5-minute closes): opening range = the NIFTY 50 index 9:15–9:30 high / low (1-minute
+candles, token 256265); **BULLISH** when a 5-minute close is above the range high AND above VWAP AND at or over the previous
+day's high; **BEARISH** is the mirror (below the range low, below VWAP, at or under the previous low). VWAP comes from the
+near-month NIFTY futures' 1-minute candles (the index has no volume), labelled "VWAP (futures)". No break by `window_end`
+(11:00) → "no trade today".
+
+**Chain score** (`chain.py`, 0–3 at the moment of the bias): (1) **walls**: the biggest put OI strike below spot =
+support, the biggest call OI strike above = resistance; +1 when a bullish bias has spot over the nearest call wall or
+≥ 0.5% over the put wall (mirror); (2) **OI change** since the 9:30 snapshot (else the previous close snapshot) on strikes
+within ±2% of spot: +1 when put OI builds and call OI does not for a bullish bias (mirror); (3) **PCR** by OI over
+±10 strikes: +1 over `pcr_bull` (1.1) for bullish / under `pcr_bear` (0.9) for bearish; PCR > 1.5 or < 0.6 is "crowded"
+and halves the size. Score 2–3 → full size; 1 → half (so no trade when only one lot was allowed); 0 → no trade ("bias
+found · chain disagrees"). The chain line (e.g. `support 24,800 · resistance 25,300 · put OI building · PCR 1.24 → 3/3`)
+is step 4 of "How the bias was found" and goes out with the alert. IV (put side vs call side) is displayed, not a rule.
+Delta / IV come from Black-Scholes on the mid (`greeks.py`, r = 6.5%, time = sessions / 252 with the intraday fraction).
+
+**Strikes**: the sold leg = the **farther** of (1% OTM on the 50-point grid) and (the first strike with |delta| ≤
+`max_delta` 0.30); for a bullish bias at or below the put wall when it is within 1.5% (mirror: at or above the call wall);
+the sold premium must be ≥ `min_premium` ₹20, else one strike nearer up to delta 0.35, else no trade. The hedge = sold ∓
+`hedge_points` (250); 200 when its premium is under ₹2. **Size**: 1 lot per `capital_per_lot` (₹1,50,000), `max_lots` 2;
+India VIX > `vix_half` (20) halves (1 lot at least).
+
+**Exits** (checked every minute while open): the sold premium ≥ entry × (1 + `stop_pct`/100) (50%; `stop_pct_expiry` 35%
+on expiry day), or a 5-minute close back through VWAP against the bias; once the sold premium has decayed `be_after_pct`
+(40%) the stop becomes **breakeven** (exit when the spread's value is back at the entry credit); **target** when the
+spread's value ≤ (1 − `target_pct`/100 = 40%) of the credit; **time exit** at `time_exit` (15:10); a **hard exit** at
+15:20 at the last known mids if the 15:10 one found no quote; the kill switch closes at once; **nothing is ever held
+overnight**. One re-entry a day, only when the bias flips before 11:00 (`max_trades_day` 2).
+
+**Guards** (no new entry; an open spread keeps its exits): kill switch (`options.killed`), enable switch off, hold-today
+(the page's Hold button, `POST /api/options/hold`, Telegram `opt hold`), an **event day** (`options.event_days`, ISO dates,
+shown on the page), a gap at the open over `max_gap_pct` (1%) from the previous close, the **daily loss limit**
+(`daily_loss_pct` 1.5% of capital on realised + open loss), 2 trades done, outside the window, no Kite login ("no data ·
+Kite login missing", recorded and alerted once). Margin is an estimate, `margin_per_lot` (₹52,000) × lots; worst case =
+spread width × quantity − credit.
+
+**Paper fills and charges**: sell at the mid − ₹1, buy at the mid + ₹1 (never the last price); MTM every minute from the
+quotes' mids; per order brokerage ₹20, STT 0.1% of the premium on the sell side, exchange 0.0495%, SEBI ₹10 a crore, GST
+18% on brokerage + exchange, stamp 0.003% on the buy side (four orders a round trip).
+
+| Table | Rows |
+|---|---|
+| `options_contracts` | the NIFTY weekly option rows per dump day (as_of, expiry, strike, type, token, tradingsymbol, lot_size) |
+| `options_chain_snap` | chain snapshots (ts, kind open / bias / live / close, expiry, strike, type, ltp, bid, ask, oi, iv, delta): 9:30, every 5 min 9:45–11:00, every minute while a spread is open (the legs ±3 strikes), 15:30 (the next day's OI baseline) |
+| `options_days` | one row a trading day: status, why, range, gap, previous day, VWAP, VIX, bias and time, score, chain line, strikes, credit, lots, result, P&L, charges, equity, the timeline |
+| `options_trades` | closed spreads (legs with fills, credit, cost, charges, net, why, breakeven armed at, spot in / out) |
+| `options_state` | the JSON book state (capital, cash, charges, deposits, today, the open spread, notes, the alerts) |
+| `options_equity` | equity per day (gross before charges, NIFTY spot) |
+
+Nothing is deleted: a day summarised again rewrites its row.
+
+**Jobs**: one scheduler job, `options_tick`, every minute 9:15–15:40 on trading days while the book is active
+(`book.due`, like futures; on the ⏱ Next up list). The minute's steps (`book.steps`, pure): first tick → contracts; 9:30
+→ range, gap, previous-day levels, the 9:30 chain snapshot (OI baseline); 9:45–11:00 → the bias on each 5-minute close
+with a chain fetch and snapshot; every minute while open → MTM, the stops, the target, the live snapshot; 15:10 time exit;
+15:20 hard exit; 15:30 close snapshot; 15:35 day summary (→ `options_days`, `options_equity`). Health rows `opt_contracts`
+(the dump's age) and `opt_chain` (the last snapshot).
+
+**API**: `GET /api/options` (the summary: `{started, capital, cash, equity, net, return, mtm_today, realised_today,
+open_pnl, charges, switches: {paper, real, enabled, killed, real_allowed, real_note}, settings, today: {status, why,
+timeline, range, prev, gap_pct, vwap, vix, trades, realised, hold, no_data, size_note, closed, schedule}, guards: {kill,
+enabled, paper, hold, event_day, event_days, gap, daily_loss: {used, limit, hit}, window, trades, no_data, trading_day,
+vix}, margin: {per_lot, lots, est, worst_case, expiry, sessions_to_expiry, expiry_day, lot_size}, cards, open (the spread
+with its legs, value, pnl, stops, `near_stop`, footer), bias: {state, at, score, line, steps, checks, window}, chain:
+{strikes: [{strike, ce, pe}], walls, pcr, score, line, oi_chg, iv, baseline}, rules, days, trades, alerts, deposits, curve,
+contracts}`; opening the page starts the book), `PUT /api/options/settings {paper, enabled}` (real → 400),
+`POST /api/options/kill?on=`, `POST /api/options/close` (close the open spread now; the page confirms),
+`POST /api/options/hold`, `POST /api/options/capital`, `GET /api/options/days?limit=`, `GET /api/options/trades`,
+`GET /api/options/chain`. Stream topic `options`.
+
+**Page** (per the approved mock): Switches (Paper, Enabled, Kill; Real disabled with its note) / Today timeline / Guards /
+Margin · risk panels; six cards (capital, equity, today, win rate, days, charges); the Open spread table (legs) with its
+footer line; How the bias was found (4 steps, step 4 carries the chain line); the Option chain panel (OI bars ±5 strikes,
+OI change as colour, walls and PCR labelled); Rules; Recent days; Alerts. Home card "Options" and the spread's legs as
+positions ("Options · paper"); Settings section `options` (Real hidden). Phone: panels stack, tables fold.
+
+**Alerts** (Telegram, tagged "paper"; `backend/alerts/messages.py` `options_*`, sent by `run_options_tick` right after
+the tick from the alerts the book recorded, each once — the key `day|opt-kind-key` in `sent_alerts`, so a restart never
+repeats one; no extra Kite call): 🧭 the bias found with the price line (range, VWAP, previous-day level), the SELL / BUY
+legs with lots and credit, stop / target / worst case, margin · sessions · VIX, the chain line; 🎯 target / 🛑 premium,
+VWAP or breakeven stop / ⏱ time or hard exit / ✋ closed by you with the P&L, the time held and "breakeven stop was armed
+at …"; 🧭 "no trade today" at 11:00 with the range, where VWAP sat and the next look; 🌙 the 15:35 day summary (trades,
+P&L, book value and return since the start, days traded of days, win rate); one-liners for "bias found · chain
+disagrees", the daily loss limit, an event day skipped, VIX half size, no sold strike with enough premium, and "no data ·
+Kite login missing". Rupees use the Indian grouping (₹3,06,800), times are 12-hour IST. **Commands**: `opt` (today's
+status, the open spread with its P&L, the book), `opt close` (close the open spread now, the exit line replies), `opt
+hold` (no new entries today). **Attention** (the 🧩 dot): the kill switch, an open spread within 20% of the way to its
+premium stop, the daily loss limit hit, no data on a trading day, no login with a spread open.
+
+**Settings** (`options.*`, section "Options"; `real` is not shown and cannot be set):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `capital` / `capital_per_lot` / `max_lots` | 300000 / 150000 / 2 | the book's capital; 1 lot per this much; lots at most |
+| `hedge_points` / `max_delta` / `min_premium` / `otm_pct` | 250 / 0.30 / 20 / 1.0 | the hedge distance; the sold strike's delta cap, premium floor and OTM floor |
+| `stop_pct` / `stop_pct_expiry` / `be_after_pct` / `target_pct` | 50 / 35 / 40 / 60 | the premium stop (expiry day), the breakeven switch, the target |
+| `time_exit` / `window_start` / `window_end` | 15:10 / 09:45 / 11:00 | the time exit; the bias window |
+| `max_trades_day` / `daily_loss_pct` / `max_gap_pct` | 2 / 1.5 / 1.0 | one re-entry; the daily loss limit (% of capital); the gap filter |
+| `vix_half` / `pcr_bull` / `pcr_bear` | 20 / 1.1 / 0.9 | VIX half size; the PCR thresholds of the chain score |
+| `margin_per_lot` / `event_days` | 52000 / "" | the margin estimate per lot; no-entry dates (ISO, comma-separated) |
+| `paper` / `enabled` / `real` | on / on / off | the switches (`real` stays off: not wired) |
+
+Tests: `tests/test_options_rules.py`, `tests/test_options_book.py`, `tests/test_options_api.py`, `tests/test_options_alerts.py`.
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -1335,7 +1454,8 @@ chat only):
 | 🔕 Quiet today | (live guard alerts) no more live alerts on that stock today |
 
 Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
-`/mute SYM`, `/chart SYM`, `/help`.
+`/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` (today's real BUYs), `fut skip SYM` / `fut hold`
+(the futures plan), `opt` / `opt close` / `opt hold` (the options book).
 
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
@@ -2419,3 +2539,17 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Tests: `tests/test_paper.py` covers the migration (A rows deleted, E rows and candles kept, second run silent) and a
   saved config still listing `["A", "E"]` / `top_e` / `real.variant = "A"`; the rule tests pin swing.py's plain rules
   (`regime_mode="sma200"`, top 200, no trail) explicitly, since those are no longer the defaults.
+
+### 2026-11-13: 🧩 NIFTY options, step 3: alerts, commands, attention, README
+- **Telegram** (`messages.py` `options_*`, tagged "paper"): the four shapes of the approved mock — 🧭 the bias found
+  with the spread (price line, SELL / BUY legs with lots and credit, stop / target / worst case, margin · sessions · VIX,
+  the chain line), 🎯 / 🛑 / ⏱ / ✋ the exit with the P&L, the time held and the breakeven stop's time, 🧭 "no trade
+  today" at 11:00 with the range, VWAP's place and the next look, 🌙 the day summary (trades, P&L, book and return since
+  the start, days traded, win rate) — plus one-liners for chain disagrees, the daily loss limit, an event day, VIX half
+  size, no strike, no data. `inr()` groups rupees the Indian way (₹3,06,800). `run_options_tick` sends what the book
+  recorded, each once (`day|opt-kind-key` in `sent_alerts`; a restart never repeats one; no extra Kite call); the
+  book's alerts now carry `key` and a `data` payload (the API's list leaves the payload out), a trade records `be_t`.
+- **Commands** `opt` (status), `opt close` (closes the spread now and answers with the exit line), `opt hold`.
+- **Attention** for the 🧩 dot: kill switch, a spread within 20% of the way to its premium stop, the daily loss limit,
+  no data on a trading day, no login with a spread open. README section "NIFTY options — book, page, alerts".
+- Tests: `tests/test_options_alerts.py`.
