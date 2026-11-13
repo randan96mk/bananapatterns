@@ -334,7 +334,7 @@ def test_report_shape_run_saved_and_verdict(monkeypatch):
         assert len(x["curve"]["dates"]) == len(x["curve"]["net"]) == len(x["curve"]["stress"]) == 160
         labels = [r["label"] for r in x["robust"]]
         assert labels == ["stop cap 4%", "stop cap 6%", "lot cap ₹5 L", "lot cap ₹7 L", "roll T-1", "roll T-3", "slippage +0.3%",
-                          "3 lots", "walk-forward (years)"]
+                          "3 lots", "no roll (close at T-2)", "roll winners only", "walk-forward (years)"]
         assert x["robust_of"] == fb.ROBUST_COUNTED == 7 and 0 <= x["robust_pass"] <= 7
         assert isinstance(x["verdict"], bool) and x["net"] == pytest.approx(x["gross"] - x["costs"], abs=0.02)
     assert out["long"]["trades"] == 2 and out["long"]["rolls"]["n"] == 4 and out["long"]["exits"]["end"] == 2
@@ -421,3 +421,31 @@ def test_routes_and_short_real_gate(api, monkeypatch):
     for t in threading.enumerate():
         if t.name == "futures-backtest":
             t.join(timeout=120)
+
+
+def test_roll_mode_never_and_winners(monkeypatch):
+    long_world(monkeypatch)
+    cfg = cfg_for()
+    data = fb.load(cfg)
+    p = tb.rules(cfg, "E")
+    cal = data["cal"]
+    base = fb.simulate(data, cfg.futures, p, "long", fb.SLIP_PCT)
+    t = next(x for x in base["trades"] if x["sym"] == "UP")
+    exps = [x for x in data["expiries"] if t["in"] <= x["expiry"] < t["out"]]
+    assert exps and t["rolls"] == len(exps)
+    # never: no position pays a roll; UP closes at T-2 before its first expiry as a roll exit
+    never = fb.simulate(data, replace(cfg.futures, roll_mode="never"), p, "long", fb.SLIP_PCT)
+    assert not [r for r in never["rolls"] if r["kind"] == "roll"]
+    u = next(x for x in never["trades"] if x["sym"] == "UP")
+    assert u["why"] == "roll_exit" and u["rolls"] == 0 and u["out"] == cal[exps[0]["i"] - 2 + 1]
+    for x in data["expiries"]:                                                   # nothing is held across an expiry on the near month
+        for tr in never["trades"]:
+            if tr["in"] <= x["expiry"] < tr["out"]:
+                assert tr["contract"] == "next"
+    # winners: UP (above its entry at T-2) rolls exactly as in the base run
+    win = fb.simulate(data, replace(cfg.futures, roll_mode="winners"), p, "long", fb.SLIP_PCT)
+    w = next(x for x in win["trades"] if x["sym"] == "UP")
+    assert w["rolls"] == t["rolls"] and w["out"] == t["out"] and w["why"] == t["why"]
+    labels = [n[0] for n in fb.neighbours(cfg.futures)]
+    assert "no roll (close at T-2)" in labels and "roll winners only" in labels
+    assert [n[4] for n in fb.neighbours(cfg.futures)].count(True) == fb.ROBUST_COUNTED

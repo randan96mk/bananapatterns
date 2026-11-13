@@ -1156,7 +1156,7 @@ no_bar}, no_slot_days, loss_days, curve: {dates, net, stress}, splits: [{name, f
 val / OOS), years: [{year, net, nifty}], robust: [{label, counted, cagr, stress_cagr, drawdown, periods,
 stress_periods, trades, ok}], robust_pass, robust_of, exits: {stop, trail, time, rule, roll_exit, end}, stress: {cagr,
 net, costs, drawdown, trades}, ok_splits, beats_nifty, verdict, reasons, trades_rows, roll_rows}`. Robustness
-neighbours: stop cap 4% / 6%, lot cap ₹5 L / ₹7 L, roll T-1 / T-3, slippage +0.3% (the 7 counted), plus "3 lots" and
+neighbours: stop cap 4% / 6%, lot cap ₹5 L / ₹7 L, roll T-1 / T-3, slippage +0.3% (the 7 counted), plus "3 lots", "no roll (close at T-2)", "roll winners only" (`futures.roll_mode` never / winners: a position below its entry closes at T-2 instead of rolling) and
 "walk-forward (years)" shown for information. **Verdict** per side: profitable after costs in every split (normal and
 stressed), CAGR over NIFTY 50's, drawdown ≤ 15% (long) / 20% (short), `robust_pass` ≥ 5 of 7; `reasons` lists what
 failed.

@@ -404,6 +404,7 @@ class FuturesConfig:
     daily_loss_pct: float = 3.0            # guard: no new entries once the day's loss reaches this % of capital
     heat_pct: float = 12.0                 # guard: sum of risk to stops at most this % of capital
     roll_days: int = 2                     # roll (or exit) T-N sessions before expiry; never hold into expiry day
+    roll_mode: str = "always"              # at T-N: "always" roll, "never" (close instead), "winners" (roll only above entry)
     results_guard_sessions: int = 3        # no entry with results within this many sessions
     long_paper: bool = True                # the long side on paper
     long_real: bool = False                # the long side for real (switch on the Futures page)

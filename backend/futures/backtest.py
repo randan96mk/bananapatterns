@@ -439,6 +439,10 @@ def simulate(data: dict, cfg: FuturesConfig, p, side: str, slip: float, first: O
                     pend_exit[sym] = "roll_exit"
                     continue
                 px = pos["last"]
+                winning = (px - pos["px"]) * sign > 0
+                if cfg.roll_mode == "never" or (cfg.roll_mode == "winners" and not winning):
+                    pend_exit[sym] = "roll_exit"                               # close at T-N instead of paying another month
+                    continue
                 f_out, f_in = fill_price(px, side == "short", slip), fill_price(px, side == "long", slip)
                 ch = futures_charges(f_out * pos["qty"], sell=(side == "long")) + futures_charges(f_in * pos["qty"], sell=(side == "short"))
                 slip_cost = (abs(px - f_out) + abs(f_in - px)) * pos["qty"]
@@ -557,13 +561,16 @@ def evaluate(data: dict, cfg: FuturesConfig, p, side: str, nifty_cagr: float, sl
 
 
 def neighbours(cfg: FuturesConfig) -> list[tuple]:
-    """(label, cfg, slip, lots, counted): the counted neighbours first (ROBUST_COUNTED of them), then the two shown
-    for information (3 lots, walk-forward is computed from the base run)."""
+    """(label, cfg, slip, lots, counted): the counted neighbours first (ROBUST_COUNTED of them), then the ones shown
+    for information: 3 lots, no roll (every position closes at T-N), roll winners only (a position below its entry
+    closes at T-N, one above it rolls); walk-forward is computed from the base run."""
     out = [(f"stop cap {v:g}%", replace(cfg, max_stop_pct=v), None, 1, True) for v in (4.0, 6.0)]
     out += [(f"lot cap {eligibility.lakh(v, True)}", replace(cfg, max_lot_value=v), None, 1, True) for v in (500000.0, 700000.0)]
     out += [(f"roll T-{v}", replace(cfg, roll_days=v), None, 1, True) for v in (1, 3)]
     out += [("slippage +0.3%", cfg, SLIP_PCT + 0.3, 1, True)]
     out += [("3 lots", cfg, None, 3, False)]
+    out += [("no roll (close at T-%d)" % cfg.roll_days, replace(cfg, roll_mode="never"), None, 1, False)]
+    out += [("roll winners only", replace(cfg, roll_mode="winners"), None, 1, False)]
     return out
 
 
