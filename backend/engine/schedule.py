@@ -80,7 +80,7 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
         add("real_stops", "🛡️", "Real stop check", f"every {r.stop_check_min} min · live price and day low",
             _next_every(now, _hm(r.send_time), MARKET_CLOSE, r.stop_check_min, getattr(sch, "last_real_stops", None)),
             r.stop_check_min, True)
-        add("real_send", "🚀", "Real orders sent", "the planned EXITs, then BUYs → Tradetron", _next_at(now, _hm(r.send_time)),
+        add("real_send", "🚀", "Real orders sent", "the planned EXITs, then BUYs → the webhook", _next_at(now, _hm(r.send_time)),
             None, True)
     try:                                                   # 📐 the futures book's own clock
         from backend.futures import book

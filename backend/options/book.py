@@ -47,11 +47,11 @@ RULES = [
     "NIFTY weekly options only · paper only · always a credit spread (sell one strike, buy one hedge_points further out)",
     "Bias 9:45-11:00 on 5-minute closes: above the 9:15-9:30 range high, above the futures VWAP and over the previous day's high = BULLISH (mirror = BEARISH)",
     "Chain score 0-3 at the bias: walls, OI change since 9:30 (else the previous close), PCR · 2-3 full size · 1 half · 0 no trade",
-    "Sold strike: the farther of 1% OTM and |delta| <= 0.30, at the wall when it is within 1.5%, premium >= Rs 20 · hedge 250 points out (200 when under Rs 2)",
-    "Size: 1 lot per Rs 1,50,000, 2 lots at most · VIX > 20 or a crowded PCR halves it",
+    "Sold strike: the farther of 1% OTM and delta ≤ 0.30, at the wall when it is within 1.5%, premium ≥ ₹20 · hedge 250 points out (200 when under ₹2)",
+    "Size: 1 lot per ₹1,50,000, 2 lots at most · VIX > 20 or a crowded PCR halves it",
     "Exits: sold premium +50% (+35% on expiry day) · a 5-minute close back through VWAP · breakeven after a 40% decay · target at 60% of the credit · 15:10 time exit · 15:20 hard exit",
     "No entry: event day, gap > 1%, daily loss 1.5% of capital, kill switch, hold-today, 2 trades done, outside the window",
-    "Paper fills at the mid -/+ Rs 1 a leg, never at the last price · charges per order like a real account · nothing is held overnight",
+    "Paper fills at the mid ∓ ₹1 a leg, never at the last price · charges per order like a real account · nothing is held overnight",
 ]
 
 
