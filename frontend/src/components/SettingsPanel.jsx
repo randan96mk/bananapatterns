@@ -76,7 +76,7 @@ const HELP = {
 const SECTIONS = ['real', 'paper', 'futures', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
 const NAMES = { real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
-const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real'] };
+const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
   max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this' };
 Object.assign(HELP, HELP2);
