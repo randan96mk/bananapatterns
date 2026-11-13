@@ -144,3 +144,28 @@ def test_routes_and_stream(api):
     assert {"opt_contracts", "opt_chain"} <= h
     with get_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM options_chain_snap").fetchone()[0] > 100              # nothing deleted along the way
+
+
+def test_home_overview_carries_the_options_book(prev_day_and_open_spread):
+    """🏠 Home: the options account (equity, today, the open spread) and the spread's legs as position rows."""
+    from backend.engine import overview
+    cfg = prev_day_and_open_spread
+    o = overview.overview(cfg)
+    a = o["accounts"]["options"]
+    assert a["name"] == "Options" and a["positions"] == 1 and a["bias"] == "BULLISH" and a["mode"] == "paper" and a["killed"] is False and a["lots"] == 2
+    rows = [p for p in o["positions"] if p["book"] == "options"]
+    assert [r["side"] for r in rows] == ["short", "long"] and rows[0]["stop"] and rows[1]["stop"] is None and rows[0]["symbol"].startswith("NIFTY 24,800 PE")
+    assert 0 < rows[0]["stop_dist"] < 100 and rows[0]["account"] == "Options · paper"
+    assert o["facts"]["options"]["open"] == 1 and o["facts"]["options"]["max_lots"] == 2
+    book.reset()
+    assert "options" not in overview.overview(cfg)["accounts"]                                        # no book: Home unchanged
+
+
+@pytest.fixture
+def prev_day_and_open_spread():
+    seed_prev_day()
+    cfg = AppConfig()
+    cfg.options = replace(cfg.options, capital=300000.0)
+    w = World(path({"09:30": 25050, "09:45": 25150}))
+    run_day(cfg, w, until=lambda s: s["open"])
+    return cfg

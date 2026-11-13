@@ -14,6 +14,7 @@ import BreakoutPage from './components/BreakoutPage';
 import PaperPage from './components/PaperPage';
 import RealPage from './components/RealPage';
 import FuturesPage from './components/FuturesPage';
+import OptionsPage from './components/OptionsPage';
 import { AttentionDot } from './components/AttentionStrip';
 import TodayPage from './components/TodayPage';
 import StatusBar from './components/StatusBar';
@@ -38,13 +39,13 @@ const ICONS = {
 };
 export const SECTIONS = [
   ['home', 'Home', [['home', 'Overview']]],
-  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout'], ['futures', '📐 Futures']]],
+  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout'], ['futures', '📐 Futures'], ['options', '🧩 Options']]],
   ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe']]],
   ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
-const DOTS = ['breakout', 'paper', 'real', 'futures'];
+const DOTS = ['breakout', 'paper', 'real', 'futures', 'options'];
 const Icon = ({ id }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
   strokeLinejoin="round" aria-hidden="true"><path d={ICONS[id]} /></svg>;
 
@@ -90,7 +91,7 @@ export default function App() {
       if (e.key === 'Escape') { setHelp(false); return; }
       if (e.key === 'g') { g = Date.now(); return; }
       if (Date.now() - g < 1500) {
-        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', f: 'flow', b: 'breakout', u: 'futures', o: 'follow', c: 'screens', a: 'alerts', d: 'data' }[e.key];
+        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', f: 'flow', b: 'breakout', u: 'futures', o: 'options', l: 'follow', c: 'screens', a: 'alerts', d: 'data' }[e.key];
         if (to) { go(to); g = 0; }
       }
     };
@@ -154,6 +155,7 @@ export default function App() {
           {tab === 'breakout' && <BreakoutPage />}
           {tab === 'real' && <RealPage />}
           {tab === 'futures' && <FuturesPage />}
+          {tab === 'options' && <OptionsPage />}
           {tab === 'paper' && <PaperPage />}
           {tab === 'follow' && <FollowPage />}
           {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
@@ -171,7 +173,7 @@ export default function App() {
         <b style={{ fontSize: 16 }}>⌨️ Keyboard</b>
         <table className="grid small" style={{ marginTop: 8 }}><tbody>
           {[['⌘K or /', 'search a stock or a page'], ['g then h', 'Home'], ['g then s', 'Strategies'], ['g then p', 'Portfolio'], ['g then r', 'Research'], ['g then y', 'System'],
-            ['g then f / b / u', 'Intraday Flow / Trend Breakout / Futures'], ['g then o / c', 'Follow / Screens'], ['g then a / d', 'Alerts / Data'], ['?', 'this list'], ['Esc', 'close']]
+            ['g then f / b / u / o', 'Intraday Flow / Trend Breakout / Futures / Options'], ['g then l / c', 'Follow / Screens'], ['g then a / d', 'Alerts / Data'], ['?', 'this list'], ['Esc', 'close']]
             .map(([k, l]) => <tr key={k}><td><kbd>{k}</kbd></td><td className="muted">{l}</td></tr>)}</tbody></table></div>}
       {cmdk && <CommandPalette sections={SECTIONS} symbols={symbols} onClose={() => setCmdk(false)}
         onPage={(p) => { go(p); setCmdk(false); }} onStock={(s) => { setStock(s); setCmdk(false); }} />}
