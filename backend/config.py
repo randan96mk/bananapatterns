@@ -281,7 +281,8 @@ class AlertsConfig:
     results_guard_sessions: int = 1        # guard: warn on a held stock this many sessions before its results
     # Exchange filings (NSE corporate announcements): news lines on alerts, 📰 on cards, filing alerts
     filings: bool = True
-    filings_interval_min: int = 15         # fetched every N minutes, 07:00-23:00, every day
+    filings_interval_min: int = 15         # fetched every N minutes, 07:00-23:00
+    filings_weekend_from: str = "18:00"    # weekends: off on Saturday, on Sunday only from this time (nothing to act on before)
     filings_alerts: bool = True            # push important filings on stocks you watch, hold or have in the plan
     news_days: int = 3                     # "recent" for alert news lines and card chips (calendar days)
     # Red flags and fund buying (filings + bulk / block deals + SAST holder disclosures)

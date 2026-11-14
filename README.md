@@ -676,8 +676,9 @@ Sessions count NSE trading days (Friday → Monday is the next session). Setting
 
 `backend/ingest/filings.py` keeps NSE's corporate announcements (`/api/corporate-announcements`: what each company
 has told the exchange) in the `filings` table for 120 days. The `filings` job fetches new ones every
-`filings_interval_min` (15) from 7:00 AM to 11:00 PM on every day (results often come out in the evening or on a
-Saturday); **Data → Refresh filings** does it by hand. A failed fetch keeps what is stored. Each filing gets a kind
+`filings_interval_min` (15) from 7:00 AM to 11:00 PM on weekdays and holidays, and on the weekend only from Sunday
+`filings_weekend_from` (6:00 PM) on, so the Monday plan sees the weekend's results but nobody is pinged on a Saturday
+when nothing can be acted on; **Data → Refresh filings** does it by hand. A failed fetch keeps what is stored. Each filing gets a kind
 from NSE's category and text:
 
 | Kind | From | Pushed? |

@@ -948,6 +948,61 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
     return base
 
 
+# --- the page's own reading (any day, holidays included) --------------------------------------------------
+
+VIEW_EVERY_S = 600                      # one "view" chain snapshot per 10 minutes at most when the page is open
+_view: dict = {"at": None}
+
+
+def _ts(ts: str) -> datetime:
+    t = datetime.fromisoformat(ts)
+    return t if t.tzinfo else t.replace(tzinfo=IST)
+
+
+def refresh_view(config: AppConfig, client, now: Optional[datetime] = None) -> bool:
+    """Opening the Options page reads the week's contracts and takes one "view" snapshot of the chain (OI, IV, walls,
+    PCR) whenever Kite is logged in, on holidays and weekends too, so the page always shows the current week. Throttled
+    to VIEW_EVERY_S; on a trading day the tick's own snapshots make this a no-op. Returns True when a snapshot was taken."""
+    now = now or datetime.now(IST)
+    if not _has_token(client):
+        return False
+    last = _view["at"]
+    if last and (now - last).total_seconds() < VIEW_EVERY_S:
+        return False
+    _view["at"] = now
+    today = now.date()
+    try:
+        oi.refresh(client, today)
+    except Exception as exc:
+        logger.warning("Options contracts refresh failed: %s", exc)
+    exp = oi.near_expiry(today.isoformat())
+    if not exp:
+        return False
+    snap = ch.last_snapshot()
+    if snap and snap.get("ts") and (now - _ts(snap["ts"])).total_seconds() < VIEW_EVERY_S:
+        return False
+    spot = (snap or {}).get("spot")
+    if not spot:
+        try:
+            spot = ((client.quote([ch.INDEX_KEY]) or {}).get(ch.INDEX_KEY) or {}).get("last_price")
+        except Exception as exc:
+            logger.warning("Options index quote failed: %s", exc)
+            return False
+    rows = ch.pick_rows(oi.chain(exp), spot or 0)
+    if not rows:
+        return False
+    try:
+        res = ch.fetch(client, rows, now.time(), int(oi.sessions_to_expiry(exp, today) or 0), spot, with_vix=True)
+    except Exception as exc:
+        logger.warning("Options chain quote failed: %s", exc)
+        return False
+    if not res["rows"]:
+        return False
+    ch.snapshot(today.isoformat(), "view", exp, res["rows"], res["spot"], now.isoformat(timespec="seconds"))
+    logger.info("Options chain view snapshot %s: %d rows, spot %s", exp, len(res["rows"]), res["spot"])
+    return True
+
+
 # --- the scheduler's clock ---------------------------------------------------------------------------------------
 
 def start(config: AppConfig, now: Optional[datetime] = None) -> dict:

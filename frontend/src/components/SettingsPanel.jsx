@@ -4,6 +4,7 @@ import { Head, Chip, Panel, Act } from './ui2';
 import * as api from '../services/api';
 
 const HELP = {
+  filings_weekend_from: 'Weekend rule for the Filings check: off on Saturday, on Sunday only from this time (24-hour HH:MM, IST)',
   send_gap_s: 'Seconds between two order webhooks at 9:16 (1–30); a 429 back-off adds to it',
   results_guard_sessions: 'Sessions before a results date: the position guard warns on a held stock (events); a planned real BUY that close to its results is skipped for the morning, switchable back on from the Real page or Telegram (real; 0 = off)',
   history_years: 'Backfill depth in years (8 ≈ 2 Kite calls per symbol)',

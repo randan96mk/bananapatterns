@@ -25,6 +25,7 @@ const Ell = ({ children, title, c = '' }) => <span className={c} title={title} s
 const RULE_LABELS = ['Book', 'Bias', 'Chain', 'Strikes', 'Size', 'Exits', 'No entry', 'Fills'];
 const STEP_META = { 'Opening range': '15-minute high and low on the NIFTY 50 index, 9:15–9:30', 'VWAP (futures)': 'VWAP from the near-month NIFTY future’s 1-minute candles (the index has no volume)',
   'Previous day': 'the previous session’s high must be taken for a bullish bias, its low for a bearish one', 'Option chain': 'walls · OI change since 9:30 · PCR → score 0–3 · 2–3 full size · 1 half · 0 no trade' };
+const SNAP_KIND = { view: 'last quotes', close: 'last close snapshot', open: '9:30 snapshot', bias: 'bias snapshot', live: 'live snapshot' };
 const STRIP_LABEL = { contracts: 'contracts', range: 'range set', open_snap: 'snapshot', entry: 'entered', be: 'breakeven', exit: 'exited', no_trade: 'no trade', close_snap: 'close snap',
   summary: 'summary', hold: 'hold', skip: 'no entry', disagree: 'chain says no', nochain: 'no chain', nolots: 'no size', nostrike: 'no strike', fail: 'failed', noquote: 'no quote', no_data: 'no data' };
 const ENDED = (r) => (/target/.test(r) ? 'ok' : /stop|kill/.test(r) ? 'bad' : /hard|no data|closed by you/.test(r) ? 'w' : '');
@@ -150,7 +151,7 @@ export default function OptionsPage() {
   const card = (c) => ({ rs: inr(c.value), rs_signed: signed(c.value), pct: c.value == null ? '—' : `${Math.round(c.value)}%`, n: c.value ?? '—' }[c.fmt] ?? c.value);
   const byKey = Object.fromEntries((d.cards || []).map((c) => [c.key, c]));
   const expiryChip = M.expiry ? <Chip title={`the nearest NIFTY weekly expiry from the contracts dump (as of ${d.contracts?.as_of || '—'})`}>expiry <b>{wday(M.expiry)} {day(M.expiry)}</b> · {sessions} session{sessions === 1 ? '' : 's'}{M.expiry_day ? <b className="warn"> · expiry day</b> : null} · lot {M.lot_size ?? '—'}</Chip>
-    : <Chip title="the weekly chain is read from the Kite instruments dump on the first tick of a trading day">no contracts yet · read on the first tick</Chip>;
+    : <Chip title="the week's contracts are read from the Kite instruments dump when this page opens (holidays too) and on the first tick of a trading day; needs the Kite login">no contracts yet · reading when Kite is logged in</Chip>;
   const capRow = <div className="rform"><div className="fr"><span>Capital<small>a change is money added / withdrawn · {(d.deposits || []).length} deposit{(d.deposits || []).length === 1 ? '' : 's'}</small></span>
     <span style={{ whiteSpace: 'nowrap' }}>₹<input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />{' '}
       <button type="button" className="btn small" onClick={saveCap} disabled={!!busy || !(Number(cap) >= 10000) || Number(cap) === d.capital}>Deposit…</button></span></div></div>;
@@ -220,7 +221,7 @@ export default function OptionsPage() {
           {!o && (T.closed || []).length > 0 && <div className="rnote">closed today: {T.closed.map((c) => `#${c.n} ${c.why} ${signed(c.net)} at ${c.t}`).join(' · ')}</div>}
           <div className="rnote">Sold leg: stop at +{st.stop_pct}% of its entry premium ({st.stop_pct_expiry}% on expiry day) or a 5-minute close back through VWAP · breakeven stop once it has decayed {st.be_after_pct}% · target when the spread is worth {100 - st.target_pct}% of the credit · time exit {ampm(st.time_exit)} · hard exit 3:20 PM. Paper fills at the mid ± ₹1 a leg, never at the last price. Nothing here places an order.</div>
         </Panel>
-        <Panel title={`Option chain${C.expiry ? ` · ${day(C.expiry)}` : ''}`} meta={C.score != null ? `score ${C.score} of 3 · PCR ${C.pcr ?? '—'}` : C.pcr != null ? `PCR ${C.pcr}${C.kind ? ` · last ${C.kind} snapshot` : ''}` : null}
+        <Panel title={`Option chain${C.expiry ? ` · ${day(C.expiry)}` : ''}`} meta={C.score != null ? `score ${C.score} of 3 · PCR ${C.pcr ?? '—'}` : C.pcr != null ? `PCR ${C.pcr}${C.kind ? ` · ${SNAP_KIND[C.kind] || `last ${C.kind} snapshot`}` : ''}` : null}
           right={<Meta>+1 spot above the call wall or ≥ 0.5% over the put wall · +1 put OI building, call OI not · +1 PCR &gt; {st.pcr_bull} (bullish; mirror for bearish, PCR &lt; {st.pcr_bear}) · 2–3 full size · 1 half · 0 no trade</Meta>}>
           {chainLine && <div className="rnote" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingBottom: 4 }} title={chainLine}>{chainLine}</div>}
           {phone && shown.length ? <div style={{ padding: '2px 10px 6px' }}>
@@ -230,7 +231,7 @@ export default function OptionsPage() {
               <span style={{ textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden' }}><b className={`mono ${o && s.strike === o.legs[0].strike ? 'up' : ''}`}>{n0(s.strike)}</b>{o && s.strike === o.legs[0].strike ? <small className="up"> ✓</small> : o && s.strike === o.legs[1].strike ? <small className="muted"> h</small> : s.strike === atm ? <small> ◆</small> : null}</span>
               {chg(s.pe)}<OiBar v={s.pe?.oi} max={maxOi} c="var(--ok)" /></div>)}
             <div className="rnote" style={{ padding: '6px 0 0' }}>✓ sold · h hedge · ◆ spot</div></div>
-            : <FixedTable cols={chainCols} rows={chainRows} empty="No chain yet · the first snapshot comes at 9:30 on a trading day (needs the Kite login)." />}
+            : <FixedTable cols={chainCols} rows={chainRows} empty="No chain yet · it is read when this page opens with Kite logged in (holidays too), then at 9:30 and through the day." />}
           {C.line && <div className="rnote">{C.line}{C.crowded ? ' · PCR crowded: half size' : ''}</div>}
         </Panel>
         <Panel title="How the bias was found" meta={B.at || `${B.window?.start}–${B.window?.end}`} right={B.state ? <Tag c={B.state === 'BULLISH' ? 'ok' : 'bad'}>{B.state}{B.score != null ? ` · score ${B.score}` : ''}</Tag> : <Meta>no bias yet · 5-minute closes {B.window?.start}–{B.window?.end}</Meta>}>

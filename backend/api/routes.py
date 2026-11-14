@@ -1273,8 +1273,10 @@ def options_summary():
     """🧩 The options book: switches, today's timeline, guards, margin, cards, the open spread, the bias steps, the chain,
     the rules, recent days, trades, alerts."""
     from backend.options import book as obook
-    obook.start(S().config)                           # the page opened once: the book exists and ticks from now on
-    return obook.summary(S().config)
+    st = S()
+    obook.start(st.config)                            # the page opened once: the book exists and ticks from now on
+    threading.Thread(target=obook.refresh_view, args=(st.config, st.client), name="options-view", daemon=True).start()
+    return obook.summary(st.config)
 
 
 @router.put("/options/settings")
