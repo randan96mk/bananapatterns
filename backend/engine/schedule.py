@@ -80,7 +80,7 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
         add("real_stops", "🛡️", "Real stop check", f"every {r.stop_check_min} min · live price and day low",
             _next_every(now, _hm(r.send_time), MARKET_CLOSE, r.stop_check_min, getattr(sch, "last_real_stops", None)),
             r.stop_check_min, True)
-        add("real_send", "🚀", "Real orders sent", "the planned EXITs, then BUYs → Tradetron", _next_at(now, _hm(r.send_time)),
+        add("real_send", "🚀", "Real orders sent", "the planned EXITs, then BUYs → the webhook", _next_at(now, _hm(r.send_time)),
             None, True)
     try:                                                   # 📐 the futures book's own clock
         from backend.futures import book
@@ -93,6 +93,13 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
             if rd:
                 add("futures_roll", "↻", "Futures roll (T-2)", "EXIT the near month, then the next", datetime.combine(date.fromisoformat(rd), time(9, 20), tzinfo=IST)
                     if date.fromisoformat(rd) >= now.date() else None)
+    except Exception:
+        pass
+    try:                                                   # 🧩 the options book: one tick a minute
+        from backend.options import book as obook
+        if obook.active(config):
+            add("options_tick", "🧩", "Options book", "every minute 9:15-15:40 · range 9:30, bias on 5-minute closes, exits, 15:35 summary",
+                _next_every(now, time(9, 15), time(15, 41), 1, getattr(sch, "last_options_tick", None)), 1)
     except Exception:
         pass
     if a.intraday:

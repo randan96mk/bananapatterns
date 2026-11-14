@@ -1,4 +1,5 @@
-"""The blinking signals on the 📈 Trend Breakout and 📝 Paper trading tabs: what is running or needs a look.
+"""The blinking signals on the 📈 Trend Breakout, 📝 Paper trading, 💰 Real, 📐 Futures and 🧩 Options tabs: what is
+running or needs a look.
 
 Levels, most urgent first: warn (something to fix: no Kite login, no scan, paper drifting from the backtest),
 sell (a holding says SELL at open, or a paper stop / exit happened today), filter (a market filter changed at the
@@ -63,6 +64,46 @@ def signals(config, kite: bool) -> dict:
         out["futures"] = _pack(_futures(config, kite))
     except Exception:
         out["futures"] = _pack([])
+    try:
+        out["options"] = _pack(_options(config, kite))
+    except Exception:
+        out["options"] = _pack([])
+    return out
+
+
+NEAR_STOP = 0.8          # 🧩 the sold premium has covered 80% of the way from its entry to the premium stop
+
+
+def _options(config, kite: bool, now=None) -> list:
+    """🧩 The options tab: the kill switch, an open spread near its premium stop (within 20% of the way left), the daily
+    loss limit hit, no data today (Kite login missing on a trading day). Reads the book's state only: no Kite call."""
+    from datetime import datetime
+
+    from backend.config import IST
+    from backend.ingest.holidays import is_trading_day
+    from backend.options import book
+    out = []
+    st = book._state()
+    if not st:
+        return out
+    now = now or datetime.now(IST)
+    d = st.get("day") or {}
+    if d.get("date") != now.date().isoformat():
+        d = {}
+    if book.killed():
+        out.append(("warn", "Options kill switch ON: no new spreads" + (" · the open spread is closed at once" if st.get("open") else "")))
+    o = st.get("open")
+    if o:
+        s = o["sold"]
+        way = o["stop_premium"] - s["entry"]
+        if way > 0 and s.get("last") is not None and s["last"] >= s["entry"] + NEAR_STOP * way:
+            out.append(("sell", f"Options spread near its stop: {s['strike']:,.0f} {s['type']} at {s['last']:.2f} vs stop {o['stop_premium']:.2f}"))
+        if not kite:
+            out.append(("warn", "Kite not logged in: the open options spread is NOT marked (the 15:20 hard exit still closes it)"))
+    if book._daily_loss(st, config.options)["hit"]:
+        out.append(("sell", "Options daily loss limit reached: no new spreads today"))
+    if d.get("no_data") and is_trading_day(now.date()):
+        out.append(("warn", f"Options: {d.get('why') or 'no data today'}"))
     return out
 
 

@@ -131,6 +131,8 @@ class Scheduler:
         self.hold: Optional[str] = None                   # summary style: the batch the evening job is holding
         self.last_real_stops: Optional[datetime] = None   # 💰 real trading: the last stop watch
         self.last_futures_stops: Optional[datetime] = None  # 📐 futures: the last stop watch on the futures quotes
+        self.last_options_tick: Optional[datetime] = None   # 🧩 options: the last minute the options book ticked
+        self.options_sent: set = set()                      # 🧩 options: the alert keys already handed to the notifier
 
     # --- loop ---
 
@@ -177,6 +179,11 @@ class Scheduler:
                 jobs += book.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_futures_stops)
         except Exception:
             logger.exception("Futures due check failed")
+        try:                                               # 🧩 the options book: one tick a minute 9:15-15:40
+            from backend.options import book as obook
+            jobs += obook.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_options_tick)
+        except Exception:
+            logger.exception("Options due check failed")
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -1010,6 +1017,49 @@ class Scheduler:
             logger.exception("Futures roll failed")
             self.record("futures_roll", today, "failed", str(exc)[:300], started)
             return {"status": "failed", "error": str(exc)}
+
+    # --- 🧩 the options book ---
+
+    def run_options_tick(self, now: datetime) -> dict:
+        """The options book's minute: range at 9:30, bias on 5-minute closes, MTM and exits while open, the time and
+        hard exits, the close snapshot, the day summary (see backend/options/book.py); then the alerts the book recorded
+        go to Telegram, each once."""
+        from backend.options import book as obook
+        self.last_options_tick = now
+        try:
+            res = obook.tick(self.state.config, self.state.client, now)
+        except Exception as exc:
+            logger.exception("Options tick failed")
+            return {"status": "failed", "error": str(exc)}
+        try:
+            res["sent"] = self.send_options_alerts(now)
+        except Exception:
+            logger.exception("Options alerts failed")
+        return res
+
+    def send_options_alerts(self, now: datetime) -> int:
+        """🧩 Send the alerts the options book recorded today and has not sent yet (the bias and the spread, the exits,
+        no trade, the day summary, the one-liners), tagged paper, on the same channel as the futures alerts. Each alert
+        has a key unique for its day: the notifier's sent_alerts table makes the send once-only across restarts and
+        `options_sent` keeps the minute cheap (no DB read for an alert already handled). No Kite call here."""
+        from backend.options import book as obook
+        st = obook._state()
+        if not st or not st.get("alerts"):
+            return 0
+        today, n, sent = now.date().isoformat(), self.notifier(), 0
+        for a in st["alerts"]:
+            if a.get("day") != today:
+                continue
+            key = f"{today}|opt-{a.get('kind')}-{a.get('key') or a.get('kind')}"
+            if key in self.options_sent:
+                continue
+            ok = n.send(key, "real", msg.options_alert(a))
+            if ok or not getattr(n, "ready", True) or getattr(n, "already_sent", lambda k: True)(key):
+                self.options_sent.add(key)              # sent, held, or not sendable at all: never again this day
+            sent += int(bool(ok))
+        if len(self.options_sent) > 500:
+            self.options_sent = {k for k in self.options_sent if k.startswith(today)}
+        return sent
 
     def _rerun_breakout(self) -> None:
         """Re-run the Trend Breakout backtest each evening so its results run to the latest day."""

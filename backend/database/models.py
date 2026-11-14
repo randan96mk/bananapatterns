@@ -367,6 +367,21 @@ CREATE TABLE IF NOT EXISTS futures_trades (id INTEGER PRIMARY KEY AUTOINCREMENT,
 CREATE TABLE IF NOT EXISTS futures_equity (account TEXT NOT NULL, day TEXT NOT NULL, equity REAL NOT NULL, gross REAL NOT NULL,
                                            nifty REAL, PRIMARY KEY (account, day));
 
+-- 🧩 The NIFTY options book (backend/options): the weekly contracts per day (history kept: the latest as_of wins), the
+-- option-chain snapshots (9:30, every 5 min in the bias window, every minute while a spread is open, 15:30), one row
+-- per trading day, the closed spreads, the book state, the equity per day. Nothing here is ever deleted.
+CREATE TABLE IF NOT EXISTS options_contracts (
+    as_of TEXT NOT NULL, expiry TEXT NOT NULL, strike REAL NOT NULL, type TEXT NOT NULL, token INTEGER NOT NULL,
+    tradingsymbol TEXT NOT NULL, lot_size INTEGER NOT NULL, PRIMARY KEY (as_of, tradingsymbol));
+CREATE TABLE IF NOT EXISTS options_chain_snap (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, expiry TEXT NOT NULL,
+    strike REAL NOT NULL, type TEXT NOT NULL, ltp REAL, bid REAL, ask REAL, oi INTEGER, iv REAL, delta REAL, spot REAL);
+CREATE INDEX IF NOT EXISTS idx_opt_snap_day ON options_chain_snap(day, kind);
+CREATE TABLE IF NOT EXISTS options_days (day TEXT PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS options_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS options_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS options_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

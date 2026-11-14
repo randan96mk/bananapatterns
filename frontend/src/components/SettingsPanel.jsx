@@ -73,13 +73,22 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['real', 'paper', 'futures', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
-const NAMES = { real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
+const SECTIONS = ['real', 'paper', 'futures', 'options', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
+const NAMES = { real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
-const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'] };
+const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
   max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this' };
-Object.assign(HELP, HELP2);
+// 🧩 the options book (paper only; paper / enabled / capital are set on its own page)
+const HELP_OPT = { window_start: 'The bias is looked for on 5-minute closes from here (24-hour HH:MM, IST)', window_end: '… to here; no break by then = no trade today',
+  hedge_points: 'The bought leg this many points further out than the sold one (200 when its premium is under Rs 2)', stop_pct: 'Stop when the sold premium rises this % over its entry',
+  stop_pct_expiry: 'The same stop on expiry day (tighter)', be_after_pct: 'Once the sold premium has decayed this %, the stop becomes breakeven', target_pct: 'Target: the spread\'s value down this % from the entry credit',
+  time_exit: 'The time exit (24-hour HH:MM, IST); a hard exit follows at 15:20, nothing is held overnight', daily_loss_pct: 'No new entries once the day\'s realised + open loss reaches this % of capital',
+  vix_half: 'India VIX over this halves the size (1 lot at least)', pcr_bull: 'Chain score: PCR over this confirms a bullish bias', pcr_bear: '… under this confirms a bearish one (over 1.5 / under 0.6 = crowded, size halves)',
+  max_gap_pct: 'No entry when the open gapped more than this % from the previous close', event_days: 'Comma-separated ISO dates with no entries (RBI policy, budget, …), e.g. 2026-12-05, 2027-02-01',
+  margin_per_lot: 'The margin estimate shown per lot (rupees)', capital_per_lot: '1 lot per this much capital', max_lots: 'At most this many lots', max_delta: 'The sold strike: the first with |delta| at most this',
+  min_premium: 'The sold premium must be at least this (else one strike nearer, delta 0.35 at most)', otm_pct: 'The sold strike at least this % out of the money (50-strike grid)', max_trades_day: 'Trades a day at most (one re-entry, only on a flipped bias)' };
+Object.assign(HELP, HELP2, HELP_OPT);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
 function useNarrow() {

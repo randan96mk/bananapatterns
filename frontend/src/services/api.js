@@ -142,3 +142,14 @@ export const futuresRollNow = () => req('POST', '/api/futures/roll');
 export const getFuturesBacktest = () => req('GET', '/api/futures/backtest');
 export const runFuturesBacktest = () => req('POST', '/api/futures/backtest/run');
 export const getFuturesBacktestTrades = (side = 'long', limit = 200, offset = 0) => req('GET', `/api/futures/backtest/trades?side=${side}&limit=${limit}&offset=${offset}`);
+
+// 🧩 the NIFTY options book (paper only; the Real switch is refused with 400 "not wired")
+export const getOptions = () => req('GET', '/api/options');
+export const putOptionsSettings = (body) => req('PUT', '/api/options/settings', body);
+export const optionsKill = (on) => req('POST', `/api/options/kill?on=${on}`);
+export const optionsClose = () => req('POST', '/api/options/close');
+export const optionsHold = () => req('POST', '/api/options/hold');
+export const optionsCapital = (capital) => req('POST', '/api/options/capital', { capital });
+export const getOptionsDays = (limit = 30) => req('GET', `/api/options/days?limit=${limit}`);
+export const getOptionsTrades = (limit = 100) => req('GET', `/api/options/trades?limit=${limit}`);
+export const getOptionsChain = () => req('GET', '/api/options/chain');

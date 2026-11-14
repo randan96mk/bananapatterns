@@ -933,3 +933,224 @@ def futures_short_signals(sigs: list, plan: list, waiting: list) -> Optional[str
         lines.append(f"🔻 <b>{escape(s['symbol'])}</b> · swing high {_rup(s['hint'])} · {state}")
     lines.append("<i>shorts stay paper until Backtest F's short verdict passes</i>")
     return "\n".join(lines)
+
+
+# --- 🧩 NIFTY options (the book: paper only; a credit spread on the opening-range bias) --------------------------------
+
+OPT = "Options"
+
+
+def inr(v: Optional[float], d: int = 0, sign: bool = False) -> str:
+    """Rupees with the Indian grouping (₹3,06,800 · ₹52,000 · ₹1,23,45,678.50); `sign` prefixes +/− (a minus is U+2212)."""
+    if v is None:
+        return "—"
+    neg = v < 0
+    whole, _, frac = f"{abs(v):.{d}f}".partition(".")
+    head, tail = whole[:-3], whole[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    if head:
+        groups.insert(0, head)
+    num = ",".join(groups + [tail]) if whole and len(whole) > 3 else whole
+    out = f"₹{num}" + (f".{frac}" if frac else "")
+    return ("−" if neg else "+" if sign else "") + out
+
+
+def _opt_head(*bits: str) -> str:
+    return "<b>" + " · ".join([OPT] + [escape(str(b)) for b in bits if b]) + "</b>"
+
+
+def _strike(leg: dict) -> str:
+    return f"{leg['strike']:,.0f} {escape(leg['type'])}"
+
+
+def _held(opened_at: Optional[str], closed_at: Optional[str]) -> str:
+    """'2h 51m' between two ISO stamps ('' when unknown)."""
+    if not opened_at or not closed_at:
+        return ""
+    try:
+        m = int((datetime.fromisoformat(closed_at) - datetime.fromisoformat(opened_at)).total_seconds() // 60)
+    except ValueError:
+        return ""
+    return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}m"
+
+
+def _day_label(iso: Optional[str]) -> str:
+    """'Fri 14 Nov' from '2026-11-14'."""
+    if not iso:
+        return ""
+    d = datetime.fromisoformat(iso[:10])
+    return f"{d:%a} {d.day} {d:%b}"
+
+
+def options_bias(o: dict, tag: str = "paper") -> str:
+    """🧭 The bias found and the spread sold: the price line (the range, VWAP, the previous day's level), the two legs with
+    the lots and the credit, stop / target / worst case, margin / sessions / VIX dim, the chain line. `o` is the open
+    spread the book recorded (plus range / prev / vix / close)."""
+    bias, s, h = o["bias"], o["sold"], o["hedge"]
+    bull = bias == "BULLISH"
+    rng, prev = o.get("range") or {}, o.get("prev") or {}
+    px = o.get("close") or o.get("spot_at_entry") or o.get("spot")
+    line = [f"NIFTY {px:,.0f}" if px else "NIFTY", f"{'above' if bull else 'below'} the 9:15–9:30 range"
+            + (f" ({rng['low']:,.0f}–{rng['high']:,.0f})" if rng else "")]
+    if o.get("vwap_at_entry") or o.get("vwap"):
+        line.append(f"and VWAP {(o.get('vwap_at_entry') or o.get('vwap')):,.0f}")
+    price = " ".join(line)
+    lvl = prev.get("high") if bull else prev.get("low")
+    if lvl:
+        price += f" · prev {'high' if bull else 'low'} taken"
+    lots = o["lots"]
+    legs = (f"SELL <b>{_strike(s)}</b> @ {s['entry']:.2f} · BUY {_strike(h)} @ {h['entry']:.2f} · {lots} lot{'s' if lots != 1 else ''} · "
+            f"credit {inr(o['credit_rs'])}")
+    stop = (f"stop {o['stop_premium']:.2f} (+{o['stop_pct']:g}%) or a 5-min close {'under' if bull else 'over'} VWAP · "
+            f"target {o['target_value']:.2f} ({o.get('target_pct', 60):g}%) · worst case {inr(-o['worst_case'], sign=True)}")
+    dim = [f"margin ~{inr(o['margin_est'])}"]
+    if o.get("sessions") is not None:
+        dim.append("expiry day" if o["sessions"] == 0 else f"{o['sessions']} session{'s' if o['sessions'] != 1 else ''} to expiry")
+    if o.get("vix"):
+        dim.append(f"VIX {o['vix']:.1f}")
+    out = [f"🧭 {_opt_head(tag, f'bias {bias}', o.get('opened_t'))}", escape(price), legs, escape(stop), f"<i>{escape(' · '.join(dim))}</i>"]
+    if o.get("chain_line"):
+        out.append(f"<i>chain: {escape(o['chain_line'])}</i>")
+    if (o.get("n") or 1) > 1:
+        out.insert(1, "<i>re-entry: the bias flipped</i>")
+    return "\n".join(out)
+
+
+EXIT_ICON = {"target": "🎯", "premium stop": "🛑", "vwap stop": "🛑", "breakeven stop": "🛑", "time exit": "⏱", "hard exit": "⏱",
+             "kill": "🔴", "closed by you": "✋"}
+
+
+def options_exit(kind: str, t: dict, tag: str = "paper") -> str:
+    """🎯 / 🛑 / ⏱ the spread closed: the strikes, the exit value, the P&L, the time held, the breakeven stop when it was
+    armed, 'at the last known mid' when no quote was there. `t` is the trade row."""
+    from backend.options.book import EXIT_LABEL
+    s, h = t["sold"], t["hedge"]
+    label = EXIT_LABEL.get(kind, kind)
+    bits = [f"{s['strike']:,.0f} / {h['strike']:,.0f} {escape(s['type'])} closed at {t['cost']:.2f}",
+            f"<b>{inr(t['net'], sign=True)}</b>"]
+    held = _held(t.get("opened_at"), t.get("closed_at"))
+    if held:
+        bits.append(f"held {held}")
+    if t.get("be_active") and kind != "breakeven stop" and t.get("be_t"):
+        bits.append(f"breakeven stop was armed at {t['be_t']}")
+    if kind == "breakeven stop" and t.get("be_t"):
+        bits.append(f"armed at {t['be_t']}")
+    if t.get("est"):
+        bits.append("at the last known mid (no quote)")
+    if (t.get("lots") or 1) != 1:
+        bits.insert(1, f"{t['lots']} lots")
+    return f"{EXIT_ICON.get(kind, '🏁')} {_opt_head(tag, label)} · " + " · ".join(bits)
+
+
+def options_no_trade(d: dict) -> str:
+    """🧭 11:00: no break of the range; where VWAP sat; the next look (the next trading day at window_start)."""
+    rng = d.get("range") or {}
+    inside = f"{rng['low']:,.0f}–{rng['high']:,.0f}" if rng else "no range"
+    if d.get("vwap_where"):
+        inside += f" · VWAP {d['vwap_where']}"
+    nxt = f" · next look {_day_label(d['next'])[:3]} {ampm(d.get('window_start') or '09:45')}" if d.get("next") else ""
+    return f"🧭 {_opt_head('no trade today')} · no break of the 9:15–9:30 range by {ampm(d.get('window_end') or '11:00')} ({escape(inside)}){escape(nxt)}"
+
+
+def options_summary(row: dict, book: dict, tag: str = "paper") -> str:
+    """🌙 15:35: the day (trades, P&L), the book (value, return since the start), the days traded, the win rate."""
+    n = row.get("trades") or 0
+    bits = [f"{n} trade{'s' if n != 1 else ''}" if n else f"no trade ({escape(str(row.get('why') or row.get('result') or 'no bias'))})"]
+    if n:
+        bits.append(f"<b>{inr(row.get('pnl') or 0.0, sign=True)}</b>")
+        if row.get("result"):
+            bits.append(escape(row["result"]))
+    since = _day_label(book.get("started"))
+    bits.append(f"book {inr(book['equity'])} ({book['return']:+.1f}%" + (f" since {since[4:]}" if since else "") + ")")
+    if book.get("days"):
+        bits.append(f"{book.get('traded', 0)} traded of {book['days']} day{'s' if book['days'] != 1 else ''}")
+    if book.get("traded"):
+        bits.append(f"won {int(book.get('won', 0) / book['traded'] * 100 + 0.5)}%")
+    return f"🌙 {_opt_head(tag, _day_label(row.get('day')))} · " + " · ".join(bits)
+
+
+def options_chain_disagrees(d: dict, tag: str = "paper") -> str:
+    return f"🧭 {_opt_head(tag, 'bias found · chain disagrees')} · {escape(d.get('bias') or '')} · no trade · <i>{escape(d.get('line') or 'score 0/3')}</i>"
+
+
+def options_daily_loss(d: dict, tag: str = "paper") -> str:
+    return (f"🛑 {_opt_head(tag, 'daily loss limit reached')} · {inr(-(d.get('used') or 0), sign=True)} today (limit −{inr(d.get('limit') or 0)}) · "
+            "no new entries today; the open spread keeps its stops")
+
+
+def options_skipped(kind: str, d: dict, tag: str = "paper") -> str:
+    """event_day / skipped: a bias was found but a guard said no entry."""
+    why = " · ".join(d.get("reasons") or [])
+    head = "event day · no entry" if kind == "event_day" else "no entry"
+    return f"📅 {_opt_head(tag, head)} · {escape(d.get('bias') or '')} found · {escape(why)}"
+
+
+def options_vix_half(d: dict, tag: str = "paper") -> str:
+    return (f"🌪 {_opt_head(tag, 'half size')} · VIX {d.get('vix') or 0:.1f} over {d.get('half_at') or 20:g} · "
+            f"{d.get('lots', 1)} lot{'s' if d.get('lots', 1) != 1 else ''} today")
+
+
+def options_no_size(kind: str, d: dict, tag: str = "paper") -> str:
+    """no_trade_size (0 lots after the halvings) / no_trade_strikes (no sold strike with enough premium)."""
+    why = " · ".join(d.get("notes") or []) if kind == "no_trade_size" else (d.get("why") or "no strike")
+    return f"🧭 {_opt_head(tag, 'no trade')} · {escape(d.get('bias') or '')} found · {escape(why)}"
+
+
+def options_no_data(d: dict, tag: str = "paper") -> str:
+    why = d.get("why") or "Kite login missing"
+    tail = " · log in from the dashboard; the day is recorded as no data" if "login" in why else ""
+    return f"⚠️ {_opt_head(tag, 'no data')} · {escape(why)}{tail}"
+
+
+def options_status(s: dict) -> str:
+    """The `opt` command's reply: today's status, the open spread with its P&L, today's realised, the book."""
+    t, o = s.get("today") or {}, s.get("open")
+    sw = s.get("switches") or {}
+    state = "🔴 kill switch ON" if sw.get("killed") else "OFF" if not sw.get("enabled") else "paper" if sw.get("paper") else "idle"
+    lines = [f"🧩 {_opt_head(state, _day_label(t.get('date')))} · {escape(str(t.get('status') or 'waiting').replace('_', ' '))}"
+             + (f" · {escape(t['why'])}" if t.get("why") else "") + (" · hold today" if t.get("hold") else "")]
+    if o:
+        s_, h = o["legs"][0], o["legs"][1]
+        lines.append(f"open: {o['bias']} · SELL {_strike(s_)} @ {s_['entry']:.2f} (now {s_['last']:.2f}) · BUY {_strike(h)} @ {h['entry']:.2f} · "
+                     f"{o['lots']} lot{'s' if o['lots'] != 1 else ''} · P&L <b>{inr(o['pnl'], sign=True)}</b> · stop {o['stop_premium']:.2f}"
+                     f"{' · breakeven stop on' if o.get('be_active') else ''} · target {o['target_value']:.2f}")
+    else:
+        lines.append("no spread open")
+    lines.append(f"<i>today {inr(t.get('realised') or 0.0, sign=True)} realised · {t.get('trades', 0)} trade{'s' if t.get('trades', 0) != 1 else ''} · "
+                 f"book {inr(s.get('equity'))} ({(s.get('return') or 0):+.1f}%)</i>")
+    lines.append("Reply <b>opt close</b> to close the open spread · <b>opt hold</b> for no new entries today.")
+    return "\n".join(lines)
+
+
+def options_alert(a: dict) -> Optional[str]:
+    """The Telegram text of one alert the book recorded ({kind, t, text, data}); None for a kind with no builder (the
+    plain text goes then)."""
+    k, d = a.get("kind"), a.get("data") or {}
+    tag = a.get("tag") or "paper"
+    try:
+        if k == "entry" and d.get("sold"):
+            return options_bias({**d, "opened_t": d.get("opened_t") or a.get("t")}, tag)
+        if k == "exit" and d.get("sold"):
+            return options_exit(d.get("why") or "closed", d, tag)
+        if k == "no_trade":
+            return options_no_trade(d)
+        if k == "summary" and d.get("row"):
+            return options_summary(d["row"], d["book"], tag)
+        if k == "chain_disagrees":
+            return options_chain_disagrees(d, tag)
+        if k == "daily_loss":
+            return options_daily_loss(d, tag)
+        if k in ("event_day", "skipped"):
+            return options_skipped(k, d, tag)
+        if k == "vix_half":
+            return options_vix_half(d, tag)
+        if k in ("no_trade_size", "no_trade_strikes"):
+            return options_no_size(k, d, tag)
+        if k == "no_data":
+            return options_no_data(d, tag)
+    except (KeyError, TypeError, ValueError):
+        pass
+    return f"🧩 {_opt_head(tag, a.get('t'))} · {escape(a.get('text') or '')}"

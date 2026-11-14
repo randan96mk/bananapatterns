@@ -38,6 +38,9 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
         fut_as_of = one("SELECT MAX(as_of) FROM futures_contracts")
         n_fut = one("SELECT COUNT(*) FROM futures_contracts WHERE as_of = ?", fut_as_of) if fut_as_of else 0
         fut_day = one("SELECT MAX(date) FROM candles_fut_daily")
+        opt_as_of = one("SELECT MAX(as_of) FROM options_contracts")
+        n_opt = one("SELECT COUNT(*) FROM options_contracts WHERE as_of = ?", opt_as_of) if opt_as_of else 0
+        opt_snap = conn.execute("SELECT ts, kind, expiry FROM options_chain_snap ORDER BY id DESC LIMIT 1").fetchone()
         n_fut_c = one("SELECT COUNT(DISTINCT underlying) FROM candles_fut_daily")
     today = now_ist()[:10]
     stale_days = (datetime.fromisoformat(today) - datetime.fromisoformat(day)).days if day else None
@@ -81,6 +84,14 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
     out.append({"key": "fo_ban", "name": "F&O ban list", "ok": True, "warn": bool(b["stale_days"] is not None and b["stale_days"] > 3),
                 "state": (f"{b['date']} · {len(b['symbols'])} in ban" + (" · stale" if b["stale_days"] and b["stale_days"] > 3 else "")) if b["date"] else "none yet",
                 "detail": "NSE MWPL ban list; a failed fetch keeps the last good day", "at": None})
+    opt_age = _days(opt_as_of)
+    out.append({"key": "opt_contracts", "name": "Options contracts", "ok": True, "warn": bool(opt_age is not None and opt_age > 4),
+                "state": f"as of {opt_as_of}" + (f" · {opt_age} d old" if opt_age else "") if opt_as_of else "none yet",
+                "detail": f"{n_opt} NIFTY weekly option rows (near and next expiry)" if opt_as_of else "filled by the options book's first tick of the day", "at": None})
+    snap_h = _ago(opt_snap["ts"]) if opt_snap else None
+    out.append({"key": "opt_chain", "name": "Option chain", "ok": True, "warn": bool(snap_h is not None and snap_h > 30),
+                "state": f"{snap_h:g} h ago · {opt_snap['kind']}" if snap_h is not None else "none yet",
+                "detail": f"last snapshot of expiry {opt_snap['expiry']}" if opt_snap else "9:30, the bias window, every minute while open, 15:30", "at": opt_snap["ts"] if opt_snap else None})
     out.append({"key": "follow", "name": "Follow book", "ok": True, "warn": bool(follow_as_of and day and follow_as_of < day),
                 "state": f"as of {follow_as_of}" if follow_as_of else "not built", "detail": "steps after the evening scan", "at": None})
     return out

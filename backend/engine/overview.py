@@ -13,7 +13,7 @@ from typing import Optional
 from backend.config import IST, AppConfig
 from backend.database.models import get_db, get_setting
 
-NAMES = {"real": "Real", "paper_E": "Paper E+", "intraday": "Intraday", "futures": "Futures"}
+NAMES = {"real": "Real", "paper_E": "Paper E+", "intraday": "Intraday", "futures": "Futures", "options": "Options"}
 STRATEGY = {"E": "Trend Breakout E+"}
 FUT_STRATEGY = {"long": "Futures E+ long", "short": "Futures E− short"}
 
@@ -40,6 +40,36 @@ def _futures_rows(fs: Optional[dict]) -> list:
     return out
 
 
+def _options_summary(config: AppConfig) -> Optional[dict]:
+    """🧩 The options book's summary (None until it has started, or on a failure: Home never blanks for it)."""
+    try:
+        from backend.options import book
+        s = book.summary(config)
+        return s if s.get("started") else None
+    except Exception:
+        return None
+
+
+def _options_rows(os_: Optional[dict]) -> list:
+    """The open spread's two legs as Home position rows (book 'options', account 'Options · paper'): the sold leg is
+    short with the premium stop, the hedge long with no stop of its own (it exits with the sold leg)."""
+    o = (os_ or {}).get("open")
+    if not o:
+        return []
+    out = []
+    for leg in o["legs"]:
+        sold = leg["leg"] == "sold"
+        now, entry, qty = leg["last"], leg["entry"], leg["qty"]
+        stop = o["stop_premium"] if sold else None
+        out.append({"book": "options", "account": "Options · paper", "strategy": f"NIFTY {o['bias'].lower()} credit spread",
+                    "symbol": f"NIFTY {leg['strike']:,.0f} {leg['type']}", "side": "short" if sold else "long", "qty": qty, "lots": o["lots"],
+                    "entry": entry, "now": now, "pnl": leg["pnl"], "pct": _pct(leg["pnl"], o.get("margin_est") or entry * qty), "stop": stop,   # % of the margin estimate
+                    "stop_dist": round((stop - now) / stop * 100, 2) if sold and stop else None,      # % of the stop premium still to go
+                    "opened": o["opened_at"], "contract": leg["tradingsymbol"],
+                    "expiry": o["expiry"], "live": bool(o.get("marked_at"))})
+    return out
+
+
 def _pct(pnl, value):
     return round(pnl / value * 100, 2) if value else None
 
@@ -62,7 +92,7 @@ def _mark_live(rows: list, quote) -> None:
     (the stored price is the previous close, refreshed by the stop watch only every few minutes); each marked row
     gets live=True."""
     from backend.engine import trend_breakout as tb
-    swing = [r for r in rows if r["book"] not in ("intraday", "futures")]
+    swing = [r for r in rows if r["book"] not in ("intraday", "futures", "options")]
     if not swing or quote is None or not market_open():
         return
     try:
@@ -79,7 +109,7 @@ def _mark_live(rows: list, quote) -> None:
 
 
 def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optional[dict] = None,
-              live: Optional[dict] = None, quote=None, fut_s: Optional[dict] = None) -> list:
+              live: Optional[dict] = None, quote=None, fut_s: Optional[dict] = None, opt_s: Optional[dict] = None) -> list:
     """Every open position, P&L after the costs an exit would take. quote: a Kite quote function (keys -> quotes) to
     mark the swing rows live in market hours. The futures lots come marked by their own stop watch."""
     from backend.engine import paper, real
@@ -114,6 +144,7 @@ def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optiona
     _mark_live(out, quote)
     _add_trail(config, out, real_s, paper_s)
     out += _futures_rows(fut_s if fut_s is not None else _futures_summary(config))
+    out += _options_rows(opt_s if opt_s is not None else _options_summary(config))
     _add_results(out, today)
     return sorted(out, key=lambda x: (x["book"] != "intraday", x["opened"]), reverse=False)
 
@@ -167,9 +198,9 @@ def _add_results(rows: list, today: str) -> None:
     for r in rows:
         r["results_date"] = r["results_in"] = None
     try:
-        res = _results({r["symbol"] for r in rows if r["book"] != "intraday"}, today)
+        res = _results({r["symbol"] for r in rows if r["book"] not in ("intraday", "options")}, today)
         for r in rows:
-            x = res.get(r["symbol"]) if r["book"] != "intraday" else None
+            x = res.get(r["symbol"]) if r["book"] not in ("intraday", "options") else None
             if x:
                 r["results_date"], r["results_in"] = x["date"], x["sessions"]
     except Exception:
@@ -243,6 +274,12 @@ def curves(config: AppConfig) -> dict:
         from backend.futures import book
         if book.has_account():
             out["futures"] = _equity("futures_equity", book.primary(config, "long"))
+    except Exception:
+        pass
+    try:                                                    # 🧩 the options book (one paper account)
+        from backend.options import book as obook
+        if obook.has_account():
+            out["options"] = _equity("options_equity")
     except Exception:
         pass
     return {k: v for k, v in out.items() if v}
@@ -570,6 +607,10 @@ def facts(config: AppConfig, accts: dict, pos: list, curve: list, n_signals: int
         fut = [p for p in pos if p["book"] == "futures"]
         out["futures"] = {"lots": sum(p.get("lots") or 0 for p in fut), "max_pos": config.futures.max_pos, "margin_pct": fu.get("margin_pct"),
                           "mode": fu.get("mode"), "killed": fu.get("killed")}
+    op = accts.get("options")
+    if op:
+        out["options"] = {"open": op.get("positions"), "status": op.get("status"), "bias": op.get("bias"), "lots": op.get("lots"), "max_lots": config.options.max_lots,
+                          "killed": op.get("killed"), "mode": op.get("mode")}
     return out
 
 
@@ -580,6 +621,7 @@ def overview(config: AppConfig, quote=None) -> dict:
     from backend.intraday import flow
     real_s, paper_s, live = real.summary(config), paper.summary(config), flow.live()
     fut_s = _futures_summary(config)
+    opt_s = _options_summary(config)
     cv = curves(config)
     dp = daily_pnl(cv)
     accts = {}
@@ -619,6 +661,14 @@ def overview(config: AppConfig, quote=None) -> dict:
             accts["futures"]["spark_nifty"] = spark_nifty("futures_equity", fut_s.get("primary"), first_cap)
         except Exception:
             pass
+    if opt_s:                                               # 🧩 the options book (paper): equity, today, the open spread
+        last = cv.get("options", [])[-1][0] if cv.get("options") else None
+        o = opt_s.get("open")
+        accts["options"] = {"name": "Options", "value": opt_s["equity"], "net": opt_s["net"], "return": opt_s["return"], "last_day": last,
+                            "day_pnl": opt_s.get("mtm_today") or 0.0, "positions": 1 if o else 0, "lots": o["lots"] if o else 0, "bias": (o or {}).get("bias") or (opt_s.get("bias") or {}).get("state"),
+                            "status": (opt_s.get("today") or {}).get("status"), "mode": "paper", "killed": bool((opt_s.get("guards") or {}).get("kill")),
+                            "margin_pct": round(100 * (opt_s.get("margin") or {}).get("est", 0) / opt_s["capital"], 1) if opt_s.get("capital") else None,
+                            "spark": [e for _, e in cv.get("options", [])[-30:]], "spark_nifty": []}
     st = live.get("stats") or {}
     accts["intraday"] = {"name": "Intraday · paper", "day_pnl": round((st.get("realised") or 0) + (st.get("unrealised") or 0), 2),
                          "realised": st.get("realised"), "open_pnl": st.get("unrealised"), "trades": st.get("trades"),
@@ -638,7 +688,7 @@ def overview(config: AppConfig, quote=None) -> dict:
             act.append({"at": at, "account": "Intraday", "text": f"{s.get('signal', 'BUY')} signal {s['symbol']}"})
     act.sort(key=lambda x: x["at"] or "", reverse=True)
     now = datetime.now(IST)
-    pos = positions(config, real_s, paper_s, live, quote, fut_s)
+    pos = positions(config, real_s, paper_s, live, quote, fut_s, opt_s)
     today_pnl = round(sum(a.get("day_pnl") or 0 for a in accts.values()), 2)
     extra = {}
     for name, fn in (("stats", lambda: stats(config, dp, today)), ("risk", lambda: risk(config, accts, pos)),

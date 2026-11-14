@@ -26,7 +26,7 @@ const dayName = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLoca
 const weekday = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }) : '');
 const sgn = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
 const shortName = (s) => (s && s.length > 9 ? `${s.slice(0, 8)}…` : s || '');       // the same shortening everywhere on the map
-const BOOK = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday', futures: 'Futures' };
+const BOOK = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday', futures: 'Futures', options: 'Options' };
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
 const evId = (e) => `${e.t}|${e.text}`;
@@ -89,7 +89,7 @@ function Contribution({ positions }) {
 
 // One tile per name. A name in both Real and Paper E+ is one tile tagged R·P (value = the sum, P&L % = Real's).
 function PositionsMap({ positions, onStock, view }) {
-  const tagOf = { real: 'R', paper_E: 'P', intraday: 'I', futures: 'F' };
+  const tagOf = { real: 'R', paper_E: 'P', intraday: 'I', futures: 'F', options: 'O' };
   const merged = new Map();
   (positions || []).filter((p) => p.entry && p.qty && (view === 'both' || (view === 'real' ? p.book === 'real' : p.book === 'paper_E'))).forEach((p) => {
     const m = merged.get(p.symbol) || { symbol: p.symbol, value: 0, books: [], pct: null, accounts: [] };
@@ -100,7 +100,7 @@ function PositionsMap({ positions, onStock, view }) {
   const rows = [...merged.values()].sort((a, b) => b.value - a.value);
   if (!rows.length) return <div className="hmap"><p className="muted small">No open positions{view === 'both' ? '' : ` in ${view === 'real' ? 'Real' : 'Paper E+'}`}.</p></div>;
   const shade = (x) => { const a = Math.min(1, Math.abs(x || 0) / 6); return x >= 0 ? `color-mix(in srgb, var(--ok) ${25 + 65 * a}%, var(--panel))` : `color-mix(in srgb, var(--bad) ${25 + 65 * a}%, var(--panel))`; };
-  const order = ['real', 'paper_E', 'futures', 'intraday'];
+  const order = ['real', 'paper_E', 'futures', 'options', 'intraday'];
   const MAX = 14, more = rows.length - MAX;
   return <div className="hmap">{rows.slice(0, more > 0 ? MAX : rows.length).map((p) => <div key={p.symbol} className="tile" style={{ background: shade(p.pct) }} title={`${p.symbol} · ${p.accounts.join(' · ')} · ${inr(p.value)}`} onClick={() => onStock(p.symbol)}>
       <b>{shortName(p.symbol)}</b><small>{pct(p.pct)}</small><em>{order.filter((b) => p.books.includes(b)).map((b) => tagOf[b]).join('·')}</em></div>)}
@@ -109,7 +109,7 @@ function PositionsMap({ positions, onStock, view }) {
 
 // The card opens to the right of the pointer (to its left at the window's edge) and under the hovered row, or
 // above the row when there is no room below: never over the row under the pointer.
-const shortStrategy = (s) => (/E\+/.test(s || '') ? 'E+' : /flow/i.test(s || '') ? 'Flow' : s || '');
+const shortStrategy = (s) => (/E\+/.test(s || '') ? 'E+' : /flow/i.test(s || '') ? 'Flow' : /spread/i.test(s || '') ? 'Opt' : s || '');
 function HoverCard({ p, at }) {
   const [c, setC] = useState(null);
   const ref = useRef(null);
@@ -199,7 +199,7 @@ export default function HomePage({ onGo, onStock }) {
   const counts = { near: positions.filter(FILTERS.near).length, trail: positions.filter(FILTERS.trail).length, results: positions.filter(FILTERS.results).length };
   const shown = positions.filter(inView).filter(FILTERS[filter] || FILTERS.all);
   const sorter = (a, b) => { const d = SORTS[sort.key](a) - SORTS[sort.key](b); return sort.dir === 'desc' ? -d : d; };
-  const groups = ['real', 'paper_E', 'futures', 'intraday'].map((b) => [b, shown.filter((p) => p.book === b).sort(sorter)]).filter(([, ps]) => ps.length);
+  const groups = ['real', 'paper_E', 'futures', 'options', 'intraday'].map((b) => [b, shown.filter((p) => p.book === b).sort(sorter)]).filter(([, ps]) => ps.length);
   const flip = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
   const arrow = (key) => (sort.key === key ? (sort.dir === 'desc' ? ' ▾' : ' ▴') : '');
   // Strategy is the short tag at 60 px; under 1440 px Entry and Trail are dropped (nw) so the Stock column keeps 140 px+
@@ -207,13 +207,14 @@ export default function HomePage({ onGo, onStock }) {
     { h: `P&L${arrow('pnl')}`, key: 'pnl', w: 86, n: true, onClick: () => flip('pnl'), title: 'sort by P&L' }, { h: `%${arrow('pct')}`, key: 'pct', w: 60, n: true, onClick: () => flip('pct'), title: 'sort by %' },
     { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 150, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 150, lo: true, nw: true }];
   const posRows = groups.flatMap(([b, ps]) => [
-    `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} ${b === 'futures' ? 'notional' : 'in use'}`,
+    `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} ${b === 'futures' ? 'notional' : b === 'options' ? 'premium' : 'in use'}`,
     ...ps.map((p) => { const f = flash[p.book + p.symbol]; return { key: p.book + p.symbol, cls: f ? `row-${f}` : '', onClick: () => onStock(p.symbol), cells: [
       <><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near stop</Tag>}{p.results_in != null && p.results_in <= 3 && <Tag c="w" title={`results on ${dayName(p.results_date)} (${p.results_in} session${p.results_in === 1 ? '' : 's'})`}>⚠ results {weekday(p.results_date)}</Tag>}{f === 'new' && <Tag c="a">new</Tag>}</>,
       <span className={/E\+/.test(p.strategy || '') ? 'vE' : 'muted'} title={p.strategy}>{shortStrategy(p.strategy)}</span>, p.qty, p.entry,
       <><span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span><span className={`tick ${f === 'up' ? 'up' : f === 'down' ? 'down' : ''}`}>{f === 'up' ? '▲' : f === 'down' ? '▼' : ''}</span></>,
       <span className={`${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`}>{signed(p.pnl)}</span>, <span className={cls(p.pct)}>{pct(p.pct)}</span>,
-      p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—',
+      p.book === 'options' ? <span className="small mono" title={p.stop ? `the sold leg's premium stop · ${p.stop_dist?.toFixed(0)}% of the stop premium still to go` : 'the hedge exits with the sold leg'}>{p.stop ? `stop ${p.stop} · ${p.stop_dist?.toFixed(0)}%` : 'with the sold leg'}</span>
+        : p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—',
       trailCell(p)] }; })]);
   const hoverOn = (e, p, tr) => { if (phone) return; const r = tr.getBoundingClientRect();
     setHover({ p, at: { x: e.clientX + 16 + 300 <= window.innerWidth ? e.clientX + 16 : Math.max(4, e.clientX - 16 - 300), below: r.bottom, above: r.top } }); };
@@ -230,7 +231,7 @@ export default function HomePage({ onGo, onStock }) {
   return <div className="rd">
     <HealthStrip onGo={onGo} compact />
     <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} picked={picked ? picked.map(evId) : null} onPick={(items) => setPicked(items && items.length ? items : null)} />
-    <Cards n={4 + (A.follow && A.follow.breakouts > 0 ? 1 : 0) + (A.futures ? 1 : 0)}>
+    <Cards n={4 + (A.follow && A.follow.breakouts > 0 ? 1 : 0) + (A.futures ? 1 : 0) + (A.options ? 1 : 0)}>
       <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
         sub={<>intraday <span className={cls(it.day_pnl)}>{sgn(it.day_pnl)}</span> · swing <span className={cls(swing)}>{sgn(swing)}</span></>}
         fact={F.today ? <>high <b className="up">{sgn(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{sgn(F.today.low)}</b></> : <span className="muted">high / low from the open</span>}
@@ -251,7 +252,11 @@ export default function HomePage({ onGo, onStock }) {
         sub={<><span className={cls(A.futures.day_pnl)}>{sgn(A.futures.day_pnl)}</span> today · {F.futures ? <>{F.futures.lots} of {F.futures.max_pos} lots</> : <>{A.futures.positions} lots</>}</>}
         fact={<>margin <Bar pct={A.futures.margin_pct || 0} bad={(A.futures.margin_pct || 0) >= 80} ok={(A.futures.margin_pct || 0) < 70} /> <b className={(A.futures.margin_pct || 0) >= 70 ? 'warn' : ''}>{Math.round(A.futures.margin_pct || 0)}%</b> · {pct(A.futures.return)}</>}
         title={cardTip([`Futures · ${A.futures.mode}`, `${A.futures.positions} lots`, `${pct(A.futures.return)} since start`, `margin ${Math.round(A.futures.margin_pct || 0)}% of capital`, 'corner chart: the book (solid) against NIFTY (dashed)'])} onClick={() => onGo('futures')} />}
-      {A.follow && A.follow.breakouts > 0 && <Card label="Screens · Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}%`}
+      {A.options && <Card label={<>Options <span className="muted">· paper</span>{A.options.killed && <span className="down"> · killed</span>}</>} value={inr(A.options.value)} num={A.options.value} k={cls(A.options.net)} spark={A.options.spark} stale={stale} live={A.options.positions > 0}
+        sub={<><span className={cls(A.options.day_pnl)}>{sgn(A.options.day_pnl)}</span> today · {A.options.positions ? <>1 spread open · {F.options?.lots ?? A.options.lots} lot{(F.options?.lots ?? A.options.lots) === 1 ? '' : 's'}</> : F.options?.status === 'no_trade' ? 'no trade today' : 'no spread open'}</>}
+        fact={<>margin <Bar pct={A.options.margin_pct || 0} ok={(A.options.margin_pct || 0) < 50} /> <b>{Math.round(A.options.margin_pct || 0)}%</b> · {A.options.bias ? <span className={A.options.bias === 'BULLISH' ? 'up' : 'down'}>{A.options.bias === 'BULLISH' ? '↑ bullish' : '↓ bearish'}</span> : 'no bias'} · {pct(A.options.return)}</>}
+        title={cardTip(['Options · paper · NIFTY weekly credit spreads', A.options.positions ? `1 spread open · ${A.options.lots} lots` : 'no spread open', A.options.bias && `bias ${A.options.bias}`, `${pct(A.options.return)} since start`, `margin estimate ${Math.round(A.options.margin_pct || 0)}% of capital`])} onClick={() => onGo('options')} />}
+      {A.follow && A.follow.breakouts > 0 && <Card label="Follow (blind)" value={signed(A.follow.net)} num={A.follow.net} k={cls(A.follow.net)} sub={`${A.follow.breakouts} breakouts · won ${A.follow.win_rate ?? '—'}%`}
         fact={F.follow ? <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{sgn(F.follow.open_pnl)}</b> · {F.follow.pending ?? 0} pending</> : <span className="muted">—</span>}
         title={cardTip([`${A.follow.breakouts} breakouts`, `won ${A.follow.win_rate ?? '—'}%`, `${inr(A.follow.per_position)} each`, F.follow && `${F.follow.open} open at ${signed(F.follow.open_pnl)}`, F.follow && `${F.follow.pending ?? 0} buys at the next open`, A.follow.as_of && `as of ${dayName(A.follow.as_of)}`])} />}
     </Cards>
