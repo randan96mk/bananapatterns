@@ -169,3 +169,27 @@ def prev_day_and_open_spread():
     w = World(path({"09:30": 25050, "09:45": 25150}))
     run_day(cfg, w, until=lambda s: s["open"])
     return cfg
+
+
+def test_page_reads_the_week_on_a_holiday(monkeypatch):
+    """Opening the page on a weekend with Kite logged in reads the contracts and one "view" chain snapshot, throttled;
+    without a login nothing is read."""
+    import datetime as _dt
+    cfg = AppConfig()
+    w = World(path({"09:30": 25050}))
+    w.now = "15:30"
+    book._view["at"] = None
+    sat = _dt.datetime.combine(DAY + _dt.timedelta(days=(5 - DAY.weekday()) % 7 or 7), _dt.time(13, 0), tzinfo=IST)
+    assert book.refresh_view(cfg, w, sat) is True
+    with get_db() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM options_chain_snap WHERE kind = 'view'").fetchone()[0]
+    assert n > 0 and oi.near_expiry(sat.date().isoformat())
+    s = book.summary(cfg, sat)
+    assert s["margin"]["expiry"] and s["margin"]["lot_size"] and s["chain"]["strikes"] and s["chain"]["kind"] == "view"
+    assert s["chain"]["walls"]["support"] and s["chain"]["pcr"] is not None
+    assert book.refresh_view(cfg, w, sat + _dt.timedelta(minutes=1)) is False         # throttled
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM options_chain_snap WHERE kind = 'view'").fetchone()[0] == n
+    book._view["at"] = None
+    w.has_token = False
+    assert book.refresh_view(cfg, w, sat + _dt.timedelta(hours=1)) is False

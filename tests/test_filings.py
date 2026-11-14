@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 
 import httpx
 import pytest
+from dataclasses import replace
 
 from backend.alerts import guard
 from backend.alerts import plan as pl
@@ -129,12 +130,19 @@ def test_filing_alerts_for_held_watched_and_plan_stocks():
 def test_filings_job_timing_and_failure():
     cfg = AlertsConfig(login_links=False, top_setups=False, morning_plan=False, gap_check=False, intraday=False,
                        job_enabled=False, system=False)
-    sat = datetime(2026, 10, 24, 9, 0, tzinfo=IST)                        # a Saturday
-    assert due_jobs(sat, cfg, set(), False) == ["filings"]                # weekends and holidays too
-    assert due_jobs(sat, cfg, set(), False, last_filings=sat - timedelta(minutes=10)) == []
-    assert due_jobs(sat, cfg, set(), False, last_filings=sat - timedelta(minutes=15)) == ["filings"]
-    assert due_jobs(sat.replace(hour=6, minute=59), cfg, set(), False) == []
-    assert due_jobs(sat.replace(hour=23), cfg, set(), False) == []
+    sat = datetime(2026, 10, 24, 9, 0, tzinfo=IST)                        # a Saturday: the check rests
+    assert "filings" not in due_jobs(sat, cfg, set(), False)
+    sun = sat + timedelta(days=1)                                          # Sunday: only from the evening (18:00)
+    assert "filings" not in due_jobs(sun, cfg, set(), False)
+    assert "filings" not in due_jobs(sun.replace(hour=17, minute=59), cfg, set(), False)
+    assert "filings" in due_jobs(sun.replace(hour=18), cfg, set(), False)
+    assert "filings" not in due_jobs(sun.replace(hour=18), replace(cfg, filings_weekend_from="20:00"), set(), False)
+    mon = sun + timedelta(days=1)                                          # weekdays and holidays: 07:00-23:00
+    assert due_jobs(mon, cfg, set(), False) == ["filings"]
+    assert due_jobs(mon, cfg, set(), False, last_filings=mon - timedelta(minutes=10)) == []
+    assert due_jobs(mon, cfg, set(), False, last_filings=mon - timedelta(minutes=15)) == ["filings"]
+    assert due_jobs(mon.replace(hour=6, minute=59), cfg, set(), False) == []
+    assert due_jobs(mon.replace(hour=23), cfg, set(), False) == []
     sch, _ = scheduler()
     assert sch.run_filings(sat)["status"] == "failed" and sch.last_filings == sat     # no network: kept, retried later
 

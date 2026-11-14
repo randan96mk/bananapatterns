@@ -28,7 +28,7 @@ def test_weekend_moves_to_monday():
     r = sc.schedule(AppConfig(), None, False, at(1, 10, 0))                # Sunday
     j = {x["key"]: x for x in r["jobs"]}
     assert not r["market"]["open"] and r["market"]["opens_at"].startswith("2026-11-02T09:15")
-    assert j["eod"]["at"].startswith("2026-11-02T18:30") and j["filings"]["at"].startswith("2026-11-01T10:00")
+    assert j["eod"]["at"].startswith("2026-11-02T18:30") and j["filings"]["at"].startswith("2026-11-01T18:00")
     assert j["kite_expiry"]["skip"] == "not logged in"
 
 

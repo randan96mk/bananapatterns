@@ -59,6 +59,17 @@ volume_pace = itd.volume_pace                          # re-exported (projection
 FILINGS_START, FILINGS_END = time(7, 0), time(23, 0)
 
 
+def filings_window_open(now: datetime, cfg) -> bool:
+    """The filings check rests on the weekend: never on Saturday, on Sunday only from `filings_weekend_from` (the
+    Monday plan needs Sunday evening's filings; nothing before that can be acted on)."""
+    wd = now.weekday()
+    if wd == 5:
+        return False
+    if wd == 6:
+        return now.time() >= hm(getattr(cfg, "filings_weekend_from", "18:00") or "18:00")
+    return True
+
+
 def hm(s: str) -> time:
     h, m = s.split(":")
     return time(int(h), int(m))
@@ -101,9 +112,9 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
         jobs.append("gap_check")
     if now.weekday() == cfg.universe_refresh_weekday and ready("weekly") and t >= time(10, 0):
         jobs.append("weekly")
-    if (cfg.filings and FILINGS_START <= t < FILINGS_END
+    if (cfg.filings and FILINGS_START <= t < FILINGS_END and filings_window_open(now, cfg)
             and (last_filings is None or now - last_filings >= timedelta(minutes=cfg.filings_interval_min))):
-        jobs.append("filings")                             # every day: results often come out in the evening
+        jobs.append("filings")                             # weekdays, and Sunday evening on: results come out in the evening
     if login_slots_due(now, cfg, done_today, login_day):
         jobs.append("login")
     if (cfg.login_links and cfg.login_heads_up and login_day and ready("login_headsup")

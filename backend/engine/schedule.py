@@ -6,6 +6,7 @@ from typing import Optional
 
 from backend.config import IST, AppConfig
 from backend.database.models import get_db
+from backend.timefmt import ampm as _ampm
 
 MARKET_OPEN, MARKET_CLOSE = time(9, 15), time(15, 30)
 
@@ -113,9 +114,15 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
         add("flow", "🔀", "Intraday Flow", f"{config.flow.mode} · live 1-minute candles, runs at each candle close",
             _next_at(now, time(9, 0)), skip="⏹ stopped" if flow.stopped() else None)
     if a.filings:
-        add("filings", "📰", "Filings check", f"every {a.filings_interval_min} min · results, deals, red flags",
-            _next_every(now, time(7, 0), time(23, 0), a.filings_interval_min, getattr(sch, "last_filings", None), False),
-            a.filings_interval_min)
+        from backend.alerts.jobs import filings_window_open
+        nxt = _next_every(now, time(7, 0), time(23, 0), a.filings_interval_min, getattr(sch, "last_filings", None), False)
+        if not filings_window_open(now, a):                    # Saturday, or Sunday before the evening: the next Sunday-evening slot
+            sun = now + timedelta(days=(6 - now.weekday()) % 7)
+            nxt = datetime.combine(sun.date(), _hm(a.filings_weekend_from), tzinfo=IST)
+            if nxt <= now:
+                nxt = _next_at(now, time(7, 0), False)
+        add("filings", "📰", "Filings check", f"every {a.filings_interval_min} min · results, deals, red flags · weekends from Sun {_ampm(a.filings_weekend_from)}",
+            nxt, a.filings_interval_min)
     if a.system:
         add("reminder", "🔔", "Kite login reminder", "only if not logged in", _next_at(now, _hm(a.reminder_time)),
             skip="logged in" if kite else None)
