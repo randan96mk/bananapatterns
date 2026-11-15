@@ -422,6 +422,7 @@ def init_db(path: Optional[str] = None) -> None:
         _migrate_drop_paper_a(conn)
         _migrate_capital_300k(conn)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
+        _migrate_ai_notes(conn)
         _drop_track_record(conn)
         n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
         if n:
@@ -599,6 +600,15 @@ def _drop_track_record(conn) -> None:
 def _add_column(conn, table: str, column: str, decl: str) -> None:
     if column not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def _migrate_ai_notes(conn) -> None:
+    """🤖 PR 2: `source_key` (the filing's seq_id / the deal group's symbol|date) and the guard that notes a source once
+    per prompt version. Added with ALTER TABLE behind a PRAGMA check; nothing is dropped."""
+    _add_column(conn, "ai_notes", "source_key", "TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
+                 "WHERE source_key IS NOT NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_notes_symbol ON ai_notes(symbol, created)")
 
 
 def _migrate_scan_tables(conn) -> None:

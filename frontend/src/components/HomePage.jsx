@@ -9,6 +9,7 @@ import { useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
 import * as api from '../services/api';
 import HealthStrip from './HealthStrip';
 import PhonePositions from './PhonePositions';
+import AiDot from './AiDot';
 import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, Chip } from './ui2';
 
 // 🏠 Home: the day on one screen. Timeline (click a dot: Activity filters to it), account cards with sparklines (Real
@@ -209,7 +210,7 @@ export default function HomePage({ onGo, onStock }) {
   const posRows = groups.flatMap(([b, ps]) => [
     `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} ${b === 'futures' ? 'notional' : b === 'options' ? 'premium' : 'in use'}`,
     ...ps.map((p) => { const f = flash[p.book + p.symbol]; return { key: p.book + p.symbol, cls: f ? `row-${f}` : '', onClick: () => onStock(p.symbol), cells: [
-      <><b>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near stop</Tag>}{p.results_in != null && p.results_in <= 3 && <Tag c="w" title={`results on ${dayName(p.results_date)} (${p.results_in} session${p.results_in === 1 ? '' : 's'})`}>⚠ results {weekday(p.results_date)}</Tag>}{f === 'new' && <Tag c="a">new</Tag>}</>,
+      <><b>{p.symbol}</b><AiDot note={p.ai_note} />{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near stop</Tag>}{p.results_in != null && p.results_in <= 3 && <Tag c="w" title={`results on ${dayName(p.results_date)} (${p.results_in} session${p.results_in === 1 ? '' : 's'})`}>⚠ results {weekday(p.results_date)}</Tag>}{f === 'new' && <Tag c="a">new</Tag>}</>,
       <span className={/E\+/.test(p.strategy || '') ? 'vE' : 'muted'} title={p.strategy}>{shortStrategy(p.strategy)}</span>, p.qty, p.entry,
       <><span className={f && f !== 'new' ? `flash-${f}` : ''}>{p.now ?? '—'}</span><span className={`tick ${f === 'up' ? 'up' : f === 'down' ? 'down' : ''}`}>{f === 'up' ? '▲' : f === 'down' ? '▼' : ''}</span></>,
       <span className={`${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`}>{signed(p.pnl)}</span>, <span className={cls(p.pct)}>{pct(p.pct)}</span>,

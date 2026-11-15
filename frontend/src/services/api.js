@@ -161,3 +161,8 @@ export const aiStart = () => req('POST', '/api/ai/start');
 export const aiPull = () => req('POST', '/api/ai/pull');
 export const aiTest = () => req('POST', '/api/ai/test');
 export const getAiJobs = (limit = 50) => req('GET', `/api/ai/jobs?limit=${limit}`);
+// 🤖 the AI's filing / deal notes and the quality test set
+export const getAiNotes = (params = {}) => { const q = Object.entries(params).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'); return req('GET', `/api/ai/notes${q ? `?${q}` : ''}`); };
+export const getAiNote = (id) => req('GET', `/api/ai/notes/${id}`);
+export const aiNotesRun = () => req('POST', '/api/ai/notes/run');
+export const aiTestsetRun = () => req('POST', '/api/ai/testset/run');

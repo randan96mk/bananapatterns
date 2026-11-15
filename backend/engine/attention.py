@@ -75,9 +75,13 @@ def signals(config, kite: bool) -> dict:
     return out
 
 
-def _ai(config) -> list:
-    """🤖 The AI page: the breaker open (jobs are skipped until it closes), a model download that failed."""
-    from backend.ai import control, guard
+def _ai(config, now=None) -> list:
+    """🤖 The AI page: the breaker open (jobs are skipped until it closes), a model download that failed, and last
+    night's high notes ("sell": a held name, "warn": a plan or watchlist name) as "🤖 SYMBOL · title"."""
+    from datetime import datetime
+
+    from backend.ai import control, guard, notes
+    from backend.config import IST
     out = []
     b = guard.breaker()
     if b["open"]:
@@ -85,6 +89,8 @@ def _ai(config) -> list:
     p = control.pull_status()
     if p.get("error"):
         out.append(("warn", f"AI model download failed: {p['error']}"[:160]))
+    for n in notes.high_notes(notes.night_day(now or datetime.now(IST), config)):
+        out.append(("sell" if n["book"] == "held" else "warn", f"🤖 {n['symbol']} · {n['title']}"))
     return out
 
 

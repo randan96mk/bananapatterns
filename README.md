@@ -1469,6 +1469,75 @@ stream, generate; the config defaults and the enable rule; the guard's decisions
 progress; the test prompt; the API routes with their 400s; the commands; the health rows; the scheduler tick), plus the
 routes in `tests/test_api.py`.
 
+#### Step 2 · filing and deal notes (PR 2)
+
+`backend/ai/notes.py`, `backend/ai/quality.py`, `config/ai_testset.json`. At night the model reads one exchange filing, or
+one day's deals on one stock, and writes a short note for the stock's owner. **Code decides everything that matters**: what
+is read, which numbers may be quoted, the severity shown and what is pushed; the model writes words and picks categories.
+
+- **What is read**: the `filings` table (every important kind plus updates, plus any filing about a pledge whatever its
+  kind: NSE files those as updates) and the `deals` table (bulk / block deals and SAST stake disclosures, one note per
+  stock and day) for the stocks **in scope**: held in any book (the cash books via the position guard, the futures book's
+  open lots; options spreads are index legs and are skipped), in the plan, or on the watchlist (`notes.scope()`, shared
+  with the filing alerts). `ai.note_days` (3) days back. One night job per source through the queue (kind `night`, key
+  `note:filing:<seq_id>` / `note:deal:<symbol>|<date>`), **held names first, then the plan, then the watchlist**, newest
+  first, `ai.notes_per_night` (80) a night. Queued by the evening job once its record is in (`run_eod` → `run_ai_notes`)
+  and by the 15-minute filings job for the filings it just stored, so an evening results filing gets its note the same
+  night. The guard decides at run time; what it refuses is queued again by the next call; a job older than 24 h is
+  skipped "stale"; a source whose job failed is left alone that night.
+- **The prompt contract** (`PROMPT_V = notes-v1`, stored on every note): system = the role ("you summarise one filing for
+  the stock's owner; reply with JSON only"), the schema, the categories, the severity rules; user = symbol, the
+  exchange's category, the time, the scope reason, the text (1,500 chars at most) and, for results, the **numbers found
+  by code** (revenue / PAT / EBITDA / loss in ₹ and the YoY %, by regex). Answer: `{category: results | order | deal |
+  pledge | legal | rating | management | exchange | fund_raise | dividend | other, severity: high | medium | low | info,
+  direction: positive | negative | neutral, title ≤ 60, line ≤ 180, acts: [≤ 3 short phrases], confidence 0–1}`.
+- **The validator** (code): the three enums (anything else is invalid), the lengths (clipped), the acts, the confidence;
+  **no broker or platform name anywhere** (invalid); **no figure in the line or the title that is not in the source text
+  or the numbers found by code**: such figures are stripped and the note carries `numbers_checked: false`. An invalid
+  answer gets one retry ("JSON only"); a second invalid answer fails the job (the breaker counts it).
+- **Severity by code** (`severity`; the model's own is kept as `severity_model`, so a model mistake cannot hide a pledge):
+  **high** = a pledge increase or invocation, results with a negative direction on a held name, legal (not in the
+  company's favour), a rating downgrade, an auditor resignation, a promoter selling, a block deal of ≥ 1% at ≥ 3% under
+  the close on a held or planned name; **medium** = results otherwise, orders, fund raise, management changes, a stake
+  disclosure of ≥ 1%; **low** = deals, dividends, a pledge released, a rating upgrade; **info** = exchange queries and
+  the rest. The discount of a block deal is computed from `candles_daily` (price vs the day's close).
+- **Table** `ai_notes`: `created, day` (the night's day: before `night_end` it is still the previous day's night), `kind`
+  (filing | deal), `symbol, book` (held | plan | watch), `severity, title, text` (the line), `data` JSON (`category,
+  direction, acts, confidence, severity_model, numbers, numbers_checked, source: {seq_id | symbol + date, url, dt,
+  category}, scope, alerted`), `model, prompt_version, ms, source_key`; a UNIQUE guard on (kind, source_key,
+  prompt_version) notes a source once per prompt version. Nothing is deleted.
+- **Alerts** (Telegram, channel `filing`): the filing and deal alerts gain a last line `🤖 AI · {severity} · {line}` when a
+  note exists at send time. A **high** note the alert did not carry (the note usually arrives later) is sent once on its
+  own: "📰 GLENMARK · pledge / 🤖 AI · high · … / in tomorrow's plan at #3 · reply skip GLENMARK before 9:16 AM to leave it
+  out · 14 Nov, 6:10 PM · filing" — the "held in Real (+x%) / in tomorrow's plan at #n / on your watchlist" part and the
+  skip hint come from code (the hint only for a plan name while real trading is on). Key `{day}|ai-note-{id}`. Medium
+  and low notes are not pushed; they are on the page. Home's attention list gets last night's high notes ("🤖 SYMBOL ·
+  title"; `sell` on a held name, `warn` otherwise), and every position row of the overview carries `ai_note: {title,
+  severity, at}` for a note of the last 7 days (the ⓘ tooltip and the dot on the position tables).
+- **The test set** (`quality.py`, `config/ai_testset.json`): 30 hand-written filings in the style of NSE texts (8 results
+  positive / negative, 5 pledges, 4 orders, 3 legal, 3 ratings, 3 management, 2 deals, 2 noise), each with the category,
+  severity and direction a careful reader expects. **Run test set** on the page (`POST /api/ai/testset/run`; 409 while a
+  run is going) sends them through the queue as kind `test` on the **night** model (allowed any time; the score reflects
+  the night work), scores category / severity / direction accuracy and keeps `ai.testset.last` and the best run so far in
+  `ai.testset.best` (`{at, model, prompt_version, n, category_ok, severity_ok, direction_ok, ms_avg, failed, rows}`); the
+  page shows last vs best. No note is written by a test.
+- **API**: `GET /api/ai` gains `notes: {today, high, last_night: {day, n, by_kind, ms_total, at, high}}`, `testset: {last,
+  best, running, progress}` and `queue.tonight: [{kind, label, n, queued, est_s}]` (the estimate from the average ms of
+  that kind's done jobs, 12 s by default) with `queue.night_allowed` / `queue.night_note` (the guard's verdict for night
+  work right now); `GET /api/ai/notes?symbol=&kind=&severity=&limit=&offset=` → `{rows, total}` newest first (a row is the
+  table row flattened with its data JSON, plus `url`, `source_at`, `alerted`); `GET /api/ai/notes/{id}` (404 when
+  missing); `POST /api/ai/notes/run` (queue tonight's notes now; 409 while note jobs are queued or running);
+  `POST /api/ai/testset/run`. Stream topic `ai` carries it all.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `notes_per_night` | 80 | filing / deal notes a night at most (held names first, then the plan, then the watchlist) |
+| `note_days` | 3 | how many days back the notes job reads filings and deals (the first run too) |
+
+Tests: `tests/test_ai_notes.py` (the prompt and the numbers found by code, the validator, the severity by code, the deal
+grouping and discount math, the scope ordering and the cap, the hooks in the evening and filings jobs, stale jobs, the
+alert lines and the high-note message, attention, the overview's `ai_note`, the test set scorer, the routes).
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -2644,3 +2713,15 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   Server, Models with Download, four cards, Recent jobs, Test prompt, "What it never does"; a "🤖 AI · state · n queued"
   chip in the top bar; Settings section "Local AI". README section "Local AI (PR 1 · infrastructure)".
 - Tests: `tests/test_ai_infra.py`.
+
+### 2026-11-15: 🤖 Local AI · PR 2 · filing and deal notes (backend)
+- `backend/ai/notes.py`: the scope (every book, the plan, the watchlist), the prompt with the numbers found by code, the
+  JSON contract and its validator (enums, lengths, figures not in the source stripped, broker names rejected), the
+  severity by code, the deal grouping with the discount to the close, the nightly queue (held first, then plan, then
+  watch; `notes_per_night`; stale jobs skipped), the high-note alert, the readers. `backend/ai/quality.py` and
+  `config/ai_testset.json`: the 30-filing test set, scored and kept as last vs best.
+- Hooks: `run_eod` queues the night's notes once its record is in; the filings job queues notes for the new in-scope
+  filings; the filing / deal alerts carry the AI line; attention and the overview's position rows carry the notes;
+  `GET /api/ai` gains `notes`, `testset`, `queue.tonight`; `GET /api/ai/notes`, `GET /api/ai/notes/{id}`,
+  `POST /api/ai/notes/run`, `POST /api/ai/testset/run`. `ai_notes` gains `source_key` and the UNIQUE guard (ALTER TABLE).
+- Tests: `tests/test_ai_notes.py` (31).

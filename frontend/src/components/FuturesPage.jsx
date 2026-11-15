@@ -10,6 +10,7 @@ import FuturesBacktest from './FuturesBacktest';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act, Cards, Card, Bar, Seg } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
+import AiDot from './AiDot';
 
 // 📐 Stock futures: one book, two sides (long = E+ breakout, short = E− breakdown), each with a Paper and a Real switch.
 // Paper fills from the daily futures candles; Real goes through the futures deployment's sender (a stub until step 4)
@@ -223,7 +224,7 @@ export default function FuturesPage() {
   const posCols = [{ h: 'Contract', ell: true }, { h: 'Side', w: 62 }, { h: 'Book', w: 62, lo: true }, { h: 'Lots', w: 50, n: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true },
     { h: 'MTM', w: 96, n: true }, { h: 'Stop · distance', w: narrow ? 160 : 200, ell: true }, { h: 'Margin', w: 100, n: true, lo: true, nw: true }, { h: 'Expiry', w: 120, lo: true }, { h: '', w: 44, key: 'edit' }];
   const posRows = (d.positions || []).flatMap((x) => [{ key: x.account + x.symbol, title: `${x.tag} · ${x.days} days · opened ${day(x.in)} · lot ${x.lot_size} · costs ${inr(x.costs)} · after costs ${signed(x.net)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}${x.rolls ? ` · rolled ${x.rolls}×` : ''}`,
-    cells: [<><b>{x.symbol}</b> <small className="muted">{x.contract} · lot {x.lot_size}</small>{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the futures open in the evening">est.</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a">by hand</Tag>}{x.stop_pct != null && x.stop_pct < 2 && <Tag c="w">near stop</Tag>}{x.trailed && <Tag c="ok" title={`late trail: 25% under the best close once +100% · best ${rs(x.best)}`}>🪜 trail</Tag>}</>,
+    cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} /> <small className="muted">{x.contract} · lot {x.lot_size}</small>{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the futures open in the evening">est.</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a">by hand</Tag>}{x.stop_pct != null && x.stop_pct < 2 && <Tag c="w">near stop</Tag>}{x.trailed && <Tag c="ok" title={`late trail: 25% under the best close once +100% · best ${rs(x.best)}`}>🪜 trail</Tag>}</>,
       sideTag(x.side), <Tag c={x.book === 'real' ? 'a' : ''}>{x.book}</Tag>, x.lots, n2(x.entry), <>{n2(x.last)}{x.live && <span className="livedot" title="live" />}</>, <b className={cls(x.mtm)}>{signed(x.mtm)}</b>,
       <><StopMeter last={x.side === 'short' ? -x.last : x.last} stop={x.side === 'short' ? -x.stop : x.stop} /> <span className="mono">{n2(x.stop)}</span></>, inr(x.margin_est),
       <>{day(x.expiry)}{x.roll_due ? <span className="warn"> · roll T-{st.roll_days}</span> : x.sessions_to_expiry != null ? <span className="muted"> · {x.sessions_to_expiry} sessions</span> : ''}</>,

@@ -294,7 +294,21 @@ class Scheduler:
 
     def run_eod(self, now: datetime, force: bool = False) -> dict:
         with self.lock:
-            return self._run_eod(now, force)
+            out = self._run_eod(now, force)
+        if out.get("status") in ("ok", "partial"):       # 🤖 the night's filing / deal notes, once the eod record is in
+            out["ai_notes"] = self.run_ai_notes(now)
+        return out
+
+    def run_ai_notes(self, now: datetime) -> dict:
+        """🤖 Queue tonight's AI notes (the guard decides at run time; nothing runs while the AI is off). Never raises."""
+        from backend.ai import notes
+        if not self.state.config.ai.enabled:
+            return {"status": "off"}
+        try:
+            return notes.enqueue_tonight(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI notes enqueue failed")
+            return {"status": "failed", "error": str(exc)[:200]}
 
     def _run_eod(self, now: datetime, force: bool) -> dict:
         today, started, st = now.date(), now_ist(), self.state
@@ -425,20 +439,31 @@ class Scheduler:
         sent = 0
         if cfg.filings_alerts:
             sent = self.alert_filings(new or [], now) + self.alert_deals(deals)
+        if new and self.state.config.ai.enabled:          # 🤖 notes for the new in-scope filings (within the night window)
+            try:
+                from backend.ai import notes
+                notes.enqueue_new_filings(self.state.config, new, now, self.notifier())
+            except Exception:
+                logger.exception("AI notes for new filings failed")
         if new is None:
             return {"status": "failed", "deals": len(deals), "sent": sent}
         return {"status": "ok", "new": len(new), "deals": len(deals), "sent": sent}
 
     @staticmethod
     def _scope() -> dict[str, str]:
-        """Stocks you hold, watch or have in the plan: {symbol: why}."""
-        scope = {p["symbol"]: "you hold it" for p in guard.positions()}
-        with get_db() as conn:
-            for r in conn.execute("SELECT symbol FROM watchlist"):
-                scope.setdefault(r["symbol"], "on your watchlist")
-        for i in pl.latest_plan()[1]:
-            scope.setdefault(i["symbol"], "in the plan")
-        return scope
+        """Stocks you hold (any book), have in the plan or watch: {symbol: why} (backend.ai.notes.scope, shared with
+        the AI notes so both read the same names)."""
+        from backend.ai import notes
+        return {s: v["why"] for s, v in notes.scope().items()}
+
+    @staticmethod
+    def _ai_note(kind: str, key: str):
+        """🤖 The AI's note for a filing / deal source when one exists at send time (the line goes on the alert)."""
+        try:
+            from backend.ai import notes
+            return notes.note_for(kind, key)
+        except Exception:
+            return None
 
     def alert_deals(self, new: list[dict]) -> int:
         """Red flags and fund moves from newly fetched deals / disclosures, on stocks in scope; once each."""
@@ -451,11 +476,19 @@ class Scheduler:
         for sym, s in holders.signals(syms, cfg).items():
             for key, icon in (("red", "🚩"), ("buy", "🏦"), ("sell", "🏦")):
                 for i in s[key]:
-                    if (sym, i["date"]) in dates and notifier.send(
-                            f"deal|{sym}|{i['label']}|{i['date']}", "filing", msg.deal_alert(sym, icon, i, scope[sym]),
-                            sym):
+                    if (sym, i["date"]) not in dates:
+                        continue
+                    note = self._ai_note("deal", f"{sym}|{i['date']}")
+                    if notifier.send(f"deal|{sym}|{i['label']}|{i['date']}", "filing", msg.deal_alert(sym, icon, i, scope[sym], note), sym):
                         sent += 1
+                        self._note_sent(note)
         return sent
+
+    @staticmethod
+    def _note_sent(note) -> None:
+        if note:
+            from backend.ai import notes
+            notes.mark_alerted(note["id"])
 
     def alert_filings(self, new: list[dict], now: datetime) -> int:
         """One message per important filing (from the last 24 h) on a stock you hold, watch or have in the plan."""
@@ -464,9 +497,12 @@ class Scheduler:
         notifier, sent = self.notifier(), 0
         for f in sorted(new, key=lambda f: f["dt"]):
             why = scope.get(f["symbol"])
-            if why and f["kind"] in filings.IMPORTANT and f["dt"] >= since and notifier.send(
-                    f"filing|{f['seq_id']}", "filing", msg.filing_alert(f, why), f["symbol"]):
+            if not (why and f["kind"] in filings.IMPORTANT and f["dt"] >= since):
+                continue
+            note = self._ai_note("filing", f["seq_id"])
+            if notifier.send(f"filing|{f['seq_id']}", "filing", msg.filing_alert(f, why, note), f["symbol"]):
                 sent += 1
+                self._note_sent(note)
         return sent
 
     @staticmethod

@@ -1,8 +1,9 @@
 """The job queue: ONE worker thread, FIFO. Every job is a row in `ai_jobs` (never deleted): queued -> running ->
 done / failed, or skipped (the guard said no, or a full stop emptied the queue). `enqueue(config, kind, key, fn)`
 dedupes on (kind, key) while a job is queued or running and refuses beyond `max_queue`. `fn()` does the work (one
-or more client calls) and returns a dict whose `tokens` / `note` are recorded; a success closes the breaker, any
-failure counts toward opening it."""
+or more client calls) and returns a dict whose `tokens` / `note` are recorded (or `{"skip": reason}` when the work
+turned out not to be needed, e.g. a stale note: the job ends skipped); a success closes the breaker, any failure counts
+toward opening it."""
 
 import queue as _q
 import threading
@@ -118,8 +119,11 @@ def _run(job_id: int, config: AppConfig, fn: Callable[[], Optional[dict]]) -> No
         logger.warning("AI job %s (%s %s) failed after %d ms: %s", job_id, row["kind"], row["key"], ms, exc)
     else:
         ms = round((time.monotonic() - t0) * 1000)
-        _set(job_id, status="done", finished=now_ist(), ms=ms, tokens=res.get("tokens"), note=res.get("note") or row.get("note"))
-        guard.ok()
+        if res.get("skip"):                                  # the work decided it was not needed (no breaker count)
+            _set(job_id, status="skipped", finished=now_ist(), ms=ms, error=str(res["skip"])[:300])
+        else:
+            _set(job_id, status="done", finished=now_ist(), ms=ms, tokens=res.get("tokens"), note=res.get("note") or row.get("note"))
+            guard.ok()
     finally:
         _running = None
 

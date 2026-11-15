@@ -95,7 +95,8 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   day_model: 'The day model (Ollama tag, e.g. qwen2.5:3b-instruct, ~1.9 GB); download it from System → AI', timeout_s: 'One model call may take at most this many seconds; longer = the job fails',
   keep_alive: 'How long a model stays loaded after a call (Ollama duration, e.g. 10m; 0 = unload at once)', min_free_ram_gb: 'No AI work while the server\'s free RAM is under this many GB',
   slow_tick_s: '… or while the scheduler\'s last tick took longer than this many seconds (the app comes first)', breaker_failures: 'This many failures in a row open the breaker …',
-  breaker_minutes: '… for this many minutes; one success closes it again', night_end: 'Night work stops here (24-hour HH:MM, IST)', max_queue: 'The queue refuses new jobs beyond this many waiting' };
+  breaker_minutes: '… for this many minutes; one success closes it again', night_end: 'Night work stops here (24-hour HH:MM, IST)', max_queue: 'The queue refuses new jobs beyond this many waiting',
+  notes_per_night: 'Filing / deal notes a night at most (held names first, then the plan, then the watchlist)', note_days: 'How many days back the notes job reads filings and deals (the first run too)' };
 Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
