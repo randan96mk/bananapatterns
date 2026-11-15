@@ -351,9 +351,10 @@ def test_test_prompt(ollama, cfg):
 
 def test_summary_shape(ollama, cfg):
     s = control.summary(cfg, at("10:00"))
-    assert set(s) == {"switches", "server", "models", "breaker", "queue", "jobs", "last_test", "settings", "limits", "url_ok", "version",
+    assert set(s) >= {"switches", "server", "models", "breaker", "queue", "jobs", "last_test", "settings", "limits", "url_ok", "version",
                       "url", "notes_count", "now", "can_enable", "enable_note", "allowed", "allowed_note", "never", "container_note",
-                      "notes", "testset"}                                                               # PR 2: notes, testset
+                      "notes", "testset"}                                     # PR 2: notes, testset; PR 3 adds its own keys below
+    assert {"brief", "asks"} <= set(s)                                                                   # 🤖 brief / 🤖 ask
     assert s["switches"] == {"enabled": True, "night_batch": True, "day_answers": True, "stopped": False}
     assert set(s["server"]) == {"ram_total_gb", "ram_free_gb", "load1", "cpu_pct", "ai_ram_mb", "app_tick_ms"}
     assert s["models"]["night"] == {"name": NIGHT, "present": True, "size_gb": 4.7} and s["models"]["day"]["present"] and s["models"]["loaded"] == []

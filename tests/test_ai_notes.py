@@ -529,7 +529,7 @@ def test_list_notes_filters_and_stats(cfg):
     assert set(all_["rows"][0]) >= {"id", "created", "day", "kind", "symbol", "book", "severity", "title", "text", "model", "prompt_version", "ms",
                                     "source_key", "category", "direction", "acts", "confidence", "severity_model", "numbers", "numbers_checked",
                                     "source", "url", "source_at", "scope", "alerted"}
-    now = datetime.now(IST)
+    now = datetime.now(IST).replace(hour=22, minute=0)          # an evening clock: tonight's day is today whatever the wall clock
     s = notes.stats(now, cfg)
     assert s["today"] == 3 and s["high"] == 1
     assert s["last_night"]["n"] == 3 and s["last_night"]["by_kind"] == {"deal": 1, "filing": 2} and s["last_night"]["high"] == 1
@@ -622,6 +622,7 @@ def api(fake_kite, make_client, monkeypatch, ollama):
 
 def test_routes(api, ollama, monkeypatch):
     tc = api
+    monkeypatch.setattr(notes, "night_day", lambda now, config: now_ist()[:10])   # the API reads the wall clock: pin the night to today
     hold("HELD")
     filing(1, "HELD", "Acquisition", "deal one", 1)
     _note_row("HELD", "high", "held", "Weak quarter", key="n1")

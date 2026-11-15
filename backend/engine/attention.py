@@ -11,7 +11,7 @@ import hashlib
 from backend.engine import paper
 from backend.engine import trend_breakout as tb
 
-ORDER = ("warn", "sell", "filter", "buy", "running")
+ORDER = ("warn", "sell", "filter", "buy", "running", "info")      # 🤖 ask: "info" = worth a look, never blinks loud
 
 
 def _pack(items: list[tuple[str, str]]) -> dict:
@@ -91,6 +91,17 @@ def _ai(config, now=None) -> list:
         out.append(("warn", f"AI model download failed: {p['error']}"[:160]))
     for n in notes.high_notes(notes.night_day(now or datetime.now(IST), config)):
         out.append(("sell" if n["book"] == "held" else "warn", f"🤖 {n['symbol']} · {n['title']}"))
+    try:                                                     # 🤖 suggestions: the open high-confidence ones
+        from backend.ai import suggest
+        out += suggest.attention_items(config)
+    except Exception:
+        pass
+    try:                                                     # 🤖 ask: a question that got no answer today
+        from backend.ai import ask
+        for a in ask.failed_today(now):
+            out.append(("info", f"🤖 ask not answered: {a['question'][:60]} ({a['error'][:60]})"))
+    except Exception:
+        pass
     return out
 
 

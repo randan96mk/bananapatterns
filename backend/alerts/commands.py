@@ -8,6 +8,10 @@
   opt / opt close / opt hold   the options book: today's status and the open spread; close the spread now; no new
                                entries today
   ai / ai stop / ai start      🤖 the local AI: one status line; the full stop (unload, empty the queue); clear it
+  sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N   🤖 suggestions: the open list; accept #N (exit and
+                               hold need `yes N` within 10 min; a skip goes straight through); dismiss with a reason;
+                               the evidence of #N. Nothing runs without your reply
+  ask <question>               🤖 ask the app: the day model answers from one read-only tool ("thinking…" first)
 
 Only messages from the configured chat_id are answered; anyone else is ignored.
 Commands older than STALE_SEC (sent while the app was off) are skipped. The poller
@@ -35,6 +39,7 @@ STALE_SEC = 120
 MORNING_WORDS = ("skip", "unskip", "hold")
 OPTIONS_WORDS = ("close", "hold")
 AI_WORDS = ("stop", "start")
+SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
 
 
 class BotCommands:
@@ -85,6 +90,12 @@ class BotCommands:
                 parts = ["/ai" + (parts[1].lower() if len(parts) > 1 and parts[1].lower() in AI_WORDS else "")] + parts[2:]
             if parts[0].lower() in MORNING_WORDS:          # the reminder's reply: "skip NRL" / "hold", no slash needed
                 parts[0] = "/" + parts[0].lower()
+            if parts[0].lstrip("/").lower() in SUGG_WORDS:                                         # 🤖 suggestions: "accept 3", "dismiss 3 wrong"
+                parts = ["/sugg" + parts[0].lstrip("/").lower(), " ".join(parts[1:])] if len(parts) > 1 else ["/sugg" + parts[0].lstrip("/").lower()]
+            if parts[0].lower() in ("ask", "/ask"):                                                # 🤖 ask: the words, as typed
+                if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
+                    handled += int(self.ask(" ".join(parts[1:]), notifier))
+                continue
             if not parts[0].startswith("/"):
                 continue
             if self.clock().timestamp() - m.get("date", 0) > STALE_SEC:
@@ -246,10 +257,56 @@ class BotCommands:
             return "▶️ AI full stop cleared.\n" + msg.ai_status(control.summary(cfg, now))
         return msg.ai_status(control.summary(cfg, now))
 
+    def ask(self, question: str, notifier: Notifier) -> bool:
+        """🤖 ask <question>: "thinking…" at once, then the answer the day model wrote from one read-only tool (or the
+        refusal); nothing is changed by an ask. Waits ask.TIMEOUT_S at most."""
+        from backend.ai import ask as aask
+        if not question.strip():
+            return self._say(notifier, "Ask what? <b>ask</b> why did we skip NMDC on thursday")
+        if not (self.state.config.ai.enabled and self.state.config.ai.ask):
+            return self._say(notifier, "🤖 Ask is off (System › AI).")
+        self._say(notifier, msg.ai_thinking(question))
+        try:
+            row = aask.ask(self.state.config, question, "telegram")
+        except ValueError as exc:
+            return self._say(notifier, f"Not asked: {msg.escape(str(exc))}")
+        return self._say(notifier, msg.ai_ask_reply(row))
+
+    def suggestions(self, command: str, arg: str) -> str:
+        """🤖 sugg: the open list · accept N: a skip runs at once (reversible), exit / hold answer with the confirm text
+        and wait for `yes N` (10 min) · yes N · dismiss N [wrong|knew|later] · why N: the evidence. Every action an
+        accept runs is the same function the page's button calls; the model itself never acts."""
+        from backend.ai import suggest
+        cfg, now = self.state.config, self.clock()
+        words = arg.split()
+        if command == "/suggsugg":
+            return msg.ai_suggestion_list(suggest.open_suggestions())
+        if not words or not words[0].isdigit():
+            return f"Which one? {command[5:]} N (the number from the list; <b>sugg</b> lists them)"
+        sid = int(words[0])
+        s = suggest.get(sid)
+        if not s:
+            return f"No suggestion #{sid}."
+        try:
+            if command == "/suggwhy":
+                return msg.ai_suggestion_detail(s)
+            if command == "/suggdismiss":
+                reason = words[1].lower() if len(words) > 1 else "none"
+                suggest.dismiss(sid, reason, who="telegram")
+                return f"✗ #{sid} dismissed · {reason} · {msg.escape(s['title'])}"
+            if command == "/suggaccept":
+                step, row = suggest.telegram_accept(sid, cfg, now)
+                return msg.ai_accept_confirm(row) if step == "confirm" else msg.ai_accepted(row)
+            return msg.ai_accepted(suggest.telegram_yes(sid, cfg, now))
+        except (suggest.SuggestionState, ValueError) as exc:
+            return f"Not changed: {msg.escape(str(exc))}"
+
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
         if command in ("/ai", "/aistop", "/aistart"):
             return self._say(notifier, self.ai(command))
+        if command.startswith("/sugg"):                                               # 🤖 suggestions
+            return self._say(notifier, self.suggestions(command, arg))
         if command in ("/skip", "/unskip", "/hold"):
             return self._say(notifier, self.morning(command, arg, notifier))
         if command in ("/futskip", "/futunskip", "/futhold"):
@@ -289,5 +346,5 @@ class BotCommands:
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold (today's real "
                                        "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
-                                       "book) · ai / ai stop / ai start (the local AI). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "book) · ai / ai stop / ai start (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

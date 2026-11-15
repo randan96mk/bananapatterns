@@ -46,6 +46,21 @@ def _ai_notes(rows: list) -> list:
     from backend.ai import notes
     return notes.attach(rows)
 
+
+def _ai_flags(day: str) -> dict:
+    """🤖 suggestions: the open `flag` suggestions for the session `day` ({symbol: text}); never raises."""
+    try:
+        from backend.ai import suggest
+        return suggest.open_flags(day)
+    except Exception:
+        return {}
+
+
+def _ai_why(trades: list) -> list:
+    """🤖 why: the AI's "likely cause" line on the closed trades (ai_why: {id, text, at} | None)."""
+    from backend.ai import why
+    return why.attach(trades, "real")
+
 def _rules(config: AppConfig, key: Optional[str] = None):
     return tb.rules(config, key or config.real.variant)
 
@@ -734,7 +749,8 @@ def morning(config: AppConfig, now: Optional[datetime] = None) -> dict:
             "skipped": skipped, "waiting": int(st.get("waiting") or 0),
             "counts": {"sent": sum(o["sent"] for o in orders), "failed": sum(o["failed"] for o in orders),
                        "skipped": sum(o["status"] == "skipped" for o in orders)},
-            "first_sent": min(sent_at) if sent_at else None, "last_sent": max(sent_at) if sent_at else None}
+            "first_sent": min(sent_at) if sent_at else None, "last_sent": max(sent_at) if sent_at else None,
+            "ai_flags": _ai_flags(today)}                 # 🤖 suggestions: {symbol: text} of the AI's open flags for today
 
 
 def send_now(config: AppConfig, client, now: Optional[datetime] = None, sender: Optional[Callable] = None) -> dict:
@@ -1042,7 +1058,7 @@ def summary(config: AppConfig) -> dict:
                         "gross": round(value + st["charges"] - cap, 2), "costs": round(st["charges"], 2),
                         "net": round(value - cap, 2), "return": round((value - cap) / cap * 100, 2),
                         "realised": round(realised, 2), "unrealised": round(value - cap - realised, 2), "nifty": nifty},
-            "positions": _ai_notes(positions), "checks": checks, "notes": st.get("notes", []), "trades": trades, "won": len(won),
+            "positions": _ai_notes(positions), "checks": checks, "notes": st.get("notes", []), "trades": _ai_why(trades), "won": len(won),
             "closed": len(trades),
             "profit_factor": round(sum(t["net"] for t in won) / loss, 2) if loss else None, "drawdown": round(dd, 2),
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq],

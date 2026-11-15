@@ -46,6 +46,12 @@ logger = setup_logger("futures")
 _lock = threading.Lock()
 
 
+def _ai_why(rows: list) -> list:
+    """🤖 why: the AI's "likely cause" line on the closed trades (ai_why: {id, text, at} | None)."""
+    from backend.ai import why
+    return why.attach(rows, "futures")
+
+
 def _ai_notes(rows: list) -> list:
     """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None)."""
     from backend.ai import notes
@@ -1460,7 +1466,7 @@ def summary(config: AppConfig) -> dict:
             "short_paper": {"open": sp["positions"], "net": sp["net"], "return": sp["return"], "value": sp["value"],
                             "signals_month": sum(1 for s in st.get("short_signals", []) if s["day"] >= month), "signals": st.get("short_signals", [])[-10:],
                             "trades": short_trades, "verdict": verdict.get("short"), "robust": robust["short"]},
-            "deposits": st.get("deposits", []), "accounts": acc, "trades": _trades()[:100], "notes": st.get("notes", []),
+            "deposits": st.get("deposits", []), "accounts": acc, "trades": _ai_why(_trades()[:100]), "notes": st.get("notes", []),
             "risk": round(sum(p["risk"] for p in positions if p["account"] == pk), 2)}
 
 

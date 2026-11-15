@@ -1540,6 +1540,137 @@ alert lines and the high-note message, attention, the overview's `ai_note`, the 
 
 **Prompt v2 (`notes-v2`)**: the model's synonyms are mapped before the check (acquisition → deal, bullish → positive, critical → high, …), a retry names the fault and lists the allowed values, the direction rules are spelled out (neutral only when the owner's position is unaffected), and the answers are capped (temperature 0.1, 320 tokens, 2,048 context) for shorter, steadier replies on the CPU. The Quality panel's **Show rows** lists every test item with expected versus got.
 
+#### Step 3 · suggestions and trade "why" notes (PR 3 · A, B)
+
+`backend/ai/suggest.py` (table `ai_suggestions`) and `backend/ai/why.py` (rows of kind `why` in `ai_notes`). The model
+**proposes and explains; it never acts**: a suggestion runs only when you accept it, and the accept calls the very function
+the page's own button calls (never HTTP, never an order, a setting, a switch or a stop).
+
+- **🤖 Suggestions** are born by the night batch after the notes (one job `suggest:<day>`, kind `night`, FIFO behind the
+  notes the evening job queued). **Code decides the kind, the evidence lines, the action, the confidence and the expiry;
+  the model writes only the one-line `why`** (≤ 180 chars, one call per suggestion), validated like a note: no figure that
+  is not in the evidence (stripped, `numbers_checked` false), no broker name (invalid); an unusable answer twice leaves the
+  first evidence line in its place (`why_source: code`). At most `ai.max_suggestions_open` (6) open, one per symbol a night
+  (the first kind in this order wins), UNIQUE (kind, symbol, day); kinds in `ai.suggest_muted` are never born.
+  1. `skip` — a planned name (a Real BUY not sent, or an E+ plan item) with a **high** negative note tonight (pledge,
+     promoter selling, negative results, legal, downgrade) or a deal note ≥ 3% under the close. Action `POST /api/real/skip`
+     (`real.skip_order`, the morning skip; Paper-only plans get a note-only suggestion). Expires at `real.send_time`
+     (9:16 AM). Confidence high for pledge / legal / promoter selling, medium otherwise.
+  2. `exit` — a held name (Real / Paper / Futures) with a high negative note. There is no exit API that is not an order,
+     so the action is `{path: "ui", route: "portfolio/<book>", hint: "Exit… on the row"}`: the accept only navigates;
+     nothing lowers a stop. Expires at `real.send_time`. Confidence medium.
+  3. `flag` — a planned name with a deal ≥ 3% under the close or results within 3 sessions: no action; the 9:00 dry run
+     gains `ai_flags: {symbol: text}` (`real.morning`) and the preview message prints "🤖 …" under the BUY. Expires 9:00 AM.
+     Confidence high.
+  4. `hold_options` — an event day tomorrow (a calendar entry or filing naming RBI policy / the Union Budget) or a VIX
+     close over `options.vix_half`: action `POST /api/options/hold` (`options.book.hold_today`). Expires at
+     `options.window_end`. Confidence medium. Only while the options book exists.
+  5. `roll_or_exit` — a futures lot due to roll tomorrow whose next month's OI is under 20% of the near month's, or that
+     trades below its entry (above, for a short): note-only with the roll-queue line; expires 9:20 AM.
+  6. `backtest` — **Sunday night only**: ≥ 8 of the last 12 futures / real stops were hit within 1% of the stop and the
+     close 5 sessions later was back past the exit → "Backtest a stop cap of +1%" with `action.prefill {max_stop_pct,
+     roll_mode}` for the futures strategy page. No expiry, confidence low.
+- **Row** (`GET /api/ai/suggestions` → `{rows, open, by_kind}`): `id, created, day, for_day` (the session it is about),
+  `kind, icon, symbol, book, title, why, evidence [{icon, text, url?}], action {label, path, args, confirm_text} | {path:
+  "ui", route, hint, prefill?} | null, confidence low | medium | high, expires_at, status open | accepted | dismissed |
+  expired, decided_at, reason wrong | knew | later | none, outcome {at, pct_move, helped, rs, note} | null, note_id, model,
+  prompt_version "sugg-v1", value, why_source, numbers_checked, later, result`. Never deleted.
+- **Decisions**: `POST /api/ai/suggestions/{id}/accept` (the row goes to accepted first, so the action can never run twice;
+  then the action runs; 404 missing, 409 already decided or expired, 400 when the action itself was refused — the row
+  stays accepted with `result.error`), `…/dismiss {reason}`, `…/later` (expires_at + 4 h, once; 409 the second time),
+  `GET /api/ai/suggestions/{id}`, `POST /api/ai/suggestions/run` (queue the job now; 409 while it runs),
+  `POST /api/ai/suggestions/mute {kind, muted}`. **Every scheduler tick** expires the open rows past `expires_at` (no tap).
+- **Outcomes** (code, nightly, 5 sessions after `day`): `pct_move` = close(day + 5 sessions) / close(day) − 1; `helped`:
+  skip / exit / flag when the stock fell ≥ 1%, `hold_options` when NIFTY's range on the target day was > 1.5%,
+  `roll_or_exit` when the underlying moved against the lot, `backtest` null; `rs` = the move × the planned / held value,
+  signed so a positive figure means the suggestion would have saved money.
+- **Scorecard** `GET /api/ai/suggestions/scorecard?month=YYYY-MM` → `{month, kinds: {kind: {made, open, accepted,
+  dismissed, expired, helped_when_accepted, would_have_helped, scored, muted}}, totals: {month, made, accepted, dismissed,
+  expired, accepted_outcome_rs, dismissed_outcome_rs, best_kind}}`. `GET /api/ai` gains `suggestions: {open, by_kind,
+  scorecard_month, muted, max_open}`; `PUT /api/ai/settings` also takes `suggest_muted` (comma list), `max_suggestions_open`
+  (1–50) and `why`. The monthly line "🤖 Suggestions · October 2026 · n made · …" goes out once on the first night batch of
+  the next month (key `{YYYY-MM}|ai-scorecard`).
+- **Telegram** (channel `ai`): the evening list "🤖 N suggestions for Wednesday" (key `{day}|ai-sugg`; `#id`, kind icon,
+  title, confidence, the why, until when), then `sugg` (the open list), `accept N` (a `skip` and the note-only kinds go
+  straight through — a skip is reversible; `exit` / `hold_options` answer with the confirm text and need **`yes N` within
+  10 minutes**), `dismiss N [wrong|knew|later]`, `why N` (the evidence and the path the accept takes). Attention ("ai"
+  tab): every open high-confidence suggestion as a `warn` line.
+- **🧾 Trade "why" notes** (`why.py`, `ai.why` true): one job `why:<day>` per night (kind `night`, after the notes) for
+  every trade closed today in the four books (`real_trades`, `paper_trades`, `futures_trades`, `options_trades`) and every
+  held name that gapped > 1% at the open or hit a stop today. Code assembles the evidence — the trade row (entry, exit,
+  stop, how it ended, net), the stock's gap and close vs the previous session, the industry's average move (the
+  `industry` column of `universe_snapshots`, when known), NIFTY's move, the filings and deals of the last 3 days (the AI's
+  note title when one exists); for options the bias, the score, the strikes, the credit, the exit time and the spot —
+  and the model writes ONE line "likely cause: …" (≤ 180 chars, numbers only from the evidence, no broker; the prefix is
+  added when missing). Row: `ai_notes` kind `why`, severity info, `title "SYMBOL · how it ended"`, `text` the line,
+  `source_key` `real:<trade id>` / `paper:…` / `futures:…` / `options:…` / `held:SYMBOL:day` (noted once per prompt
+  version `why-v1`), `data {trade, extra, evidence, numbers_checked}`. The Real / Paper / Futures / Options summaries'
+  trade rows carry `ai_why: {id, text, at} | null` (paper trade rows now carry their `id`). One evening message
+  "🧾 Today's exits, explained · Tue 17 Nov" lists each closed trade (book icon, name, how it ended, net) with its line
+  (key `{day}|ai-why`; only when ≥ 1 trade closed; a held name that merely gapped gets a row, not a message line).
+  `POST /api/ai/why/run` queues the job now (409 while it runs); the lines are in `GET /api/ai/notes?kind=why`.
+
+**Settings** (`ai.*`):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_suggestions_open` | 6 | open suggestions at most (older ones expire on their own time) |
+| `suggest_muted` | "" | comma list of kinds never born: skip, exit, flag, hold_options, roll_or_exit, backtest |
+| `why` | true | the nightly "likely cause" line under every trade closed today, and the evening message |
+
+Tests: `tests/test_ai_suggest.py` (each kind's birth rule on seeded data, the why validator, the birth through the fake
+Ollama with the cap and the code fallback, the evening list once, the scorecard line, expiry on the tick, accept through the
+real skip once and never twice, the refused action, the options hold, dismiss reasons, later once, the outcome math, the
+scorecard and the mute, the Telegram two-step, the morning flags and the preview line, attention, the eod hooks, the
+routes) and `tests/test_ai_why.py` (the four books normalised, gaps and stops, the evidence lines, the line validator, the
+night job with the UNIQUE guard and the message once, the skipped item, the switch, `ai_why` on the trade tables, the hook
+and the route).
+
+#### Step 3 · morning brief and ask the app (PR 3 · C, D)
+
+`backend/ai/brief.py` and `backend/ai/ask.py`. Both read; neither acts (no order, setting, switch or stop is ever touched).
+
+- **☀️ Morning brief** (`brief.py`): at `ai.brief_time` (6:30 AM) on a trading day the scheduler queues one job (kind
+  `brief`, key `brief:<day>`, recorded as `ai_brief` so it is queued once) and the **night model** writes at most 5 lines
+  (each ≤ 160 chars) from the facts code gathered: the Real morning plan (EXITs, BUYs, cash after, free slots, the skips
+  with their reason), the futures plan, lots held, roll day and roll queue, the options book (the open spread, the last
+  chain line: PCR, put / call walls, VIX against `options.vix_half`, an event day), the night's high notes, results due
+  within 3 sessions on held names. The guard's window for kind `brief` is the night window extended to 9:00 AM
+  (`guard.brief_window`). The answer is validated like a note: a JSON list, clipped, **no broker name** (invalid, one
+  retry), **no figure that is not in the facts** (stripped, `numbers_checked: false`). Stored as an `ai_notes` row of kind
+  `brief` (`source_key brief:<day>`, severity info, `data.lines`, `data.facts`), sent once on Telegram (channel `system`,
+  key `{day}|ai-brief`): "☀️ Morning brief · Mon 17 Nov · 6:30 AM" + the lines + "written from the plans and filings · no
+  action taken". Shown on System › Alerts (as sent) and in the AI page's Notes feed (kind `brief`). Nothing to brief (no
+  book, no notes) → the job ends skipped. `GET /api/ai` gains `brief: {last_at, lines, day, id}`.
+- **💬 Ask the app** (`ask.py`): a question → the **day model** picks ONE tool from a fixed list (JSON `{tool, args}`) →
+  code runs that read-only function with the arguments **coerced by type and defaulted by code** (days 1–90, limit 1–30,
+  pct 0.1–20, book one of real / paper / futures / options, dates ISO) → the model writes the answer (≤ 400 chars) from the
+  tool's result only. The tools (Python functions, no HTTP): `real_morning(day)`, `real_summary()`, `paper_summary()`,
+  `futures_summary()`, `options_summary()`, `options_days(limit)`, `trades(book, days)`, `filings(symbol, days)`,
+  `notes(symbol, days)`, `suggestions(status)`, `plan(day)`, `why_skipped(symbol, day)` (the plan's skips / waiting /
+  results guard for that stock), `positions_near_stop(pct)`, `backtest_f()`. Anything else → "I can only answer from the
+  app's own data: plans, positions, trades, filings, notes, backtests." The answer check: no broker name, **every figure
+  must appear in the tool's result** (or the question); one retry names the fault, a second bad answer is **rejected**
+  (the row keeps `ok 0` and the reason; the reply says so). Kind `ask` is allowed at **any time** (not only 9:00–15:40) but
+  only on the day model; the 7B is never used. Every ask is a row in `ai_asks` (`created, who (page | telegram),
+  question, tool, args, answer, ms, model, ok, error`), never deleted. Telegram: `ask <question>` replies "thinking…" at
+  once, then "💬 ask … / AI · the answer (why_skipped(symbol=NMDC, day=…) · 6 s · read-only)"; 60 s timeout. A question
+  that got no answer today is an `info` item in Home's attention list.
+- **API**: `POST /api/ai/ask {question}` → `{id, question, tool, args, answer, ms, ok, status, read, error}` (400 on an
+  empty question, while ask is off or the AI is off); `GET /api/ai/asks?limit=` → `{rows}` newest first; `GET /api/ai`
+  gains `asks: {today, last}`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `brief` | true | the morning brief on trading days (one night-model call, one Telegram message) |
+| `brief_time` | 06:30 | when the brief is written (its window runs to 9:00 AM) |
+| `ask` | true | ask the app: the day model answers from one whitelisted read-only tool, any time |
+
+Tests: `tests/test_ai_brief.py` (the settings and the guard windows, the facts from the books, the validator, the run with
+its retry and once-a-day guard, the due rule and the scheduler job, the routes) and `tests/test_ai_ask.py` (the whitelist
+and the typed arguments, the tool pick and the refusal, the tools on seeded data, the answer check, the flow through the
+queue incl. the rejection, the timeout and the night-time ask, Telegram, attention, the routes).
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -2727,3 +2858,29 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   `GET /api/ai` gains `notes`, `testset`, `queue.tonight`; `GET /api/ai/notes`, `GET /api/ai/notes/{id}`,
   `POST /api/ai/notes/run`, `POST /api/ai/testset/run`. `ai_notes` gains `source_key` and the UNIQUE guard (ALTER TABLE).
 - Tests: `tests/test_ai_notes.py` (31).
+
+### 2026-11-15: 🤖 Local AI · PR 3 · A + B · suggestions and trade "why" notes (backend)
+- `backend/ai/suggest.py`, table `ai_suggestions`: six birth rules by code (skip, exit, flag, hold_options, roll_or_exit,
+  backtest on Sunday) from tonight's notes, the plans, the books and the calendar; the model writes only the one-line
+  why (validated like a note, code fallback); the open cap and the mute; expiry on every scheduler tick; accept through
+  the hand action's own function once (real.skip_order, options.book.hold_today; "ui" actions navigate), dismiss with a
+  reason, later once; outcomes 5 sessions on and the scorecard; the Telegram list, `sugg` / `accept N` / `yes N` (two-step
+  for exit and hold) / `dismiss N [reason]` / `why N`; the monthly scorecard line; `real.morning` `ai_flags` and the
+  preview's "🤖" line; attention; `GET /api/ai` `suggestions`; the `/api/ai/suggestions*` routes.
+- `backend/ai/why.py`: the trades closed today in the four books and the held names that gapped or hit a stop, the
+  evidence by code (trade row, day move, industry average, NIFTY, filings and deals), the one line "likely cause: …" as an
+  `ai_notes` row of kind `why`, `ai_why` on the trade rows of the four summaries, the evening message "🧾 Today's exits,
+  explained" once, `POST /api/ai/why/run`. Hooks: `run_eod` queues why then suggest after the notes; `AIConfig
+  .max_suggestions_open / suggest_muted / why`.
+- Tests: `tests/test_ai_suggest.py` (23), `tests/test_ai_why.py` (12).
+
+### 2026-11-15: 🤖 Local AI · PR 3 · C + D · morning brief and ask the app (backend)
+- `backend/ai/brief.py`: the facts from the books (Real morning plan, futures plan and roll queue, options state and chain
+  line, the night's high notes, results on held names, VIX, event days), the night model's ≤ 5 lines validated like a
+  note, the `ai_notes` row of kind `brief`, the Telegram message, the `ai_brief` scheduler job at `ai.brief_time` through
+  the queue (kind `brief`; `guard.brief_window` to 9:00 AM). `backend/ai/ask.py`: the 14 whitelisted read-only tools with
+  typed arguments coerced by code, the tool pick, the answer on the day model with the numbers check and the rejection,
+  the refusal text, table `ai_asks`, kind `ask` allowed any time on the day model only.
+- Hooks: `AIConfig.brief / brief_time / ask`; Telegram `ask <question>` ("thinking…" first, 60 s); `POST /api/ai/ask`,
+  `GET /api/ai/asks`; `GET /api/ai` gains `brief` and `asks`; attention `info` item for an ask that got no answer.
+- Tests: `tests/test_ai_brief.py` (15), `tests/test_ai_ask.py` (19).
