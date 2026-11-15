@@ -226,6 +226,14 @@ def _add_ai_notes(rows: list, today: str) -> None:
                 r["ai_note"] = {"title": n["title"], "severity": n["severity"], "at": n["at"]}
     except Exception:
         pass
+    try:                                               # 🤖 AI view: the held name's rating (null on intraday / options rows)
+        from backend.ai import view
+        swing = [r for r in rows if r["book"] not in ("intraday", "options")]
+        for r in rows:
+            r["ai_view"] = None
+        view.attach(swing, "held", today)
+    except Exception:
+        pass
 
 
 def results_held(pos: list) -> list:

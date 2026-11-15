@@ -1671,6 +1671,76 @@ its retry and once-a-day guard, the due rule and the scheduler job, the routes) 
 and the typed arguments, the tool pick and the refusal, the tools on seeded data, the answer check, the flow through the
 queue incl. the rejection, the timeout and the night-time ask, Telegram, attention, the routes).
 
+### 🤖 AI view · a rating beside every system-suggested stock
+
+The night batch rates every name the system suggests for the next session (and every held name) 0–100, with a verdict,
+up to three short reasons and the levels that matter. **The model rates and explains; it never acts**: no order, no size,
+no skip, no stop, no setting. Every number in a rating comes from code.
+
+- **What it gets** (`backend/ai/view.py: features`): the plan or scan payload (stage, base, pivot, distance, breakout
+  date and sessions since, volume ratio, depth, RS, industry rank, trend template, 52-week distance, VCP, score); from the
+  daily bars the SMA 20/50/200 stack and the distance to the 50 / 200, ATR(14) %, the 20-day volume average, the last 5
+  sessions' volume ratio and the dry-up (10-day avg / 50-day avg − 1); the market filter; the industry and its 5-session
+  average move; the next results date and the sessions to it; the last 3 AI filing / deal notes; "no chain" (the stored
+  chain is NIFTY's only); for held names the entry, stop, distance to the stop, days held and whether the trail armed.
+- **Candidate levels** (`levels`): the 5-bar swing lows / highs of the last 120 sessions, the base floor and the pivot,
+  the 50 / 200-day averages, the nearest round number (step 5 / 10 / 50 / 100 by price) and the breakout day's VWAP (the
+  1-minute store, else the day's typical price): up to 10 `{price, kind, label}`. The model picks `support_1`,
+  `support_2`, `resistance` and `fails_below` from these prices only (matched within 0.2%).
+- **The contract** (prompt `view-v1`): `{score 0–100, verdict, confidence 0–1, reasons ≤ 3 × ≤ 60 chars, change ≤ 100 |
+  null, levels {support_1, support_2|null, resistance|null, fails_below}, would_change ≤ 120}`. Code checks the enums,
+  the lengths, that every figure is in the facts, that each level is a candidate and that `fails_below` is under the
+  close. One retry names the fault; a second failure is saved with status `failed` (no rating shown; the record counts it).
+- **Verdict by code**: candidates `buy` at `view_score_buy` (60) and over, `avoid` under `view_score_avoid` (40), else
+  `wait`; held names `hold` / `trim` / `exit-watch` on the same lines, and `exit-watch` whenever the close is under
+  `fails_below`. The model's own verdict is kept as `verdict_model`.
+- **Memory and calibration**: the stock's previous view (score, verdict, reasons, day) and what happened since (close
+  change, whether support 1 held, the volume ratio now vs then, new notes) follow the facts in the prompt, as context and
+  not an anchor; `change` says why the score moved. A calibration note built nightly from the record (hit rates by
+  verdict, in results weeks, by volume-ratio band) closes the prompt.
+- **The night** (job `view:<day>`, kind `night`, queued by `run_eod` after the suggestions): tomorrow's plan (the evening
+  plan, the Real BUYs, the Paper BUYs), held names (Real, Paper, Futures; `view_rate_held`), the futures plan, the day's
+  Follow breakouts, the Screens' breakout / ready names (top 5 by score per screen), one model call per name, at most
+  `view_max_per_night` (40). Then the outcomes, the calibration note and the shuffle test.
+- **Outcomes and the record**: 5 / 10 / 20 sessions on, `pct` = close(day + h) / close(day) − 1; a candidate hits at +3%
+  (or when the trail armed before a close under its stop), a held name hits when it did not close under `fails_below`.
+  `GET /api/ai/view/record` gives per verdict {votes, hit5, hit20, avg20} against the plan baseline (every plan name), by
+  week, the shuffle result, the feature it leans on most (dry-up / RS / volume ratio by verdict), where it is wrong (the
+  worst bucket, e.g. results-week buys) and the unlock state.
+- **The shuffle test**: ~1 in 5 views is rated again with ANOTHER stock's facts swapped in; a model that rates the facts
+  scores them differently, a model that rates the name does not. The record compares the buy hit rate by the real score
+  with the one by the shuffled score.
+- **The locked switches and the unlock rule**: `view_rank_by_score` (plan ties, the same breakout rank, ordered by score),
+  `view_size_by_score` (BUY qty = rule qty × clip(0.5 + 0.5 × (score − 40) / 40, `view_size_floor`, 1.0), whole shares,
+  at least one; the dry run shows "32 (0.8× · was 40)"; Telegram `full SYMBOL` restores the rule size that morning) and
+  `view_exit_watch_alert` (an alert when a held name closes under `fails_below`; a flag only). They are built and off;
+  turning one on is refused (400) until the record shows **4 weeks in a row** with buy hit@20 over the plan baseline and
+  avoid hit@20 under it. Even then a score never sizes above 1.0×, never skips a name and never moves a stop (asserted
+  in code and tests).
+- **API**: `GET /api/ai/view?symbols=A,B` → `{views: {SYM: row + previous}}`; `GET /api/ai/view/record?weeks=`;
+  `POST /api/ai/view/run` (409 while running); `GET /api/ai` → `view: {on, last_night, record_summary, switches}`;
+  `PUT /api/ai/settings` and `PUT /api/config/ai` take the `view_` keys. `GET /api/plan`, `GET /api/breakout` (scan
+  buys), `GET /api/follow`, `GET /api/screens/{screen}/results`, the futures plan rows and the position rows of the Real,
+  Paper, Futures and Home summaries carry `ai_view: {score, verdict, reasons, change, levels, at, day, source,
+  prev_score} | null`; the Real morning's BUYs carry `ai_view`, `qty_rule`, `qty_ai`, `size_x`, `full`.
+- **Telegram** (channel `ai`): the morning dry run shows "· 🤖 AI 82 buy · reason" under each BUY; "🌙 AI view · tonight ·
+  n rated" after the night batch; "🤖 SYM · exit-watch" (only with `view_exit_watch_alert`); once a week "📊 AI view ·
+  week n" with the unlock notice; `ask levels SYM` answers through the ask tool `levels(symbol)`.
+
+| Setting (`ai.*`) | Default | Meaning |
+|---|---|---|
+| `view_enabled` | true | the nightly rating |
+| `view_rate_held` | true | held names re-rated nightly |
+| `view_rank_by_score` | false (locked) | plan ties ordered by score |
+| `view_size_by_score` | false (locked) | BUY size by score, 0.5–1.0× |
+| `view_size_floor` | 0.5 | the smallest multiplier (0.5–1.0) |
+| `view_exit_watch_alert` | false (locked) | alert when a held name closes under fails_below |
+| `view_score_buy` | 60 | buy / hold at or over |
+| `view_score_avoid` | 40 | avoid / exit-watch under |
+| `view_max_per_night` | 40 | names rated a night at most |
+
+Tests: `tests/test_ai_view.py` (fake Ollama, no network).
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -1734,7 +1804,7 @@ chat only):
 | 🔕 Quiet today | (live guard alerts) no more live alerts on that stock today |
 
 Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
-`/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` (today's real BUYs), `fut skip SYM` / `fut hold`
+`/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` / `full SYM` (today's real BUYs; `full` restores the rule size when the locked AI view size-by-score is on), `fut skip SYM` / `fut hold`
 (the futures plan), `opt` / `opt close` / `opt hold` (the options book), `ai` / `ai stop` / `ai start` (the local AI).
 
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
@@ -2884,3 +2954,14 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - Hooks: `AIConfig.brief / brief_time / ask`; Telegram `ask <question>` ("thinking…" first, 60 s); `POST /api/ai/ask`,
   `GET /api/ai/asks`; `GET /api/ai` gains `brief` and `asks`; attention `info` item for an ask that got no answer.
 - Tests: `tests/test_ai_brief.py` (15), `tests/test_ai_ask.py` (19).
+
+### 2026-11-15: 🤖 AI view · a rating beside every system-suggested stock (backend)
+- `backend/ai/view.py`, table `ai_views`: the facts and candidate levels by code, prompt `view-v1` with the previous view
+  and the calibration note, the validator (verdict recomputed by code), the night job after the suggestions (plan, held,
+  futures, Follow, Screens; capped), outcomes at 5 / 10 / 20, the shuffle test, the record with the by-week table, the lean,
+  the worst bucket and the unlock rule; `ai_view` on the plan, breakout, Follow, Screens, futures plan and position rows;
+  `GET /api/ai/view`, `/api/ai/view/record`, `POST /api/ai/view/run`, `GET /api/ai` `view`; the `view_` keys with the lock
+  rule (400); the three locked switches wired off (rank ties in `real._plan`, size by score in `real.morning` /
+  `send_orders` with Telegram `full SYMBOL`, the exit-watch alert); the dry-run AI line, the nightly count, the weekly
+  record line; the ask tool `levels`.
+- Tests: `tests/test_ai_view.py` (47).

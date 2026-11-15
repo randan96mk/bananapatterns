@@ -179,3 +179,7 @@ export const getAiScorecard = (month) => req('GET', `/api/ai/suggestions/scoreca
 export const aiWhyRun = () => req('POST', '/api/ai/why/run');
 export const aiAsk = (question) => req('POST', '/api/ai/ask', { question });
 export const getAiAsks = (limit = 10) => req('GET', `/api/ai/asks?limit=${limit}`);
+// 🤖 the AI view: a rating beside every system-suggested stock (reads only; it never acts)
+export const getAiView = (symbols) => req('GET', `/api/ai/view?symbols=${encodeURIComponent((symbols || []).join(','))}`);
+export const getAiViewRecord = (weeks) => req('GET', `/api/ai/view/record${qs({ weeks })}`);
+export const aiViewRun = () => req('POST', '/api/ai/view/run');

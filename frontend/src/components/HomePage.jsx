@@ -11,6 +11,7 @@ import HealthStrip from './HealthStrip';
 import PhonePositions from './PhonePositions';
 import AiDot from './AiDot';
 import AiSuggestions from './AiSuggestions';
+import { useAiViews, viewOf, AiView, aiChanged } from './AiView';
 import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, Chip } from './ui2';
 
 // 🏠 Home: the day on one screen. Timeline (click a dot: Activity filters to it), account cards with sparklines (Real
@@ -130,6 +131,7 @@ function HoverCard({ p, at }) {
       {p.entry && <><line x1="0" x2={w} y1={y(p.entry)} y2={y(p.entry)} stroke="var(--blue)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" /><text x="4" y={y(p.entry) - 3} fill="var(--blue)" fontSize="9">entry {p.entry}</text></>}
       {p.stop && <><line x1="0" x2={w} y1={y(p.stop)} y2={y(p.stop)} stroke="var(--bad)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" /><text x="4" y={y(p.stop) + 10} fill="var(--bad)" fontSize="9">stop {p.stop}</text></>}</svg>
       : <div className="muted small" style={{ height: 80 }}>{c ? 'no candles' : 'loading…'}</div>}
+    {p.aiv && <div className="small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>🤖 AI {p.aiv.score} {p.aiv.verdict} · <span className="muted">{aiChanged(p.aiv)}</span></div>}
     <div className="muted small">last 60 sessions · click the row for the full chart</div></div>;
 }
 
@@ -142,6 +144,35 @@ const trailCell = (p) => {
 };
 const FILTERS = { all: () => true, near: (p) => p.stop_dist != null && p.stop_dist <= 5, trail: (p) => p.trail?.active, results: (p) => p.results_in != null && p.results_in <= 5 };
 const SORTS = { pnl: (p) => p.pnl ?? -Infinity, pct: (p) => p.pct ?? -Infinity, stop: (p) => p.stop_dist ?? Infinity };
+
+// 🤖 The AI view's three cards: tonight's plan rated (buy · wait · avoid), the held names re-rated, the record.
+// Nothing renders until there is a view or the AI summary carries the view block.
+function AiViewCards({ plan, positions, views, vw, onGo }) {
+  const pv = (plan?.items || []).map((i) => [i.symbol, viewOf(i, views)]).filter(([, v]) => v);
+  const seen = new Set(), hv = [];
+  positions.forEach((p) => { const v = viewOf(p, views); if (v && !seen.has(p.symbol)) { seen.add(p.symbol); hv.push([p.symbol, v]); } });
+  const rs = vw?.record_summary;
+  if (!pv.length && !hv.length && !rs) return null;
+  const n = (vs, ...ks) => vs.filter(([, v]) => ks.includes(v.verdict)).length;
+  const changed = hv.filter(([, v]) => v.change);
+  const broken = hv.filter(([, v]) => v.verdict === 'exit-watch');
+  const p100 = (x) => (x == null ? null : Math.round(x));                 // percent from the backend
+  const edge = rs?.edge != null ? Math.round(rs.edge) : null;
+  return <Cards n={3}>
+    <Card unit="n" label="Plan · AI view" value={pv.length ? `${n(pv, 'buy')} buy · ${n(pv, 'wait')} wait · ${n(pv, 'avoid')} avoid` : '—'} num={pv.length}
+      sub={pv.length ? [...pv].sort((a, b) => b[1].score - a[1].score).map(([s, v]) => `${s} ${v.score}`).join(' · ') : 'no plan name rated yet'}
+      fact={<>shadow · {rs ? <>record <Bar pct={p100(rs.buy_hit20)} ok /> buy {p100(rs.buy_hit20) ?? '—'}% hit</> : 'a rating only'}</>} onClick={() => onGo('plan')}
+      title={pv.map(([s, v]) => `${s} ${v.score} ${v.verdict}`).join(' · ') || 'the plan names are rated every evening'} />
+    <Card unit="n" label="Held · re-rated tonight" value={hv.length ? `${changed.length} changed` : '—'} num={changed.length} k={broken.length ? 'warn' : ''}
+      sub={hv.length ? (changed.length ? changed : hv).map(([s, v]) => `${s} ${v.verdict}${v.previous?.score != null ? ` (${v.previous.score} → ${v.score})` : ` ${v.score}`}`).join(' · ') : 'no held name rated yet'}
+      fact={<>levels broken <Bar pct={hv.length ? (100 * broken.length) / hv.length : 0} bad={broken.length > 0} /> {broken.length ? broken.map(([s]) => s).join(' · ') : 'none'}</>}
+      title={hv.map(([s, v]) => `${s} ${v.score} ${v.verdict}${v.change ? ` · ${v.change}` : ''}`).join('\n') || 'held names are re-rated every evening'} />
+    <Card unit="n" label="AI view record · 4 weeks" value={edge != null ? `${edge > 0 ? '+' : ''}${edge} pts` : '—'} num={edge ?? 0} k={edge > 0 ? 'up' : edge < 0 ? 'down' : ''}
+      sub={rs ? `buy ${p100(rs.buy_hit20) ?? '—'}% vs plan ${p100(rs.baseline20) ?? '—'}% at 20 sessions · avoid ${p100(rs.avoid_hit20) ?? '—'}%` : 'no scored views yet'}
+      fact={<>shuffle <Bar pct={rs?.shuffle_ok ? 100 : 0} ok={!!rs?.shuffle_ok} /> {rs?.shuffle_ok == null ? '—' : rs.shuffle_ok ? 'passes' : 'fails'} · switches {rs?.unlocked ? 'unlocked' : 'locked'}</>}
+      onClick={() => onGo('ai')} title="buy hit@20 against the plan baseline · the switches unlock after 4 weeks over it · System › AI" />
+  </Cards>;
+}
 
 export default function HomePage({ onGo, onStock }) {
   const o = useLive('overview');
@@ -178,6 +209,10 @@ export default function HomePage({ onGo, onStock }) {
       setToasts((t) => [...t, { id, text: `${a.account} · ${a.text}`, at: a.at }]);
     });
   }, [freshAct, o]);
+  const aiLive = useLive('ai');                                // 🤖 the AI view: tonight's count, the record summary
+  const [plan, setPlan] = useState(null);
+  useEffect(() => { api.getPlan().then(setPlan).catch(() => setPlan(null)); }, []);
+  const views = useAiViews([...(o?.positions || []).map((p) => p.symbol), ...(plan?.items || []).map((i) => i.symbol)]);
   if (!o) return <div className="rd"><Panel><p className="muted small rempty">Loading…</p></Panel></div>;
   const A = o.accounts || {}, it = A.intraday || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {}, F = o.facts || {}, D = o.drift, N = o.next_open;
   const hm24 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '');
@@ -207,7 +242,8 @@ export default function HomePage({ onGo, onStock }) {
   // Strategy is the short tag at 60 px; under 1440 px Entry and Trail are dropped (nw) so the Stock column keeps 140 px+
   const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true, title: 'strategy' }, { h: 'Qty', w: 56, n: true }, { h: 'Entry', w: 80, n: true, lo: true, nw: true }, { h: 'Now', w: 84, n: true },
     { h: `P&L${arrow('pnl')}`, key: 'pnl', w: 86, n: true, onClick: () => flip('pnl'), title: 'sort by P&L' }, { h: `%${arrow('pct')}`, key: 'pct', w: 60, n: true, onClick: () => flip('pct'), title: 'sort by %' },
-    { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 150, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 150, lo: true, nw: true }];
+    { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 150, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 132, lo: true, nw: true },
+    { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag for you; the stop and the trail stay as the rules set them' }];
   const posRows = groups.flatMap(([b, ps]) => [
     `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} ${b === 'futures' ? 'notional' : b === 'options' ? 'premium' : 'in use'}`,
     ...ps.map((p) => { const f = flash[p.book + p.symbol]; return { key: p.book + p.symbol, cls: f ? `row-${f}` : '', onClick: () => onStock(p.symbol), cells: [
@@ -217,7 +253,7 @@ export default function HomePage({ onGo, onStock }) {
       <span className={`${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`}>{signed(p.pnl)}</span>, <span className={cls(p.pct)}>{pct(p.pct)}</span>,
       p.book === 'options' ? <span className="small mono" title={p.stop ? `the sold leg's premium stop · ${p.stop_dist?.toFixed(0)}% of the stop premium still to go` : 'the hedge exits with the sold leg'}>{p.stop ? `stop ${p.stop} · ${p.stop_dist?.toFixed(0)}%` : 'with the sold leg'}</span>
         : p.now && p.stop ? <StopMeter last={p.side === 'short' ? -p.now : p.now} stop={p.side === 'short' ? -p.stop : p.stop} /> : '—',
-      trailCell(p)] }; })]);
+      trailCell(p), <AiView compact v={viewOf(p, views)} note={aiChanged(viewOf(p, views))} />] }; })]);
   const hoverOn = (e, p, tr) => { if (phone) return; const r = tr.getBoundingClientRect();
     setHover({ p, at: { x: e.clientX + 16 + 300 <= window.innerWidth ? e.clientX + 16 : Math.max(4, e.clientX - 16 - 300), below: r.bottom, above: r.top } }); };
 
@@ -287,11 +323,12 @@ export default function HomePage({ onGo, onStock }) {
         </div></div></Panel>
     </div>}
     <AiSuggestions onGo={onGo} />
+    <AiViewCards plan={plan} positions={positions} views={views} vw={aiLive && !aiLive.error ? aiLive.view : null} onGo={onGo} />
     <div className="two">
       <Panel title="Open positions" meta={positions.length} right={phone ? <>{liveNow && <span className="livedot" />}<select value={view} onChange={(e) => setView(e.target.value)} style={{ fontSize: 11.5, padding: '2px 6px', marginLeft: 'auto' }} title="which books">
           <option value="all">Real + Paper</option><option value="real">Real</option><option value="paper">Paper</option><option value="diff">Differences</option></select></>
         : <>{liveNow && <span className="livedot" />}net <b className={`mono ${cls(net)}`}>{signed(net)}</b>{R.worst_case != null && <> · worst case <b className="mono down">{signed(R.worst_case)}</b></>}{R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" style={{ padding: 0 }} onClick={() => onGo('portfolio')}>Portfolio →</button></>}>
-        {phone ? <PhonePositions positions={positions} groups={groups} counts={counts} filter={filter} setFilter={setFilter} sort={sort} setSort={setSort} net={net} worstCase={R.worst_case} flash={flash} onStock={onStock} onGo={onGo} differs={differs} /> : <>
+        {phone ? <PhonePositions positions={positions} groups={groups} counts={counts} filter={filter} setFilter={setFilter} sort={sort} setSort={setSort} net={net} worstCase={R.worst_case} flash={flash} onStock={onStock} onGo={onGo} differs={differs} views={views} /> : <>
           <div className="hfilters">
             <Seg small opts={[['all', 'All'], ['near', `Within 5% of stop (${counts.near})`], ['trail', `Trail armed (${counts.trail})`], ['results', `Results this week (${counts.results})`]]} v={filter} set={setFilter} />
             <Seg small opts={[['all', 'Real + Paper'], ['real', 'Real'], ['paper', 'Paper'], ['diff', 'Differences', 'names held in one book but not the other, or with a different quantity']]} v={view} set={setView} />
@@ -323,7 +360,7 @@ export default function HomePage({ onGo, onStock }) {
             : <div className="rbody"><div className="v2list">{activity.map((a, i) => { const trail = /stop raised|trail/i.test(a.text); return <div key={i} className={`it ${freshAct.includes(`${a.at}|${a.text}`) ? 'row-new' : ''}`}><span className="t">{at12(a.at)}</span><span><b>{a.account}</b> · {a.text}{trail && <span style={{ color: 'var(--purple)', marginLeft: 6 }} title="trailing stop">🪜</span>}</span></div>; })}</div></div>}</Panel>
       </div>
     </div>
-    {hover && !phone && <HoverCard p={hover.p} at={hover.at} />}
+    {hover && !phone && <HoverCard p={{ ...hover.p, aiv: viewOf(hover.p, views) }} at={hover.at} />}
     {toasts.length > 0 && <div className="htoasts">{toasts.slice(-3).map((t) => <div key={t.id} className="htoast"><b>{t.text}</b><span className="muted small">{at12(t.at)}</span><button className="linkbtn" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>dismiss</button></div>)}</div>}
   </div>;
 }

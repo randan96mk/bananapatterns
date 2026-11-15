@@ -34,8 +34,8 @@ _lock = threading.Lock()
 
 def _ai_notes(rows: list) -> list:
     """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None)."""
-    from backend.ai import notes
-    return notes.attach(rows)
+    from backend.ai import notes, view
+    return view.attach(notes.attach(rows), "held")                 # 🤖 AI view: the held name's rating
 
 def variants(config: AppConfig) -> list[str]:
     """The enabled accounts that exist: a saved config still listing "A" gives ["E"]."""

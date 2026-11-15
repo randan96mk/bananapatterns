@@ -54,8 +54,14 @@ def _ai_why(rows: list) -> list:
 
 def _ai_notes(rows: list) -> list:
     """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None)."""
-    from backend.ai import notes
-    return notes.attach(rows)
+    from backend.ai import notes, view
+    return view.attach(notes.attach(rows), "held")                 # 🤖 AI view: the held name's rating
+
+def _ai_view_plan(rows: list) -> list:
+    """🤖 AI view: the futures plan rows' rating (ai_view | None)."""
+    from backend.ai import view
+    return view.attach(rows, "futures")
+
 
 SIDES = ("long", "short")
 MODES = ("paper", "real")
@@ -1460,7 +1466,7 @@ def summary(config: AppConfig) -> dict:
             "primary": pk, "cash": main["cash"], "margin_used": main["margin_used"], "margin_pct": main["guards"]["margin"]["pct"],
             "mtm_today": main["mtm_today"], "value": main["value"], "net": main["net"], "return": main["return"], "realised": main["realised"],
             "unrealised": main["unrealised"], "won": main["won"], "closed": main["closed"], "profit_factor": main["profit_factor"],
-            "drawdown": main["drawdown"], "curve": main["curve"], "guards": main["guards"], "positions": _ai_notes(positions), "waiting": waiting, "plan": plan,
+            "drawdown": main["drawdown"], "curve": main["curve"], "guards": main["guards"], "positions": _ai_notes(positions), "waiting": waiting, "plan": _ai_view_plan(plan),
             "allowed": st.get("allowed"), "filter": st.get("filter"), "rolls": roll_queue(st, config, today), "roll_day": st.get("roll_day"),
             "roll_log": list(reversed(st.get("rolls", [])))[:20], "warnings": st.get("warnings") or {},
             "short_paper": {"open": sp["positions"], "net": sp["net"], "return": sp["return"], "value": sp["value"],

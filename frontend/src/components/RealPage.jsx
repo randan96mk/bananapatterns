@@ -8,6 +8,7 @@ import NextUp from './NextUp';
 import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
+import { useAiViews, viewOf, AiView, AiLine, aiChanged, qtyCell } from './AiView';
 import { useNarrow, useIsPhone } from '../useMedia';
 import AiDot, { AiWhy } from './AiDot';
 
@@ -173,6 +174,7 @@ function MorningPanel({ live, onReplan, replanning, onErr, onChanged }) {
   useEffect(() => { api.realMorning().then((x) => { setM(x); setGot(Date.now()); }).catch(() => {}); }, []);
   useEffect(() => { if (streamed) { setM(streamed); setGot(Date.now()); } }, [streamed]);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const views = useAiViews(m?.visible ? (m.orders || []).filter((o) => o.action === 'BUY').map((o) => o.symbol) : []);   // 🤖 the AI line under each BUY
   if (!m || !m.visible) return null;
   const gone = Math.round((now - got) / 1000);
   const left = m.seconds_to_send - gone, toOpen = m.seconds_to_open - gone;
@@ -203,9 +205,10 @@ function MorningPanel({ live, onReplan, replanning, onErr, onChanged }) {
     return <Sw><Switch on={!o.skip} disabled={!!busy} title={o.skip ? `skipped today by ${o.skip.by}${o.skip.note ? ` · ${o.skip.note}` : ''} · switch on to send it after all` : 'switch off to skip this BUY today only'} onChange={(on) => toggle(o, on)} />
       {o.skip ? <span className="small" style={{ color: 'var(--warn)' }}>{o.skip.by === 'you' ? 'skipped today' : 'results guard'}</span> : null}</Sw>;
   };
-  const rows = m.orders.flatMap((o) => [{ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.close ? n2(o.close) : '—', inr(o.value),
+  const rows = m.orders.flatMap((o) => [{ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, qtyCell(o), o.close ? n2(o.close) : '—', inr(o.value),
     o.stop ? n2(o.stop) : '—', o.results_date ? <Tag c="w" title={`results ${day(o.results_date)} · in ${o.results_in} session${o.results_in === 1 ? '' : 's'}${o.skip?.by === 'results guard' ? ' · skipped by the results guard (settable: real.results_guard_sessions)' : ''}`}>⚠ {wday(o.results_date)}</Tag> : '—',
     <span className="muted">{o.why}</span>, sendCell(o)] },
+  ...(o.action === 'BUY' && viewOf(o, views) ? [{ key: `${o.symbol}-ai`, span: <AiLine v={viewOf(o, views)} /> }] : []),   // 🤖 the AI view: advice only, scored later
   ...(m.ai_flags?.[o.symbol] ? [{ key: `${o.symbol}-flag`, span: <div className="warn" title={`🤖 AI flag · ${m.ai_flags[o.symbol]} · the order still goes unless you skip it`} style={{ fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>⚠ 🤖 {m.ai_flags[o.symbol]}</div> }] : [])]);   // 🤖 the AI's open flag on this name
   rows.push(after ? `${m.counts.sent} sent · ${m.counts.failed} failed · ${m.counts.skipped} skipped${m.first_sent ? ` · ${clock(m.first_sent, true)} → ${clock(m.last_sent, true)}` : ''}`
     : `going out: ${exits.length} EXIT${exits.length === 1 ? '' : 's'} · ${buys.length} BUY${buys.length === 1 ? '' : 's'} · ${inr(m.going_out.value)}${m.skipped.length ? ` · ${m.skipped.length} skipped today (${m.skipped.join(', ')})` : ''}${m.waiting ? ` · ${m.waiting} waiting (no slot)` : ''}`);
@@ -287,6 +290,7 @@ export default function RealPage() {
   const todayIst = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   const failedToday = (d?.log || []).filter((o) => o.status === 'failed' && o.day === todayIst);
 
+  const views = useAiViews((d?.positions || []).map((x) => x.symbol));     // 🤖 the held names' AI view
   if (!d) return <div className="rd"><Panel>{err ? <div className="rbanner bad">{err}</div> : <p className="muted small rempty">Loading…</p>}</Panel></div>;
   const s = d.settings || {};
   const live = d.enabled && !d.killed;
@@ -301,11 +305,12 @@ export default function RealPage() {
     <Tag c={o.sent === 'sent' ? 'ok' : o.sent === 'failed' ? 'bad' : o.sent === 'skipped' ? 'w' : live ? 'a' : 'w'}>{o.sent || (live ? `queued · ${ampm(s.send_time)}` : 'not sending')}</Tag>] }));
   const done = (changed) => { setEdit(null); setTedit(null); setAdding(false); if (changed) reload(); };
   // Strategy is the short tag at 60 px; under 1440 px % and Days are dropped (nw: the row title keeps them) so Stock keeps 140 px+
-  const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 170 : 240, ell: true }, { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: '', w: 50, key: 'edit' }];
+  const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 160 : 196, ell: true }, { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag only; the stop and the trail stay as the rules set them' }, { h: '', w: 50, key: 'edit' }];
   const posRows = (d.positions || []).flatMap((x) => [{ key: x.symbol, title: `${pct(x.buy ? (x.last / x.buy - 1) * 100 : null)} · ${x.days ?? '—'} days · bought ${day(x.in)} · before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.px_orig != null && x.px_orig !== x.buy ? ` · first entry ${rs(x.px_orig)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}`,
     cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} />{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. entry</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a" title="placed by hand, tracked and exited by the app's rules">by hand</Tag>}{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>,
       <span className={`v${x.variant}`}>{x.variant === 'E' ? 'E+' : x.variant}</span>, x.qty, rs(x.buy), rs(x.last), <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
       <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, <>{x.days ?? '—'} · {day(x.in)}</>,
+      <AiView compact v={viewOf(x, views)} note={aiChanged(viewOf(x, views))} />,
       <button type="button" className={`btn ${edit === x.symbol ? 'primary' : 'ghost'}`} style={PEN} title="correct qty / entry / stop · remove from tracking" onClick={() => { setEdit(edit === x.symbol ? null : x.symbol); setAdding(false); }}>✎</button>] },
   ...(edit === x.symbol ? [{ key: `${x.symbol}-edit`, span: <PositionEditor x={x} onDone={done} onErr={setErr} /> }] : [])]);
   const tradeCols = [{ h: 'Stock', ell: true }, { h: 'Bought · sold', w: 150, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Exit ₹', w: 90, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true, nw: true }, { h: 'Costs', w: 80, n: true, lo: true, nw: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110 }, { h: '', w: 50, key: 'edit' }];

@@ -690,6 +690,7 @@ def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: boo
     morning view (real.morning); without it only the orders are listed."""
     skips = {o["symbol"]: o["skip"] for o in (m or {}).get("orders") or [] if o.get("skip")}
     results = {o["symbol"]: o for o in (m or {}).get("orders") or [] if o.get("results_date")}
+    views = {o["symbol"]: o for o in (m or {}).get("orders") or [] if o.get("action") == "BUY"}
     going = [o for o in orders if o["action"] == "EXIT" or o["symbol"] not in skips]
     n = len(going)
     state = "🔴 kill switch ON: nothing goes out" if killed else "OFF: nothing goes out" if not on else f"go out at {ampm(send_at)}"
@@ -700,10 +701,15 @@ def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: boo
         else:
             r = results.get(o["symbol"])
             tag = f" · ⚠️ results {_wday(r['results_date'])}" if r else ""
-            lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {o['qty']} · stop {_rup(o['stop'])} · ~{_rup(o['qty'] * o['close'])}{tag}")
+            mo = views.get(o["symbol"]) or {}                                  # 🤖 AI view: the morning row (size, rating)
+            qty, was = (mo["qty_ai"], f" ({mo['size_x']:g}× · was {mo['qty_rule']})") if mo.get("qty_ai") and mo["qty_ai"] != mo.get("qty_rule") else (o["qty"], "")
+            lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {qty}{was} · stop {_rup(o['stop'])} · ~{_rup(qty * o['close'])}{tag}")
             flag = ((m or {}).get("ai_flags") or {}).get(o["symbol"])        # 🤖 suggestions: the AI's flag on a planned name
             if flag:
                 lines.append(f"   🤖 <i>{escape(flag)}</i>")
+            av = ai_view_line(mo.get("ai_view"))
+            if av:
+                lines.append(f"   · {av}")
     if not going:
         lines.append("Nothing goes out today.")
     if skips:
@@ -1338,3 +1344,44 @@ def ai_why_evening(rows: list, day: str) -> str:
                      f"   🤖 <i>{escape(n['text'])}</i>")
     lines.append("<i>written from the trade rows, the day's bars and the filings · no action taken</i>")
     return "\n".join(lines)
+
+
+# --- 🤖 AI view --------------------------------------------------------------------------------------------------------------------
+
+VIEW_ICON = {"buy": "🟢", "wait": "🟡", "avoid": "🔴", "hold": "🟢", "trim": "🟡", "exit-watch": "🔴"}
+
+
+def ai_view_line(v: Optional[dict]) -> str:
+    """'🤖 AI 82 buy · <reason 1>' (the dry run's line under a BUY); '' without a view."""
+    if not v or v.get("score") is None:
+        return ""
+    reason = (v.get("reasons") or [""])[0]
+    return f"🤖 AI {v['score']} {escape(v['verdict'])}" + (f" · <i>{escape(reason)}</i>" if reason else "")
+
+
+def ai_view_night(night: dict) -> str:
+    """🌙 AI view · tonight: how many names were rated and the verdict counts (one line, sent after the night batch)."""
+    by = night.get("by_verdict") or {}
+    order = ("buy", "wait", "avoid", "hold", "trim", "exit-watch")
+    counts = " · ".join(f"{VIEW_ICON[k]} {by[k]} {k}" for k in order if by.get(k))
+    extra = (f" · {night['failed']} failed" if night.get("failed") else "") + (f" · {night['capped']} over the cap" if night.get("capped") else "")
+    at = ampm(night["at"][11:16]) if night.get("at") else ""
+    return (f"🌙 <b>AI view · tonight</b> · {night.get('n', 0)} rated{extra}" + (f"\n{counts}" if counts else "")
+            + f"\n<i>ratings only · the plan, the sizes and the stops are as the rules made them{' · ' + at if at else ''}</i>")
+
+
+def ai_view_exit_watch(x: dict) -> str:
+    """🤖 SYM · exit-watch: a held name closed under the level its view said the setup fails below (a flag only)."""
+    return (f"🤖 <b>{escape(x['symbol'])}</b> · exit-watch · closed {rs(x['close'])} under {rs(x['fails_below'])} (setup fails below)"
+            f"\n<i>a flag only: nothing is sold and the stop stays as it is · {escape(x.get('book') or '')}</i>")
+
+
+def ai_view_week(w: dict, rec: dict) -> str:
+    """📊 AI view · week n: the week's buy / avoid hit@20 vs the plan baseline, the streak and the unlock notice."""
+    n = w["week"].split("-W")[-1].lstrip("0")
+    pct = lambda v: "–" if v is None else f"{v:g}%"
+    u = rec.get("unlock") or {}
+    tail = ("🔓 <b>unlocked</b>: the three AI view switches may now be turned on in Settings (each stays off until you do)"
+            if u.get("unlocked") else f"🔒 locked · {u.get('streak', 0)} of {u.get('need', 4)} weeks in a row")
+    return (f"📊 <b>AI view · week {escape(n)}</b> · buy hit@20 {pct(w['buy_hit20'])} · avoid {pct(w['avoid_hit20'])} · "
+            f"plan {pct(w['baseline20'])} · {'beat' if w['beat'] else 'did not beat'} the plan\n{tail}")

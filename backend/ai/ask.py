@@ -277,6 +277,12 @@ def backtest_f(config: AppConfig) -> dict:
     return {"built": s["built"], "ran_at": run.get("ran_at"), "verdict": run.get("verdict"), "sides": sides}
 
 
+def levels(config: AppConfig, symbol: str) -> dict:
+    """🤖 AI view: the candidate levels code found for a stock and the ones its latest view picked."""
+    from backend.ai import view
+    return view.levels_tool(config, symbol)
+
+
 TOOLS: dict[str, dict] = {
     "real_morning": {"fn": real_morning, "args": {"day": str}, "help": "the Real morning plan of a day: orders, skips, cash, free slots"},
     "real_summary": {"fn": real_summary, "args": {}, "help": "the Real book: account, positions, next orders, trade tally"},
@@ -292,6 +298,7 @@ TOOLS: dict[str, dict] = {
     "why_skipped": {"fn": why_skipped, "args": {"symbol": str, "day": str}, "help": "why a stock did not go out on a day: skips, results guard, waiting list"},
     "positions_near_stop": {"fn": positions_near_stop, "args": {"pct": float}, "help": "open positions within N percent of their stop, every book"},
     "backtest_f": {"fn": backtest_f, "args": {}, "help": "the latest stock-futures backtest: verdict and headline figures"},
+    "levels": {"fn": levels, "args": {"symbol": str}, "help": "a stock's support / resistance levels: the candidates and the AI view's picks"},
 }
 
 

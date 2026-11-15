@@ -4,6 +4,7 @@
   /status  is the Kite session OK, until when
   skip SYM / unskip SYM / hold   the morning dry run: skip one planned real BUY for today, send it after all,
                                  or hold every BUY (EXITs always go out); also with a slash; refused after send_until
+  full SYM                       🤖 AI view: the rule size restored for one BUY this morning (size-by-score, locked)
   fut skip SYM / fut unskip SYM / fut hold   the same for the futures book's plan (paper fill and real send)
   opt / opt close / opt hold   the options book: today's status and the open spread; close the spread now; no new
                                entries today
@@ -36,7 +37,7 @@ from backend.logging_config.logger import setup_logger
 logger = setup_logger("bot")
 
 STALE_SEC = 120
-MORNING_WORDS = ("skip", "unskip", "hold")
+MORNING_WORDS = ("skip", "unskip", "hold", "full")         # full SYM: 🤖 the rule size restored this morning (AI view)
 OPTIONS_WORDS = ("close", "hold")
 AI_WORDS = ("stop", "start")
 SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
@@ -194,10 +195,12 @@ class BotCommands:
         cfg, now = self.state.config, self.clock()
         if now.time() >= hm(cfg.real.send_until):
             return f"Too late: today's orders went out at {ampm(cfg.real.send_time)} (the window closed at {ampm(cfg.real.send_until)})."
-        if command in ("/skip", "/unskip") and not arg:
+        if command in ("/skip", "/unskip", "/full") and not arg:
             return f"Which stock? {command} SYMBOL"
         try:
-            if command == "/hold":
+            if command == "/full":
+                m = real.full_size(cfg, arg, now)
+            elif command == "/hold":
                 m = real.hold_today(cfg, "hold all (Telegram)", now)
             else:
                 m = real.skip_order(cfg, arg, command == "/skip", "Telegram", now)
@@ -205,7 +208,8 @@ class BotCommands:
             return f"Not changed: {msg.escape(str(exc))}"
         orders = [o for o in (real._state() or {}).get("orders", []) if not o.get("sent")]
         head = {"/skip": f"⏸ {msg.escape(arg)} skipped today.", "/unskip": f"▶️ {msg.escape(arg)} goes out again.",
-                "/hold": "⏸ Every BUY held today; the EXITs still go out."}[command]
+                "/hold": "⏸ Every BUY held today; the EXITs still go out.",
+                "/full": f"↩️ {msg.escape(arg)} goes out at the rule size today."}[command]
         return head + "\n" + msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed(), m)
 
     def futures(self, command: str, arg: str) -> str:
@@ -307,7 +311,7 @@ class BotCommands:
             return self._say(notifier, self.ai(command))
         if command.startswith("/sugg"):                                               # 🤖 suggestions
             return self._say(notifier, self.suggestions(command, arg))
-        if command in ("/skip", "/unskip", "/hold"):
+        if command in ("/skip", "/unskip", "/hold", "/full"):
             return self._say(notifier, self.morning(command, arg, notifier))
         if command in ("/futskip", "/futunskip", "/futhold"):
             return self._say(notifier, self.futures(command, arg))
@@ -344,7 +348,7 @@ class BotCommands:
             return self._say(notifier, "📌 Watching: " + (", ".join(names) if names else "nothing yet"))
         if command in ("/start", "/help"):
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
-                                       "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold (today's real "
+                                       "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
                                        "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
                                        "book) · ai / ai stop / ai start (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

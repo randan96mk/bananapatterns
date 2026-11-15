@@ -269,6 +269,13 @@ def put_config(section: str, values: dict):
         raise HTTPException(422, "roll_mode must be always, never or winners")
     if section == "options" and _truthy(values.get("real")):
         raise HTTPException(400, "not wired")             # the options Real switch: no webhook yet, stays off
+    if section == "ai":                                    # 🤖 AI view: the locked switches and the bounds
+        from backend.ai import view as ai_view
+        try:
+            ai_view.check_lock(values, before)
+            ai_view.check_bounds(values)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
     if section == "ai" and _truthy(values.get("enabled")) and not before.get("enabled"):
         from backend.ai import control as ai_control
         if not ai_control.can_enable(S().config):          # 🤖 the AI goes on only once both models are on disk
@@ -631,7 +638,8 @@ def screens_results(screen: str, stage: str = Query(...)):
         items.sort(key=lambda p: -(p.get("score") or 0))          # best setups first
     else:
         items.sort(key=STAGE_SORT[stage], reverse=(stage == "played_out"))
-    return {"as_of": as_of, "stage": stage, "rows": items}
+    from backend.ai import view                       # 🤖 AI view on the screen's rows
+    return {"as_of": as_of, "stage": stage, "rows": view.attach(items, f"screen:{screen}")}
 
 
 @router.get("/screens/{screen}/sparks")
@@ -731,8 +739,12 @@ def breakout_summary():
     if run:
         run = {**run, "variants": {k: {f: x for f, x in v.items() if f not in ("trades", "stress_trades")}
                                    for k, v in run["variants"].items()}}
+    scan = tb.saved_scan()
+    if scan and scan.get("buys"):                     # 🤖 AI view on the morning's breakouts
+        from backend.ai import view
+        view.attach(scan["buys"], "plan")
     return {"built": bool(run), "progress": tb.status(), "kite": bool(S().client.has_token),
-            "rules": asdict(S().config.breakout), "run": run, "scan": tb.saved_scan()}
+            "rules": asdict(S().config.breakout), "run": run, "scan": scan}
 
 
 @router.get("/breakout/trades")
@@ -1360,6 +1372,15 @@ class AiSettings(BaseModel):
     suggest_muted: Optional[str] = None          # 🤖 suggestions: comma list of kinds never born
     max_suggestions_open: Optional[int] = None   # 🤖 suggestions: the open cap (1-50)
     why: Optional[bool] = None                   # 🤖 why: the nightly lines under today's exits
+    view_enabled: Optional[bool] = None          # 🤖 AI view (the three locked ones: 400 until the record unlocks them)
+    view_rate_held: Optional[bool] = None
+    view_rank_by_score: Optional[bool] = None
+    view_size_by_score: Optional[bool] = None
+    view_size_floor: Optional[float] = None
+    view_exit_watch_alert: Optional[bool] = None
+    view_score_buy: Optional[int] = None
+    view_score_avoid: Optional[int] = None
+    view_max_per_night: Optional[int] = None
 
 
 @router.get("/ai")
@@ -1378,6 +1399,8 @@ def ai_settings(req: AiSettings):
     try:
         from backend.ai import suggest                                      # 🤖 suggestions: its own keys first
         flags = suggest.apply_settings(S().config, flags)
+        from backend.ai import view                                         # 🤖 AI view: the view_ keys (the lock rule)
+        flags = view.apply_settings(S().config, flags)
         if "why" in flags:                                                  # 🤖 why
             S().config.ai.why = bool(flags.pop("why"))
         return control.set_switches(S().config, **flags)                   # the switches' shape; the rest is in GET /api/ai settings
@@ -1445,6 +1468,33 @@ def ai_notes_run():
     if notes.running():
         raise HTTPException(409, "notes are running")
     return notes.enqueue_tonight(S().config)
+
+
+# 🤖 AI view
+
+@router.get("/ai/view")
+def ai_view_get(symbols: str = Query(...)):
+    """🤖 The latest AI view per symbol (comma list): {views: {SYM: row with levels, candidates, change, previous}}."""
+    from backend.ai import view
+    syms = [x for x in symbols.split(",") if x.strip()][:200]
+    return {"views": view.latest(syms)}
+
+
+@router.get("/ai/view/record")
+def ai_view_record(weeks: Optional[int] = Query(None, ge=1, le=520)):
+    """🤖 The AI view record: by verdict vs the plan baseline, by week, the shuffle, the lean, the worst bucket, the
+    unlock state; `weeks` back from today (every week by default)."""
+    from backend.ai import view
+    return view.record(weeks, score_buy=S().config.ai.view_score_buy)
+
+
+@router.post("/ai/view/run")
+def ai_view_run():
+    """🤖 Queue tonight's AI view job now (the guard decides whether it runs); 409 while one is queued or running."""
+    from backend.ai import view
+    if view.running():
+        raise HTTPException(409, "the AI view job is running")
+    return view.enqueue_tonight(S().config)
 
 
 # 🤖 ask
@@ -1612,7 +1662,10 @@ def follow_report():
     from backend.engine import follow
     st = S()
     u = uni.resolve_universe(st.config.ingest)
-    return follow.report(next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None))
+    out = follow.report(next((i["instrument_token"] for i in u["indices"] if i["symbol"] == uni.INDEX_NAME), None))
+    from backend.ai import view                       # 🤖 AI view on the Follow rows
+    view.attach(out.get("rows") or [], "follow")
+    return out
 
 
 @router.post("/follow/rebuild")
@@ -2047,7 +2100,8 @@ def daily_plan():
     """The newest saved plan (tonight's ranked setups)."""
     from backend.alerts import plan as pl
     as_of, items = pl.latest_plan()
-    return {"as_of": as_of, "items": items}
+    from backend.ai import view                       # 🤖 AI view: the rating beside every plan name
+    return {"as_of": as_of, "items": view.attach(items, "plan")}
 
 
 @router.get("/changes")

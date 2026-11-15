@@ -153,7 +153,7 @@ def test_morning_view_shape_and_phases():
     assert ex["close"] == 1151 and ex["value"] == 16 * 1151 and ex["stop"] is None and ex["skip"] is None and not ex["sent"]
     assert b1 == {"symbol": "S1", "action": "BUY", "qty": 40, "close": 500, "value": 20_000, "stop": 470, "why": "breakout #1 · E · top 300 · turnover rank 1",
                   "results_date": None, "results_in": None, "skip": None, "status": None, "sent": False, "failed": False, "at": None,
-                  "price": None, "reply": None}
+                  "price": None, "reply": None, "ai_view": None, "qty_rule": 40, "qty_ai": 40, "size_x": 1.0, "full": False}   # 🤖 AI view (size off)
     assert m["going_out"] == {"exits": 1, "buys": 4, "value": 20_000 + 35 * 600 + 30 * 700 + 25 * 800} and m["skipped"] == []
     assert real.morning(c, at(8, 30))["visible"] is False                              # before the 9:00 reminder
     assert real.morning(c, datetime(2026, 11, 14, 9, 30, tzinfo=IST))["visible"] is False   # Saturday: no panel

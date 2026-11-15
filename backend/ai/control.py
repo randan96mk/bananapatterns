@@ -200,6 +200,15 @@ def _asks_stats(now: datetime) -> dict:
         return {"today": 0, "last": None}
 
 
+def _view_summary(config: AppConfig) -> Optional[dict]:
+    """🤖 AI view (never raises)."""
+    try:
+        from backend.ai import view
+        return view.summary(config)
+    except Exception:
+        return None
+
+
 def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
     """Everything the AI page needs: switches, server, models, breaker, queue (with tonight's note rows and the night
     verdict), jobs, last_test, notes (today / high / last night), testset (last / best / running), settings, limits,
@@ -224,6 +233,7 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
             "notes": notes.stats(now, config), "testset": quality.status(),
             "suggestions": suggest.summary(config),                        # 🤖 suggestions: {open, by_kind, scorecard_month, muted, max_open}
             "brief": _brief_status(), "asks": _asks_stats(now),                   # 🤖 brief / 🤖 ask
+            "view": _view_summary(config),                                    # 🤖 AI view: {on, last_night, record_summary, switches}
             "settings": asdict(config.ai), "limits": LIMITS, "url_ok": h["ok"], "version": h["version"], "url": client.url(),
             "notes_count": _notes_count(), "now": now.isoformat(timespec="seconds"),
             "can_enable": both, "enable_note": None if both else NEEDS_MODELS, "allowed": ok_now, "allowed_note": why,

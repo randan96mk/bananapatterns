@@ -5,6 +5,7 @@ import { inr } from '../fmt';
 import * as api from '../services/api';
 import StockChart from './StockChart';
 import ResultsTag from './ResultsTag';
+import PlanCard from './PlanCard';
 import { Head, Chip, Cards, Card, Panel, KV, Tag } from './ui2';
 
 const rs = (v) => (v == null ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -43,6 +44,8 @@ export default function TodayPage() {
   const [err, setErr] = useState('');
   const [selected, setSelected] = useState(null);
   const [open, setOpen] = useState(null);           // a setup whose checklist is unfolded
+  const [plan, setPlan] = useState(null);           // the saved plan with the 🤖 AI view column
+  useEffect(() => { api.getPlan().then(setPlan).catch(() => setPlan(null)); }, []);
 
   useEffect(() => {
     let alive = true, t1, t2;
@@ -99,14 +102,14 @@ export default function TodayPage() {
             l.vs_nifty != null && l.vs_pivot_pct > 0 && <span key="n" className={l.vs_nifty > 0 ? 'up' : 'down'}>vs Nifty {pct(l.vs_nifty)}</span>].filter(Boolean) : [];
           return (
             <div key={s.symbol} style={{ cursor: 'pointer', minWidth: 0 }} onClick={() => (l?.checks ? setOpen(unfolded ? null : s.symbol) : setSelected(s.symbol))}>
-              <Panel title={<>{s.symbol} {s.tier && <span className={`tier t-${s.tier}`}>{s.tier}</span>}</>} meta={setupChip(l, s)}
+              <Panel title={<>{s.symbol} {s.tier && <span className={`tier t-${s.tier}`}>{s.tier}</span>}</>} meta={l ? setupChip(l, s) : null}
                 right={<><Tag c="a">{s.source === 'plan' ? 'in the plan' : 'near the pivot'}</Tag><ResultsTag r={s.results} /></>}>
                 <KV pairs={[
                   ['🎯 Buy up to · trigger', l?.zone_top != null ? <>{rs(l.zone_top)} <small className="muted">· trigger {rs(s.pivot)}</small></> : <>trigger {rs(s.pivot)}</>],
                   ['Stop', <>{rs(s.stop)} <small className="muted">· {s.stop && s.pivot ? pct((s.stop / s.pivot - 1) * 100) : '—'}</small></>],
                   ['Qty · risk', l?.size ? <>{l.size.qty} <small className="muted">· {inr(l.size.risk_rs)}</small></> : '—'],
                   ['Live', l ? <><span className={l.vs_pivot_pct > 0 ? (l.verdict === 'skip' ? 'down' : 'up') : ''}>{rs(l.ltp)}</span> <small className={(l.day_pct ?? 0) >= 0 ? 'up' : 'down'}>{pct(l.day_pct)}</small>
-                    <small className="muted"> · {pct(l.vs_pivot_pct)} pivot</small></> : <small className="muted">last close · log in for live</small>],
+                    <small className="muted"> · {pct(l.vs_pivot_pct)} pivot</small></> : <small className="muted" title="last close · log in for live">last close</small>],
                   ...(signals.length ? [['Signals', <span className="small">{signals.map((x, i) => <React.Fragment key={i}>{i ? ' · ' : ''}{x}</React.Fragment>)}</span>]] : []),
                 ]} />
                 <div style={{ padding: '4px 14px 8px' }}><Spark points={sparks[s.symbol]} level={s.pivot} /></div>
@@ -121,6 +124,7 @@ export default function TodayPage() {
             </div>);
         })}
       </div>}
+      <PlanCard plan={plan} onSelect={setSelected} />
       {anyValid && !d.capital_set && <div className="rbanner warn">Set <b>Capital</b> in Alerts → Size to see a quantity.</div>}
       <div style={{ minWidth: 0, overflow: "hidden" }}><NextUp /></div>
       <p className="muted small" style={{ margin: 0 }}>Refreshes every 30 s while NSE is open · tap a setup for its checklist, then "Open the chart".
