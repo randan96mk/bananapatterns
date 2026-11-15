@@ -32,6 +32,8 @@ export default function StatusBar({ kite, onKite, onGo }) {
   const eod = (data?.jobs || []).find((j) => j.key === 'eod')?.last;
   const m = data?.market;
   const real = data?.real;
+  const ai = useLive('ai');                               // 🤖 the local AI's state for the chip next to Real
+  const aiState = ai && !ai.error ? (ai.switches?.stopped ? 'stopped' : !ai.url_ok ? 'unreachable' : ai.queue?.job ? 'running' : !ai.switches?.enabled ? 'off' : 'idle') : null;
   const needs = att ? Object.entries(att).filter(([, a]) => a?.level && a.level !== 'running') : [];
   const [open, setOpen] = useState(false);                // the needs-a-look list under the chip
   useEffect(() => { if (!open) return undefined; const close = (e) => { if (!e.target.closest?.('.needwrap')) setOpen(false); }; document.addEventListener('click', close); return () => document.removeEventListener('click', close); }, [open]);
@@ -45,6 +47,7 @@ export default function StatusBar({ kite, onKite, onGo }) {
       {m && <span className="sb">{m.open ? `NSE open · closes ${at12(m.closes_at)}` : m.opens_at ? `NSE closed · opens ${new Date(m.opens_at).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short' })} ${at12(m.opens_at)}` : 'NSE closed'}</span>}
       {eod?.at && <span className="sb hide-phone">Evening run {at12(eod.at)} {eod.status === 'ok' ? '✓' : '⚠'}</span>}
       {real && <button className="sb" onClick={() => onGo('real')}>💰 Real <b className={real.enabled && !real.killed ? 'up' : 'down'}>{real.killed ? 'KILLED' : real.enabled ? 'ON' : 'OFF'}</b> · {real.variant === 'E' ? 'E+' : real.variant}</button>}
+      {aiState && <button className="sb" onClick={() => onGo('ai')} title="System › AI · the local model: it reads and explains, never trades">🤖 AI <b className={aiState === 'idle' || aiState === 'running' ? 'up' : aiState === 'off' ? 'muted' : 'down'}>{aiState}</b> · {ai.queue?.queued ?? 0} queued</button>}
       {next && <span className="sb">⏱ Next: <b>{next.name}</b> in <b className="mono">{left(next.at, now)}</b>
         <span className="hide-phone muted">{later.map((j) => ` · ${j.name.toLowerCase()} ${left(j.at, now)}`).join('')}</span></span>}
       <span className="sbfill" />

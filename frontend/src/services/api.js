@@ -153,3 +153,11 @@ export const optionsCapital = (capital) => req('POST', '/api/options/capital', {
 export const getOptionsDays = (limit = 30) => req('GET', `/api/options/days?limit=${limit}`);
 export const getOptionsTrades = (limit = 100) => req('GET', `/api/options/trades?limit=${limit}`);
 export const getOptionsChain = () => req('GET', '/api/options/chain');
+// 🤖 the local AI (System › AI): switches, the full stop, the model downloads, a test prompt, the job log
+export const getAi = () => req('GET', '/api/ai');
+export const putAiSettings = (body) => req('PUT', '/api/ai/settings', body);
+export const aiStop = () => req('POST', '/api/ai/stop');
+export const aiStart = () => req('POST', '/api/ai/start');
+export const aiPull = () => req('POST', '/api/ai/pull');
+export const aiTest = () => req('POST', '/api/ai/test');
+export const getAiJobs = (limit = 50) => req('GET', `/api/ai/jobs?limit=${limit}`);

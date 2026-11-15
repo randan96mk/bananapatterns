@@ -15,6 +15,7 @@ import PaperPage from './components/PaperPage';
 import RealPage from './components/RealPage';
 import FuturesPage from './components/FuturesPage';
 import OptionsPage from './components/OptionsPage';
+import AiPage from './components/AiPage';
 import { AttentionDot } from './components/AttentionStrip';
 import TodayPage from './components/TodayPage';
 import StatusBar from './components/StatusBar';
@@ -42,7 +43,7 @@ export const SECTIONS = [
   ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout'], ['futures', '📐 Futures'], ['options', '🧩 Options']]],
   ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe']]],
-  ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs']]],
+  ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs'], ['ai', '🤖 AI']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
 const DOTS = ['breakout', 'paper', 'real', 'futures', 'options'];
@@ -166,6 +167,7 @@ export default function App() {
           {tab === 'data' && <DataPanel hasToken={!!kite?.has_token} onDataChanged={loadUniverse} />}
           {tab === 'settings' && <SettingsPanel />}
           {tab === 'logs' && <LogsPanel />}
+          {tab === 'ai' && <AiPage />}
           {tab === 'sent' && <SentAlerts onStock={setStock} />}
         </main>
       </div>
