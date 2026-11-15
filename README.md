@@ -261,6 +261,10 @@ Keep your `.env` as it is: it is read at start-up and never copied into the imag
   (`scripts/macos/`), unload it when switching to Docker.
 - A sleeping Mac pauses Docker as well; for alerts with the Mac off, the same image runs on a cloud server.
 - Back to the normal way at any time: `./docker.sh down`, then `./start.sh`.
+- **🤖 Local AI**: `docker-compose.yml` has a second service `ollama` (the local model; `./docker.sh update` pulls its
+  image). Nothing is exposed: the app reaches it on the compose network only (`OLLAMA_URL=http://ollama:11434`, set in
+  the compose file; the `.env.example` line is optional, not a secret). Models are downloaded from **System › AI**
+  into `data/ai` and survive rebuilds; the service is capped at 2.5 cores / 12 GB with a low CPU priority.
 - Files: `Dockerfile` (Node stage builds the dashboard, Python 3.12 slim runs the app as a non-root user,
   IST time zone, `/health` check), `docker-compose.yml` (restart policy, `.env`, the three folders, log
   rotation), `.dockerignore` (keeps `.env`, `data/`, `logs/`, `node_modules`, `.venv` out of the image),
@@ -1392,6 +1396,79 @@ premium stop, the daily loss limit hit, no data on a trading day, no login with 
 
 Tests: `tests/test_options_rules.py`, `tests/test_options_book.py`, `tests/test_options_api.py`, `tests/test_options_alerts.py`.
 
+### 🤖 Local AI (PR 1 · infrastructure)
+
+`backend/ai/` (`client.py`, `guard.py`, `queue.py`, `control.py`) and `frontend/src/components/AiPage.jsx` under
+**System › 🤖 AI** (route `system/ai`; a "🤖 AI · idle · 0 queued" chip sits next to the Real chip on every page). A
+**local language model that reads and explains and never trades**: later PRs make it write night notes on filings and
+trades, a morning brief and answers to questions from the app's own data. It **never** places, changes or cancels an
+order, never touches a setting, a switch, a stop or a capital figure, never sends anything off the server and never
+deletes data; every job and every note stays in the database. PR 1 is the plumbing only: the service, the switches,
+the guard, the breaker, the queue, the downloads and a test prompt. No Queue / Notes / Ask panels yet.
+
+- **The service**: a second compose service `ollama` (`ollama/ollama:0.40.16`, arm64 build; `container_name:
+  bananapatterns-ai`), reachable **only from the app on the compose network** (no port published), capped at
+  **2.5 cores / 12 GB** with a low CPU priority next to the app (`cpu_shares: 256`), one model loaded at a time, three
+  threads, `OLLAMA_KEEP_ALIVE=10m`. The app gets `OLLAMA_URL=http://ollama:11434` (`.env.example` lists it commented
+  out: it is optional and not a secret; `./start.sh` on a Mac would use `http://127.0.0.1:11434`).
+- **Install**: `./docker.sh update` pulls the image and starts the service; then **System › AI › Download models**
+  (`POST /api/ai/pull`) fetches the night model `qwen2.5:7b-instruct` (~4.7 GB) and the day model `qwen2.5:3b-instruct`
+  (~1.9 GB) in the background with a progress bar. Models live in **`data/ai`** (`/root/.ollama` in the container), so
+  they survive rebuilds; the names are `ai.night_model` / `ai.day_model`.
+- **Switches** (`ai.*`, the page or `PUT /api/ai/settings`): **AI enabled** (off by default; it may go on **only once both
+  models are on disk**: the page keeps the switch disabled with the reason, the API answers 400 "download both models
+  first", `PUT /api/config/ai` obeys the same rule), **Night batch** (the night model from the evening job's end until
+  `night_end`, 6:00 AM) and **Day answers** (the day model only, 9:00 AM–3:40 PM, never on the trading path).
+- **Full stop** (the red switch, the "⏹ Full stop now…" button, Telegram `ai stop`; `POST /api/ai/stop`): `ai.stopped=1`,
+  every loaded model unloaded and every queued job marked skipped — the RAM and CPU are free at once. The container
+  itself keeps idling at ~50 MB (the app has no docker socket, so it cannot stop it; the page says so). `ai start` /
+  `POST /api/ai/start` clears it; the switches decide what runs from there.
+- **Guard** (`guard.py`): a job runs only when the AI is enabled, not stopped, the breaker is closed, free RAM is at least
+  `min_free_ram_gb` (4 GB), the scheduler's last tick took at most `slow_tick_s` (2 s; `jobs.Scheduler.tick` records its
+  own duration), the kind's window and switch allow it (night / day) and both models are present. The page's Server
+  panel shows the box (RAM app vs AI out of the total, CPU, load, the app tick) and the verdict right now.
+- **Breaker**: `breaker_failures` (3) failures in a row open it for `breaker_minutes` (60); one success closes it. State
+  in `app_settings` `ai.breaker`; a health row `ai_breaker` and an attention item while it is open (and when a download failed).
+- **Queue** (`queue.py`): one worker thread, FIFO, table `ai_jobs` (created, started, finished, kind, key, model, status
+  queued / running / done / failed / skipped, ms, tokens, error, note; never deleted), deduped on (kind, key) while
+  queued or running, each job under the guard with `timeout_s`; `max_queue` (200) waiting at most. Table `ai_notes` is
+  created now (empty; PR 2 fills it).
+- **Test prompt** (the page's "Send a test prompt", `POST /api/ai/test`): the day model answers
+  `{"ok": true, "word": "banana"}` through the queue; the reply, the time it took and ok / failed are kept as the last
+  test.
+- **API**: `GET /api/ai` (`{switches: {enabled, night_batch, day_answers, stopped}, server: {ram_total_gb, ram_free_gb,
+  load1, cpu_pct, ai_ram_mb, app_tick_ms}, models: {night, day: {name, present, size_gb}, loaded, pull: {running, model,
+  pct, done, error, at}, error}, breaker: {open, until, failures, text}, queue: {queued, running, done_today,
+  failed_today, job}, jobs (20 recent), last_test, settings, limits: {cpus, mem_gb}, url_ok, version, url, notes_count,
+  now, can_enable, enable_note, allowed, allowed_note, never, container_note}`), `PUT /api/ai/settings`,
+  `POST /api/ai/stop`, `POST /api/ai/start`, `POST /api/ai/pull` (502 when the service does not answer),
+  `POST /api/ai/test`, `GET /api/ai/jobs?limit=`. Stream topic `ai` (every 5 s while a download or a job runs, else
+  60 s). Health rows `ai_service`, `ai_models`, `ai_breaker` (all ok with a note while the AI is off).
+- **Telegram**: `ai` (one status line: enabled / stopped, models, RAM in use, queue, breaker), `ai stop`, `ai start`;
+  `/help` lists them.
+- **Page** (per the approved mock, the infrastructure panels only): Switches (AI enabled, Night batch, Day answers, Full
+  stop with its confirm and the Telegram commands) / Server (RAM gauge app vs AI, CPU, app tick, the guard thresholds,
+  the verdict) / Models (night and day rows, loaded models with their RAM, Download models with progress, the service
+  error) panels; four cards (jobs today, failures today, model RAM in use, models on disk); Recent jobs (`FixedTable`:
+  time, kind, key, model, took, status, error); Test prompt; "What it never does". Without the service the page shows
+  "service unreachable" everywhere and nothing else breaks. Times 12-hour IST.
+
+**Settings** (`ai.*`, section "Local AI"; `enabled` is set on the page):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` / `night_batch` / `day_answers` | off / on / on | the master switch (needs both models); night work; day answers |
+| `night_model` / `day_model` | qwen2.5:7b-instruct / qwen2.5:3b-instruct | the Ollama tags (~4.7 GB / ~1.9 GB) |
+| `timeout_s` / `keep_alive` | 90 / 10m | one call at most; how long a model stays loaded after a call |
+| `min_free_ram_gb` / `slow_tick_s` | 4.0 / 2.0 | the guard: free RAM floor; the scheduler's tick ceiling |
+| `breaker_failures` / `breaker_minutes` | 3 / 60 | failures in a row that open the breaker; for how long |
+| `night_end` / `max_queue` | 06:00 / 200 | night work stops here; waiting jobs at most |
+
+Tests: `tests/test_ai_infra.py` (a fake Ollama by monkeypatching the client's HTTP call: health, tags, ps, the pull
+stream, generate; the config defaults and the enable rule; the guard's decisions; the queue; the full stop; the pull
+progress; the test prompt; the API routes with their 400s; the commands; the health rows; the scheduler tick), plus the
+routes in `tests/test_api.py`.
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -1456,7 +1533,7 @@ chat only):
 
 Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
 `/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` (today's real BUYs), `fut skip SYM` / `fut hold`
-(the futures plan), `opt` / `opt close` / `opt hold` (the options book).
+(the futures plan), `opt` / `opt close` / `opt hold` (the options book), `ai` / `ai stop` / `ai start` (the local AI).
 
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
@@ -2554,3 +2631,16 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - **Attention** for the 🧩 dot: kill switch, a spread within 20% of the way to its premium stop, the daily loss limit,
   no data on a trading day, no login with a spread open. README section "NIFTY options — book, page, alerts".
 - Tests: `tests/test_options_alerts.py`.
+
+### 2026-11-15: 🤖 Local AI, step 1: infrastructure (service, switches, guard, queue, page)
+- **Service**: a second compose service `ollama` (`ollama/ollama:0.40.16`, `bananapatterns-ai`, no port published,
+  `./data/ai` for the models, 2.5 cores / 12 GB, low CPU priority); the app gets `OLLAMA_URL` (optional in `.env`, not a
+  secret). `backend/ai/`: `client.py` (health, tags, ps, streaming pull, generate, unload), `guard.py` (the box: RAM, CPU,
+  load, the scheduler's tick; allowed / why not; the breaker), `queue.py` (one worker, `ai_jobs`, dedupe, never deleted),
+  `control.py` (switches with the both-models rule, the full stop, the downloads, the test prompt, the page summary).
+  `AIConfig` (`ai.*`), tables `ai_jobs` and `ai_notes`, health rows, `GET /api/ai` and the `/api/ai/*` routes, stream topic
+  `ai`, commands `ai` / `ai stop` / `ai start`.
+- **Page** System › 🤖 AI (`AiPage.jsx`, per the approved mock's infrastructure panels): Switches with the Full stop,
+  Server, Models with Download, four cards, Recent jobs, Test prompt, "What it never does"; a "🤖 AI · state · n queued"
+  chip in the top bar; Settings section "Local AI". README section "Local AI (PR 1 · infrastructure)".
+- Tests: `tests/test_ai_infra.py`.

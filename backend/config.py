@@ -446,6 +446,27 @@ class OptionsConfig:
     enabled: bool = True                   # the enable switch (off: no new entries; an open spread still exits)
 
 
+@dataclass
+class AIConfig:
+    """🤖 Local AI (an Ollama service next to the app): it reads and explains, it never decides or acts. Off until both
+    models are present; a full stop (`ai.stopped` in app_settings) unloads the model and empties the queue."""
+    enabled: bool = False                  # the master switch: nothing runs while off (turning on needs both models)
+    night_batch: bool = True               # night work (the 7B model) from the evening job's end until night_end
+    day_answers: bool = True               # day answers (the 3B model only) 9:00-15:40
+    night_model: str = "qwen2.5:7b-instruct"   # ~4.7 GB; the evening / night batch
+    day_model: str = "qwen2.5:3b-instruct"     # ~1.9 GB; quick answers while the market is open
+    timeout_s: int = 90                    # one generate call may take at most this long
+    keep_alive: str = "10m"                # how long a model stays loaded after a call (0 = unload at once)
+    min_free_ram_gb: float = 4.0           # no AI work when the server's free RAM is under this
+    slow_tick_s: float = 2.0               # ... or when the scheduler's last tick took longer than this
+    breaker_failures: int = 3              # this many failures in a row open the breaker ...
+    breaker_minutes: int = 60              # ... for this long; one success closes it again
+    night_end: str = "06:00"               # night work stops here (HH:MM, 24-hour internally; shown 12-hour)
+    max_queue: int = 200                   # the queue refuses new jobs beyond this many waiting
+
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
+
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
 # Keys of a saved section from before A was removed (E's own settings): read into the field they became, once.
 LEGACY_KEYS = {"breakout": {"top_e": "top", "late_at_e": "late_at", "late_pct_e": "late_pct"}}
@@ -455,7 +476,7 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "vcp": VcpConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
-                      "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig}
+                      "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig, "ai": AIConfig}
 
 
 @dataclass
@@ -475,6 +496,7 @@ class AppConfig:
     flow: FlowConfig = field(default_factory=FlowConfig)
     futures: FuturesConfig = field(default_factory=FuturesConfig)
     options: OptionsConfig = field(default_factory=OptionsConfig)
+    ai: AIConfig = field(default_factory=AIConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):

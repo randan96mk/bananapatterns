@@ -20,6 +20,28 @@ def _ago(iso):
         return None
 
 
+def _ai_rows(config: AppConfig) -> list[dict]:
+    """🤖 ai_service (reachable, version), ai_models (both present / missing), ai_breaker (closed / open until ...):
+    all green with a note while the AI is switched off; nothing here is red unless the AI is on and the service is gone."""
+    from backend.ai import client, guard
+    on = bool(config.ai.enabled)
+    h = client.health()
+    m = guard.models_present(config)
+    b = guard.breaker()
+    missing = [k for k in ("night", "day") if not m[k]["present"]]
+    off = "AI off · " if not on else ""
+    return [
+        {"key": "ai_service", "name": "AI service", "ok": h["ok"] or not on, "warn": not on and not h["ok"],
+         "state": f"{off}version {h['version']}" if h["ok"] else f"{off}unreachable",
+         "detail": "the local model next to the app" if h["ok"] else (h["error"] or "")[:80], "at": None},
+        {"key": "ai_models", "name": "AI models", "ok": True, "warn": bool(on and missing),
+         "state": f"{off}both present" if not missing else f"{off}missing: {', '.join(m[k]['name'] for k in missing)}",
+         "detail": f"night {m['night']['name']} · day {m['day']['name']}", "at": None},
+        {"key": "ai_breaker", "name": "AI breaker", "ok": True, "warn": bool(on and b["open"]),
+         "state": off + guard.breaker_text(b), "detail": f"{b['failures']} failure(s) in a row · opens at {config.ai.breaker_failures}", "at": b["until"]},
+    ]
+
+
 def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
     out = []
     with get_db() as conn:
@@ -92,6 +114,7 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
     out.append({"key": "opt_chain", "name": "Option chain", "ok": True, "warn": bool(snap_h is not None and snap_h > 30),
                 "state": f"{snap_h:g} h ago · {opt_snap['kind']}" if snap_h is not None else "none yet",
                 "detail": f"last snapshot of expiry {opt_snap['expiry']}" if opt_snap else "9:30, the bias window, every minute while open, 15:30", "at": opt_snap["ts"] if opt_snap else None})
+    out.extend(_ai_rows(config))
     out.append({"key": "follow", "name": "Follow book", "ok": True, "warn": bool(follow_as_of and day and follow_as_of < day),
                 "state": f"as of {follow_as_of}" if follow_as_of else "not built", "detail": "steps after the evening scan", "at": None})
     return out

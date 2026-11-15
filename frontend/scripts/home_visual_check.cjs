@@ -57,7 +57,8 @@ const schedule = { now: now.toISOString(), jobs: [{ key: 'real_stops', name: 'Re
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
   await p.route('**/api/stream**', (route) => {
     const topics = new URL(route.request().url()).searchParams.get('topics').split(',');
-    const data = { overview, attention, schedule };
+    const ai = { switches: { enabled: true, night_batch: true, day_answers: true, stopped: false }, url_ok: true, queue: { queued: 0, running: 0, job: null } };   // 🤖 the top-bar AI chip
+    const data = { overview, attention, schedule, ai };
     const body = 'retry: 3000\n\n' + topics.filter((t) => data[t]).map((t) => `event: ${t}\ndata: ${JSON.stringify(data[t])}\n\n`).join('');
     route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body });
   });

@@ -74,10 +74,10 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['real', 'paper', 'futures', 'options', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
-const NAMES = { real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
+const SECTIONS = ['real', 'paper', 'futures', 'options', 'ai', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
+const NAMES = { real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
-const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'] };
+const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'], ai: ['enabled'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
   max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this' };
 // 🧩 the options book (paper only; paper / enabled / capital are set on its own page)
@@ -89,7 +89,14 @@ const HELP_OPT = { window_start: 'The bias is looked for on 5-minute closes from
   max_gap_pct: 'No entry when the open gapped more than this % from the previous close', event_days: 'Comma-separated ISO dates with no entries (RBI policy, budget, …), e.g. 2026-12-05, 2027-02-01',
   margin_per_lot: 'The margin estimate shown per lot (rupees)', capital_per_lot: '1 lot per this much capital', max_lots: 'At most this many lots', max_delta: 'The sold strike: the first with |delta| at most this',
   min_premium: 'The sold premium must be at least this (else one strike nearer, delta 0.35 at most)', otm_pct: 'The sold strike at least this % out of the money (50-strike grid)', max_trades_day: 'Trades a day at most (one re-entry, only on a flipped bias)' };
-Object.assign(HELP, HELP2, HELP_OPT);
+// 🤖 the local AI (the enabled switch lives on its own page: it may go on only once both models are on disk)
+const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both models on disk)', night_batch: 'Night work (the night model) from the evening job\'s end until night_end (true/false)',
+  day_answers: 'Day answers with the day model only, 9:00–15:40 (true/false)', night_model: 'The night model (Ollama tag, e.g. qwen2.5:7b-instruct, ~4.7 GB); download it from System → AI',
+  day_model: 'The day model (Ollama tag, e.g. qwen2.5:3b-instruct, ~1.9 GB); download it from System → AI', timeout_s: 'One model call may take at most this many seconds; longer = the job fails',
+  keep_alive: 'How long a model stays loaded after a call (Ollama duration, e.g. 10m; 0 = unload at once)', min_free_ram_gb: 'No AI work while the server\'s free RAM is under this many GB',
+  slow_tick_s: '… or while the scheduler\'s last tick took longer than this many seconds (the app comes first)', breaker_failures: 'This many failures in a row open the breaker …',
+  breaker_minutes: '… for this many minutes; one success closes it again', night_end: 'Night work stops here (24-hour HH:MM, IST)', max_queue: 'The queue refuses new jobs beyond this many waiting' };
+Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
 function useNarrow() {

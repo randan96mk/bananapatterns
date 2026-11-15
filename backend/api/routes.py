@@ -268,6 +268,10 @@ def put_config(section: str, values: dict):
         raise HTTPException(422, "roll_mode must be always, never or winners")
     if section == "options" and _truthy(values.get("real")):
         raise HTTPException(400, "not wired")             # the options Real switch: no webhook yet, stays off
+    if section == "ai" and _truthy(values.get("enabled")) and not before.get("enabled"):
+        from backend.ai import control as ai_control
+        if not ai_control.can_enable(S().config):          # 🤖 the AI goes on only once both models are on disk
+            raise HTTPException(400, ai_control.NEEDS_MODELS)
     try:
         out = S().config.update_section(section, values)
     except (ValueError, TypeError) as exc:
@@ -1346,6 +1350,68 @@ def options_chain():
     return obook.chain_view()
 
 
+# --- 🤖 the local AI (infrastructure: switches, server, models, queue, test) -----------------------------------------
+
+class AiSettings(BaseModel):
+    enabled: Optional[bool] = None
+    night_batch: Optional[bool] = None
+    day_answers: Optional[bool] = None
+
+
+@router.get("/ai")
+def ai_summary():
+    """🤖 The AI page: switches, server gauge, models (and a download's progress), breaker, queue, recent jobs, the
+    last test, the settings, the service's limits and version."""
+    from backend.ai import control
+    return control.summary(S().config)
+
+
+@router.put("/ai/settings")
+def ai_settings(req: AiSettings):
+    """enabled / night_batch / day_answers; enabled=true without both models is refused (400)."""
+    from backend.ai import control
+    try:
+        return control.set_switches(S().config, **req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/ai/stop")
+def ai_stop():
+    """The full stop: every model unloaded, every queued job skipped, nothing runs until /ai/start."""
+    from backend.ai import control
+    return control.full_stop()
+
+
+@router.post("/ai/start")
+def ai_start():
+    from backend.ai import control
+    return control.start()
+
+
+@router.post("/ai/pull")
+def ai_pull():
+    """Download the missing models in the background; the progress is in GET /api/ai models.pull."""
+    from backend.ai import control
+    try:
+        return control.pull_models(S().config)
+    except ValueError as exc:
+        raise HTTPException(502, str(exc))
+
+
+@router.post("/ai/test")
+def ai_test():
+    """A tiny JSON prompt on the day model through the queue; the reply and the time it took."""
+    from backend.ai import control
+    return control.test_prompt(S().config)
+
+
+@router.get("/ai/jobs")
+def ai_jobs(limit: int = Query(50, le=500)):
+    from backend.ai import queue as aiq
+    return {"rows": aiq.recent(limit)}
+
+
 @router.get("/corp-actions")
 def corp_actions_list():
     """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""
@@ -2019,6 +2085,7 @@ def _stream_topics() -> dict:
         "futures": (futures_summary, lambda d: 30 if __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
         "futures_morning": (futures_morning, lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
         "options": (options_summary, lambda d: 15 if (d or {}).get("open") or __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
+        "ai": (ai_summary, lambda d: 5 if ((d or {}).get("models") or {}).get("pull", {}).get("running") or ((d or {}).get("queue") or {}).get("job") else 60),
     }
 
 

@@ -170,6 +170,19 @@ class Scheduler:
             self._stop.wait(30)
 
     def tick(self, now: Optional[datetime] = None) -> list[str]:
+        """One pass: every due job runs; how long it took goes to the AI guard (`ai.guard.record_tick`)."""
+        import time as _t
+        t0 = _t.monotonic()
+        try:
+            return self._tick(now)
+        finally:
+            try:
+                from backend.ai import guard as ai_guard
+                ai_guard.record_tick((_t.monotonic() - t0) * 1000)
+            except Exception:                               # the gauge never breaks the scheduler
+                pass
+
+    def _tick(self, now: Optional[datetime] = None) -> list[str]:
         now = now or self.clock()
         today = now.date()
         jobs = due_jobs(now, self.state.config.alerts, self.done_today(today), hol.is_trading_day(today),

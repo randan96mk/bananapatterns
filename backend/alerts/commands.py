@@ -7,6 +7,7 @@
   fut skip SYM / fut unskip SYM / fut hold   the same for the futures book's plan (paper fill and real send)
   opt / opt close / opt hold   the options book: today's status and the open spread; close the spread now; no new
                                entries today
+  ai / ai stop / ai start      🤖 the local AI: one status line; the full stop (unload, empty the queue); clear it
 
 Only messages from the configured chat_id are answered; anyone else is ignored.
 Commands older than STALE_SEC (sent while the app was off) are skipped. The poller
@@ -33,6 +34,7 @@ logger = setup_logger("bot")
 STALE_SEC = 120
 MORNING_WORDS = ("skip", "unskip", "hold")
 OPTIONS_WORDS = ("close", "hold")
+AI_WORDS = ("stop", "start")
 
 
 class BotCommands:
@@ -79,6 +81,8 @@ class BotCommands:
                 parts = ["/fut" + parts[1].lower()] + parts[2:]
             if parts[0].lower() in ("opt", "/opt"):                                                # "opt" / "opt close" / "opt hold"
                 parts = ["/opt" + (parts[1].lower() if len(parts) > 1 and parts[1].lower() in OPTIONS_WORDS else "")] + parts[2:]
+            if parts[0].lower() in ("ai", "/ai"):                                                  # "ai" / "ai stop" / "ai start"
+                parts = ["/ai" + (parts[1].lower() if len(parts) > 1 and parts[1].lower() in AI_WORDS else "")] + parts[2:]
             if parts[0].lower() in MORNING_WORDS:          # the reminder's reply: "skip NRL" / "hold", no slash needed
                 parts[0] = "/" + parts[0].lower()
             if not parts[0].startswith("/"):
@@ -230,8 +234,22 @@ class BotCommands:
             return "⏸ No new options entries today; an open spread keeps its exits.\n" + msg.options_status(book.summary(cfg, now))
         return msg.options_status(book.summary(cfg, now))
 
+    def ai(self, command: str) -> str:
+        """ai: one status line · ai stop: the full stop (every model unloaded, the queue emptied; the RAM freed) ·
+        ai start: the stop cleared. The model never acts on anything; these only start and stop it."""
+        from backend.ai import control
+        cfg, now = self.state.config, self.clock()
+        if command == "/aistop":
+            return msg.ai_stopped(control.full_stop())
+        if command == "/aistart":
+            control.start()
+            return "▶️ AI full stop cleared.\n" + msg.ai_status(control.summary(cfg, now))
+        return msg.ai_status(control.summary(cfg, now))
+
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
+        if command in ("/ai", "/aistop", "/aistart"):
+            return self._say(notifier, self.ai(command))
         if command in ("/skip", "/unskip", "/hold"):
             return self._say(notifier, self.morning(command, arg, notifier))
         if command in ("/futskip", "/futunskip", "/futhold"):
@@ -271,5 +289,5 @@ class BotCommands:
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold (today's real "
                                        "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
-                                       "book). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "book) · ai / ai stop / ai start (the local AI). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False
