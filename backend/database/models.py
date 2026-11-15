@@ -382,6 +382,19 @@ CREATE TABLE IF NOT EXISTS options_trades (id INTEGER PRIMARY KEY AUTOINCREMENT,
 CREATE TABLE IF NOT EXISTS options_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS options_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
 
+-- 🤖 Local AI (backend/ai): every job the queue ran (queued / running / done / failed / skipped) and the notes the
+-- model wrote (filled from PR 2). Nothing here is ever deleted.
+CREATE TABLE IF NOT EXISTS ai_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, started TEXT, finished TEXT, kind TEXT NOT NULL,
+    key TEXT NOT NULL, model TEXT, status TEXT NOT NULL DEFAULT 'queued'
+        CHECK(status IN ('queued', 'running', 'done', 'failed', 'skipped')),
+    ms INTEGER, tokens INTEGER, error TEXT, note TEXT);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_status ON ai_jobs(status);
+CREATE TABLE IF NOT EXISTS ai_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, symbol TEXT,
+    book TEXT, severity TEXT, title TEXT, text TEXT, data TEXT, model TEXT, prompt_version TEXT, ms INTEGER);
+CREATE INDEX IF NOT EXISTS idx_ai_notes_day ON ai_notes(day, kind);
+
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

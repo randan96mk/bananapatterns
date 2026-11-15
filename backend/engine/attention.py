@@ -68,6 +68,23 @@ def signals(config, kite: bool) -> dict:
         out["options"] = _pack(_options(config, kite))
     except Exception:
         out["options"] = _pack([])
+    try:
+        out["ai"] = _pack(_ai(config))
+    except Exception:
+        out["ai"] = _pack([])
+    return out
+
+
+def _ai(config) -> list:
+    """🤖 The AI page: the breaker open (jobs are skipped until it closes), a model download that failed."""
+    from backend.ai import control, guard
+    out = []
+    b = guard.breaker()
+    if b["open"]:
+        out.append(("warn", f"AI breaker {guard.breaker_text(b)}: jobs are skipped until then"))
+    p = control.pull_status()
+    if p.get("error"):
+        out.append(("warn", f"AI model download failed: {p['error']}"[:160]))
     return out
 
 

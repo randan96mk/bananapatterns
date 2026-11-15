@@ -1125,6 +1125,27 @@ def options_status(s: dict) -> str:
     return "\n".join(lines)
 
 
+def ai_status(s: dict) -> str:
+    """The `ai` command's reply: enabled / stopped, the models, the RAM in use, the queue, the breaker."""
+    sw, m, srv, qu, b = s["switches"], s["models"], s["server"], s["queue"], s["breaker"]
+    state = "⏹ full stop" if sw["stopped"] else ("on" if sw["enabled"] else "off")
+    have = lambda k: f"{escape(m[k]['name'])} {'✓' if m[k]['present'] else 'missing'}"
+    ram = f"{srv['ai_ram_mb'] / 1000:.1f} GB in use" if srv.get("ai_ram_mb") else ("nothing loaded" if s.get("url_ok") else "service unreachable")
+    job = f" · running {escape(qu['job']['kind'])}" if qu.get("job") else ""
+    lines = [f"🤖 <b>AI · {state}</b> · night {have('night')} · day {have('day')}",
+             f"RAM {ram} · queue {qu['queued']} waiting{job} · today {qu['done_today']} done / {qu['failed_today']} failed · breaker {escape(b['text'])}",
+             "Reply <b>ai stop</b> to unload the model and empty the queue · <b>ai start</b> to clear the stop."]
+    return "\n".join(lines)
+
+
+def ai_stopped(r: dict) -> str:
+    """The `ai stop` reply: what was unloaded and freed."""
+    freed = f"{r['ram_freed_mb'] / 1000:.1f} GB freed" if r.get("ram_freed_mb") else "nothing was loaded"
+    return (f"⏹ <b>AI full stop</b> · {freed} · {r['skipped']} queued job(s) skipped"
+            + (f" · unloaded {escape(', '.join(r['unloaded']))}" if r.get("unloaded") else "")
+            + "\nThe container keeps idling (~50 MB). Reply <b>ai start</b> to clear the stop.")
+
+
 def options_alert(a: dict) -> Optional[str]:
     """The Telegram text of one alert the book recorded ({kind, t, text, data}); None for a kind with no builder (the
     plain text goes then)."""

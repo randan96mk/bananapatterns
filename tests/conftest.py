@@ -15,6 +15,11 @@ def _offline(*a, **kw):
     raise RuntimeError("no network in tests")
 
 
+def _no_ai(*a, **kw):
+    from backend.ai.client import AIError
+    raise AIError("service unreachable (tests)")
+
+
 @pytest.fixture(autouse=True)
 def tmp_db(tmp_path, monkeypatch):
     db = tmp_path / "test.db"
@@ -23,6 +28,7 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.ingest.filings.refresh_from_nse", _offline)
     monkeypatch.setattr("backend.ingest.holders.refresh_from_nse", _offline)
     monkeypatch.setattr("backend.futures.ban._fetch", _offline)                  # the ban list fetch keeps the last list
+    monkeypatch.setattr("backend.ai.client._http", _no_ai)                       # 🤖 no AI service in tests (test_ai_* fake it)
     from backend.database.models import init_db
     init_db()
     return db
