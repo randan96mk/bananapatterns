@@ -14,3 +14,11 @@ export default function AiDot({ note, dot }) {
     {!dot && <span style={{ opacity: COLOR[note.severity] ? 1 : 0.7 }}>🤖</span>}
     <i style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 4, background: c, flex: 'none' }} /></span>;
 }
+
+// 🤖 The "why" line under a closed trade (`row.ai_why` = {id, text, at}): one small line with an ellipsis, the full
+// text as the tooltip. Meant for a FixedTable span row, so the trade row itself keeps its 34 px.
+export function AiWhy({ why }) {
+  if (!why || !why.text) return null;
+  return <div className="muted" title={`🤖 AI · likely cause · ${why.text}${why.at ? ` · ${stamp(why.at)}` : ''} · System → AI › Notes › Why`}
+    style={{ fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>🤖 {why.text}</div>;
+}

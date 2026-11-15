@@ -10,6 +10,7 @@ import * as api from '../services/api';
 import HealthStrip from './HealthStrip';
 import PhonePositions from './PhonePositions';
 import AiDot from './AiDot';
+import AiSuggestions from './AiSuggestions';
 import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, Chip } from './ui2';
 
 // 🏠 Home: the day on one screen. Timeline (click a dot: Activity filters to it), account cards with sparklines (Real
@@ -285,6 +286,7 @@ export default function HomePage({ onGo, onStock }) {
           <div title={heldResults.map((r) => `${r.symbol} · ${dayName(r.date)}`).join('\n') || 'no held name reports this week'}><span className="l">Results this week · held</span><b className={heldResults.length ? 'warn' : ''}>{heldResults.length}</b><small>{heldResults.length ? `${heldResults.slice(0, 2).map((r) => `${r.symbol} ${weekday(r.date)}`).join(' · ')}${heldResults.length > 2 ? ` · +${heldResults.length - 2}` : ''}` : 'none of the held names'}</small></div>
         </div></div></Panel>
     </div>}
+    <AiSuggestions onGo={onGo} />
     <div className="two">
       <Panel title="Open positions" meta={positions.length} right={phone ? <>{liveNow && <span className="livedot" />}<select value={view} onChange={(e) => setView(e.target.value)} style={{ fontSize: 11.5, padding: '2px 6px', marginLeft: 'auto' }} title="which books">
           <option value="all">Real + Paper</option><option value="real">Real</option><option value="paper">Paper</option><option value="diff">Differences</option></select></>

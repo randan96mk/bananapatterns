@@ -9,7 +9,7 @@ import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { useIsPhone } from '../useMedia';
 import { Head, Chip, Tag, Cards, Card, Bar, Panel, FixedTable, LineChart, Act } from './ui2';
-import AiDot from './AiDot';
+import AiDot, { AiWhy } from './AiDot';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const COLOR = { E: '#b39dff' };
@@ -114,8 +114,9 @@ export default function PaperPage() {
     return [...sells.map((o) => ({ key: `${k}s${o.symbol}`, title: o.why, cells: [<b>{o.symbol}</b>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, <Tag c="bad">SELL</Tag>, o.qty, '—', <span className="muted">{o.why}</span>] })),
       ...buys.slice(0, f).map((o) => ({ key: `${k}b${o.symbol}`, cells: [<b>{o.symbol}</b>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, <Tag c="ok">BUY</Tag>, `~${o.qty_est}`, rs(o.stop), inr(o.risk_est)] })),
       ...(buys.length > f ? [`${NAME[k]} · +${buys.length - f} skipped · ${a.allowed ? 'slots full' : 'filter off'}`] : [])]; });
-  const trdRows = allTrades.filter((t) => shown.includes(t.k)).map((t) => ({ key: t.k + t.symbol + t.in, title: `charges ${inr(t.charges)} + slippage ${inr(t.slippage)}`,
-    cells: [<b>{t.symbol}</b>, <span className={`v${t.k}`}>{t.k === 'E' ? 'E+' : t.k}</span>, `${day(t.in)} → ${day(t.out)}`, t.days, <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why] }));
+  const trdRows = allTrades.filter((t) => shown.includes(t.k)).flatMap((t) => [{ key: t.k + t.symbol + t.in, title: `charges ${inr(t.charges)} + slippage ${inr(t.slippage)}`,
+    cells: [<b>{t.symbol}</b>, <span className={`v${t.k}`}>{t.k === 'E' ? 'E+' : t.k}</span>, `${day(t.in)} → ${day(t.out)}`, t.days, <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why] },
+  ...(t.ai_why ? [{ key: `${t.k}${t.symbol}${t.in}-why`, span: <AiWhy why={t.ai_why} /> }] : [])]);          // 🤖 the AI's likely cause under the row
   const totals = shown.map((k) => accts[k].trade_totals).reduce((a, t) => ({ gross: a.gross + (t.gross || 0), costs: a.costs + (t.costs || 0), net: a.net + (t.net || 0) }), { gross: 0, costs: 0, net: 0 });
   if (trdRows.length) trdRows.push({ key: 'total', cells: [<b>Total</b>, '', '', '', <span className={cls(totals.gross)}>{signed(totals.gross)}</span>, <span className="muted">{inr(totals.costs)}</span>, <b className={cls(totals.net)}>{signed(totals.net)}</b>, ''] });
   const curve = a0.curve || {};

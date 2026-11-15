@@ -166,3 +166,16 @@ export const getAiNotes = (params = {}) => { const q = Object.entries(params).fi
 export const getAiNote = (id) => req('GET', `/api/ai/notes/${id}`);
 export const aiNotesRun = () => req('POST', '/api/ai/notes/run');
 export const aiTestsetRun = () => req('POST', '/api/ai/testset/run');
+// 🤖 PR 3: suggestions (Home panel + scorecard), the trade "why" lines, ask the app
+const qs = (params = {}) => { const q = Object.entries(params).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'); return q ? `?${q}` : ''; };
+export const getAiSuggestions = (params = {}) => req('GET', `/api/ai/suggestions${qs(params)}`);
+export const getAiSuggestion = (id) => req('GET', `/api/ai/suggestions/${id}`);
+export const aiSuggestionAccept = (id) => req('POST', `/api/ai/suggestions/${id}/accept`);
+export const aiSuggestionDismiss = (id, reason = 'none') => req('POST', `/api/ai/suggestions/${id}/dismiss`, { reason });
+export const aiSuggestionLater = (id) => req('POST', `/api/ai/suggestions/${id}/later`);
+export const aiSuggestionsRun = () => req('POST', '/api/ai/suggestions/run');
+export const aiSuggestionMute = (kind, muted) => req('POST', '/api/ai/suggestions/mute', { kind, muted });
+export const getAiScorecard = (month) => req('GET', `/api/ai/suggestions/scorecard${qs({ month })}`);
+export const aiWhyRun = () => req('POST', '/api/ai/why/run');
+export const aiAsk = (question) => req('POST', '/api/ai/ask', { question });
+export const getAiAsks = (limit = 10) => req('GET', `/api/ai/asks?limit=${limit}`);

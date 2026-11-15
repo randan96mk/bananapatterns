@@ -6,6 +6,7 @@ import { useLive } from '../services/live';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Bar } from './ui2';
+import { AiWhy } from './AiDot';
 import { useNarrow, useIsPhone } from '../useMedia';
 
 // 🧩 NIFTY weekly options, paper only: one credit spread a day on the opening-range bias (9:45–11:00), confirmed by the
@@ -144,10 +145,12 @@ export default function OptionsPage() {
   }
 
   const dayCols = [{ h: 'Day · spread', ell: true }, { h: 'Bias', w: 50 }, { h: 'P&L', w: 96, n: true }, { h: 'Ended', w: 100, ell: true }];
-  const dayRows = days.map((x) => ({ key: x.day, title: `${x.day} · ${x.result || x.why || ''}${x.chain_line ? ` · ${x.chain_line}` : ''}${x.size_note ? ` · ${x.size_note}` : ''}`,
+  const whyByDay = Object.fromEntries((d.trades || []).filter((t) => t.ai_why).map((t) => [t.day, t.ai_why]));   // 🤖 the AI's likely cause per traded day
+  const dayRows = days.flatMap((x) => [{ key: x.day, title: `${x.day} · ${x.result || x.why || ''}${x.chain_line ? ` · ${x.chain_line}` : ''}${x.size_note ? ` · ${x.size_note}` : ''}`,
     cells: [<><b>{wday(x.day)} {x.day.slice(8)}</b> <small className="muted">{x.strikes ? `${x.strikes}${x.lots ? ` · ${x.lots} lot${x.lots === 1 ? '' : 's'}` : ''}` : x.no_data ? 'no data' : 'no trade'}</small></>, x.bias ? <span className={x.bias === 'BULLISH' ? 'up' : 'down'}>{x.bias === 'BULLISH' ? '↑' : '↓'}</span> : <span className="muted">—</span>,
       <b className={x.trades ? cls(x.pnl) : 'muted'}>{x.trades ? signed(x.pnl) : '₹0'}</b>,
-      <Tag c={x.trades ? ENDED(x.result || '') : x.no_data ? 'w' : ''} title={x.result || x.why}>{x.trades ? x.result : x.no_data ? 'no data' : 'no trade'}</Tag>] }));
+      <Tag c={x.trades ? ENDED(x.result || '') : x.no_data ? 'w' : ''} title={x.result || x.why}>{x.trades ? x.result : x.no_data ? 'no data' : 'no trade'}</Tag>] },
+  ...(whyByDay[x.day] ? [{ key: `${x.day}-why`, span: <AiWhy why={whyByDay[x.day]} /> }] : [])]);
   const card = (c) => ({ rs: inr(c.value), rs_signed: signed(c.value), pct: c.value == null ? '—' : `${Math.round(c.value)}%`, n: c.value ?? '—' }[c.fmt] ?? c.value);
   const byKey = Object.fromEntries((d.cards || []).map((c) => [c.key, c]));
   const expiryChip = M.expiry ? <Chip title={`the nearest NIFTY weekly expiry from the contracts dump (as of ${d.contracts?.as_of || '—'})`}>expiry <b>{wday(M.expiry)} {day(M.expiry)}</b> · {sessions} session{sessions === 1 ? '' : 's'}{M.expiry_day ? <b className="warn"> · expiry day</b> : null} · lot {M.lot_size ?? '—'}</Chip>
