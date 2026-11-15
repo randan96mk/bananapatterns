@@ -69,6 +69,7 @@ export default function AiPage() {
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState('');
+  const [rows, setRows] = useState(false);
   const [filt, setFilt] = useState('all');                                       // the notes filter: all / high / filing / deal
   const [notes, setNotes] = useState({ rows: [], total: 0, loading: true });
   const narrow = useNarrow();
@@ -182,6 +183,16 @@ export default function AiPage() {
           <button type="button" className="btn small" disabled={!!busy || TS.running || !d.url_ok || !!sw.stopped} onClick={runTestset}
             title={TS.running ? 'running now' : !d.url_ok ? 'the service does not answer' : sw.stopped ? 'full stop is on' : 'send the 30 filings through the night model now'}>{TS.running ? `Running… ${PR.done ?? 0}/${PR.n ?? 30}` : busy === 'testset' ? 'Starting…' : 'Run test set'}</button>
           <Meta title={PR.error || ''}>{PR.error ? <span className="down">last run failed: {PR.error}</span> : <span className="muted">kind "test" · allowed outside the night window · a few minutes</span>}</Meta></div>
+        {TL?.rows?.length ? <div style={{ padding: '0 14px 6px' }}>
+          <button type="button" className="btn small" onClick={() => setRows(!rows)}>{rows ? 'Hide rows' : `Show rows · ${TL.rows.filter((r) => !(r.ok?.category && r.ok?.severity && r.ok?.direction)).length} missed`}</button>
+          {rows && <div style={{ marginTop: 8, maxHeight: 260, overflowY: 'auto', fontSize: 11.5 }}>
+            {TL.rows.map((r) => <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '28px 92px minmax(0, 1fr)', gap: 8, padding: '4px 0', borderBottom: '1px solid var(--line)' }} title={r.error || ''}>
+              <span className="mono muted">{r.id}</span><b className="mono">{r.symbol}</b>
+              <span style={{ minWidth: 0 }}>{r.status && r.status !== 'done' ? <span className="down">{r.status}{r.error ? ` · ${r.error}` : ''}</span>
+                : ['category', 'severity', 'direction'].map((k) => <span key={k} style={{ marginRight: 8 }} className={r.ok?.[k] ? 'muted' : 'down'}>{r.ok?.[k] ? '✓' : '✗'} {k.slice(0, 3)} {r.got?.[k] || '—'}{r.ok?.[k] ? '' : ` (want ${r.expected?.[k]})`}</span>)}
+                {r.ms ? <span className="mono muted"> · {secs(r.ms)}</span> : null}</span></div>)}
+          </div>}
+        </div> : null}
         <div className="rnote">category · severity · direction against the hand labels · the severity on screen is set by code anyway</div>
       </Panel>
     </div>

@@ -1538,6 +1538,8 @@ Tests: `tests/test_ai_notes.py` (the prompt and the numbers found by code, the v
 grouping and discount math, the scope ordering and the cap, the hooks in the evening and filings jobs, stale jobs, the
 alert lines and the high-note message, attention, the overview's `ai_note`, the test set scorer, the routes).
 
+**Prompt v2 (`notes-v2`)**: the model's synonyms are mapped before the check (acquisition → deal, bullish → positive, critical → high, …), a retry names the fault and lists the allowed values, the direction rules are spelled out (neutral only when the owner's position is unaffected), and the answers are capped (temperature 0.1, 320 tokens, 2,048 context) for shorter, steadier replies on the CPU. The Quality panel's **Show rows** lists every test item with expected versus got.
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;

@@ -172,7 +172,7 @@ def test_validate_good_answer():
 
 
 def test_validate_rejects_bad_enums_and_non_json():
-    for bad in ({**GOOD, "category": "gossip"}, {**GOOD, "severity": "critical"}, {**GOOD, "direction": "up"}, {**GOOD, "title": ""}):
+    for bad in ({**GOOD, "category": "gossip"}, {**GOOD, "severity": "urgent"}, {**GOOD, "direction": "sideways"}, {**GOOD, "title": ""}):
         with pytest.raises(notes.NoteInvalid):
             notes.validate(json.dumps(bad), RESULTS_TEXT, [])
     with pytest.raises(notes.NoteInvalid, match="not JSON"):
@@ -330,7 +330,7 @@ def test_run_one_writes_the_row_with_severity_by_code(ollama, cfg):
     n = notes.get_note(out["id"])
     assert out["note"] == "GLENMARK · high · Promoter pledge raised to 9.92%" and out["tokens"] == 9
     assert n["severity"] == "high" and n["severity_model"] == "low" and n["category"] == "pledge" and n["direction"] == "negative"
-    assert n["kind"] == "filing" and n["book"] == "held" and n["source_key"] == "9" and n["prompt_version"] == "notes-v1" and n["model"] == NIGHT
+    assert n["kind"] == "filing" and n["book"] == "held" and n["source_key"] == "9" and n["prompt_version"] == "notes-v2" and n["model"] == NIGHT
     assert n["day"] == "2026-11-17" and n["ms"] == 850 and n["numbers_checked"] is True and n["numbers"] == [] and n["acts"] == ["watch the lender"]
     assert n["source"] == {"seq_id": "9", "url": row["url"], "dt": row["dt"], "category": "Updates", "kind": "update"} and n["url"] == row["url"]
     assert n["scope"] == {"book": "held", "why": "you hold it", "rank": None} and n["alerted"] is False
@@ -344,7 +344,7 @@ def test_run_one_retries_once_then_fails(ollama, cfg):
     ollama.reply = ["not json at all", json.dumps({**GOOD, "category": "deal"})]
     out = notes.run_one(source_for(row, "watch"), cfg)
     assert out["tokens"] == 18 and notes.get_note(out["id"])["ms"] == 1700 and notes.get_note(out["id"])["severity"] == "low"
-    assert ollama.calls[-1][2]["system"].endswith(notes.RETRY_SUFFIX) and ollama.calls[-2][2]["system"] == notes.SYSTEM_PROMPT
+    assert "was not valid:" in ollama.calls[-1][2]["system"] and ollama.calls[-1][2]["system"].startswith(notes.SYSTEM_PROMPT) and ollama.calls[-2][2]["system"] == notes.SYSTEM_PROMPT
     ollama.reply = ["{}", json.dumps({**GOOD, "severity": "urgent"})]
     with pytest.raises(notes.NoteInvalid, match="severity"):
         notes.run_one(source_for(filing(2, "AAA", "Acquisition", "x", 1), "watch"), cfg)
@@ -586,7 +586,7 @@ def test_testset_scorer_last_and_best(ollama, cfg):
     ollama.reply = reply
     res = quality.run_testset(cfg, items, timeout_s=20)
     assert (res["n"], res["category_ok"], res["severity_ok"], res["direction_ok"], res["failed"]) == (4, 3, 3, 4, 0)
-    assert res["model"] == NIGHT and res["prompt_version"] == "notes-v1" and res["ms_avg"] == 850 and res["at"]
+    assert res["model"] == NIGHT and res["prompt_version"] == "notes-v2" and res["ms_avg"] == 850 and res["at"]
     assert res["rows"][1] == {"id": 2, "symbol": "AVANTIFEED", "expected": items[1]["expected"], "got": answers["AVANTIFEED"],
                               "ok": {"category": True, "severity": False, "direction": True}, "ms": 850, "status": "done", "error": None}
     assert all(j["kind"] == "test" and j["model"] == NIGHT for j in q.recent(4)) and all(c[2]["model"] == NIGHT for c in ollama.calls if c[1] == "/api/generate")
@@ -664,5 +664,32 @@ def test_no_broker_names_and_12_hour_times_in_the_new_modules():
         assert no_brokers((ROOT / "backend" / "ai" / name).read_text()), name
     assert no_brokers((ROOT / "config" / "ai_testset.json").read_text())
     assert {b.lower() for b in BROKERS[:2]} <= set(notes.BLOCKED) and all(w == w.lower() for w in notes.BLOCKED)
-    assert notes.DEFAULT_EST_S == 12 and notes.STALE_HOURS == 24 and notes.PROMPT_V == "notes-v1"
+    assert notes.DEFAULT_EST_S == 12 and notes.STALE_HOURS == 24 and notes.PROMPT_V == "notes-v2"
     assert not re.search(r"\b\d{2}:\d{2}\b", notes.SYSTEM_PROMPT)
+
+
+def test_synonyms_map_to_listed_values_and_retry_names_the_fault(monkeypatch):
+    """v2: a synonym the model reaches for ("acquisition", "bullish", "critical") is mapped before the enum check; an
+    answer that is still invalid is retried with the fault and the allowed values in the system prompt; the generation
+    options cap the answer."""
+    raw = json.dumps({"category": "Acquisition", "severity": "critical", "direction": "bullish", "title": "Buys a plant",
+                      "line": "the company buys a plant", "acts": [], "confidence": 0.8})
+    n = notes.validate(raw, "the company buys a plant", [])
+    assert (n["category"], n["severity_model"], n["direction"]) == ("deal", "high", "positive")
+    n2 = notes.validate(raw.replace("Acquisition", "stake-sale").replace("bullish", "mixed"), "the company buys a plant", [])
+    assert (n2["category"], n2["direction"]) == ("deal", "neutral")
+    with pytest.raises(notes.NoteInvalid):
+        notes.validate(raw.replace("Acquisition", "weather"), "x", [])
+    calls = []
+
+    def fake_generate(model, prompt, system=None, **kw):
+        calls.append((system, kw.get("options")))
+        bad = json.dumps({"category": "weather", "severity": "high", "direction": "negative", "title": "t", "line": "l"})
+        good = json.dumps({"category": "legal", "severity": "high", "direction": "negative", "title": "t", "line": "l"})
+        return {"text": bad if len(calls) == 1 else good, "tokens": 5, "prompt_tokens": 50, "ms": 100, "load_ms": 0, "eval_ms": 90, "model": model}
+    monkeypatch.setattr(notes.client, "generate", fake_generate)
+    note, r = notes.ask(AppConfig(), notes.SYSTEM_PROMPT, "user", "l", [])
+    assert note["category"] == "legal" and len(calls) == 2
+    assert "weather" in calls[1][0] and "legal" in calls[1][0] and calls[1][0].startswith(notes.SYSTEM_PROMPT)
+    assert calls[0][1] == notes.GEN_OPTIONS and calls[0][1]["num_predict"] <= 400 and calls[0][1]["temperature"] <= 0.2
+    assert notes.PROMPT_V == "notes-v2" and "neutral = only when" in notes.SYSTEM_PROMPT
