@@ -408,6 +408,15 @@ CREATE TABLE IF NOT EXISTS ai_asks (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, who TEXT NOT NULL, question TEXT NOT NULL, tool TEXT,
     args TEXT, answer TEXT, ms INTEGER, model TEXT, ok INTEGER NOT NULL DEFAULT 0, error TEXT);
 CREATE INDEX IF NOT EXISTS idx_ai_asks_created ON ai_asks(created);
+-- 🤖 AI view: a rating beside every system-suggested stock (score, verdict by code, reasons, levels picked from the
+-- candidates code found, the facts it got, the outcome 5 / 10 / 20 sessions later, the shuffle score). Never deleted.
+CREATE TABLE IF NOT EXISTS ai_views (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, day TEXT NOT NULL, symbol TEXT NOT NULL, source TEXT NOT NULL,
+    book TEXT, rank_in_source INTEGER, score INTEGER, verdict TEXT, verdict_model TEXT, confidence REAL, reasons TEXT, change TEXT,
+    would_change TEXT, levels TEXT, candidates TEXT, features TEXT, previous_id INTEGER, model TEXT, prompt_version TEXT, ms INTEGER,
+    status TEXT NOT NULL DEFAULT 'ok' CHECK(status IN ('ok', 'failed')), outcome TEXT, shuffle_score INTEGER,
+    UNIQUE (day, symbol, source));
+CREATE INDEX IF NOT EXISTS idx_ai_views_symbol ON ai_views(symbol, day);
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

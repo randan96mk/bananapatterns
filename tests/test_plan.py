@@ -139,7 +139,7 @@ def test_plan_api(monkeypatch):
     pl.save_plan("2026-10-23", [{"symbol": "X", "pivot": 10.0}])
     from backend import main
     with TestClient(main.app) as tc:
-        assert tc.get("/api/plan").json() == {"as_of": "2026-10-23", "items": [{"symbol": "X", "pivot": 10.0}]}
+        assert tc.get("/api/plan").json() == {"as_of": "2026-10-23", "items": [{"symbol": "X", "pivot": 10.0, "ai_view": None}]}   # 🤖 AI view: null without a view
 
 
 def test_plan_messages_escape():

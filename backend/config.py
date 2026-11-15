@@ -475,6 +475,16 @@ class AIConfig:
     brief_time: str = "06:30"              # when the brief is written (HH:MM; the window for kind "brief" runs to 9:00 AM)
     # 🤖 ask
     ask: bool = True                       # "ask the app": the day model answers from one whitelisted read-only tool, any time
+    # 🤖 AI view: a rating beside every system-suggested stock (the model rates, it never acts)
+    view_enabled: bool = True              # the nightly rating of the plan, held, futures, Follow and Screens names
+    view_rate_held: bool = True            # held names re-rated nightly (hold / trim / exit-watch)
+    view_rank_by_score: bool = False       # LOCKED until unlocked: plan ties (the same breakout rank) ordered by the AI score
+    view_size_by_score: bool = False       # LOCKED until unlocked: BUY qty × clip(0.5 + 0.5 × (score − 40) / 40, floor, 1.0); never above 1.0×
+    view_size_floor: float = 0.5           # the smallest size multiplier size_by_score may use (0.5-1.0)
+    view_exit_watch_alert: bool = False    # LOCKED until unlocked: an alert when a held name closes under its fails_below (flag only)
+    view_score_buy: int = 60               # score at or over this: buy (held: hold)
+    view_score_avoid: int = 40             # score under this: avoid (held: exit-watch); between: wait (held: trim)
+    view_max_per_night: int = 40           # names rated a night at most (plan, held, futures, Follow, Screens, in that order)
 
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)

@@ -67,7 +67,7 @@ def gen_calls(fake):
 
 def test_tool_list_matches_the_plan():
     assert ask.TOOL_NAMES == ("real_morning", "real_summary", "paper_summary", "futures_summary", "options_summary", "options_days", "trades",
-                              "filings", "notes", "suggestions", "plan", "why_skipped", "positions_near_stop", "backtest_f")
+                              "filings", "notes", "suggestions", "plan", "why_skipped", "positions_near_stop", "backtest_f", "levels")
     args = {k: {a: t.__name__ for a, t in v["args"].items()} for k, v in ask.TOOLS.items()}
     assert args["real_morning"] == {"day": "str"} and args["trades"] == {"book": "str", "days": "int"} and args["why_skipped"] == {"symbol": "str", "day": "str"}
     assert args["positions_near_stop"] == {"pct": "float"} and args["options_days"] == {"limit": "int"} and args["backtest_f"] == {}

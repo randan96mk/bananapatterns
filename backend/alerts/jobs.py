@@ -309,6 +309,7 @@ class Scheduler:
             out["ai_notes"] = self.run_ai_notes(now)
             out["ai_why"] = self.run_ai_why(now)          # 🤖 why: the lines under today's exits (FIFO: after the notes)
             out["ai_suggest"] = self.run_ai_suggest(now)  # 🤖 suggestions: for the next session (FIFO: after the notes)
+            out["ai_view"] = self.run_ai_view(now)        # 🤖 AI view: a rating beside every suggested stock (after the suggestions)
         return out
 
     def run_ai_why(self, now: datetime) -> dict:
@@ -331,6 +332,18 @@ class Scheduler:
             return suggest.enqueue_tonight(self.state.config, now, self.notifier())
         except Exception as exc:
             logger.exception("AI suggest enqueue failed")
+            return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_ai_view(self, now: datetime) -> dict:
+        """🤖 AI view: queue tonight's rating job (the plan, held, futures, Follow and Screens names; FIFO after the
+        suggestions). Never raises."""
+        if not self.state.config.ai.enabled:
+            return {"status": "off"}
+        try:
+            from backend.ai import view
+            return view.enqueue_tonight(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI view enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
 
     def run_ai_notes(self, now: datetime) -> dict:

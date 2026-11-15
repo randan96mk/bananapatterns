@@ -42,9 +42,34 @@ _lock = threading.Lock()
 
 
 def _ai_notes(rows: list) -> list:
-    """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None)."""
-    from backend.ai import notes
-    return notes.attach(rows)
+    """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None) and the held
+    name's AI view (ai_view: {score, verdict, reasons, change, levels, at, ...} | None)."""
+    from backend.ai import notes, view
+    return view.attach(notes.attach(rows), "held")
+
+
+def _fulls(st: dict, day: str) -> list:
+    """🤖 AI view: the names whose rule size was restored for `day` (Telegram `full SYMBOL`)."""
+    return (st.get("ai_full") or {}).get(day) or []
+
+
+def ai_size(config: AppConfig, st: dict, o: dict, day: str) -> dict:
+    """🤖 AI view on one planned BUY: {ai_view, qty_rule, qty_ai, size_x, full}. qty_ai differs from the rule only when
+    view_size_by_score is on (locked until the record unlocks it) and the name was not restored with `full`; it is
+    never above the rule quantity and never under one share (never a skip). Never raises."""
+    out = {"ai_view": None, "qty_rule": o.get("qty"), "qty_ai": o.get("qty"), "size_x": 1.0, "full": False}
+    try:
+        from backend.ai import view
+        v = view.score_for(o["symbol"], day)
+        out["ai_view"] = view._join(v, None) if v else None
+        out["full"] = o["symbol"] in _fulls(st, day)
+        if config.ai.view_size_by_score and not out["full"] and o.get("qty"):
+            out["size_x"] = view.size_mult((v or {}).get("score"), config.ai.view_size_floor)
+            out["qty_ai"] = view.ai_qty(o["qty"], (v or {}).get("score"), config.ai.view_size_floor)
+    except Exception:
+        logger.exception("AI view size failed for %s", o.get("symbol"))
+    assert out["qty_ai"] is None or out["qty_ai"] <= (out["qty_rule"] or 0)
+    return out
 
 
 def _ai_flags(day: str) -> dict:
@@ -274,6 +299,7 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig, keep: tuple = ()) -> 
     used = len(st["positions"]) - len(exits)              # slots after the exits
     buys = sum(o["action"] == "BUY" for o in orders)      # today's sent BUYs count toward the daily limit
     waiting = []
+    ranked = _rank_ties(config, ranked, S, i, data["cal"][i])      # 🤖 AI view: ties by score (off unless unlocked and on)
     for k, (s, stop) in enumerate(ranked):
         if (s, "BUY") in done:
             continue
@@ -308,6 +334,19 @@ def _plan(st: dict, data: dict, i: int, config: AppConfig, keep: tuple = ()) -> 
     results_guard(st, config, next_session(data["cal"][i]))
     return {"orders": orders, "waiting": waiting, "idle_cash": round(cash, 2), "cap": cap, "regime_on": bool(regime_on),
             "slots_used": used}
+
+
+def _rank_ties(config: AppConfig, ranked: list, S: dict, i: int, day: str) -> list:
+    """🤖 view_rank_by_score: breakouts with the same rank figure (ret126 to 0.1%) ordered by the AI score; the order
+    between different figures never changes. Off: unchanged."""
+    if not config.ai.view_rank_by_score:
+        return ranked
+    from backend.ai import view
+
+    def key(x):
+        s = S.get(x[0])
+        return round((tb.val(s, s["at"][i], "ret126") or 0) * 100, 1) if s else None
+    return view.rank_ties(config, ranked, key, lambda x: x[0], (date.fromisoformat(day) + timedelta(days=1)).isoformat())
 
 
 def suggest(value: float, idle: float, cur: int, cap: int, waiting: list, max_order: float, room: int,
@@ -449,6 +488,12 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 o["sent"] = "skipped"
                 skipped.append({**o, "skip": sk})
                 continue
+            if o["action"] == "BUY" and config.ai.view_size_by_score:   # 🤖 AI view (locked until unlocked): ≤ the rule size, ≥ 1 share
+                a = ai_size(config, st, o, today)
+                if a["qty_ai"] != o["qty"]:
+                    stop_before = o["stop"]
+                    o["qty_rule"], o["qty"], o["size_x"] = o["qty"], a["qty_ai"], a["size_x"]
+                    assert 1 <= o["qty"] <= o["qty_rule"] and o["stop"] == stop_before
             price = px.get(o["ts"]) or (st["positions"][o["symbol"]]["last"] if o["action"] == "EXIT" else o["close"])
             if o["action"] == "BUY" and o["qty"] * price * 1.0012 > st["cash"]:
                 _log(key, today, o, "skipped", "not enough cash")
@@ -662,6 +707,27 @@ def skip_order(config: AppConfig, symbol: str, on: bool, note: str = "", now: Op
     return morning(config, now)
 
 
+def full_size(config: AppConfig, symbol: str, now: Optional[datetime] = None) -> dict:
+    """🤖 Telegram `full SYMBOL`: the rule size restored for one planned BUY this morning (the AI view's size-by-score
+    no longer applies to it today). Refused for a name not in today's BUYs or already sent. Returns the morning view."""
+    symbol = (symbol or "").strip().upper()
+    today = _day(now)
+    with _lock:
+        st = _state()
+        if not st:
+            raise ValueError("real tracking has not started yet")
+        o = next((x for x in st.get("orders", []) if x["symbol"] == symbol and x["action"] == "BUY"), None)
+        if not o:
+            raise ValueError(f"{symbol} is not a BUY in today's plan")
+        if o.get("sent") or _sent(f"{today}|{symbol}|BUY"):
+            raise ValueError(f"{symbol} is already {o.get('sent') or 'logged'} today")
+        full = st.setdefault("ai_full", {}).setdefault(today, [])
+        if symbol not in full:
+            full.append(symbol)
+        _save(st)
+    return morning(config, now)
+
+
 def hold_today(config: AppConfig, note: str = "hold all", now: Optional[datetime] = None) -> dict:
     """Skip every planned BUY for today (the EXITs still go out). Returns the morning view."""
     today = _day(now)
@@ -725,7 +791,8 @@ def morning(config: AppConfig, now: Optional[datetime] = None) -> dict:
                        "stop": round(o["stop"], 2) if o.get("stop") else None, "why": o.get("why"),
                        "results_date": r["date"] if r else None, "results_in": r["sessions"] if r else None,
                        "skip": sk, "status": status, "sent": status == "sent", "failed": status == "failed",
-                       "at": (row or {}).get("created_at"), "price": (row or {}).get("price"), "reply": (row or {}).get("reply")})
+                       "at": (row or {}).get("created_at"), "price": (row or {}).get("price"), "reply": (row or {}).get("reply"),
+                       **(ai_size(config, st, o, today) if o["action"] == "BUY" else {"ai_view": None})})
     pending = [o for o in orders if not o["status"] and not o["skip"]]
     phase = "before" if now < send_at else "sending" if now < send_until and pending else "after"
     going = [o for o in orders if not o["skip"] and o["status"] != "skipped"]
@@ -750,7 +817,8 @@ def morning(config: AppConfig, now: Optional[datetime] = None) -> dict:
             "counts": {"sent": sum(o["sent"] for o in orders), "failed": sum(o["failed"] for o in orders),
                        "skipped": sum(o["status"] == "skipped" for o in orders)},
             "first_sent": min(sent_at) if sent_at else None, "last_sent": max(sent_at) if sent_at else None,
-            "ai_flags": _ai_flags(today)}                 # 🤖 suggestions: {symbol: text} of the AI's open flags for today
+            "ai_flags": _ai_flags(today),                 # 🤖 suggestions: {symbol: text} of the AI's open flags for today
+            "size_by_score": bool(config.ai.view_size_by_score), "ai_full": _fulls(st, today)}   # 🤖 AI view
 
 
 def send_now(config: AppConfig, client, now: Optional[datetime] = None, sender: Optional[Callable] = None) -> dict:
