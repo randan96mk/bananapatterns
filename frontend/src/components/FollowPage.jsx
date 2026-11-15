@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../services/api';
 import { inr, cls } from '../fmt';
 import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg, Tag, KV, Bars } from './ui2';
+import { useAiViews, viewOf, AiView } from './AiView';
 
 // 📈 Follow: every fresh breakout on the Research screens bought blindly with ₹X. Everything on the page follows the
 // filters (screens, status, result, max open at once): tiles, growth chart vs NIFTY 50, drawdown, the table.
@@ -210,6 +211,7 @@ export default function FollowPage() {
   const rows = useMemo(() => base.filter((p) => !p.skipped || (st === 'all' && res === 'all'))
     .filter((p) => st === 'all' || (st === 'open' ? live(p) : !live(p)))
     .filter((p) => res === 'all' || (res === 'profit' ? p.net > 0 : p.net <= 0)), [base, st, res]);
+  const views = useAiViews(rows.slice(0, max).filter(live).map((p) => p.symbol));     // 🤖 the AI view of the open / pending names
   const cv = useMemo(() => curve(taken), [taken]);
   if (!d) return <div className="rd"><div className="rbanner">{err || 'Loading…'}</div></div>;
   const t = agg(taken), peak = peakUse(taken), dd = drawdown(cv), skipped = base.length - taken.length;
@@ -248,12 +250,12 @@ export default function FollowPage() {
       : live(p) ? <Tag c="ok">open · {p.days} d</Tag> : <Tag c={p.net > 0 ? 'ok' : 'bad'}>closed · {p.days} d</Tag>);
   const whyText = (p) => (p.skipped ? (p.skipped === 'cash' ? 'no cash left in the capital' : p.skipped === 'market' ? 'NIFTY under its 50-day line on the entry day' : 'no free slot')
     : `${p.reason || ''}${p.trigger ? ` · ${day(p.trigger.date)} close ${n2(p.trigger.close)}${p.trigger.gap != null ? `, next open ${p.trigger.gap > 0 ? '+' : ''}${p.trigger.gap}%` : ''}` : ''}`);
-  const bCols = [{ h: 'Stock', ell: true }, { h: 'Breakout', w: 86 }, { h: 'Screens', w: 124 }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now / exit', w: 90, n: true },
-    { h: 'Qty', w: 52, n: true, lo: true }, { h: 'Value', w: 92, n: true, lo: true }, { h: 'P&L', w: 96, n: true }, { h: '%', w: 66, n: true }, { h: 'Held', w: 56, n: true, lo: true }, { h: 'Status', w: 190, ell: true }];
+  const bCols = [{ h: 'Stock', ell: true }, { h: 'Breakout', w: 86 }, { h: 'AI view', w: 96, title: 'the AI view of an open or pending name · a rating only' }, { h: 'Screens', w: 124 }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now / exit', w: 90, n: true },
+    { h: 'Qty', w: 52, n: true, lo: true }, { h: 'Value', w: 86, n: true, lo: true }, { h: 'P&L', w: 92, n: true }, { h: '%', w: 66, n: true }, { h: 'Held', w: 56, n: true, lo: true }, { h: 'Status', w: 116, ell: true }];
   const total = `Total · ${shownTaken.length} taken${rows.length - shownTaken.length ? ` · ${rows.length - shownTaken.length} skipped` : ''} · value ${inr(sumShown((p) => p.value))} · P&L ${inr(sumShown((p) => p.net))} (${sumShown((p) => p.value) ? pc(sumShown((p) => p.net) / sumShown((p) => p.value) * 100) : '—'}) · held ${shownTaken.length ? Math.round(sumShown((p) => p.days) / shownTaken.length) : 0} d avg · ${nOpen} open · ${nClosed} closed · ${nWon} won`;
   const bRows = rows.slice(0, max).map((p) => ({ key: p.symbol + p.breakout_date, cls: p.skipped ? 'dim' : '', title: whyText(p), cells: [
     <><b>{p.symbol}</b> <small>{p.entry_date ? `bought ${day(p.entry_date)}` : 'not bought yet'} · pivot {n2(p.pivot)} · stop {n2(p.stop)}{p.exit_date ? ` · sold ${day(p.exit_date)}` : ''}</small></>,
-    day(p.breakout_date), <Tags s={p.screens} />, n2(p.entry), n2(p.exit ?? p.last), p.qty || '—', inr(p.value),
+    day(p.breakout_date), live(p) ? <AiView compact v={viewOf(p, views)} /> : <span className="muted">—</span>, <Tags s={p.screens} />, n2(p.entry), n2(p.exit ?? p.last), p.qty || '—', inr(p.value),
     <b className={cls(p.net)}>{p.skipped ? '—' : inr(p.net)}</b>, <span className={cls(p.pct)}>{p.skipped ? '—' : pc(p.pct)}</span>, `${p.days} d`,
     <>{statusTag(p)} <small>{p.skipped ? '' : whyText(p)}</small></>] }));
   const cCols = [{ h: 'Stop ↓ · time stop →', w: undefined }, ...TIME_F.map(([k, l]) => ({ h: l, w: 118, n: true, key: k }))];

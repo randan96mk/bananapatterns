@@ -10,6 +10,7 @@ import { StopMeter } from './ui';
 import { useIsPhone } from '../useMedia';
 import { Head, Chip, Tag, Cards, Card, Bar, Panel, FixedTable, LineChart, Act } from './ui2';
 import AiDot, { AiWhy } from './AiDot';
+import { useAiViews, viewOf, AiView, aiChanged } from './AiView';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const COLOR = { E: '#b39dff' };
@@ -25,7 +26,8 @@ const filterText = (f) => (f ? `${f.state}${f.state === 'HALF' ? ` (${f.slots} s
 
 // Strategy is the short tag at 60 px; under 1440 px SMA50, % and Days are dropped (nw) so the Stock column keeps 140 px+
 const POS_COLS = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true, title: 'strategy' }, { h: 'Qty', w: 50, n: true, lo: true }, { h: 'Bought', w: 130, lo: true }, { h: 'SMA50', w: 80, n: true, lo: true, nw: true }, { h: 'Last', w: 84, n: true },
-  { h: 'After costs', w: 96, n: true }, { h: '%', w: 60, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: 180, ell: true }, { h: 'Days', w: 56, n: true, lo: true, nw: true }];
+  { h: 'After costs', w: 96, n: true }, { h: '%', w: 60, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: 180, ell: true }, { h: 'Days', w: 56, n: true, lo: true, nw: true },
+  { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag only' }];
 const ORD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 58 }, { h: 'Side', w: 58 }, { h: 'Qty', w: 50, n: true }, { h: 'Stop', w: 80, n: true }, { h: 'Risk', w: 72, n: true, lo: true }];
 const TRD_COLS = [{ h: 'Stock' }, { h: 'Book', w: 62 }, { h: 'Closed', w: 150, lo: true }, { h: 'Days', w: 56, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110, lo: true }];
 
@@ -67,6 +69,7 @@ export default function PaperPage() {
       api.resetPaper().then(() => setTick((t) => t + 1)).catch((e) => setErr(e.message));
     }
   };
+  const views = useAiViews(Object.values(d?.accounts || {}).flatMap((a) => (a.positions || []).map((x) => x.symbol)));   // 🤖 held names
   if (!d) return <div className="rd"><Panel>{err ? <div className="rbanner bad">{err}</div> : <p className="muted small rempty">Loading…</p>}</Panel></div>;
   if (!d.started) {
     return <div className="rd">
@@ -108,7 +111,7 @@ export default function PaperPage() {
     ...a.positions.map((x) => ({ key: k + x.symbol, title: `before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.warning ? ` · ⚠️ ${x.warning}` : ''}`,
       cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} />{x.warning && <Tag c="w" title={x.warning}>⚠️ split?</Tag>}</>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, x.qty, <>{day(x.in)} · {rs(x.buy)}</>, x.sma != null ? rs(x.sma) : '—', rs(x.last),
         <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
-        <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, x.days ?? '—'] }))]; });
+        <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, x.days ?? '—', <AiView compact v={viewOf(x, views)} note={aiChanged(viewOf(x, views))} />] }))]; });
   // orders for the next open: SELL rows first, BUY rows up to the free slots, then the skipped count
   const ordRows = shown.flatMap((k) => { const a = accts[k], sells = a.orders.filter((o) => o.action === 'SELL'), buys = buysOf(k), f = free(a);
     return [...sells.map((o) => ({ key: `${k}s${o.symbol}`, title: o.why, cells: [<b>{o.symbol}</b>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, <Tag c="bad">SELL</Tag>, o.qty, '—', <span className="muted">{o.why}</span>] })),

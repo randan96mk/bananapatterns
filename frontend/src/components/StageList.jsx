@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import StageGrid, { tagLine } from './StageGrid';
 import { Panel, FixedTable, Seg, Tag, Act } from './ui2';
+import { useAiViews, viewOf, AiView } from './AiView';
 
 const pct = (v) => (v == null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`);
 const rs = (v) => (v == null ? '' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
@@ -51,16 +52,17 @@ function Results({ view, onCount, ...props }) {
 function Table({ screen, stage, selected, onSelect, shown }) {
   const extra = { vcp: VCP_COLS, flag: FLAG_COLS }[screen] || [];
   const stageCols = [...COLS[stage], ...extra];
+  const views = useAiViews(shown.map((r) => r.symbol));                // 🤖 the AI view, the last column
   const cols = [{ h: 'Symbol' }, { h: 'Company', w: 160, lo: true, ell: true }, { h: 'Industry', w: 130, lo: true, ell: true }, { h: 'Tags', w: 150, lo: true }, { h: 'Close', w: 90, n: true }, { h: 'Chg %', w: 70, n: true },
     { h: 'RS', w: 50, n: true }, { h: 'Trend', w: 60, n: true, lo: true },
-    ...stageCols.map(([h, , w, n], i) => ({ h, w, n: !!n, lo: i >= 2 }))];
+    ...stageCols.map(([h, , w, n], i) => ({ h, w, n: !!n, lo: i >= 2 })), { h: 'AI view', w: 96, title: 'the AI view · a rating only' }];
   const rows = shown.map((r) => ({
     key: r.symbol, cls: r.symbol === selected ? 'sel' : '', onClick: () => onSelect(r.symbol), title: `${r.company || ''} · ${tagLine(r)}`,
     cells: [<>{r.tier && <span className={`tier t-${r.tier}`}>{r.tier}</span>} <b>{r.symbol}</b>
       {screen === 'bases' && r.vcp_tag && <Tag c="ok">VCP</Tag>}{screen === 'bases' && r.flag_tag && <Tag c="ok">Flag</Tag>}</>,
     r.company, r.industry, tagLine(r), rs(r.close), <span className={pcls(r.change_pct)}>{pct(r.change_pct)}</span>, r.rs ?? '',
     <span className={r.tt_all ? 'up' : ''}>{r.tt_of ? `${r.tt_passed}/${r.tt_of}` : ''}</span>,
-    ...stageCols.map(([, f]) => f(r))],
+    ...stageCols.map(([, f]) => f(r)), <AiView compact v={viewOf(r, views)} />],
   }));
   return <FixedTable cols={cols} rows={rows} />;
 }

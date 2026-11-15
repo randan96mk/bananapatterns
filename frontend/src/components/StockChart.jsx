@@ -11,6 +11,7 @@ import VcpPanel from './VcpPanel';
 import { cssVar, useTheme } from '../theme';
 import { useIsPhone } from '../useMedia';
 import FilingsList from './FilingsList';
+import { AiViewCard, levelRows, norm } from './AiView';
 
 function sma(candles, n) {
   const out = [];
@@ -58,6 +59,15 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
   const [showBases, setShowBases] = useState(true);
   const [err, setErr] = useState('');
   const [preview, setPreview] = useState(null);       // {kind, stamp} while the alert-chart preview is open
+  const [aiv, setAiv] = useState(null);               // 🤖 the stock's latest AI view (levels drawn, card under the chart)
+
+  useEffect(() => {
+    if (!symbol) return undefined;
+    let alive = true;
+    setAiv(null);
+    api.getAiView([symbol]).then((r) => { if (alive) setAiv(norm(r?.views?.[symbol])); }).catch(() => {});
+    return () => { alive = false; };
+  }, [symbol]);
 
   useEffect(() => {
     if (!symbol || !box.current) return undefined;
@@ -157,6 +167,19 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
     return () => lines.forEach((l) => { try { h.candles.removePriceLine(l); } catch { /* chart rebuilt */ } });
   }, [trade, info]);
 
+  // 🤖 the AI view's levels: dashed lines with labels (support 1 green "setup fails below", support 2 grey, pivot blue,
+  // resistance orange); the base pivot line already drawn wins over the same price
+  useEffect(() => {
+    const h = box.current && box.current.__bp;
+    if (!h || !aiv || !info) return undefined;
+    const COL = { support_1: '--ok', support_2: '--muted', pivot: '--blue', resistance: '--warn' };
+    const basePivot = bases?.latest?.pivot;
+    const lines = levelRows(aiv).filter(([k, , , price]) => !(k === 'pivot' && basePivot && Math.abs(price - basePivot) <= basePivot * 0.002))
+      .map(([k, name, , price, label, fails]) => h.candles.createPriceLine({ price, color: cssVar(COL[k]), lineWidth: 1, lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true, title: `${name} ${Math.round(price * 100) / 100}${label ? ` · ${label}` : ''}${fails ? ' · setup fails below' : ''}` }));
+    return () => lines.forEach((l) => { try { h.candles.removePriceLine(l); } catch { /* chart rebuilt */ } });
+  }, [aiv, info, bases]);
+
   if (!symbol) return null;
   const last = info?.candles?.at(-1);
   return (
@@ -187,6 +210,7 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
                onError={() => setErr('No alert chart for this stock/kind (no base to annotate, or matplotlib missing)')} />
         </div>)}
       <div ref={box} className="chart" />
+      <AiViewCard symbol={symbol} v={aiv} pivot={bases?.latest?.pivot} />
       <details className="fold" open={!phone}><summary>Everywhere in the app{overlay ? ' · entry / stop drawn' : ''}</summary>
         <StockEverywhere symbol={symbol} onOverlay={setOverlay} /></details>
       <details className="fold" open={!phone}><summary>Filings &amp; deals (30 days)</summary>

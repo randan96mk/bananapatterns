@@ -6,6 +6,7 @@ import { useLive, push } from '../services/live';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
 import ReplanPanel from './ReplanPanel';
+import { useAiViews, viewOf, AiView, aiChanged } from './AiView';
 import FuturesBacktest from './FuturesBacktest';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act, Cards, Card, Bar, Seg } from './ui2';
@@ -209,6 +210,7 @@ export default function FuturesPage() {
     const text = d.started ? `Change the futures capital from ${inr(now)} to ${inr(v)}? This counts as ${v > now ? 'adding' : 'withdrawing'} ${inr(Math.abs(v - now))} on every account (paper and real of both sides): cash changes, the profit so far stays.` : `Start the futures book with ${inr(v)}?`;
     if (window.confirm(text)) api.futuresCapital(v).then((r) => { if (r.replan?.status === 'ok') setRp(r.replan); reload(); }).catch((e) => setErr(e.message));
   };
+  const views = useAiViews(d ? [...(d.positions || []), ...(d.plan || [])].map((x) => x.symbol) : []);   // 🤖 held and planned names
   if (!d) return <div className="rd"><Panel>{err ? <div className="rbanner bad">{err}</div> : <p className="muted small rempty">Loading…</p>}</Panel></div>;
   const S = d.sides, G = d.guards, st = d.settings || {}, sp = d.short_paper || {}, roll = d.rolls || {};
   const long = S.long, short = S.short;
@@ -221,13 +223,14 @@ export default function FuturesPage() {
   const done = (changed) => { setEdit(null); setAdding(false); if (changed) reload(); };
   const vsNifty = d.curve?.nifty ? null : null;
   const todayLong = (d.accounts?.[long.real ? 'real_long' : 'paper_long']?.mtm_today) ?? 0, todayShort = d.accounts?.paper_short?.mtm_today ?? 0;
-  const posCols = [{ h: 'Contract', ell: true }, { h: 'Side', w: 62 }, { h: 'Book', w: 62, lo: true }, { h: 'Lots', w: 50, n: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true },
-    { h: 'MTM', w: 96, n: true }, { h: 'Stop · distance', w: narrow ? 160 : 200, ell: true }, { h: 'Margin', w: 100, n: true, lo: true, nw: true }, { h: 'Expiry', w: 120, lo: true }, { h: '', w: 44, key: 'edit' }];
+  const posCols = [{ h: 'Contract', ell: true }, { h: 'Side', w: 62 }, { h: 'Book', w: 62, lo: true }, { h: 'Lots', w: 50, n: true }, { h: 'Entry', w: 84, n: true, lo: true }, { h: 'Now', w: 84, n: true },
+    { h: 'MTM', w: 96, n: true }, { h: 'Stop · distance', w: narrow ? 140 : 150, ell: true }, { h: 'Margin', w: 92, n: true, lo: true, nw: true }, { h: 'Expiry', w: 120, lo: true }, { h: 'AI view', w: 114, nw: true, title: 'the AI view of the held name: hold / trim / exit-watch · a flag only' }, { h: '', w: 44, key: 'edit' }];
   const posRows = (d.positions || []).flatMap((x) => [{ key: x.account + x.symbol, title: `${x.tag} · ${x.days} days · opened ${day(x.in)} · lot ${x.lot_size} · costs ${inr(x.costs)} · after costs ${signed(x.net)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}${x.rolls ? ` · rolled ${x.rolls}×` : ''}`,
     cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} /> <small className="muted">{x.contract} · lot {x.lot_size}</small>{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the futures open in the evening">est.</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a">by hand</Tag>}{x.stop_pct != null && x.stop_pct < 2 && <Tag c="w">near stop</Tag>}{x.trailed && <Tag c="ok" title={`late trail: 25% under the best close once +100% · best ${rs(x.best)}`}>🪜 trail</Tag>}</>,
       sideTag(x.side), <Tag c={x.book === 'real' ? 'a' : ''}>{x.book}</Tag>, x.lots, n2(x.entry), <>{n2(x.last)}{x.live && <span className="livedot" title="live" />}</>, <b className={cls(x.mtm)}>{signed(x.mtm)}</b>,
       <><StopMeter last={x.side === 'short' ? -x.last : x.last} stop={x.side === 'short' ? -x.stop : x.stop} /> <span className="mono">{n2(x.stop)}</span></>, inr(x.margin_est),
       <>{day(x.expiry)}{x.roll_due ? <span className="warn"> · roll T-{st.roll_days}</span> : x.sessions_to_expiry != null ? <span className="muted"> · {x.sessions_to_expiry} sessions</span> : ''}</>,
+      <AiView compact v={viewOf(x, views)} note={aiChanged(viewOf(x, views))} />,
       <button type="button" className={`btn ${edit === x.account + x.symbol ? 'primary' : 'ghost'}`} style={PEN} title="correct lots / entry / stop · remove from tracking" onClick={() => { setEdit(edit === x.account + x.symbol ? null : x.account + x.symbol); setAdding(false); }}>✎</button>] },
   ...(edit === x.account + x.symbol ? [{ key: `${x.account}${x.symbol}-edit`, span: <PositionEditor x={x} onDone={done} onErr={setErr} /> }] : [])]);
   if (waiting.length) posRows.push(`waiting · ${waiting.slice(0, 4).map((w) => `${w.symbol} ${w.side} (${w.why})`).join(' · ')}${waiting.length > 4 ? ` · +${waiting.length - 4} more` : ''}`);
@@ -322,7 +325,7 @@ export default function FuturesPage() {
           <Panel title="Plan · next open" meta={planRows.length} right={d.decided ? <Meta>decided {day(d.decided)} · filter {d.filter?.state || '—'}</Meta> : null}>
             {!planRows.length ? <p className="muted small rempty">{d.started ? 'No futures orders for the next open.' : 'After the first evening run.'}</p> : planRows.map((o) => <Act key={o.action + o.symbol} icon={o.action === 'EXIT' ? '↓' : o.action === 'BUY' ? '↑' : '↓'} cls={o.action === 'BUY' ? 'up' : 'down'}
               text={<><b>{o.symbol}</b> {o.side?.toUpperCase()} · {o.action} · {o.lots} lot ({(o.lot_size || 0).toLocaleString('en-IN')}){o.action !== 'EXIT' && <> · ≈ {lakh(o.lot_value)} · stop {n2(o.stop)} ({o.stop_pct}%) · risk {inr(o.risk)} ({o.risk_pct}%)</>}</>}
-              meta={o.action === 'EXIT' ? o.why : `${o.why} · margin needed ${inr(o.margin_est)} · ${[S[o.side]?.paper && 'paper', S[o.side]?.real && 'real'].filter(Boolean).join(' and ') || 'side off'} planned${o.sent ? ` · ${o.sent}` : ''}`} />)}
+              meta={o.action === 'EXIT' ? o.why : `${o.why} · margin needed ${inr(o.margin_est)} · ${[S[o.side]?.paper && 'paper', S[o.side]?.real && 'real'].filter(Boolean).join(' and ') || 'side off'} planned${o.sent ? ` · ${o.sent}` : ''}`}>{o.action !== 'EXIT' && <span style={{ flex: 'none' }}><AiView compact v={viewOf(o, views)} /></span>}</Act>)}
             <div className="rnote">real sides sent at {ampm(d.send?.send_time)} with the {d.send?.gap_s} s gap · {ampm(d.send?.preview_time)} dry run with skip switches, like the cash book · paper fills at the futures open</div>
           </Panel>
           <Panel title="Roll queue" meta={roll.day ? `${wday(roll.day)} ${day(roll.day)}` : '—'} right={<Meta>T-{st.roll_days} · {ampm(d.send?.roll_time || '09:20')}</Meta>}>

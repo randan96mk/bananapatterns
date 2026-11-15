@@ -103,7 +103,17 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   why: 'The nightly "why" line under every trade closed today (Real, Paper, Futures, Options) and the evening "exits, explained" message (true/false)',
   brief: 'The morning brief on trading days: ≤ 5 lines from the plans, the books and the night\'s notes; one Telegram message, kept as a note (true/false)',
   brief_time: 'When the brief is written (24-hour HH:MM, IST); its window runs to 9:00 AM, the night model, one call',
-  ask: '"Ask the app": the day model picks one read-only tool, code runs it, the model answers from its result · any time of day, never on the trading path (true/false)' };
+  ask: '"Ask the app": the day model picks one read-only tool, code runs it, the model answers from its result · any time of day, never on the trading path (true/false)',
+  // 🤖 the AI view: a rating beside every system-suggested stock (it rates and explains, never acts)
+  view_enabled: 'Rate the plan, held, futures plan, Follow and Screens names every evening with the night model (true/false)',
+  view_rate_held: 'Also re-rate the held names: hold / trim / exit-watch (true/false)',
+  view_rank_by_score: 'Ties in the plan (same breakout rank) ordered by the AI score · locked until the record beats the plan baseline 4 weeks in a row (true/false)',
+  view_size_by_score: 'BUY qty = rule qty × 0.5–1.0 by the AI score, never above the rule size, never a skip · locked the same way (true/false)',
+  view_size_floor: 'The smallest size-by-score multiple (0.5 = half the rule size at most off)',
+  view_exit_watch_alert: 'An alert when a held name closes under the model\'s "setup fails below" level · a flag only, never an exit · locked the same way (true/false)',
+  view_score_buy: 'Verdict buy at or above this score (hold for a held name); set by code from the score, not by the model',
+  view_score_avoid: 'Verdict avoid under this score (exit-watch for a held name); in between = wait / trim',
+  view_max_per_night: 'Names rated a night at most (plan first, then held, futures, Follow, Screens; ~10 s a name)' };
 Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).

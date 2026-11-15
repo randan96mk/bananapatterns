@@ -5,6 +5,7 @@ import { useLive } from '../services/live';
 import { inr, signed, cls } from '../fmt';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Seg, Bar } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
+import { AiViewRecord } from './AiView';
 
 // 🤖 System › AI: a local model next to the app that reads and explains and never trades. Everything here reads
 // GET /api/ai (stream topic "ai"); the switches, the full stop, the model downloads and the test prompt act through
@@ -297,7 +298,7 @@ export default function AiPage() {
       <Card label="Dismissed · outcome" value={signed(ST.dismissed_outcome_rs || 0)} num={ST.dismissed_outcome_rs || 0} k={cls(-(ST.dismissed_outcome_rs || 0))} sub={dismissedScored ? `would have helped ${wouldHave} of ${dismissedScored}` : 'nothing scored yet'}
         fact={<>you were right <Bar pct={dismissedScored ? (100 * (dismissedScored - wouldHave)) / dismissedScored : 0} ok /> <b className="mono">{dismissedScored ? Math.round((100 * (dismissedScored - wouldHave)) / dismissedScored) : 0}%</b></>} title="what the dismissed suggestions would have saved had you accepted them · a positive figure = they were right" />
       <Card unit="n" label="Best kind" value={ST.best_kind || '—'} num={bestK ? bestK.scored : 0} k={ST.best_kind ? 'up' : 'muted'}
-        sub={bestK ? `${(bestK.helped_when_accepted || 0) + (bestK.would_have_helped || 0)} of ${bestK.scored} helped` : 'needs scored suggestions'} fact={<span className="muted">the highest helped share this month</span>} title={ST.best_kind ? `${SLABEL[ST.best_kind]} · ${(bestK.helped_when_accepted || 0) + (bestK.would_have_helped || 0)} of ${bestK.scored} scored helped` : 'no kind scored yet'} />
+        sub={bestK ? `${(bestK.helped_when_accepted || 0) + (bestK.would_have_helped || 0)} of ${bestK.scored} helped` : 'needs scored suggestions'} fact={<span className="muted">the highest helped share this month</span>} title={bestK ? `${SLABEL[ST.best_kind]} · ${(bestK.helped_when_accepted || 0) + (bestK.would_have_helped || 0)} of ${bestK.scored} scored helped` : 'no kind scored yet'} />
       <Card unit="n" label="Switched off" value={`${muted.length} kind${muted.length === 1 ? '' : 's'}`} num={muted.length} k={muted.length ? 'warn' : 'muted'} sub={muted.length ? muted.map((k) => SLABEL[k] || k).join(' · ') : 'any kind can be switched off'}
         fact={<span className="muted">the switches in the scorecard below</span>} title={muted.length ? `off: ${muted.join(', ')} · settings ai.suggest_muted` : 'every kind is on'} />
     </Cards>
@@ -315,6 +316,7 @@ export default function AiPage() {
         </Panel>
       </div>
     </div>
+    <AiViewRecord view={d.view} phone={phone} onChanged={reload} />
     <div className="two">
       <div className="rd" style={COL}>
         <Panel title={phone ? 'Notes' : 'Notes · tonight'} meta={notes.total ? `${notes.total} · newest first` : null} right={<Seg small v={filt} set={setFilt} opts={[['all', 'All'], ['high', 'High'], ['filing', 'Filings'], ['deal', 'Deals'], ['why', 'Why'], ['brief', 'Brief']]} />}>
