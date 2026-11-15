@@ -481,7 +481,12 @@ FILING_ICONS = {"results": "📊", "order": "📦", "deal": "🤝", "rating": "�
                 "exchange": "❓"}
 
 
-def filing_alert(f: dict, why: str) -> str:
+def ai_line(note: Optional[dict]) -> str:
+    """🤖 The last line of a filing / deal alert when the AI has a note for that source: "🤖 AI · high · …"."""
+    return f"\n🤖 <i>AI · {escape(note['severity'])} · {escape(note['text'])}</i>" if note else ""
+
+
+def filing_alert(f: dict, why: str, note: Optional[dict] = None) -> str:
     from backend.ingest.filings import LABELS
     d = datetime.fromisoformat(f["dt"])
     text = f["text"] if len(f["text"]) <= 400 else f["text"][:397] + "…"
@@ -490,13 +495,34 @@ def filing_alert(f: dict, why: str) -> str:
              f"<i>{escape(f['category'])} · {d.day} {d:%b}, {ampm(d)}</i>"]
     if f.get("url", "").startswith("https://"):
         lines[-1] += f' · <a href="{escape(f["url"], quote=True)}">filing</a>'
-    return "\n".join(lines)
+    return "\n".join(lines) + ai_line(note)
 
 
-def deal_alert(symbol: str, icon: str, item: dict, why: str) -> str:
+def deal_alert(symbol: str, icon: str, item: dict, why: str, note: Optional[dict] = None) -> str:
     tail = " Holds it at tier B: no A alerts until it clears." if icon == "🚩" else ""
     return (f"{icon} <b>{escape(symbol)}</b> · {escape(item['label'])} <i>({escape(why)})</i>\n"
-            f"{escape(item['text'])}.{tail}")
+            f"{escape(item['text'])}.{tail}") + ai_line(note)
+
+
+def note_alert(note: dict, where: str, skip_hint: Optional[str] = None) -> str:
+    """🤖 The separate message for a high note the filing / deal alert did not carry: the symbol and the category, the
+    AI line, then the part code knows (held in Real (+x%) / in tomorrow's plan at #n / on your watchlist, the skip hint),
+    the source time and a link to the filing."""
+    cat = (note.get("category") or note.get("kind") or "note").replace("_", " ")
+    lines = [f"📰 <b>{escape(note['symbol'])} · {escape(cat)}</b>",
+             f"🤖 <i>AI · {escape(note['severity'])} · {escape(note['text'])}</i>"]
+    tail = [escape(where, quote=False)]
+    if skip_hint:
+        tail.append(escape(skip_hint, quote=False))
+    try:
+        d = datetime.fromisoformat(note["source_at"])
+        tail.append(f"{d.day} {d:%b}" + (f", {ampm(d)}" if len(note["source_at"]) > 10 else ""))
+    except (KeyError, TypeError, ValueError):
+        pass
+    if (note.get("url") or "").startswith("https://"):
+        tail.append(f'<a href="{escape(note["url"], quote=True)}">filing</a>')
+    lines.append(f"<i>{' · '.join(tail)}</i>")
+    return "\n".join(lines)
 
 
 def guard_results(pos: dict, ev: dict, label: str) -> str:

@@ -183,8 +183,10 @@ def _loaded() -> list[dict]:
 
 
 def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
-    """Everything the AI page needs: switches, server, models, breaker, queue, jobs, last_test, settings, limits,
+    """Everything the AI page needs: switches, server, models, breaker, queue (with tonight's note rows and the night
+    verdict), jobs, last_test, notes (today / high / last night), testset (last / best / running), settings, limits,
     url_ok, version, notes_count, now, never, and whether the enable switch may go on (and why not)."""
+    from backend.ai import notes, quality
     now = now or datetime.now(IST)
     h = client.health()
     models = guard.models_present(config)
@@ -192,10 +194,15 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
     b = guard.breaker(now)
     ok_now, why = guard.allowed("day" if guard.day_window(now) else "night", now, config, srv, models)
     both = can_enable(config, models)
+    night_ok, night_why = guard.allowed("night", now, config, srv, models)
+    queue = q.status(now.date().isoformat())
+    queue["tonight"] = notes.tonight(config, now)                          # 🤖 PR 2: the Queue · tonight rows
+    queue["night_allowed"], queue["night_note"] = night_ok, night_why
     return {"switches": switches(config), "server": srv,
             "models": {"night": models["night"], "day": models["day"], "loaded": _loaded(), "pull": pull_status(), "error": models["error"]},
             "breaker": {**b, "text": guard.breaker_text(b)},
-            "queue": q.status(now.date().isoformat()), "jobs": q.recent(20), "last_test": last_test(),
+            "queue": queue, "jobs": q.recent(20), "last_test": last_test(),
+            "notes": notes.stats(now, config), "testset": quality.status(),
             "settings": asdict(config.ai), "limits": LIMITS, "url_ok": h["ok"], "version": h["version"], "url": client.url(),
             "notes_count": _notes_count(), "now": now.isoformat(timespec="seconds"),
             "can_enable": both, "enable_note": None if both else NEEDS_MODELS, "allowed": ok_now, "allowed_note": why,

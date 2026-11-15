@@ -130,7 +130,7 @@ def test_tables_exist_and_are_empty():
     with get_db() as conn:
         cols = lambda t: [r[1] for r in conn.execute(f"PRAGMA table_info({t})")]
         assert cols("ai_jobs") == ["id", "created", "started", "finished", "kind", "key", "model", "status", "ms", "tokens", "error", "note"]
-        assert cols("ai_notes") == ["id", "created", "day", "kind", "symbol", "book", "severity", "title", "text", "data", "model", "prompt_version", "ms"]
+        assert cols("ai_notes") == ["id", "created", "day", "kind", "symbol", "book", "severity", "title", "text", "data", "model", "prompt_version", "ms", "source_key"]
         assert conn.execute("SELECT COUNT(*) FROM ai_notes").fetchone()[0] == 0
         with pytest.raises(Exception):                                                 # the status check holds
             conn.execute("INSERT INTO ai_jobs (created, kind, key, status) VALUES ('x', 'k', 'k', 'bogus')")
@@ -352,13 +352,15 @@ def test_test_prompt(ollama, cfg):
 def test_summary_shape(ollama, cfg):
     s = control.summary(cfg, at("10:00"))
     assert set(s) == {"switches", "server", "models", "breaker", "queue", "jobs", "last_test", "settings", "limits", "url_ok", "version",
-                      "url", "notes_count", "now", "can_enable", "enable_note", "allowed", "allowed_note", "never", "container_note"}
+                      "url", "notes_count", "now", "can_enable", "enable_note", "allowed", "allowed_note", "never", "container_note",
+                      "notes", "testset"}                                                               # PR 2: notes, testset
     assert s["switches"] == {"enabled": True, "night_batch": True, "day_answers": True, "stopped": False}
     assert set(s["server"]) == {"ram_total_gb", "ram_free_gb", "load1", "cpu_pct", "ai_ram_mb", "app_tick_ms"}
     assert s["models"]["night"] == {"name": NIGHT, "present": True, "size_gb": 4.7} and s["models"]["day"]["present"] and s["models"]["loaded"] == []
     assert set(s["models"]["pull"]) == {"running", "model", "pct", "done", "error", "at"}
     assert s["breaker"] == {"open": False, "until": None, "failures": 0, "text": "closed"}
-    assert set(s["queue"]) == {"queued", "running", "done_today", "failed_today", "job"} and s["jobs"] == [] and s["last_test"] is None
+    assert set(s["queue"]) == {"queued", "running", "done_today", "failed_today", "job", "tonight", "night_allowed", "night_note"}
+    assert s["jobs"] == [] and s["last_test"] is None
     assert s["settings"] == {**AIConfig().__dict__, "enabled": True} and s["limits"] == {"cpus": 2.5, "mem_gb": 12}
     assert s["url_ok"] and s["version"] == "0.40.16" and s["notes_count"] == 0 and s["now"] == "2026-11-17T10:00:00+05:30"
     assert s["can_enable"] and s["enable_note"] is None and s["allowed"] and s["allowed_note"] == "ok" and len(s["never"]) == 5

@@ -146,6 +146,7 @@ def positions(config: AppConfig, real_s: Optional[dict] = None, paper_s: Optiona
     out += _futures_rows(fut_s if fut_s is not None else _futures_summary(config))
     out += _options_rows(opt_s if opt_s is not None else _options_summary(config))
     _add_results(out, today)
+    _add_ai_notes(out, today)
     return sorted(out, key=lambda x: (x["book"] != "intraday", x["opened"]), reverse=False)
 
 
@@ -203,6 +204,26 @@ def _add_results(rows: list, today: str) -> None:
             x = res.get(r["symbol"]) if r["book"] not in ("intraday", "options") else None
             if x:
                 r["results_date"], r["results_in"] = x["date"], x["sessions"]
+    except Exception:
+        pass
+
+
+AI_NOTE_DAYS = 7                                  # 🤖 a note this recent shows as a dot + tooltip on the position row
+
+
+def _add_ai_notes(rows: list, today: str) -> None:
+    """ai_note: {title, severity, at} of the stock's newest AI note within AI_NOTE_DAYS (null without one; never on
+    intraday or options rows). A failure leaves the key null."""
+    for r in rows:
+        r["ai_note"] = None
+    try:
+        from backend.ai import notes
+        syms = {r["symbol"] for r in rows if r["book"] not in ("intraday", "options")}
+        latest = notes.latest_for_symbols(syms, AI_NOTE_DAYS, today)
+        for r in rows:
+            n = latest.get(r["symbol"]) if r["book"] not in ("intraday", "options") else None
+            if n:
+                r["ai_note"] = {"title": n["title"], "severity": n["severity"], "at": n["at"]}
     except Exception:
         pass
 

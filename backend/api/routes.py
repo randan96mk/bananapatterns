@@ -1412,6 +1412,42 @@ def ai_jobs(limit: int = Query(50, le=500)):
     return {"rows": aiq.recent(limit)}
 
 
+@router.get("/ai/notes")
+def ai_notes(symbol: Optional[str] = None, kind: Optional[str] = None, severity: Optional[str] = None,
+             limit: int = Query(50, le=500), offset: int = Query(0, ge=0)):
+    """🤖 The AI's filing / deal notes, newest first: {rows, total}; filters symbol / kind (filing | deal) / severity."""
+    from backend.ai import notes
+    return notes.list_notes(symbol, kind, severity, limit, offset)
+
+
+@router.get("/ai/notes/{note_id}")
+def ai_note(note_id: int):
+    from backend.ai import notes
+    n = notes.get_note(note_id)
+    if not n:
+        raise HTTPException(404, "no such note")
+    return n
+
+
+@router.post("/ai/notes/run")
+def ai_notes_run():
+    """🤖 Queue tonight's notes now (the guard decides whether they run); 409 while note jobs are queued or running."""
+    from backend.ai import notes
+    if notes.running():
+        raise HTTPException(409, "notes are running")
+    return notes.enqueue_tonight(S().config)
+
+
+@router.post("/ai/testset/run")
+def ai_testset_run():
+    """🤖 Run the 30-filing test set on the night model in the background; 409 while a run is going."""
+    from backend.ai import quality
+    try:
+        return quality.start(S().config)
+    except quality.TestsetRunning as exc:
+        raise HTTPException(409, str(exc))
+
+
 @router.get("/corp-actions")
 def corp_actions_list():
     """Splits / bonuses found in the daily candles (prices before each are adjusted everywhere)."""

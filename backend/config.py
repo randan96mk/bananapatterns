@@ -463,6 +463,8 @@ class AIConfig:
     breaker_minutes: int = 60              # ... for this long; one success closes it again
     night_end: str = "06:00"               # night work stops here (HH:MM, 24-hour internally; shown 12-hour)
     max_queue: int = 200                   # the queue refuses new jobs beyond this many waiting
+    notes_per_night: int = 80              # filing / deal notes a night at most (held names first, then plan, then watch)
+    note_days: int = 3                     # how many days back the notes job reads filings and deals (the first run too)
 
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
