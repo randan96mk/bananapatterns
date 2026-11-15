@@ -465,6 +465,16 @@ class AIConfig:
     max_queue: int = 200                   # the queue refuses new jobs beyond this many waiting
     notes_per_night: int = 80              # filing / deal notes a night at most (held names first, then plan, then watch)
     note_days: int = 3                     # how many days back the notes job reads filings and deals (the first run too)
+    # 🤖 suggestions (PR 3 · A)
+    max_suggestions_open: int = 6          # open suggestions at most (older ones expire on their own time)
+    suggest_muted: str = ""                # comma list of suggestion kinds never born: skip, exit, flag, hold_options, roll_or_exit, backtest
+    # 🤖 why (PR 3 · B)
+    why: bool = True                       # the nightly "why" line under every trade closed today (and the evening message)
+    # 🤖 brief
+    brief: bool = True                     # the morning brief on trading days (one night-model call; a Telegram message)
+    brief_time: str = "06:30"              # when the brief is written (HH:MM; the window for kind "brief" runs to 9:00 AM)
+    # 🤖 ask
+    ask: bool = True                       # "ask the app": the day model answers from one whitelisted read-only tool, any time
 
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)

@@ -821,6 +821,12 @@ def trades(limit: int = 100) -> list[dict]:
         return [{**json.loads(r[1]), "id": r[0]} for r in conn.execute("SELECT id, payload FROM options_trades ORDER BY id DESC LIMIT ?", (limit,))]
 
 
+def _ai_why(rows: list) -> list:
+    """🤖 why: the AI's "likely cause" line on the closed spreads (ai_why: {id, text, at} | None)."""
+    from backend.ai import why
+    return why.attach(rows, "options")
+
+
 def days(limit: int = 30) -> list[dict]:
     with get_db() as conn:
         return [json.loads(r[0]) for r in conn.execute("SELECT payload FROM options_days ORDER BY day DESC LIMIT ?", (limit,))]
@@ -942,7 +948,7 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
                                    {"t": ampm(c.time_exit), "text": "time exit"}, {"t": ampm("15:20"), "text": "hard exit"}, {"t": ampm("15:30"), "text": "close snapshot"},
                                    {"t": ampm("15:35"), "text": "day summary"}]},
             "guards": guards, "margin": margin, "cards": _cards(st, c, dl, eq, open_pnl), "open": _open_view(o, c), "bias": _bias_steps(d, c),
-            "chain": chain_view(st, today), "rules": RULES, "days": dl, "trades": trades(50), "alerts": [{k: v for k, v in a.items() if k != "data"} for a in reversed((st or {}).get("alerts") or [])][:30],
+            "chain": chain_view(st, today), "rules": RULES, "days": dl, "trades": _ai_why(trades(50)), "alerts": [{k: v for k, v in a.items() if k != "data"} for a in reversed((st or {}).get("alerts") or [])][:30],
             "deposits": (st or {}).get("deposits") or [], "curve": _curve(), "notes": (st or {}).get("notes") or [], "last_day": (st or {}).get("last_day"),
             "contracts": oi.status(), "updated_at": (st or {}).get("updated_at"), "now": now.isoformat(timespec="seconds")}
     return base

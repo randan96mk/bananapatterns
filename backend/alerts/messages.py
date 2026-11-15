@@ -701,6 +701,9 @@ def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: boo
             r = results.get(o["symbol"])
             tag = f" · ⚠️ results {_wday(r['results_date'])}" if r else ""
             lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {o['qty']} · stop {_rup(o['stop'])} · ~{_rup(o['qty'] * o['close'])}{tag}")
+            flag = ((m or {}).get("ai_flags") or {}).get(o["symbol"])        # 🤖 suggestions: the AI's flag on a planned name
+            if flag:
+                lines.append(f"   🤖 <i>{escape(flag)}</i>")
     if not going:
         lines.append("Nothing goes out today.")
     if skips:
@@ -1201,3 +1204,137 @@ def options_alert(a: dict) -> Optional[str]:
     except (KeyError, TypeError, ValueError):
         pass
     return f"🧩 {_opt_head(tag, a.get('t'))} · {escape(a.get('text') or '')}"
+
+
+# --- 🤖 brief ---------------------------------------------------------------------------------------------------------------
+
+def ai_brief(day: str, at: str, lines: list[str]) -> str:
+    """☀️ The morning brief: the day and time, the model's lines (≤ 5), the footer that says where it came from."""
+    head = f"☀️ <b>Morning brief · {escape(_day_label(day))} · {ampm(at)}</b> <i>AI</i>"
+    return "\n".join([head, *(escape(ln, quote=False) for ln in lines), "<i>written from the plans and filings · no action taken</i>"])
+
+
+# --- 🤖 ask ------------------------------------------------------------------------------------------------------------------
+
+def ai_thinking(question: str) -> str:
+    """The first reply to `ask <question>`, sent before the model runs."""
+    return f"💬 <b>ask</b> {escape(question, quote=False)}\n<i>thinking…</i>"
+
+
+def ai_ask_reply(row: dict) -> str:
+    """💬 The answer: the question, 'AI · the answer', then what was read, the seconds and 'read-only'."""
+    tail = [row["read"]] if row.get("read") else []
+    if row.get("ms"):
+        tail.append(f"{max(1, round(row['ms'] / 1000))} s")
+    tail.append("read-only")
+    body = escape(row.get("answer") or row.get("error") or "no answer", quote=False)
+    return f"💬 <b>ask</b> {escape(row['question'], quote=False)}\n<i>AI</i> · {body} <i>({escape(' · '.join(tail), quote=False)})</i>"
+
+
+# --- 🤖 suggestions (PR 3 · A) ----------------------------------------------------------------------------------------------
+
+def _day_full(d: Optional[str], fmt: str = "%A") -> str:
+    """'2026-11-17' -> 'Monday' (fmt "%a %d %b" -> 'Tue 17 Nov')."""
+    try:
+        return datetime.fromisoformat(d).strftime(fmt).replace(" 0", " ") if d else ""
+    except ValueError:
+        return d or ""
+
+
+def _until(iso: Optional[str]) -> str:
+    if not iso:
+        return "no expiry"
+    try:
+        d = datetime.fromisoformat(iso)
+        return f"until {ampm(d)}" if d.date() == datetime.now(d.tzinfo).date() else f"until {ampm(d)}, {d.day} {d:%b}"
+    except ValueError:
+        return "until ?"
+
+
+def _sugg_line(s: dict) -> str:
+    conf = f" · {s['confidence']}" if s.get("confidence") else ""
+    return (f"<b>#{s['id']}</b> {s.get('icon', '🤖')} <b>{escape(s['title'])}</b>{conf}\n"
+            f"   <i>{escape(s.get('why') or '')}</i> · {escape(_until(s.get('expires_at')))}")
+
+
+def ai_suggestions(rows: list, for_day: Optional[str] = None) -> str:
+    """The evening list "🤖 N suggestions for Monday": numbered by id, the kind icon, the title, the why, until when."""
+    n = len(rows)
+    head = f"🤖 <b>{n} suggestion{'s' if n != 1 else ''}</b>" + (f" for {_day_full(for_day)}" if for_day else "")
+    lines = [head] + [_sugg_line(s) for s in rows]
+    lines.append("Reply <b>accept N</b> · <b>dismiss N [wrong|knew|later]</b> · <b>why N</b> (the evidence) · <b>sugg</b> (the list). "
+                 "Nothing happens without your reply; the model only proposes.")
+    return "\n".join(lines)
+
+
+def ai_suggestion_list(rows: list) -> str:
+    """The `sugg` reply: the open suggestions, or a line saying there are none."""
+    if not rows:
+        return "🤖 No open suggestions."
+    return ai_suggestions(rows)
+
+
+def ai_suggestion_detail(s: dict) -> str:
+    """The `why N` reply: the title, the why, every evidence line, the action's path and the state."""
+    lines = [_sugg_line(s)]
+    for e in s.get("evidence") or []:
+        url = f' · <a href="{escape(e["url"], quote=True)}">source</a>' if (e.get("url") or "").startswith("https://") else ""
+        lines.append(f"{e.get('icon', '•')} {escape(e['text'])}{url}")
+    a = s.get("action") or {}
+    if a.get("path") and a["path"] != "ui":
+        lines.append(f"<i>accept → {escape(a['path'])} (the same code path as the hand action)</i>")
+    elif a.get("route"):
+        lines.append(f"<i>accept → opens {escape(a['route'])}: {escape(a.get('hint') or '')}</i>")
+    else:
+        lines.append("<i>note only · nothing to run</i>")
+    if s.get("status") != "open":
+        lines.append(f"<i>{escape(s['status'])}" + (f" · {escape(s['reason'])}" if s.get("reason") else "") + "</i>")
+    return "\n".join(lines)
+
+
+def ai_accept_confirm(s: dict) -> str:
+    """The two-step accept's question: the action's confirm text and the `yes N` reply."""
+    a = s.get("action") or {}
+    return (f"🤖 <b>#{s['id']} · {escape(s['title'])}</b>\n{escape(a.get('confirm_text') or 'Run it?')}\n"
+            f"Reply <b>yes {s['id']}</b> within 10 minutes to go ahead; anything else leaves it open.")
+
+
+def ai_accepted(s: dict) -> str:
+    res = (s.get("action_result") or {})
+    ran = "the action ran" if res.get("ran") else "noted (nothing to run)"
+    return f"✅ <b>#{s['id']} accepted</b> · {escape(s['title'])} · {ran}."
+
+
+def ai_scorecard(sc: dict, month: str) -> str:
+    """The monthly scorecard line (sent on the first night batch of the next month)."""
+    t = sc["totals"]
+    kinds = " · ".join(f"{k} {v['made']}" for k, v in sc["kinds"].items() if v["made"])
+    best = f" · best kind {escape(t['best_kind'])}" if t.get("best_kind") else ""
+    return (f"🤖 <b>Suggestions · {escape(_month(month))}</b> · {t['made']} made · {t['accepted']} accepted · {t['dismissed']} dismissed · "
+            f"{t['expired']} expired{best}\n<i>{escape(kinds) or 'none'} · accepted outcome {inr(t['accepted_outcome_rs'], sign=True)} · "
+            f"dismissed outcome {inr(t['dismissed_outcome_rs'], sign=True)}</i>")
+
+
+def _month(m: str) -> str:
+    try:
+        return datetime.strptime(m, "%Y-%m").strftime("%B %Y")
+    except ValueError:
+        return m
+
+
+# --- 🤖 why (PR 3 · B) ---------------------------------------------------------------------------------------------------------
+
+WHY_ICON = {"real": "💰", "paper": "📝", "futures": "📐", "options": "🧩", "held": "📦"}
+
+
+def ai_why_evening(rows: list, day: str) -> str:
+    """🧾 Today's exits, explained: one line per trade closed today (the book, the name, how it ended, the net) with the
+    AI's "likely cause" under it."""
+    lines = [f"🧾 <b>Today's exits, explained</b> · {_day_full(day, '%a %d %b')}"]
+    for n in rows:
+        t = n.get("trade") or ((n.get("data") or {}).get("trade") if isinstance(n.get("data"), dict) else None) or {}
+        net = f" · {inr(t['net'], sign=True)}" if t.get("net") is not None else ""
+        lines.append(f"{WHY_ICON.get(n['book'], '📦')} <b>{escape(n['symbol'])}</b> · {escape(str(t.get('label') or ''))}{net}\n"
+                     f"   🤖 <i>{escape(n['text'])}</i>")
+    lines.append("<i>written from the trade rows, the day's bars and the filings · no action taken</i>")
+    return "\n".join(lines)

@@ -10,7 +10,7 @@ import FuturesBacktest from './FuturesBacktest';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act, Cards, Card, Bar, Seg } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
-import AiDot from './AiDot';
+import AiDot, { AiWhy } from './AiDot';
 
 // 📐 Stock futures: one book, two sides (long = E+ breakout, short = E− breakdown), each with a Paper and a Real switch.
 // Paper fills from the daily futures candles; Real goes through the futures deployment's sender (a stub until step 4)
@@ -236,7 +236,8 @@ export default function FuturesPage() {
   const shortRows = [...shortOpen.map((p) => ({ key: `o${p.symbol}`, cells: [<b>{p.symbol}</b>, sideTag('short'), n2(p.entry), '—', <b className={cls(p.mtm)}>{signed(p.mtm)}</b>, <span className="muted">E− breakdown</span>, <Tag c="a">open · {p.days} days</Tag>] })),
     ...(sp.trades || []).map((t) => ({ key: `t${t.id}`, cells: [<b>{t.symbol}</b>, sideTag('short'), n2(t.entry), n2(t.exit), <b className={cls(t.net)}>{signed(t.net)}</b>, <span className="muted">{WHY[t.why] || t.why}</span>, <Tag c={t.why === 'stop' ? 'bad' : ''}>closed · {WHY[t.why] || t.why}</Tag>] }))];
   const tradeCols = [{ h: 'Contract', ell: true }, { h: 'Book', w: 110, lo: true }, { h: 'Opened · closed', w: 150, lo: true }, { h: 'Lots', w: 50, n: true }, { h: 'Entry', w: 90, n: true, lo: true, nw: true }, { h: 'Exit', w: 90, n: true, lo: true }, { h: 'Costs', w: 80, n: true, lo: true, nw: true }, { h: 'After', w: 104, n: true }, { h: 'Why', w: 130 }];
-  const tradeRows = (d.trades || []).map((t) => ({ key: t.id, cells: [<><b>{t.symbol}</b> <small className="muted">{t.contract}</small></>, <span className="muted">{t.tag}</span>, `${day(t.in)} · ${day(t.out)}`, t.lots, n2(t.entry), n2(t.exit), <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, WHY[t.why] || t.why] }));
+  const tradeRows = (d.trades || []).flatMap((t) => [{ key: t.id, cells: [<><b>{t.symbol}</b> <small className="muted">{t.contract}</small></>, <span className="muted">{t.tag}</span>, `${day(t.in)} · ${day(t.out)}`, t.lots, n2(t.entry), n2(t.exit), <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, WHY[t.why] || t.why] },
+  ...(t.ai_why ? [{ key: `${t.id}-why`, span: <AiWhy why={t.ai_why} /> }] : [])]);          // 🤖 the AI's likely cause under the row
   const planRows = d.plan || [];
   const expiryChip = d.next_expiry ? <Chip title="the near month's expiry and the roll session (T-2)">{new Date(`${d.next_expiry}T00:00:00`).toLocaleDateString('en-IN', { month: 'short' })} expiry <b>{day(d.next_expiry)}</b>{d.roll_day && <> · roll day <b>{wday(d.roll_day)} {day(d.roll_day)}</b> (T-{st.roll_days})</>}</Chip> : <Chip>no contracts yet · run the futures data step</Chip>;
   const capRow = <div className="rform"><div className="fr"><span>Capital<small>one lot a name · margin {st.margin_pct}% of the lot value · a change after the start is money added / withdrawn on every account</small></span>

@@ -208,6 +208,16 @@ class Scheduler:
             jobs += obook.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today), self.last_options_tick)
         except Exception:
             logger.exception("Options due check failed")
+        try:                                               # 🤖 brief: the morning brief at ai.brief_time
+            from backend.ai import brief
+            jobs += brief.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
+        except Exception:
+            logger.exception("AI brief due check failed")
+        try:                                               # 🤖 suggestions: an open one past its time expires (no tap)
+            from backend.ai import suggest
+            suggest.expire_open(now)
+        except Exception:
+            logger.exception("AI suggestion expiry failed")
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -297,7 +307,31 @@ class Scheduler:
             out = self._run_eod(now, force)
         if out.get("status") in ("ok", "partial"):       # 🤖 the night's filing / deal notes, once the eod record is in
             out["ai_notes"] = self.run_ai_notes(now)
+            out["ai_why"] = self.run_ai_why(now)          # 🤖 why: the lines under today's exits (FIFO: after the notes)
+            out["ai_suggest"] = self.run_ai_suggest(now)  # 🤖 suggestions: for the next session (FIFO: after the notes)
         return out
+
+    def run_ai_why(self, now: datetime) -> dict:
+        """🤖 why: queue tonight's "why" lines for the trades closed today (one job; the guard decides at run time)."""
+        if not self.state.config.ai.enabled:
+            return {"status": "off"}
+        try:
+            from backend.ai import why
+            return why.enqueue_tonight(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI why enqueue failed")
+            return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_ai_suggest(self, now: datetime) -> dict:
+        """🤖 suggestions: queue tonight's suggestion job (outcomes scored, candidates born, the evening list)."""
+        if not self.state.config.ai.enabled:
+            return {"status": "off"}
+        try:
+            from backend.ai import suggest
+            return suggest.enqueue_tonight(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI suggest enqueue failed")
+            return {"status": "failed", "error": str(exc)[:200]}
 
     def run_ai_notes(self, now: datetime) -> dict:
         """🤖 Queue tonight's AI notes (the guard decides at run time; nothing runs while the AI is off). Never raises."""
@@ -309,6 +343,20 @@ class Scheduler:
         except Exception as exc:
             logger.exception("AI notes enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_ai_brief(self, now: datetime) -> dict:
+        """🤖 brief: queue today's morning brief (kind "brief"; the guard decides at run time) and record the job so it
+        is queued once a day. Never raises."""
+        from backend.ai import brief
+        today, started = now.date(), now_ist()
+        try:
+            job = brief.enqueue(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI brief enqueue failed")
+            self.record(brief.JOB, today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        self.record(brief.JOB, today, "ok", f"queued as AI job {job['id']}" + (" (already queued)" if job["dedup"] else ""), started)
+        return {"status": "ok", "job": job["id"], "dedup": job["dedup"]}
 
     def _run_eod(self, now: datetime, force: bool) -> dict:
         today, started, st = now.date(), now_ist(), self.state

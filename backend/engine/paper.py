@@ -46,6 +46,12 @@ def _rules(config: AppConfig, key: str):
     return tb.rules(config, key)
 
 
+def _ai_why(trades: list) -> list:
+    """🤖 why: the AI's "likely cause" line on the closed trades (ai_why: {id, text, at} | None)."""
+    from backend.ai import why
+    return why.attach(trades, "paper")
+
+
 def _states() -> dict:
     """Every existing account's state (an "A" row from before the migration is never read); one saved before the
     accounts had a variant (Oct 2026) gets its variant and name."""
@@ -452,8 +458,8 @@ def account(key: str, st: dict) -> dict:
 def _one(key: str, st: dict, config: AppConfig) -> dict:
     p = _rules(config, key)
     with get_db() as conn:
-        trades = [json.loads(r[0]) for r in conn.execute(
-            "SELECT payload FROM paper_trades WHERE account = ? ORDER BY id DESC", (key,))]
+        trades = [{**json.loads(r[1]), "id": r[0]} for r in conn.execute(                  # 🤖 why: the id keys the why line
+            "SELECT id, payload FROM paper_trades WHERE account = ? ORDER BY id DESC", (key,))]
         eq = [dict(r) for r in conn.execute(
             "SELECT day, equity, gross, nifty FROM paper_equity WHERE account = ? ORDER BY day", (key,))]
     deposits, first_cap = st.get("deposits", []), first_capital(st)
@@ -486,7 +492,7 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
             "account": account(key, st), "deposits": deposits, "drawdown": round(dd, 2), "positions": _ai_notes(positions),
             "orders": st.get("orders", []), "skipped": st.get("skipped", []), "cap": st.get("cap", p.max_pos),
             "allowed": st.get("allowed"), "filter": st.get("filter"), "decided": st.get("decided"),
-            "trades": trades, "won": len(won), "closed": len(trades), "notes": st.get("notes", []), "top": st.get("top"),
+            "trades": _ai_why(trades), "won": len(won), "closed": len(trades), "notes": st.get("notes", []), "top": st.get("top"),
             "profit_factor": round(gain / loss, 2) if loss else None,
             "trade_totals": {k: round(sum(t[k] for t in trades), 2) for k in ("gross", "charges", "slippage", "costs", "net")},
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq], "gross": [e["gross"] for e in eq],

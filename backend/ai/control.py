@@ -182,11 +182,30 @@ def _loaded() -> list[dict]:
         return []
 
 
+def _brief_status() -> dict:
+    """🤖 brief: {last_at, lines, day, id} of the newest morning brief (never raises: the page comes first)."""
+    try:
+        from backend.ai import brief
+        return brief.status()
+    except Exception:
+        return {"last_at": None, "lines": [], "day": None, "id": None}
+
+
+def _asks_stats(now: datetime) -> dict:
+    """🤖 ask: {today, last} (never raises)."""
+    try:
+        from backend.ai import ask
+        return ask.stats(now)
+    except Exception:
+        return {"today": 0, "last": None}
+
+
 def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
     """Everything the AI page needs: switches, server, models, breaker, queue (with tonight's note rows and the night
     verdict), jobs, last_test, notes (today / high / last night), testset (last / best / running), settings, limits,
     url_ok, version, notes_count, now, never, and whether the enable switch may go on (and why not)."""
     from backend.ai import notes, quality
+    from backend.ai import suggest                                         # 🤖 suggestions
     now = now or datetime.now(IST)
     h = client.health()
     models = guard.models_present(config)
@@ -203,6 +222,8 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
             "breaker": {**b, "text": guard.breaker_text(b)},
             "queue": queue, "jobs": q.recent(20), "last_test": last_test(),
             "notes": notes.stats(now, config), "testset": quality.status(),
+            "suggestions": suggest.summary(config),                        # 🤖 suggestions: {open, by_kind, scorecard_month, muted, max_open}
+            "brief": _brief_status(), "asks": _asks_stats(now),                   # 🤖 brief / 🤖 ask
             "settings": asdict(config.ai), "limits": LIMITS, "url_ok": h["ok"], "version": h["version"], "url": client.url(),
             "notes_count": _notes_count(), "now": now.isoformat(timespec="seconds"),
             "can_enable": both, "enable_note": None if both else NEEDS_MODELS, "allowed": ok_now, "allowed_note": why,

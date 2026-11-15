@@ -29,7 +29,7 @@ from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("ai")
 
-PROMPT_V = "notes-v1"
+PROMPT_V = "notes-v2"                 # v2: synonyms mapped, the retry names the fault, tighter direction rules, capped answers
 TEXT_MAX = 1500                                   # chars of the filing text in the prompt
 TITLE_MAX, LINE_MAX, ACT_MAX, ACTS_MAX = 60, 180, 60, 3
 STALE_HOURS = 24                                  # a queued job older than this is skipped, not run
@@ -38,6 +38,26 @@ CATEGORIES = ("results", "order", "deal", "pledge", "legal", "rating", "manageme
               "dividend", "other")
 SEVERITIES = ("high", "medium", "low", "info")
 DIRECTIONS = ("positive", "negative", "neutral")
+# What the model may answer instead of a listed value (synonyms the 7B model reaches for), mapped before the check.
+SYNONYMS = {
+    "category": {"acquisition": "deal", "merger": "deal", "amalgamation": "deal", "buyback": "deal", "buy_back": "deal",
+                 "stake_sale": "deal", "stake sale": "deal", "divestment": "deal", "joint_venture": "deal", "jv": "deal",
+                 "block_deal": "deal", "bulk_deal": "deal", "deals": "deal", "orders": "order", "order_win": "order",
+                 "contract": "order", "result": "results", "earnings": "results", "financial_results": "results",
+                 "quarterly_results": "results", "encumbrance": "pledge", "pledge_release": "pledge", "pledged": "pledge",
+                 "downgrade": "rating", "upgrade": "rating", "credit_rating": "rating", "ratings": "rating",
+                 "resignation": "management", "appointment": "management", "auditor": "management", "board": "management",
+                 "litigation": "legal", "regulatory": "legal", "penalty": "legal", "insolvency": "legal", "fraud": "legal",
+                 "clarification": "exchange", "price_movement": "exchange", "fundraise": "fund_raise", "fund raise": "fund_raise",
+                 "fund_raising": "fund_raise", "qip": "fund_raise", "rights_issue": "fund_raise", "preferential": "fund_raise",
+                 "dividends": "dividend", "interim_dividend": "dividend", "noise": "other", "update": "other", "general": "other"},
+    "severity": {"critical": "high", "severe": "high", "major": "high", "moderate": "medium", "mid": "medium", "minor": "low",
+                 "routine": "info", "none": "info", "informational": "info", "informative": "info"},
+    "direction": {"bullish": "positive", "good": "positive", "favourable": "positive", "favorable": "positive",
+                  "bearish": "negative", "bad": "negative", "adverse": "negative", "unfavourable": "negative",
+                  "mixed": "neutral", "none": "neutral", "unclear": "neutral", "unknown": "neutral"},
+}
+GEN_OPTIONS = {"temperature": 0.1, "num_predict": 320, "num_ctx": 2048, "top_p": 0.9}   # short, steady answers on a CPU
 BOOKS = ("held", "plan", "watch")                 # the scope reasons, in the order the night reads them
 BOOK_WHY = {"held": "you hold it", "plan": "in the plan", "watch": "on your watchlist"}
 KEY_PREFIX = "note:"                              # ai_jobs.key = note:filing:<seq_id> / note:deal:<symbol>|<date>
@@ -62,11 +82,16 @@ one object, no prose around it:
 Severity: high = a promoter pledge increase or invocation, a loss or a sharp fall in profit, legal or regulatory action
 against the company, insolvency, fraud, default, a rating downgrade, an auditor resignation, a promoter selling;
 medium = results that are fine, an order win, a fund raise, an acquisition, merger or buyback, a change of management;
-low = routine news with some meaning (a pledge released, a rating upgrade, a dividend); info = nothing to act on. Direction is for the owner of the stock: positive, negative or neutral.
+low = routine news with some meaning (a pledge released, a rating upgrade, a dividend); info = nothing to act on.
+Direction is for the owner of the stock. positive = profit or revenue growth, an order win, a pledge released, an upgrade,
+a case won, a buyback; negative = a loss or a fall in profit, a pledge increase, a downgrade, legal action, an auditor
+or CFO resignation, promoter selling, a guidance cut; neutral = only when the owner's position is not affected either
+way (a procedural notice, a meeting date, an appointment that changes nothing). Use the listed values exactly.
 Numbers: quote only the numbers listed under "numbers found by code" or written in the filing text, exactly as given;
 never compute, convert or estimate a number. Never name a broker or a trading platform. No markdown."""
 
-RETRY_SUFFIX = "\nYour previous answer was not valid. Reply with the JSON object only, using only the listed values."
+RETRY_SUFFIX = ("\nYour previous answer was not valid: {why}. Reply with the JSON object only. category must be one of "
+                f"{', '.join(CATEGORIES)}; severity one of {', '.join(SEVERITIES)}; direction one of {', '.join(DIRECTIONS)}.")
 
 
 # --- the scope ------------------------------------------------------------------------------------------------------
@@ -237,7 +262,8 @@ def validate(raw: str, source_text: str, numbers: list[dict]) -> dict:
     if not isinstance(d, dict):
         raise NoteInvalid("not a JSON object")
     for key, values in (("category", CATEGORIES), ("severity", SEVERITIES), ("direction", DIRECTIONS)):
-        v = str(d.get(key) or "").strip().lower()
+        v = str(d.get(key) or "").strip().lower().replace("-", "_")
+        v = SYNONYMS[key].get(v, SYNONYMS[key].get(v.replace("_", " "), v))
         if v not in values:
             raise NoteInvalid(f"{key} {d.get(key)!r} is not one of {', '.join(values)}")
         d[key] = v
@@ -469,7 +495,8 @@ def enqueue_new_filings(config: AppConfig, new: list[dict], now: Optional[dateti
 
 def _generate(config: AppConfig, system: str, user: str) -> dict:
     c = config.ai
-    return client.generate(c.night_model, user, system=system, json_mode=True, timeout=float(c.timeout_s), keep_alive=c.keep_alive)
+    return client.generate(c.night_model, user, system=system, json_mode=True, timeout=float(c.timeout_s), keep_alive=c.keep_alive,
+                           options=GEN_OPTIONS)
 
 
 def ask(config: AppConfig, system: str, user: str, source_text: str, numbers: list[dict]) -> tuple[dict, dict]:
@@ -479,7 +506,7 @@ def ask(config: AppConfig, system: str, user: str, source_text: str, numbers: li
         return validate(r["text"], source_text, numbers), r
     except NoteInvalid as exc:
         logger.info("AI note answer invalid (%s); one retry", exc)
-        r2 = _generate(config, system + RETRY_SUFFIX, user)
+        r2 = _generate(config, system + RETRY_SUFFIX.format(why=str(exc)[:120]), user)
         r2["tokens"] = r2["tokens"] + r["tokens"]
         r2["ms"] = r2["ms"] + r["ms"]
         return validate(r2["text"], source_text, numbers), r2

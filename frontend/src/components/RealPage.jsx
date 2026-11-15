@@ -9,7 +9,7 @@ import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
-import AiDot from './AiDot';
+import AiDot, { AiWhy } from './AiDot';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const STATUS = { sent: 'ok', failed: 'bad', skipped: 'w', added: 'a', removed: 'w', edited: '' };
@@ -203,9 +203,10 @@ function MorningPanel({ live, onReplan, replanning, onErr, onChanged }) {
     return <Sw><Switch on={!o.skip} disabled={!!busy} title={o.skip ? `skipped today by ${o.skip.by}${o.skip.note ? ` · ${o.skip.note}` : ''} · switch on to send it after all` : 'switch off to skip this BUY today only'} onChange={(on) => toggle(o, on)} />
       {o.skip ? <span className="small" style={{ color: 'var(--warn)' }}>{o.skip.by === 'you' ? 'skipped today' : 'results guard'}</span> : null}</Sw>;
   };
-  const rows = m.orders.map((o) => ({ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.close ? n2(o.close) : '—', inr(o.value),
+  const rows = m.orders.flatMap((o) => [{ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.close ? n2(o.close) : '—', inr(o.value),
     o.stop ? n2(o.stop) : '—', o.results_date ? <Tag c="w" title={`results ${day(o.results_date)} · in ${o.results_in} session${o.results_in === 1 ? '' : 's'}${o.skip?.by === 'results guard' ? ' · skipped by the results guard (settable: real.results_guard_sessions)' : ''}`}>⚠ {wday(o.results_date)}</Tag> : '—',
-    <span className="muted">{o.why}</span>, sendCell(o)] }));
+    <span className="muted">{o.why}</span>, sendCell(o)] },
+  ...(m.ai_flags?.[o.symbol] ? [{ key: `${o.symbol}-flag`, span: <div className="warn" title={`🤖 AI flag · ${m.ai_flags[o.symbol]} · the order still goes unless you skip it`} style={{ fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>⚠ 🤖 {m.ai_flags[o.symbol]}</div> }] : [])]);   // 🤖 the AI's open flag on this name
   rows.push(after ? `${m.counts.sent} sent · ${m.counts.failed} failed · ${m.counts.skipped} skipped${m.first_sent ? ` · ${clock(m.first_sent, true)} → ${clock(m.last_sent, true)}` : ''}`
     : `going out: ${exits.length} EXIT${exits.length === 1 ? '' : 's'} · ${buys.length} BUY${buys.length === 1 ? '' : 's'} · ${inr(m.going_out.value)}${m.skipped.length ? ` · ${m.skipped.length} skipped today (${m.skipped.join(', ')})` : ''}${m.waiting ? ` · ${m.waiting} waiting (no slot)` : ''}`);
   const right = after ? <Meta>{send} · <b className="mono">{m.counts.sent}</b> sent · <b className="mono">{m.counts.failed}</b> failed · <b className="mono">{m.counts.skipped}</b> skipped</Meta>
@@ -310,6 +311,7 @@ export default function RealPage() {
   const tradeCols = [{ h: 'Stock', ell: true }, { h: 'Bought · sold', w: 150, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Exit ₹', w: 90, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true, nw: true }, { h: 'Costs', w: 80, n: true, lo: true, nw: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110 }, { h: '', w: 50, key: 'edit' }];
   const tradeRows = (d.trades || []).flatMap((t) => [{ key: t.id ?? t.symbol + t.in, cells: [<><b>{t.symbol}</b>{t.est && <Tag c="w" title="estimated exit: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. exit</Tag>}<Edited edits={t.edits} /></>, `${day(t.in)} · ${day(t.out)}`, t.qty, rs(t.sell), <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why,
     t.id != null ? <button type="button" className={`btn ${tedit === t.id ? 'primary' : 'ghost'}`} style={PEN} title="correct the exit price / quantity" onClick={() => setTedit(tedit === t.id ? null : t.id)}>✎</button> : ''] },
+  ...(t.ai_why ? [{ key: `${t.id ?? t.symbol + t.in}-why`, span: <AiWhy why={t.ai_why} /> }] : []),          // 🤖 the AI's likely cause, one small line
   ...(tedit === t.id && t.id != null ? [{ key: `${t.id}-edit`, span: <TradeEditor t={t} onDone={done} onErr={setErr} /> }] : [])]);
   const capRow = <div className="rform"><div className="fr"><span>Capital<small>size {inr(d.limits?.size)} a stock (÷ {d.max_pos}) · largest order {inr(d.limits?.max_order)} ({s.max_order_pct}%) · whole shares, within the cash left</small></span>
     <span style={{ whiteSpace: 'nowrap' }}>₹<input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />{' '}

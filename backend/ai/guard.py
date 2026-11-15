@@ -14,6 +14,7 @@ from backend.database.models import get_db, get_setting, set_setting
 from backend.timefmt import ampm_date
 
 DAY_START, DAY_END = time(9, 0), time(15, 40)      # day answers (the day model only)
+BRIEF_END = time(9, 0)                             # 🤖 brief: kind "brief" may run past night_end, until here
 EOD_DONE = ("ok", "partial", "failed", "no_session")  # the evening job ended for the day with one of these
 
 _lock = threading.Lock()
@@ -173,6 +174,11 @@ def day_window(now: datetime) -> bool:
     return DAY_START <= now.time() <= DAY_END
 
 
+def brief_window(now: datetime, config: AppConfig) -> bool:
+    """🤖 brief: the night window, extended to BRIEF_END (the brief is written at ai.brief_time, after night_end)."""
+    return now.time() < BRIEF_END or night_window(now, config)
+
+
 def allowed(kind: str, now: Optional[datetime] = None, config: Optional[AppConfig] = None, srv: Optional[dict] = None,
             models: Optional[dict] = None) -> tuple[bool, str]:
     """(ok, reason) for a job of `kind` ("night", "day", "test", ...): the switch, the full stop, the breaker, free
@@ -197,6 +203,10 @@ def allowed(kind: str, now: Optional[datetime] = None, config: Optional[AppConfi
         return False, "night batch off" if not c.night_batch else f"outside the night window (evening job's end to {ampm(c.night_end)})"
     if kind == "day" and (not c.day_answers or not day_window(now)):
         return False, "day answers off" if not c.day_answers else f"outside {ampm(DAY_START)}-{ampm(DAY_END)}"
+    if kind == "brief" and (not c.brief or not brief_window(now, config)):          # 🤖 brief
+        return False, "morning brief off" if not c.brief else f"outside the brief window (evening job's end to {ampm(BRIEF_END)})"
+    if kind == "ask" and (not c.day_answers or not c.ask):                          # 🤖 ask: any time, the day model only
+        return False, "day answers off" if not c.day_answers else "ask off"
     m = models or models_present(config)
     if m.get("error"):
         return False, "service unreachable"

@@ -96,7 +96,14 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   keep_alive: 'How long a model stays loaded after a call (Ollama duration, e.g. 10m; 0 = unload at once)', min_free_ram_gb: 'No AI work while the server\'s free RAM is under this many GB',
   slow_tick_s: '… or while the scheduler\'s last tick took longer than this many seconds (the app comes first)', breaker_failures: 'This many failures in a row open the breaker …',
   breaker_minutes: '… for this many minutes; one success closes it again', night_end: 'Night work stops here (24-hour HH:MM, IST)', max_queue: 'The queue refuses new jobs beyond this many waiting',
-  notes_per_night: 'Filing / deal notes a night at most (held names first, then the plan, then the watchlist)', note_days: 'How many days back the notes job reads filings and deals (the first run too)' };
+  notes_per_night: 'Filing / deal notes a night at most (held names first, then the plan, then the watchlist)', note_days: 'How many days back the notes job reads filings and deals (the first run too)',
+  // 🤖 PR 3: suggestions, the trade "why" line, the morning brief, ask the app
+  max_suggestions_open: 'Open suggestions at most (1-50); beyond it the night keeps its candidates for another night · each open one expires on its own time',
+  suggest_muted: 'Suggestion kinds never born, comma-separated: skip, exit, flag, hold_options, roll_or_exit, backtest (the switches on System → AI → Scorecard set the same list)',
+  why: 'The nightly "why" line under every trade closed today (Real, Paper, Futures, Options) and the evening "exits, explained" message (true/false)',
+  brief: 'The morning brief on trading days: ≤ 5 lines from the plans, the books and the night\'s notes; one Telegram message, kept as a note (true/false)',
+  brief_time: 'When the brief is written (24-hour HH:MM, IST); its window runs to 9:00 AM, the night model, one call',
+  ask: '"Ask the app": the day model picks one read-only tool, code runs it, the model answers from its result · any time of day, never on the trading path (true/false)' };
 Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).

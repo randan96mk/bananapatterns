@@ -394,6 +394,20 @@ CREATE TABLE IF NOT EXISTS ai_notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, symbol TEXT,
     book TEXT, severity TEXT, title TEXT, text TEXT, data TEXT, model TEXT, prompt_version TEXT, ms INTEGER);
 CREATE INDEX IF NOT EXISTS idx_ai_notes_day ON ai_notes(day, kind);
+-- 🤖 suggestions (PR 3): what the AI proposes for the next session; code decides the kind, the evidence, the expiry and
+-- the outcome, the model writes the one-line why. Never deleted; one per kind, symbol and day.
+CREATE TABLE IF NOT EXISTS ai_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, day TEXT NOT NULL, for_day TEXT, kind TEXT NOT NULL,
+    symbol TEXT NOT NULL DEFAULT '', book TEXT, title TEXT NOT NULL, why TEXT, evidence TEXT, action TEXT, confidence TEXT,
+    expires_at TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'accepted', 'dismissed', 'expired')),
+    decided_at TEXT, reason TEXT, outcome TEXT, note_id INTEGER, model TEXT, prompt_version TEXT, data TEXT,
+    UNIQUE (kind, symbol, day));
+CREATE INDEX IF NOT EXISTS idx_ai_sugg_status ON ai_suggestions(status, expires_at);
+-- 🤖 ask: every question put to the app (page or Telegram), the tool the model picked, the answer; never deleted
+CREATE TABLE IF NOT EXISTS ai_asks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, who TEXT NOT NULL, question TEXT NOT NULL, tool TEXT,
+    args TEXT, answer TEXT, ms INTEGER, model TEXT, ok INTEGER NOT NULL DEFAULT 0, error TEXT);
+CREATE INDEX IF NOT EXISTS idx_ai_asks_created ON ai_asks(created);
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

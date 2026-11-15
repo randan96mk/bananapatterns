@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import threading
 import uuid
 from dataclasses import asdict
@@ -1356,6 +1357,9 @@ class AiSettings(BaseModel):
     enabled: Optional[bool] = None
     night_batch: Optional[bool] = None
     day_answers: Optional[bool] = None
+    suggest_muted: Optional[str] = None          # 🤖 suggestions: comma list of kinds never born
+    max_suggestions_open: Optional[int] = None   # 🤖 suggestions: the open cap (1-50)
+    why: Optional[bool] = None                   # 🤖 why: the nightly lines under today's exits
 
 
 @router.get("/ai")
@@ -1370,8 +1374,13 @@ def ai_summary():
 def ai_settings(req: AiSettings):
     """enabled / night_batch / day_answers; enabled=true without both models is refused (400)."""
     from backend.ai import control
+    flags = req.model_dump(exclude_none=True)
     try:
-        return control.set_switches(S().config, **req.model_dump(exclude_none=True))
+        from backend.ai import suggest                                      # 🤖 suggestions: its own keys first
+        flags = suggest.apply_settings(S().config, flags)
+        if "why" in flags:                                                  # 🤖 why
+            S().config.ai.why = bool(flags.pop("why"))
+        return control.set_switches(S().config, **flags)                   # the switches' shape; the rest is in GET /api/ai settings
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -1436,6 +1445,147 @@ def ai_notes_run():
     if notes.running():
         raise HTTPException(409, "notes are running")
     return notes.enqueue_tonight(S().config)
+
+
+# 🤖 ask
+
+class AskReq(BaseModel):
+    question: str
+
+
+@router.post("/ai/ask")
+def ai_ask(req: AskReq):
+    """🤖 Ask the app: the day model picks one read-only tool, code runs it, the model answers from its result; waits
+    up to 60 s. {answer, tool, args, ms, id, ok, status, read}. 400 on an empty question or while ask is off."""
+    from backend.ai import ask as aask
+    c = S().config.ai
+    if not (c.enabled and c.ask):
+        raise HTTPException(400, "ask is off" if c.enabled else "AI switched off")
+    try:
+        return aask.ask(S().config, req.question, "page")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.get("/ai/asks")
+def ai_asks(limit: int = Query(10, le=200)):
+    """🤖 The last asks, newest first: {rows}."""
+    from backend.ai import ask as aask
+    return {"rows": aask.list_asks(limit)}
+
+
+# 🤖 suggestions
+
+class SuggDismiss(BaseModel):
+    reason: str = "none"
+
+
+class SuggMute(BaseModel):
+    kind: str
+    muted: bool = True
+
+
+@router.get("/ai/suggestions")
+def ai_suggestions(status: Optional[str] = None, kind: Optional[str] = None, limit: int = Query(50, le=500)):
+    """🤖 The suggestions, open first then newest: {rows, open, by_kind}. Filters status (open | accepted | dismissed |
+    expired) and kind."""
+    from backend.ai import suggest
+    if status and status not in suggest.STATUSES:
+        raise HTTPException(400, f"status must be one of {', '.join(suggest.STATUSES)}")
+    rows = suggest.list_suggestions(status, limit, kind)
+    sm = suggest.summary(S().config)
+    return {"rows": rows, "open": sm["open"], "by_kind": sm["by_kind"]}
+
+
+@router.get("/ai/suggestions/scorecard")
+def ai_suggestions_scorecard(month: Optional[str] = None):
+    """🤖 Per kind {made, open, accepted, dismissed, expired, helped_when_accepted, would_have_helped, scored, muted} and
+    the totals {month, made, accepted, dismissed, expired, accepted_outcome_rs, dismissed_outcome_rs, best_kind}; `month`
+    YYYY-MM (this month by default)."""
+    from backend.ai import suggest
+    if month and not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(400, "month must be YYYY-MM")
+    return suggest.scorecard(month, S().config)
+
+
+@router.post("/ai/suggestions/run")
+def ai_suggestions_run():
+    """🤖 Queue tonight's suggestion job now (the guard decides whether it runs); 409 while one is queued or running."""
+    from backend.ai import suggest
+    if suggest.running():
+        raise HTTPException(409, "the suggestion job is running")
+    return suggest.enqueue_tonight(S().config)
+
+
+@router.post("/ai/suggestions/mute")
+def ai_suggestions_mute(req: SuggMute):
+    """🤖 Mute (or unmute) one kind: it is never born while muted. {muted: [kinds]}; 400 on an unknown kind."""
+    from backend.ai import suggest
+    try:
+        return {"muted": suggest.mute(S().config, req.kind, req.muted)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/ai/suggestions/{sid}/accept")
+def ai_suggestion_accept(sid: int):
+    """🤖 Accept: the action runs through the same function as the hand action, once; the row is accepted. 404 when
+    missing, 409 when already decided or expired, 400 when the action itself was refused (the row stays accepted)."""
+    from backend.ai import suggest
+    if not suggest.get(sid):
+        raise HTTPException(404, "no such suggestion")
+    try:
+        return suggest.accept(sid, S().config, who="page")
+    except suggest.SuggestionState as exc:
+        raise HTTPException(409, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/ai/suggestions/{sid}/dismiss")
+def ai_suggestion_dismiss(sid: int, req: SuggDismiss = SuggDismiss()):
+    """🤖 Dismiss with a reason (wrong | knew | later | none). 404 / 409 / 400 like accept."""
+    from backend.ai import suggest
+    if not suggest.get(sid):
+        raise HTTPException(404, "no such suggestion")
+    try:
+        return suggest.dismiss(sid, req.reason, who="page")
+    except suggest.SuggestionState as exc:
+        raise HTTPException(409, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/ai/suggestions/{sid}/later")
+def ai_suggestion_later(sid: int):
+    """🤖 Later: the expiry moves 4 hours on, once (409 the second time or once decided)."""
+    from backend.ai import suggest
+    if not suggest.get(sid):
+        raise HTTPException(404, "no such suggestion")
+    try:
+        return suggest.later(sid)
+    except suggest.SuggestionState as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.get("/ai/suggestions/{sid}")
+def ai_suggestion(sid: int):
+    from backend.ai import suggest
+    s = suggest.get(sid)
+    if not s:
+        raise HTTPException(404, "no such suggestion")
+    return s
+
+
+# 🤖 why
+
+@router.post("/ai/why/run")
+def ai_why_run():
+    """🤖 Queue tonight's "why" lines now (the guard decides whether they run); 409 while the job is queued or running."""
+    from backend.ai import why
+    if why.running():
+        raise HTTPException(409, "the why job is running")
+    return why.enqueue_tonight(S().config)
 
 
 @router.post("/ai/testset/run")

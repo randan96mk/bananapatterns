@@ -98,11 +98,14 @@ def pull(model: str, progress_cb: Optional[Callable[[float, str], None]] = None)
 
 
 def generate(model: str, prompt: str, system: Optional[str] = None, json_mode: bool = True, timeout: float = 90,
-             keep_alive: Union[str, int] = "10m") -> dict:
-    """One non-streaming /api/generate call: {text, tokens, prompt_tokens, ms, load_ms, eval_ms, model}."""
+             keep_alive: Union[str, int] = "10m", options: Optional[dict] = None) -> dict:
+    """One non-streaming /api/generate call: {text, tokens, prompt_tokens, ms, load_ms, eval_ms, model}. `options` are
+    Ollama's generation options (temperature, num_predict, num_ctx, ...)."""
     body = {"model": model, "prompt": prompt, "stream": False, "keep_alive": keep_alive}
     if system:
         body["system"] = system
+    if options:
+        body["options"] = dict(options)
     if json_mode:
         body["format"] = "json"
     d = _json(_http("POST", "/api/generate", body, timeout=timeout))
