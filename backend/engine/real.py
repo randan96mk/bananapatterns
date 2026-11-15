@@ -40,6 +40,12 @@ logger = setup_logger("real")
 _lock = threading.Lock()
 
 
+
+def _ai_notes(rows: list) -> list:
+    """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None)."""
+    from backend.ai import notes
+    return notes.attach(rows)
+
 def _rules(config: AppConfig, key: Optional[str] = None):
     return tb.rules(config, key or config.real.variant)
 
@@ -1036,7 +1042,7 @@ def summary(config: AppConfig) -> dict:
                         "gross": round(value + st["charges"] - cap, 2), "costs": round(st["charges"], 2),
                         "net": round(value - cap, 2), "return": round((value - cap) / cap * 100, 2),
                         "realised": round(realised, 2), "unrealised": round(value - cap - realised, 2), "nifty": nifty},
-            "positions": positions, "checks": checks, "notes": st.get("notes", []), "trades": trades, "won": len(won),
+            "positions": _ai_notes(positions), "checks": checks, "notes": st.get("notes", []), "trades": trades, "won": len(won),
             "closed": len(trades),
             "profit_factor": round(sum(t["net"] for t in won) / loss, 2) if loss else None, "drawdown": round(dd, 2),
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq],

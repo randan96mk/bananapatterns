@@ -147,7 +147,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       </Panel>
       <Panel title="NSE sources">
         <KV pairs={[['Results calendar', evs?.last_fetch ? `${evs.upcoming_results} upcoming · ${stamp(evs.last_fetch)}` : 'not fetched yet'],
-          ['Exchange filings', fils?.last_fetch ? `${fils.important_today} important today · ${stamp(fils.last_fetch)}` : 'not fetched yet'],
+          ['Exchange filings', fils?.last_fetch ? `${fils.important_today} important · ${stamp(fils.last_fetch)}` : 'not fetched yet'],
           ['Bulk / block deals', deals?.last_fetch ? `fetched ${stamp(deals.last_fetch)}` : 'not fetched yet']]} />
         <div className="rnote">Results calendar: NSE board meetings, refreshed by the evening job. Filings: every 15 min, 7:00 AM – 11:00 PM; deals come with the filings.</div>
       </Panel>

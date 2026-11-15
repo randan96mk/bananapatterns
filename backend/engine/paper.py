@@ -31,6 +31,12 @@ logger = setup_logger("paper")
 _lock = threading.Lock()
 
 
+
+def _ai_notes(rows: list) -> list:
+    """🤖 The newest AI note per held stock on the position rows (ai_note: {title, severity, at} | None)."""
+    from backend.ai import notes
+    return notes.attach(rows)
+
 def variants(config: AppConfig) -> list[str]:
     """The enabled accounts that exist: a saved config still listing "A" gives ["E"]."""
     return [v for v in (config.paper.variants or ["E"]) if v in tb.MODES] or list(tb.MODES)
@@ -477,7 +483,7 @@ def _one(key: str, st: dict, config: AppConfig) -> dict:
     won = [t for t in trades if t["net"] > 0]
     gain, loss = sum(t["net"] for t in won), -sum(t["net"] for t in trades if t["net"] <= 0)
     return {"name": st["name"], "start_date": st["started"], "as_of": st["as_of"], "updated_at": st.get("updated_at"),
-            "account": account(key, st), "deposits": deposits, "drawdown": round(dd, 2), "positions": positions,
+            "account": account(key, st), "deposits": deposits, "drawdown": round(dd, 2), "positions": _ai_notes(positions),
             "orders": st.get("orders", []), "skipped": st.get("skipped", []), "cap": st.get("cap", p.max_pos),
             "allowed": st.get("allowed"), "filter": st.get("filter"), "decided": st.get("decided"),
             "trades": trades, "won": len(won), "closed": len(trades), "notes": st.get("notes", []), "top": st.get("top"),

@@ -698,3 +698,23 @@ def tonight(config: AppConfig, now: Optional[datetime] = None) -> list[dict]:
         avg = _avg_ms(kind) or DEFAULT_EST_S * 1000
         out.append({"kind": kind, "label": label, "n": n, "queued": queued.get(kind, 0), "est_s": round(n * avg / 1000)})
     return out
+
+
+def attach(rows: list, days: int = 7, today: Optional[str] = None) -> list:
+    """Give every position row (dicts with a "symbol") an `ai_note: {title, severity, at} | None` from the stock's
+    newest note within `days`. Used by the Real, Paper and Futures summaries and the overview. Never raises."""
+    for r in rows:
+        if isinstance(r, dict):
+            r.setdefault("ai_note", None)
+    try:
+        syms = {r["symbol"] for r in rows if isinstance(r, dict) and r.get("symbol")}
+        if not syms:
+            return rows
+        latest = latest_for_symbols(syms, days, today or now_ist()[:10])
+        for r in rows:
+            n = latest.get(r.get("symbol")) if isinstance(r, dict) else None
+            if n:
+                r["ai_note"] = {"title": n["title"], "severity": n["severity"], "at": n["at"]}
+    except Exception:                                   # a note is decoration: the summary never fails on it
+        logger.exception("AI notes attach failed")
+    return rows

@@ -9,6 +9,7 @@ import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
+import AiDot from './AiDot';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const STATUS = { sent: 'ok', failed: 'bad', skipped: 'w', added: 'a', removed: 'w', edited: '' };
@@ -301,7 +302,7 @@ export default function RealPage() {
   // Strategy is the short tag at 60 px; under 1440 px % and Days are dropped (nw: the row title keeps them) so Stock keeps 140 px+
   const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 170 : 240, ell: true }, { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: '', w: 50, key: 'edit' }];
   const posRows = (d.positions || []).flatMap((x) => [{ key: x.symbol, title: `${pct(x.buy ? (x.last / x.buy - 1) * 100 : null)} · ${x.days ?? '—'} days · bought ${day(x.in)} · before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.px_orig != null && x.px_orig !== x.buy ? ` · first entry ${rs(x.px_orig)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}`,
-    cells: [<><b>{x.symbol}</b>{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. entry</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a" title="placed by hand, tracked and exited by the app's rules">by hand</Tag>}{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>,
+    cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} />{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. entry</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a" title="placed by hand, tracked and exited by the app's rules">by hand</Tag>}{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>,
       <span className={`v${x.variant}`}>{x.variant === 'E' ? 'E+' : x.variant}</span>, x.qty, rs(x.buy), rs(x.last), <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
       <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, <>{x.days ?? '—'} · {day(x.in)}</>,
       <button type="button" className={`btn ${edit === x.symbol ? 'primary' : 'ghost'}`} style={PEN} title="correct qty / entry / stop · remove from tracking" onClick={() => { setEdit(edit === x.symbol ? null : x.symbol); setAdding(false); }}>✎</button>] },

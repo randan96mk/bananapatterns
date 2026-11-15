@@ -9,6 +9,7 @@ import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { useIsPhone } from '../useMedia';
 import { Head, Chip, Tag, Cards, Card, Bar, Panel, FixedTable, LineChart, Act } from './ui2';
+import AiDot from './AiDot';
 
 const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
 const COLOR = { E: '#b39dff' };
@@ -105,7 +106,7 @@ export default function PaperPage() {
   const posRows = shown.flatMap((k) => { const a = accts[k]; return [
     `${NAME[k]} · ${a.positions.length} of ${a.allowed ? a.cap : d.max_pos}${a.filter?.state === 'HALF' ? ' · HALF' : ''} · ${signed(a.positions.reduce((s, x) => s + (x.net || 0), 0))}`,
     ...a.positions.map((x) => ({ key: k + x.symbol, title: `before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.warning ? ` · ⚠️ ${x.warning}` : ''}`,
-      cells: [<><b>{x.symbol}</b>{x.warning && <Tag c="w" title={x.warning}>⚠️ split?</Tag>}</>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, x.qty, <>{day(x.in)} · {rs(x.buy)}</>, x.sma != null ? rs(x.sma) : '—', rs(x.last),
+      cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} />{x.warning && <Tag c="w" title={x.warning}>⚠️ split?</Tag>}</>, <span className={`v${k}`}>{k === 'E' ? 'E+' : k}</span>, x.qty, <>{day(x.in)} · {rs(x.buy)}</>, x.sma != null ? rs(x.sma) : '—', rs(x.last),
         <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
         <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, x.days ?? '—'] }))]; });
   // orders for the next open: SELL rows first, BUY rows up to the free slots, then the skipped count

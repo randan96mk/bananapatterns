@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { inr, pct, cls, signed } from '../fmt';
 import { Tag } from './ui2';
+import AiDot from './AiDot';
 
 // 📱 Home's open positions on a phone (≤ 760 px): one scrollable chip line (filter + sort) and a book picker, a
 // "net · worst case" line, one 44 px fold row per book (Real open by default, Paper E+ and Intraday folded; the
@@ -25,7 +26,7 @@ const Meter = ({ d }) => (d == null ? <small style={{ color: 'var(--muted)' }}>�
 
 function Row({ p, open, onOpen, f }) {
   return <div className="ppr" data-key={p.book + p.symbol} onClick={onOpen} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 84px 92px', gap: 6, alignItems: 'center', height: 46, padding: '0 10px', borderBottom: open ? 0 : '1px solid var(--rowline)', background: open ? 'var(--bg)' : undefined, cursor: 'pointer' }}>
-    <div style={ELL}><b style={{ fontSize: 13 }}>{p.symbol}</b>{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near</Tag>}{f === 'new' && <Tag c="a">new</Tag>}<small style={SMALL}>{p.qty} · now {p.now ?? '—'}</small></div>
+    <div style={ELL}><b style={{ fontSize: 13 }}>{p.symbol}</b><AiDot note={p.ai_note} dot />{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near</Tag>}{f === 'new' && <Tag c="a">new</Tag>}<small style={SMALL}>{p.qty} · now {p.now ?? '—'}</small></div>
     <div style={{ textAlign: 'right', ...ELL }}><b className={`mono ${cls(p.pnl)} ${f && f !== 'new' ? `flash-${f}` : ''}`} style={{ fontSize: 12.5 }}>{signed(p.pnl)}</b><small className={cls(p.pct)} style={{ ...SMALL, color: undefined }}>{pct(p.pct)}</small></div>
     <div style={{ textAlign: 'right', ...ELL }}><Meter d={p.stop_dist} /></div>
   </div>;
