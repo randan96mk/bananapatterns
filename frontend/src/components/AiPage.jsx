@@ -302,21 +302,13 @@ export default function AiPage() {
       <Card unit="n" label="Switched off" value={`${muted.length} kind${muted.length === 1 ? '' : 's'}`} num={muted.length} k={muted.length ? 'warn' : 'muted'} sub={muted.length ? muted.map((k) => SLABEL[k] || k).join(' · ') : 'any kind can be switched off'}
         fact={<span className="muted">the switches in the scorecard below</span>} title={muted.length ? `off: ${muted.join(', ')} · settings ai.suggest_muted` : 'every kind is on'} />
     </Cards>
-    <div className="two">
+    <AiViewRecord view={d.view} phone={phone} onChanged={reload} />
+    <div className="rd">
       <Panel id="sugg-scorecard" title="Scorecard · how each kind has done" meta={ST.month ? `since 1 ${monthName}` : null} right={phone ? null : <Meta title="helped = the stock moved the way the suggestion said within 5 sessions · judged by code, not by the model">"helped" = the stock moved the way the suggestion said within 5 sessions · judged by code, not by the model</Meta>}>
         <FixedTable cols={scCols} rows={scRows} empty="Loading…" />
         <div className="rnote">"helped" = the stock moved the way the suggestion said within 5 sessions · judged by code, not by the model · a switch off stops that kind from being born (ai.suggest_muted) · open ones stay</div>
       </Panel>
-      <div className="rd" style={COL}>
-        <Panel title="How a suggestion is made" meta="every night, after the notes">
-          {HOW.map(([t, m], i) => <Act key={t} icon={i + 1} cls="act" text={t} meta={m} />)}
-        </Panel>
-        <Panel title="Rules">
-          {RULES.map((t) => <Act key={t} icon="•" cls="act" text={t} />)}
-        </Panel>
-      </div>
     </div>
-    <AiViewRecord view={d.view} phone={phone} onChanged={reload} />
     <div className="two">
       <div className="rd" style={COL}>
         <Panel title={phone ? 'Notes' : 'Notes · tonight'} meta={notes.total ? `${notes.total} · newest first` : null} right={<Seg small v={filt} set={setFilt} opts={[['all', 'All'], ['high', 'High'], ['filing', 'Filings'], ['deal', 'Deals'], ['why', 'Why'], ['brief', 'Brief']]} />}>
@@ -375,6 +367,14 @@ export default function AiPage() {
           {(d.never || []).map((x) => <Act key={x} icon="✗" cls="down" text={x} />)}
         </Panel>
       </div>
+    </div>
+    <div className="two">
+      <Panel title="How a suggestion is made" meta="every night, after the notes">
+        {HOW.map(([t, m], i) => <Act key={t} icon={i + 1} cls="act" text={t} meta={m} />)}
+      </Panel>
+      <Panel title="Rules">
+        {RULES.map((t) => <Act key={t} icon="•" cls="act" text={t} />)}
+      </Panel>
     </div>
     <div className="rnote">A local model in the container next to the app: it reads what the app already has and writes notes; it never decides or acts. Nothing leaves this server. Times are IST.</div>
   </div>;
