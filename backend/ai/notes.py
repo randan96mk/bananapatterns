@@ -369,10 +369,18 @@ def _noted_keys(kind: str) -> set:
 
 
 def _failed_keys(since: str) -> set:
-    """Sources whose job failed since `since`: not retried that night (the breaker already counted them)."""
+    """Sources whose job failed since `since`: not retried that night (the breaker already counted them) — except a
+    source that failed ONCE on a timeout ("no answer … within"), which gets one more try: the first call of a night
+    pays the model load and a long filing can run past the limit."""
     with get_db() as conn:
-        return {r[0] for r in conn.execute("SELECT key FROM ai_jobs WHERE kind = 'night' AND key LIKE ? AND status = 'failed' AND created >= ?",
-                                           (KEY_PREFIX + "%", since))}
+        rows = conn.execute("SELECT key, error FROM ai_jobs WHERE kind = 'night' AND key LIKE ? AND status = 'failed' AND created >= ?",
+                            (KEY_PREFIX + "%", since)).fetchall()
+    n = {}
+    timeouts = {}
+    for key, err in rows:
+        n[key] = n.get(key, 0) + 1
+        timeouts[key] = timeouts.get(key, 0) + (1 if "within" in (err or "") else 0)
+    return {k for k, c in n.items() if not (c == 1 and timeouts.get(k) == 1)}
 
 
 def _wanted_filing(f: dict) -> bool:
@@ -586,14 +594,15 @@ def where_text(symbol: str, config: AppConfig, sc: Optional[dict] = None) -> tup
 
 def alert_high(note: dict, config: AppConfig, notifier=None) -> bool:
     """The separate message for a high note that no filing / deal alert carried: key {day}|ai-note-{id}, channel
-    "filing"; once. Builds a Notifier from the alerts config when none is given."""
+    "filing" (held in the AI quiet hours: `quiet=True`); once. Builds a Notifier from the alerts config when none is given."""
     from backend.alerts import messages as msg
     from backend.alerts.dispatch import Notifier
     if note.get("alerted") or note["severity"] != "high":
         return False
-    notifier = notifier or Notifier(config.alerts)
+    notifier = notifier or Notifier(config.alerts, ai=config.ai)
     where, hint = where_text(note["symbol"], config, note.get("scope"))
-    sent = notifier.send(f"{note['day']}|ai-note-{note['id']}", "filing", msg.note_alert(note, where, hint), note["symbol"])
+    sent = notifier.send(f"{note['day']}|ai-note-{note['id']}", "filing", msg.note_alert(note, where, hint), note["symbol"],
+                         quiet=True)                         # 🤖 held in the AI quiet hours like the "ai" kind
     if sent:
         mark_alerted(note["id"])
     return sent

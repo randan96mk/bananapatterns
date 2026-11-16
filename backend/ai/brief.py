@@ -305,13 +305,20 @@ def save(f: dict, brief: dict, model: str, ms: int) -> Optional[int]:
 
 
 def send(note_id: int, f: dict, lines: list[str], config: AppConfig, notifier=None) -> bool:
-    """The Telegram message, once per day (key {day}|ai-brief, channel "system": never held)."""
+    """The Telegram message, once per day (key {day}|ai-brief, channel "system": never held), then the AI messages held
+    in the quiet hours (`Notifier.flush_quiet`: with the brief or at quiet_to, whichever comes first)."""
     from backend.alerts import messages as msg
     from backend.alerts.dispatch import Notifier
-    notifier = notifier or Notifier(config.alerts)
+    notifier = notifier or Notifier(config.alerts, ai=config.ai)
     sent = notifier.send(f"{f['day']}|ai-brief", "system", msg.ai_brief(f["day"], f["at"], lines))
     if sent:
         notes.mark_alerted(note_id)
+    flush = getattr(notifier, "flush_quiet", None)          # 🤖 quiet hours: the night's held AI messages follow the brief
+    if callable(flush):
+        try:
+            flush()
+        except Exception:
+            logger.exception("brief: the quiet-hours flush failed")
     return sent
 
 

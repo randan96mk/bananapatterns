@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { inr, pct, cls, signed } from '../fmt';
-import { Tag } from './ui2';
+import { Tag, AiTag } from './ui2';
 import AiDot from './AiDot';
 import { viewOf, AiView, aiChanged, tone } from './AiView';
 
@@ -40,7 +40,7 @@ function Details({ p, onStock, onGo, v }) {
   return <div className="pdx" style={{ background: 'var(--bg)', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px 8px', padding: '6px 10px 10px', borderBottom: '1px solid var(--rowline)', fontSize: 11 }}>
     {cell('Entry', p.entry ?? '—')}{cell('Stop', p.stop ?? '—')}{cell('Days', daysSince(p.opened) ?? '—')}
     {cell('Trail', trail)}{cell('Results', p.results_date ? `${dayName(p.results_date)}${p.results_in != null ? ` · ${p.results_in}s` : ''}` : '—')}{cell('Book', p.account)}
-    {v && <div style={{ gridColumn: '1 / -1', ...ELL }} title={aiChanged(v)}><AiView compact v={v} /> <span className="muted">{aiChanged(v)}</span></div>}
+    {v && <div style={{ gridColumn: '1 / -1', ...ELL }} title={aiChanged(v)}><AiView compact v={v} /> <AiTag of={v} /> <span className="muted">{aiChanged(v)}</span></div>}
     <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 6, marginTop: 4 }}>
       <button type="button" className="btn small" style={BTN} onClick={(e) => { e.stopPropagation(); onStock(p.symbol); }}>chart</button>
       {p.book === 'real' && <button type="button" className="btn small" style={BTN} title="correct qty / entry / stop on the Real page" onClick={(e) => { e.stopPropagation(); try { sessionStorage.setItem('bp.real.edit', p.symbol); } catch { /* private mode */ } onGo('real'); }}>✎ edit</button>}

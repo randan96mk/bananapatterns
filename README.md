@@ -767,10 +767,35 @@ never block a real alert, and show in the Sent-alerts log as `test`. A wrong tok
 | ⚠️ Failed breakout | a name that crossed its pivot today falls `failed_buffer_pct` (1%) back under it: don't buy / honour the stop | on (with intraday) |
 | 🕒 Act-before-close check | at 3:15 PM, for every Forming name above its pivot: ✅ **holding** (volume on pace ≥ 1.5× and price in the upper half of the day's range), 🟡 weak, or ⛔ extended, with the decision chart and buy zone, so you can act before 3:30 PM. Up to 3 names get their own message; more go in one summary. At 6:30 PM the breakout alert says "✓ flagged at 3:15 PM", and a 3:15 PM "holding" name that didn't confirm gets "✗ didn't confirm on the close" | on |
 | ⚙️ System | Kite login missing (3:30 PM), evening job waiting / failed / partial, no bar from Kite, Nifty 500 additions/removals | on |
+| 🌙 Day summary | at `day_summary_time` (3:40 PM) on trading days, ONE message across the books (below) | on |
 | ⚠️ Low-volume breakout · ▫️ Left a card | below the volume rule · dropped off a card (noisy) | off |
 
 Every alert is sent **once** (`sent_alerts` key), so rescans and restarts don't repeat it. A failed send is retried on
 the next run.
+
+**🌙 Day summary** (`backend/alerts/daysum.py` gathers, `messages.day_summary` writes, the scheduler job `day_summary`
+sends; key `{day}|day-summary`, kind `summary`, never held, recorded in `job_runs`). One message at
+`alerts.day_summary_time` (3:40 PM, after the options book's 3:35 PM row) on trading days, one line per book that had
+anything today, the value and the day's P&L always in the same place; a book with nothing is left out:
+
+```
+🌙 Day summary · Mon 16 Nov
+💰 Real · ₹3,08,793 · today −₹1,702 · 1 stop hit (LAURUSLABS) · 0 orders failed · tomorrow 3 BUYs 1 EXIT
+📝 Paper E+ · ₹3,11,153 · today −₹1,751 · 1 stop hit
+📐 Futures · paper · ₹4,90,311 · today +₹3,150 · 2 lots · roll Thu
+🧩 Options · paper · ₹2,99,417 · today −₹583 · 1 trade · VWAP stop
+⚡ Signal track · 3 trades · 1 won · net −₹435 on ₹3,00,000
+🤖 AI · tonight after 6:30 PM: notes, why, suggestions, ratings
+```
+
+Real: the value at the stop watch's last price, today = value − the previous close's equity (money added today left
+out), the stops sent today, the failed orders, and tomorrow's BUYs / EXITs once the evening has planned them. Paper is
+marked by the evening job, so until then its line says "today at the 6:30 PM mark". Futures: the long side's primary
+account (value, today's MTM, open lots, the roll day). Options: the `options_days` row of the day. The signal track /
+paper intraday: only with trades. AI: what runs tonight, or "n notes · n suggestions · n rated" once the night has run.
+The options book's own 3:35 PM summary line and the Intraday Flow's day-summary line are **no longer sent** on their
+own: their data stays on the pages, in the API's alert list and in `options_days`. Settings: `alerts.day_summary` (on),
+`alerts.day_summary_time` (15:40). Tests: `tests/test_day_summary.py`.
 
 **Decision charts** (`backend/alerts/decision.py`). Each stock alert carries an annotated image plus matching text lines,
 so you can decide at a glance:
@@ -1373,8 +1398,9 @@ the tick from the alerts the book recorded, each once — the key `day|opt-kind-
 repeats one; no extra Kite call): 🧭 the bias found with the price line (range, VWAP, previous-day level), the SELL / BUY
 legs with lots and credit, stop / target / worst case, margin · sessions · VIX, the chain line; 🎯 target / 🛑 premium,
 VWAP or breakeven stop / ⏱ time or hard exit / ✋ closed by you with the P&L, the time held and "breakeven stop was armed
-at …"; 🧭 "no trade today" at 11:00 with the range, where VWAP sat and the next look; 🌙 the 15:35 day summary (trades,
-P&L, book value and return since the start, days traded of days, win rate); one-liners for "bias found · chain
+at …"; 🧭 "no trade today" at 11:00 with the range, where VWAP sat and the next look; the 3:35 PM day summary (trades,
+P&L, book value and return since the start, days traded of days, win rate) is recorded for the API but no longer sent:
+the book's line is in the one 🌙 day summary at 3:40 PM; one-liners for "bias found · chain
 disagrees", the daily loss limit, an event day skipped, VIX half size, no sold strike with enough premium, and "no data ·
 Kite login missing". Rupees use the Indian grouping (₹3,06,800), times are 12-hour IST. **Commands**: `opt` (today's
 status, the open spread with its P&L, the book), `opt close` (close the open spread now, the exit line replies), `opt
@@ -1608,6 +1634,11 @@ the page's own button calls (never HTTP, never an order, a setting, a switch or 
   trade rows carry `ai_why: {id, text, at} | null` (paper trade rows now carry their `id`). One evening message
   "🧾 Today's exits, explained · Tue 17 Nov" lists each closed trade (book icon, name, how it ended, net) with its line
   (key `{day}|ai-why`; only when ≥ 1 trade closed; a held name that merely gapped gets a row, not a message line).
+  **One entry per stock across books**: a stock closed the same day in several books (Real and Paper E+ on the same
+  stop) is one evidence block (each book's trade line, then the stock's lines once), one model call and one row with
+  `source_key multi:<SYMBOL>:<day>`, `book` the first book's, `data.trades` / `data.keys` / `data.books` the books'
+  trades; `attach()` finds the line for every trade row through `data.keys`. The evening message lists the stock once:
+  "💰📝 LAURUSLABS · stop hit · Real −₹1,702 · Paper −₹1,751" then the one cause line. Options spreads stay apart.
   `POST /api/ai/why/run` queues the job now (409 while it runs); the lines are in `GET /api/ai/notes?kind=why`.
 
 **Settings** (`ai.*`):
@@ -1664,7 +1695,19 @@ and the route).
 |---|---|---|
 | `brief` | true | the morning brief on trading days (one night-model call, one Telegram message) |
 | `brief_time` | 09:00 | when the brief is written (its window runs to 9:15 AM, before the 9:16 send) |
+| `quiet_from` / `quiet_to` | 23:00 / 09:00 | AI quiet hours on Telegram (below); equal times switch them off |
 | `ask` | true | ask the app: the day model answers from one whitelisted read-only tool, any time |
+
+**🤖 AI on Telegram: the marker and the quiet hours.** Every model-written line starts "<i>AI ·</i> " (the 🤖 stays where
+it was); a message the model wrote entirely opens "[AI] " in its bold header (the brief, today's exits explained, the
+suggestions list, a note alert, the ask answer). Code-written lines carry nothing (the counts, the levels, the day
+summary, a suggestion whose why fell back to the evidence). **Quiet hours** (`ai.quiet_from` 11:00 PM → `ai.quiet_to`
+9:00 AM, IST): a message of kind `ai` (why, suggestions, ratings, the scorecard) or one sent with `quiet=True` (the
+separate note alerts, channel `filing`) is stored in `alert_outbox` (batch `ai-quiet:<day>`, `sent_alerts` "held for the
+AI quiet hours") instead of being sent; at `quiet_to` (the scheduler's tick) or right after the morning brief, whichever
+comes first, `Notifier.flush_quiet()` sends one line "🤖 held overnight · n messages" and then each held message on its
+own, in order. Never held: the morning brief (kind `system`), the Kite login lines, stops, orders, the day summary, the
+flow and options lines, a filing / deal alert carrying an AI line. Tests: `tests/test_ai_quiet.py`.
 
 Tests: `tests/test_ai_brief.py` (the settings and the guard windows, the facts from the books, the validator, the run with
 its retry and once-a-day guard, the due rule and the scheduler job, the routes) and `tests/test_ai_ask.py` (the whitelist
@@ -1985,6 +2028,7 @@ The same pipeline without the UI (log in via the dashboard first, or store a tok
 | `breakout.*`: `test_years` / `warmup_years` / `warmup_sessions` / `capital` / `max_pos` / `top` / `min_price` / `vol_mult` / `stop_pct` / `atr_mult` / `hi_window` / `exit_sma` / `regime` / `slippage_pct` / `stress_slippage_pct` / `sell_pct` | 6 / 1.2 / 260 / 3,00,000 / 10 / 200 / 100 / 1.5 / 8 / 2 / 20 / 50 / on / 0.10 / 0.25 / 8 | Trend Breakout backtest and evening scan |
 | `top_setups` / `top_setups_time` / `plan_top_n` | true / 19:00 / 5 | ranked setups after the evening scan |
 | `morning_plan` / `morning_plan_time` · `gap_check` / `gap_check_time` | true / 08:50 · true / 09:10 | morning plan and opening check |
+| `day_summary` / `day_summary_time` | true / 15:40 | 🌙 one close-of-day Telegram message across the books |
 | `coiled_volume` / `coiled_within_pct` | 0.5 / 3.0 | coiled: volume ≤ 0.5× average, within 3% of the pivot |
 | `position_guard` / `profit_zone_pct` / `extended_pct` / `failed_days` | true / 20 / 25 / 3 | position guard rules |
 | `live_guard` / `live_drop_pct` / `live_drop_volume` / `holdings_refresh_min` / `hard_stop` | true / 4 / 2 / 30 / false | live position guard in market hours |
@@ -2965,3 +3009,16 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   `send_orders` with Telegram `full SYMBOL`, the exit-watch alert); the dry-run AI line, the nightly count, the weekly
   record line; the ask tool `levels`.
 - Tests: `tests/test_ai_view.py` (47).
+
+### 2026-11-16: Batch 1 · one day summary, why per stock, the AI marker, AI quiet hours (backend)
+- 🌙 `backend/alerts/daysum.py` + `messages.day_summary` + the scheduler job `day_summary` at `alerts.day_summary_time`
+  (3:40 PM; `alerts.day_summary`, the schedule row "🌙 Day summary"): one close-of-day message across Real, Paper,
+  Futures, Options, the signal track and the AI. The options 3:35 PM summary line and the flow day-summary line are no
+  longer sent on their own (their rows and stats stay).
+- 🧾 `backend/ai/why.py` `merge()`: a stock closed in several books the same day is one item, one model call, one
+  `multi:<SYM>:<day>` row whose `data.keys` lets `attach()` find it for every trade row; one line in the evening message
+  with the books' nets.
+- 🤖 `messages.py`: "<i>AI ·</i> " on every model-written line, "[AI] " in the header of a message the model wrote.
+- 🤖 `AIConfig.quiet_from / quiet_to` (23:00 / 09:00), `dispatch.AI_QUIET_KINDS`, `Notifier.send(..., quiet=True)`, the
+  `ai-quiet:<day>` outbox batch, `Notifier.flush_quiet()` at `quiet_to` (scheduler tick) or with the brief.
+- Tests: `tests/test_day_summary.py` (12), `tests/test_ai_quiet.py` (11), `tests/test_ai_why.py` (+4).

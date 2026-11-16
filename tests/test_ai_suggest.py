@@ -270,7 +270,7 @@ def test_run_night_sends_the_evening_list_once(ollama, cfg):
     out = suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
     assert out["note"].startswith("1 suggestion(s) born") and len(fake.sent) == 1
     text = fake.sent[0][1]
-    assert text.startswith("🤖 <b>1 suggestion</b> for Wednesday") and "<b>#1</b> ⏸ <b>Skip PLAN1 tomorrow</b> · high" in text
+    assert text.startswith("🤖 <b>[AI] 1 suggestion</b> for Wednesday") and "<b>#1</b> ⏸ <b>Skip PLAN1 tomorrow</b> · high" in text
     assert "until 9:16 AM, 18 Nov" in text and "accept N" in text and no_brokers(text)
     suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
     assert len(fake.sent) == 1                                                                   # the same key: once a day
@@ -433,7 +433,7 @@ def test_telegram_commands_two_step(cfg):
     b, n = BotCommands(st, clock=lambda: when), Notifier(cfg.alerts, fake)
     assert b.poll_once(n) == 11
     lst, which, none, why, acc, confirm, noyes, yes, dis, dis2, lst2 = (h for _, h in fake.sent)
-    assert lst.startswith("🤖 <b>3 suggestions</b>") and f"<b>#{sk}</b> ⏸" in lst and "accept N" in lst
+    assert lst.startswith("🤖 <b>[AI] 3 suggestions</b>") and f"<b>#{sk}</b> ⏸" in lst and "accept N" in lst
     assert which.startswith("Which one? accept N") and none == "No suggestion #9."
     assert why.startswith(f"<b>#{sk}</b> ⏸ <b>skip PLAN1</b>") and "🤖 high note · pledge 4.43%" in why and "accept → POST /api/real/skip" in why
     assert acc == f"✅ <b>#{sk} accepted</b> · skip PLAN1 · the action ran." and real._skips(real._state(), TOMORROW)["PLAN1"]["note"] == f"AI suggestion #{sk}"
@@ -463,7 +463,7 @@ def test_morning_flags_and_the_preview_line(cfg):
     m = real.morning(cfg, datetime(2026, 11, 18, 9, 0, tzinfo=IST))
     assert m["ai_flags"] == {"PLAN1": "flag PLAN1 — because"}
     text = msg.real_preview(real._state()["orders"], "E", "09:16", True, False, m)
-    assert "🟢 BUY <b>PLAN1</b> 40" in text and "\n   🤖 <i>flag PLAN1 — because</i>\n🟢 BUY <b>PLAN2</b>" in text
+    assert "🟢 BUY <b>PLAN1</b> 40" in text and "\n   🤖 <i>AI ·</i> <i>flag PLAN1 — because</i>\n🟢 BUY <b>PLAN2</b>" in text
     assert "🤖" not in msg.real_preview(real._state()["orders"], "E", "09:16", True, False, {**m, "ai_flags": {}})
 
 

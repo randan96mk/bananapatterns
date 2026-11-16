@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import ResultsTag from './ResultsTag';
 import FlagTags from './FlagTags';
-import { Panel, FixedTable, Tag } from './ui2';
-import { useAiViews, viewOf, AiView, AiLevels, aiReasons } from './AiView';
+import { Panel, FixedTable, Tag, AiTag } from './ui2';
+import { useAiViews, viewOf, AiView, AiLevels, AiReasons, aiReasons } from './AiView';
 import { useIsPhone } from '../useMedia';
 
 const rs = (v) => (v == null ? '—' : `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`);
@@ -24,14 +24,14 @@ export default function PlanCard({ plan, onSelect }) {
     const row = { key: i.symbol, onClick: () => onSelect(i.symbol), title: v ? aiReasons(v) : undefined, cells: [
       <><span className="muted">{n + 1}</span> {i.tier && <span className={`tier t-${i.tier}`}>{i.tier}</span>} <b>{i.symbol}</b>
         {i.coiled && <Tag c="w" title="coiled: volume dried up">🌀 {i.coiled.volume_x}×</Tag>}<ResultsTag r={i.results} /><FlagTags f={i.flags} />
-        {phone && v && <small style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{aiReasons(v)}</small>}</>,
+        {phone && v && <small style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><AiReasons v={v} /></small>}</>,
       rs(i.pivot), i.dist_to_pivot_pct != null ? `${i.dist_to_pivot_pct.toFixed(1)}%` : '—', rs(i.zone_top), rs(i.stop), i.size ? `~${i.size.qty}` : '—',
-      <AiView v={v} />, v ? aiReasons(v) : <span className="muted">—</span>,
+      <AiView v={v} />, <AiReasons v={v} />,
       v ? <button type="button" className="btn ghost small" aria-expanded={open === i.symbol} onClick={(e) => { e.stopPropagation(); setOpen(open === i.symbol ? null : i.symbol); }}>levels {open === i.symbol ? '▴' : '▾'}</button> : <span className="muted">—</span>] };
     return open === i.symbol ? [row, { key: `${i.symbol}-lv`, span: <><b style={{ fontSize: 12.5 }}>{i.symbol} · levels</b><div style={{ marginTop: 6 }}><AiLevels v={v} pivot={i.pivot} symbol={i.symbol} /></div></> }] : [row];
   });
   return (
-    <Panel title="🎯 Next session's plan" meta={items.length} right={<span>from the {plan.as_of} scan{rated ? <> · <Tag c="a">AI</Tag> view on {rated} of {items.length} · rating only</> : ''}</span>}>
+    <Panel title="🎯 Next session's plan" meta={items.length} right={<span>from the {plan.as_of} scan{rated ? <> · <AiTag title="the AI view: reasons written by the local model; the score and the verdict are set by code" /> view on {rated} of {items.length} · rating only</> : ''}</span>}>
       <FixedTable cols={cols} rows={rows} />
       {rated > 0 && <div className="rnote">ranked by the system · the AI view is for your eyes: the order, sizes and stops are unchanged · scored at 5, 10 and 20 sessions · System › AI › AI view record</div>}
     </Panel>

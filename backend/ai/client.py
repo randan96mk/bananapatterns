@@ -115,6 +115,13 @@ def generate(model: str, prompt: str, system: Optional[str] = None, json_mode: b
             "load_ms": ns("load_duration"), "eval_ms": ns("eval_duration"), "model": d.get("model") or model}
 
 
+def warm(model: str, keep_alive: Union[str, int] = "10m", timeout: float = 240) -> dict:
+    """Load the model into RAM ahead of the first real job (an empty-prompt generate): the night batch pays the load
+    once here instead of inside a job that then runs out of time. {ms, loaded}."""
+    d = _json(_http("POST", "/api/generate", {"model": model, "prompt": "", "keep_alive": keep_alive}, timeout=timeout))
+    return {"ms": round((d.get("total_duration") or 0) / 1e6), "loaded": True}
+
+
 def unload(model: str) -> None:
     """Free the model's RAM at once (a generate with keep_alive 0 and no prompt)."""
     _json(_http("POST", "/api/generate", {"model": model, "keep_alive": 0}, timeout=CONNECT_TIMEOUT_S * 4))

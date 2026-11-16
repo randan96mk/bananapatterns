@@ -292,6 +292,9 @@ class AlertsConfig:
     deals: bool = True                     # 🏦 funds buying / selling in bulk / block deals or raising stakes
     deal_days: int = 10
     deal_min_cr: float = 5.0               # net bulk / block value (₹ crore) a fund must trade to count
+    # 🌙 one close-of-day message across the books (Real, Paper, Futures, Options, the signal track, the AI)
+    day_summary: bool = True               # the day summary on trading days (replaces the options and flow day lines)
+    day_summary_time: str = "15:40"        # after the options book's 3:35 PM summary row
 
 
 @dataclass
@@ -363,7 +366,7 @@ class FlowConfig:
 
 
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
-               "top_setups_time", "morning_plan_time", "gap_check_time")
+               "top_setups_time", "morning_plan_time", "gap_check_time", "day_summary_time")
 
 
 CHOICES = {"b_alerts": ("digest", "push", "off"), "correction_mode": ("caution", "mute_buys"),
@@ -385,6 +388,14 @@ def check_alert_times(sec: "AlertsConfig") -> None:
     for t in sec.login_times:
         if parse(t) < (6, 0):
             raise ValueError(f"login time {t} is before 06:00: a session from then dies at 06:00")
+
+
+def check_ai_times(sec: "AIConfig") -> None:
+    """🤖 The quiet hours are HH:MM (24-hour inside; the pages show them 12-hour)."""
+    for f in ("quiet_from", "quiet_to"):
+        h, _, m = str(getattr(sec, f)).partition(":")
+        if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+            raise ValueError(f"time {getattr(sec, f)!r} must be HH:MM")
 
 
 @dataclass
@@ -455,7 +466,7 @@ class AIConfig:
     day_answers: bool = True               # day answers (the 3B model only) 9:00-15:40
     night_model: str = "qwen2.5:7b-instruct"   # ~4.7 GB; the evening / night batch
     day_model: str = "qwen2.5:3b-instruct"     # ~1.9 GB; quick answers while the market is open
-    timeout_s: int = 90                    # one generate call may take at most this long
+    timeout_s: int = 180                   # one generate call may take at most this long (a long filing on 2.5 cores)
     keep_alive: str = "10m"                # how long a model stays loaded after a call (0 = unload at once)
     min_free_ram_gb: float = 4.0           # no AI work when the server's free RAM is under this
     slow_tick_s: float = 2.0               # ... or when the scheduler's last tick took longer than this
@@ -485,6 +496,10 @@ class AIConfig:
     view_score_buy: int = 60               # score at or over this: buy (held: hold)
     view_score_avoid: int = 40             # score under this: avoid (held: exit-watch); between: wait (held: trim)
     view_max_per_night: int = 40           # names rated a night at most (plan, held, futures, Follow, Screens, in that order)
+    # 🤖 quiet hours: AI messages (notes, why, suggestions, ratings) are held from quiet_from to quiet_to and sent then
+    # (or with the morning brief, whichever first). Never held: the brief, the Kite login, stops, orders. Equal = off.
+    quiet_from: str = "23:00"
+    quiet_to: str = "09:00"
 
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
@@ -551,9 +566,9 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name == "alerts":
+        if name in ("alerts", "ai"):
             try:
-                check_alert_times(sec)
+                (check_alert_times if name == "alerts" else check_ai_times)(sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))

@@ -3,7 +3,7 @@ import * as api from '../services/api';
 import { stamp, ampm, clock } from '../timefmt';
 import { useLive } from '../services/live';
 import { inr, signed, cls } from '../fmt';
-import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Seg, Bar } from './ui2';
+import { Head, Chip, Switch, Tag, AiTag, Panel, FixedTable, Act, Cards, Card, Seg, Bar } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
 import { AiViewRecord } from './AiView';
 
@@ -60,7 +60,7 @@ function NoteRow({ n }) {
     <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flex: 'none', marginTop: 1 }}>{KIND_ICON[n.kind] || '🤖'}</span>
     <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, whiteSpace: 'nowrap' }}>
-        <Tag c="a">AI</Tag>{sym}<span className="muted">· {n.kind}</span><Tag c={SEV_TAG[n.severity] || ''}>{n.severity}</Tag>
+        <AiTag of={n} />{sym}<span className="muted">· {n.kind}</span><Tag c={SEV_TAG[n.severity] || ''}>{n.severity}</Tag>
         <span className="muted" style={{ flex: 'none' }}>· {n.kind === 'why' ? `${BOOKN[n.book] || n.book || ''} trade` : scopeText(n.scope)} ·</span><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.title}</span></div>
       <div style={{ color: 'var(--muted)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', marginTop: 2 }} title={n.text}>{n.text}</div>
       {n.acts?.length > 0 && <div style={{ display: 'flex', gap: 6, marginTop: 4, minWidth: 0, overflow: 'hidden' }}>{n.acts.map((a) => <span key={a} style={CHIP} title={a}>→ {a}</span>)}</div>}
@@ -75,7 +75,7 @@ function BriefRow({ n }) {
   return <div style={{ display: 'flex', gap: 10, padding: '9px 14px', borderBottom: '1px solid var(--rowline)', minWidth: 0, alignItems: 'flex-start' }} title={`${n.title} · written from the plans and filings · no action taken`}>
     <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flex: 'none', marginTop: 1 }}>☀️</span>
     <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, whiteSpace: 'nowrap' }}><Tag c="a">AI</Tag><b>{n.title}</b><span className="muted">· brief</span><span className="muted" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>· {lines.length} line{lines.length === 1 ? '' : 's'}</span></div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, whiteSpace: 'nowrap' }}><AiTag of={n} /><b>{n.title}</b><span className="muted">· brief</span><span className="muted" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>· {lines.length} line{lines.length === 1 ? '' : 's'}</span></div>
       {lines.map((l, i) => <Ell key={i} title={l}><span className="muted">· </span>{l}</Ell>)}
       <div className="muted" style={{ fontSize: 11, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={meta}>{meta}</div>
     </div></div>;
@@ -89,7 +89,7 @@ function AskRow({ a, big }) {
     <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
       <Ell title={a.question}><b>{a.question}</b></Ell>
       <div style={{ color: a.ok ? 'var(--text)' : 'var(--bad)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: big ? 4 : 2, WebkitBoxOrient: 'vertical', marginTop: 2 }} title={a.answer || a.error || ''}>
-        {a.answer || (a.error ? `✗ ${a.error}` : a.status === 'queued' || a.status === 'running' ? 'thinking…' : '—')}</div>
+        {a.answer && <><AiTag of={a} /> </>}{a.answer || (a.error ? `✗ ${a.error}` : a.status === 'queued' || a.status === 'running' ? 'thinking…' : '—')}</div>
       <div className="muted" style={{ fontSize: 11, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={meta}>{meta}</div>
     </div></div>;
 }
@@ -337,7 +337,7 @@ export default function AiPage() {
       </div>
       <div className="rd" style={COL}>
         <Panel title="Morning brief" meta={B2.day ? `${day(B2.day)} · ${clock(B2.last_at)}` : 'not written yet'} right={<Meta>{st.brief ? `at ${ampm(st.brief_time)} on a trading day` : 'off (Settings → Local AI → brief)'}</Meta>}>
-          {B2.lines?.length ? B2.lines.map((l, i) => <Act key={i} icon="☀️" text={<Ell title={l}>{l}</Ell>} />)
+          {B2.lines?.length ? B2.lines.map((l, i) => <Act key={i} icon="☀️" text={<Ell title={l}><AiTag of={B2} /> {l}</Ell>} />)
             : <p className="muted small rempty">not written yet · at {ampm(st.brief_time)} on a trading day · from the plans, the books and the night's notes · one Telegram message</p>}
           <div className="rnote">written from the plans and filings · no action taken · also in the Notes feed (Brief) and on System → Alerts as sent</div>
         </Panel>

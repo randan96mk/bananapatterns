@@ -113,7 +113,14 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   view_exit_watch_alert: 'An alert when a held name closes under the model\'s "setup fails below" level · a flag only, never an exit · locked the same way (true/false)',
   view_score_buy: 'Verdict buy at or above this score (hold for a held name); set by code from the score, not by the model',
   view_score_avoid: 'Verdict avoid under this score (exit-watch for a held name); in between = wait / trim',
-  view_max_per_night: 'Names rated a night at most (plan first, then held, futures, Follow, Screens; ~10 s a name)' };
+  view_max_per_night: 'Names rated a night at most (plan first, then held, futures, Follow, Screens; ~10 s a name)',
+  // 🤖 quiet hours on Telegram: AI messages inside the window are held and sent together at its end (or with the brief)
+  quiet_from: 'AI messages on Telegram are held from here (24-hour HH:MM, IST; "" = never held) · stops, orders, Kite login and the brief are never held',
+  quiet_to: '… until here; the held AI messages then go out in order, after one "held overnight · n messages" line' };
+// 🌙 the one close-of-day Telegram summary across all the books (alerts section)
+Object.assign(HELP_AI, {
+  day_summary: 'One close-of-day Telegram summary across all the books (Real, Paper E+, Futures, Options, Signal track, AI) on trading days; replaces the separate options and signal-track day lines (true/false)',
+  day_summary_time: 'When the day summary is sent (24-hour HH:MM, IST)' });
 Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).

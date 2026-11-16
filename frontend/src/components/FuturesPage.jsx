@@ -144,7 +144,7 @@ function MorningPanel({ onReplan, replanning, onErr }) {
     if (window.confirm(`Hold every futures entry today?\n\n${entries.map(line).join('\n')}\n\n${exits.length ? `The ${exits.length} EXIT${exits.length > 1 ? 's' : ''} still go${exits.length > 1 ? '' : 'es'}. ` : ''}A hold is for today only (paper fill and real send alike). The kill switch and the enable switch stay as they are.`)) act(api.futuresHold(), 'hold');
   };
   const real = (m.guard?.real_sides || []).length > 0 && m.guard.enabled && !m.guard.killed;
-  const cols = [{ h: 'Contract' }, { h: 'Side', w: 62 }, { h: 'Books', w: 96, lo: true }, { h: 'Lots', w: 50, n: true }, { h: '≈ Price', w: 90, n: true, lo: true }, { h: 'Margin', w: 96, n: true },
+  const cols = [{ h: 'Contract', ell: true }, { h: 'Side', w: 62 }, { h: 'Books', w: 96, lo: true }, { h: 'Lots', w: 50, n: true }, { h: '≈ Price', w: 90, n: true, lo: true }, { h: 'Margin', w: 96, n: true },
     { h: 'Stop', w: 90, n: true, lo: true }, { h: 'Results', w: 80 }, { h: 'Why', w: 160, lo: true, ell: true }, { h: after ? 'Sent' : 'Take', w: 150 }];
   const cell = (o) => {
     if (o.status || after) return o.status ? <><Tag c={STATUS[o.status] || ''}>{o.status}</Tag>{o.at && <span className="mono small"> {clock(o.at, true)}</span>}</> : <span className="small">{o.books?.includes('real') ? 'not sent' : 'paper'}</span>;
@@ -152,7 +152,7 @@ function MorningPanel({ onReplan, replanning, onErr }) {
     return <Sw><Switch on={!o.skip} disabled={!!busy} title={o.skip ? `skipped today by ${o.skip.by}${o.skip.note ? ` · ${o.skip.note}` : ''} · switch on to take it after all` : 'switch off to skip this entry today (paper and real)'} onChange={(on) => act(api.futuresSkip(o.symbol, !on, on ? '' : 'Futures page'), o.symbol)} />
       {o.skip ? <span className="small" style={{ color: 'var(--warn)' }}>{o.skip.by === 'you' ? 'skipped today' : 'results guard'}</span> : null}</Sw>;
   };
-  const rows = m.orders.map((o) => ({ key: o.action + o.symbol, cells: [<><b>{o.symbol}</b> <small className="muted">{o.contract}</small></>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>,
+  const rows = m.orders.map((o) => ({ key: o.action + o.symbol, title: `${o.symbol} · ${o.contract || ''}`, cells: [<><b>{o.symbol}</b> <small className="muted">{o.contract}</small></>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>,
     <span className="muted">{(o.books || []).join(' · ') || 'off'} · {o.side}</span>, o.lots, o.close ? n2(o.close) : '—', inr(o.margin), o.stop ? n2(o.stop) : '—',
     o.results_date ? <Tag c="w" title={`results ${day(o.results_date)} · in ${o.results_in} session${o.results_in === 1 ? '' : 's'}`}>⚠ {wday(o.results_date)}</Tag> : '—', <span className="muted">{o.why}</span>, cell(o)] }));
   rows.push(after ? `${m.counts.sent} sent · ${m.counts.failed} failed · ${m.counts.skipped} skipped${m.first_sent ? ` · ${clock(m.first_sent, true)} → ${clock(m.last_sent, true)}` : ''}`

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import { stamp } from '../timefmt';
-import { Panel, Tag, FixedTable, Switch } from './ui2';
+import { Panel, Tag, AiTag, FixedTable, Switch } from './ui2';
 
 // 🤖 The AI view: a rating beside every system-suggested stock (score 0–100, a verdict set by code from the score,
 // up to 3 reasons and the support / resistance levels it picked from the candidates code found). It rates and
@@ -54,7 +54,7 @@ export function AiLine({ v }) {
   if (!v) return null;
   const [k] = tone(v.verdict), text = `${v.score} · ${v.verdict}${v.reasons?.[0] ? ` · ${v.reasons.slice(0, 2).join(', ')}` : ''}`;
   return <div title={tip(v)} style={{ fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
-    <Tag c="a">AI</Tag> <b className={`mono ${k}`}>{v.score}</b> <span className="muted">{text.slice(String(v.score).length)}</span></div>;
+    <AiTag of={v} /> <b className={`mono ${k}`}>{v.score}</b> <span className="muted">{text.slice(String(v.score).length)}</span></div>;
 }
 // "qty rule → AI" when size-by-score is on and the backend sent both (never above the rule)
 export const qtyCell = (o) => (o.qty_rule != null && o.qty_ai != null && o.qty_rule !== o.qty_ai
@@ -62,6 +62,8 @@ export const qtyCell = (o) => (o.qty_rule != null && o.qty_ai != null && o.qty_r
 
 // The reasons cell (free text; the table cell carries the ellipsis)
 export const aiReasons = (v) => (v?.reasons?.length ? v.reasons.join(' · ') : '—');
+// the same, as a cell: the purple AI tag then the model's reasons (inline, so the cell's ellipsis still applies)
+export const AiReasons = ({ v }) => (v?.reasons?.length ? <span title={aiReasons(v)}><AiTag of={v} /> {aiReasons(v)}</span> : <span className="muted">—</span>);
 // held names: "what changed" (the change text, else the first reason)
 export const aiChanged = (v) => (v ? v.change || v.reasons?.[0] || '—' : '—');
 
@@ -111,9 +113,9 @@ export function AiViewCard({ symbol, v, pivot }) {
   const [, c] = tone(v.verdict), p = prevScore(v);
   const kinds = [...new Set((v.candidates || []).map((x) => x.kind).filter(Boolean))];
   const rows = [
-    [`Why ${v.verdict}`, aiReasons(v)],
-    v.change ? ['Since the last view', `${p != null ? `${p} → ${v.score} · ` : ''}${v.change}`] : null,
-    ['What would change it', v.would_change || '—'],
+    [`Why ${v.verdict}`, v.reasons?.length ? <><AiTag of={v} /> {aiReasons(v)}</> : '—'],
+    v.change ? ['Since the last view', <>{p != null ? `${p} → ${v.score} · ` : ''}<AiTag of={v} /> {v.change}</>] : null,
+    ['What would change it', v.would_change ? <><AiTag of={v} /> {v.would_change}</> : '—'],
     ['Levels picked by', `code found ${(v.candidates || []).length} candidates${kinds.length ? ` (${kinds.join(', ').replace(/_/g, ' ')})` : ''} · the model chose from those only`],
     ['Numbers', 'every figure above is code-measured · the model wrote the words and picked the levels'],
   ].filter(Boolean);

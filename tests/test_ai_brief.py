@@ -208,7 +208,7 @@ def test_run_writes_the_row_and_sends_once(ollama, cfg):
     assert row["text"].split("\n")[0].startswith("Real sends 3 orders") and len(row["text"].split("\n")) == 4
     assert len(fake.sent) == 1
     html = fake.sent[0][1]
-    assert html.startswith(f"☀️ <b>Morning brief · {brief.day_label(TODAY)} · 6:30 AM</b> <i>AI</i>\nReal sends 3 orders at 9:16 AM")
+    assert html.startswith(f"☀️ <b>[AI] Morning brief · {brief.day_label(TODAY)} · 6:30 AM</b>\n<i>AI ·</i> Real sends 3 orders at 9:16 AM")
     assert html.endswith("<i>written from the plans and filings · no action taken</i>") and no_brokers(html)
     assert brief.run(cfg, now_at("06:31"), n) == {"skip": "today's brief exists"} and len(fake.sent) == 1
     assert brief.status() == {"last_at": row["created"], "lines": row["text"].split("\n"), "day": TODAY, "id": out["id"]}
@@ -265,7 +265,7 @@ def test_scheduler_queues_the_brief_once(ollama, cfg, monkeypatch):
         job = conn.execute("SELECT kind, key, status, model FROM ai_jobs ORDER BY id DESC LIMIT 1").fetchone()
     assert len(run) == 1 and run[0]["status"] == "ok" and run[0]["message"].startswith("queued as AI job")
     assert tuple(job) == ("brief", f"brief:{TODAY}", "done", NIGHT)
-    assert brief.latest()["day"] == TODAY and any(h.startswith("☀️ <b>Morning brief") for _, h in fake.sent)
+    assert brief.latest()["day"] == TODAY and any(h.startswith("☀️ <b>[AI] Morning brief") for _, h in fake.sent)
     assert "ai_brief" not in sch.tick(now_at("06:32"))                                  # recorded: once a day
 
 
@@ -286,7 +286,7 @@ def test_queue_runs_brief_under_its_window(ollama, cfg):
 def test_message_text_is_html_escaped_and_12_hour():
     from backend.alerts import messages as msg
     html = msg.ai_brief("2026-11-17", "06:30", ["A & B <ok>", "second"])
-    assert html == ("☀️ <b>Morning brief · Tue 17 Nov · 6:30 AM</b> <i>AI</i>\nA &amp; B &lt;ok&gt;\nsecond\n"
+    assert html == ("☀️ <b>[AI] Morning brief · Tue 17 Nov · 6:30 AM</b>\n<i>AI ·</i> A &amp; B &lt;ok&gt;\n<i>AI ·</i> second\n"
                     "<i>written from the plans and filings · no action taken</i>")
 
 

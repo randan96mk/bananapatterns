@@ -103,6 +103,8 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
     if (trading and cfg.intraday and cfg.close_check and ready("close_check")
             and hm(cfg.close_check_time) <= t < MARKET_CLOSE):
         jobs.append("close_check")
+    if trading and cfg.day_summary and ready("day_summary") and hm(cfg.day_summary_time) <= t < time(23, 0):
+        jobs.append("day_summary")                         # 🌙 one close-of-day message across the books
     if (trading and (cfg.top_setups or cfg.alert_style == "summary") and ready("top_setups")
             and hm(cfg.top_setups_time) <= t < time(23, 0)):             # summary style: the evening report
         jobs.append("top_setups")
@@ -218,6 +220,10 @@ class Scheduler:
             suggest.expire_open(now)
         except Exception:
             logger.exception("AI suggestion expiry failed")
+        try:                                               # 🤖 quiet hours over: the held AI messages go out
+            self.flush_quiet(now)
+        except Exception:
+            logger.exception("AI quiet-hours flush failed")
         for job in jobs:
             getattr(self, f"run_{job}")(now)
         return jobs
@@ -241,7 +247,17 @@ class Scheduler:
     def notifier(self) -> Notifier:
         n = self.notifier_factory(self.state.config.alerts)
         n.hold = self.hold                                  # summary style: the evening job holds its alerts
+        n.ai = self.state.config.ai                         # 🤖 the AI quiet hours
         return n
+
+    def flush_quiet(self, now: datetime) -> int:
+        """🤖 Past the AI quiet hours (quiet_to), the AI messages held overnight go out in order (Notifier.flush_quiet;
+        the morning brief may have sent them already). Nothing to do inside the window or with nothing held."""
+        from backend.alerts.dispatch import in_quiet
+        if in_quiet(now, self.state.config.ai):
+            return 0
+        flush = getattr(self.notifier(), "flush_quiet", None)
+        return flush() if callable(flush) else 0
 
     def summary(self) -> bool:
         return self.state.config.alerts.alert_style == "summary"
@@ -346,11 +362,25 @@ class Scheduler:
             logger.exception("AI view enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
 
+    def _ai_warm(self, now: datetime) -> None:
+        """🤖 Load the night model once at the start of the night batch (a "warm" job through the queue, so the guard
+        still decides): the first real job then starts with the model in RAM instead of spending its timeout loading."""
+        try:
+            from backend.ai import client, guard, queue as aiq
+            c = self.state.config.ai
+            if not guard.allowed("night", now, self.state.config)[0]:
+                return
+            aiq.enqueue(self.state.config, "night", f"warm:{now.date().isoformat()}",
+                        lambda: client.warm(c.night_model, c.keep_alive), model=c.night_model, note="model warm-up")
+        except Exception:
+            logger.exception("AI warm-up enqueue failed")
+
     def run_ai_notes(self, now: datetime) -> dict:
         """🤖 Queue tonight's AI notes (the guard decides at run time; nothing runs while the AI is off). Never raises."""
         from backend.ai import notes
         if not self.state.config.ai.enabled:
             return {"status": "off"}
+        self._ai_warm(now)
         try:
             return notes.enqueue_tonight(self.state.config, now, self.notifier())
         except Exception as exc:
@@ -974,11 +1004,28 @@ class Scheduler:
             self.notifier().send(f"{d}|flow-ev|{p.get('id')}|{ev['t']}|{ev.get('why', 'fill')}", "flow", msg.flow_event(p, ev))
         elif kind == "loss_limit":
             self.notifier().send(f"{d}|flow-loss", "flow", msg.flow_loss(data, "signal" if self.state.config.flow.mode == "signals" else "paper"))
-        elif kind == "summary":
-            self.notifier().send(f"{d}|flow-summary", "flow", msg.flow_summary(data, "signal" if self.state.config.flow.mode == "signals" else "paper"))
+        elif kind == "summary":                            # 🌙 in the one day summary (run_day_summary); not sent on its own
+            return
         elif kind in ("stopped", "started"):
             at = datetime.now(IST).strftime("%H%M%S")
             self.notifier().send(f"{d}|flow-{kind}|{at}", "flow", msg.flow_switch(kind, data))
+
+    def run_day_summary(self, now: datetime) -> dict:
+        """🌙 One close-of-day message across the books (alerts.day_summary_time, trading days): Real, Paper, Futures,
+        Options, the signal track and the AI, one line each (backend/alerts/daysum.py gathers, msg.day_summary
+        writes); key {day}|day-summary, kind "summary" (never held). Recorded once a day in job_runs."""
+        from backend.alerts import daysum
+        today, started = now.date(), now_ist()
+        try:
+            text = msg.day_summary(daysum.parts(self.state.config, today.isoformat()), today.isoformat())
+            sent = bool(text) and self.notifier().send(f"{today}|day-summary", "summary", text)
+        except Exception as exc:
+            logger.exception("Day summary failed")
+            self.record("day_summary", today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        note = "sent" if sent else "nothing to report" if not text else "not sent (Telegram off or sent already)"
+        self.record("day_summary", today, "ok", note, started)
+        return {"status": "ok", "sent": sent, "text": text}
 
     def run_real_evening(self) -> int:
         """Mark the real account and plan tomorrow's orders (a loud message when there are any)."""
@@ -1160,7 +1207,7 @@ class Scheduler:
 
     def send_options_alerts(self, now: datetime) -> int:
         """🧩 Send the alerts the options book recorded today and has not sent yet (the bias and the spread, the exits,
-        no trade, the day summary, the one-liners), tagged paper, on the same channel as the futures alerts. Each alert
+        no trade, the one-liners; the day summary goes into the one 🌙 day summary instead), tagged paper, on the same channel as the futures alerts. Each alert
         has a key unique for its day: the notifier's sent_alerts table makes the send once-only across restarts and
         `options_sent` keeps the minute cheap (no DB read for an alert already handled). No Kite call here."""
         from backend.options import book as obook
@@ -1173,6 +1220,9 @@ class Scheduler:
                 continue
             key = f"{today}|opt-{a.get('kind')}-{a.get('key') or a.get('kind')}"
             if key in self.options_sent:
+                continue
+            if a.get("kind") == "summary":                 # 🌙 in the one day summary (run_day_summary); the row stays
+                self.options_sent.add(key)
                 continue
             ok = n.send(key, "real", msg.options_alert(a))
             if ok or not getattr(n, "ready", True) or getattr(n, "already_sent", lambda k: True)(key):

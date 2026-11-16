@@ -1063,7 +1063,7 @@ def exit_watch(config: AppConfig, day: str, notifier=None) -> list[dict]:
             continue
         x = {"symbol": it["symbol"], "book": it["book"], "close": b[-1]["close"], "fails_below": fb, "day": day, "score": prev.get("score")}
         try:
-            (notifier or Notifier(config.alerts)).send(f"{day}|ai-exit-watch|{it['symbol']}", "ai", msg.ai_view_exit_watch(x))
+            (notifier or Notifier(config.alerts, ai=config.ai)).send(f"{day}|ai-exit-watch|{it['symbol']}", "ai", msg.ai_view_exit_watch(x))
         except Exception:
             logger.exception("view: the exit-watch alert failed")
         out.append(x)
@@ -1105,7 +1105,7 @@ def run_night(config: AppConfig, now: Optional[datetime] = None, notifier=None, 
         set_setting(conn, LAST_NIGHT_KEY, json.dumps(night))
     flagged = exit_watch(config, day, notifier)
     try:
-        notifier = notifier or Notifier(config.alerts)
+        notifier = notifier or Notifier(config.alerts, ai=config.ai)
         if night["n"] or night["failed"]:
             notifier.send(f"{day}|ai-view", "ai", msg.ai_view_night(night))
         week = week_of(day)

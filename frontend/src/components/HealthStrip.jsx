@@ -8,6 +8,8 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: '
 const colour = (c) => (!c.ok ? 'var(--bad)' : c.warn ? 'var(--warn, #f5c518)' : 'var(--ok)');
 export default function HealthStrip({ full = false, compact = false, chips = false, onGo, onLoad }) {   // compact: Home's chip line
   const [h, setH] = useState(null);
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem('bp.home.health') === 'open'; } catch { return false; } });   // Home: folded by default, remembered per device
+  const setOpenRaw = (v) => { setOpen(v); try { localStorage.setItem('bp.home.health', v ? 'open' : 'closed'); } catch { /* private mode */ } };
   useEffect(() => {
     const load = () => api.health().then((x) => { setH(x); onLoad && onLoad(x); }).catch(() => {});
     load(); const id = setInterval(load, 120000); return () => clearInterval(id);
@@ -20,11 +22,15 @@ export default function HealthStrip({ full = false, compact = false, chips = fal
       {h.checks.map((c) => <Chip key={c.key} title={`${c.detail}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} · <b>{c.state}</b></Chip>)}
     </div>;
   }
-  if (compact) {                                           // Home: one line of chips; a chip's detail only on hover (title), never inline
-    return <div className="hhealth" aria-label="Health">
+  if (compact) {                                           // Home: one line by default (overall · Kite · every red/amber · ▾ all); a chip's detail only on hover
+    const chip = (c) => <Chip key={c.key} c={!c.ok ? 'bad' : c.warn ? 'warn' : ''} title={`${c.name}: ${c.state}${c.detail ? ` · ${c.detail}` : ''}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} · <b>{c.state}</b></Chip>;
+    const shown = open ? h.checks : h.checks.filter((c) => c.key === 'kite' || !c.ok || c.warn);   // problems always visible
+    const hidden = h.checks.length - shown.length;
+    return <div className={`hhealth ${open ? 'open' : 'one'}`} aria-label="Health">
       <Chip c={h.red ? 'bad' : h.amber ? 'warn' : 'ok'} dot={h.red ? 'bad' : h.amber ? 'warn' : 'ok'} title="Open System › Data" onClick={() => onGo && onGo('data')}>
-        🩺 {h.red ? `${h.red} failing` : h.amber ? `${h.amber} stale` : 'all fresh'} · checked {when(h.at)}</Chip>
-      {h.checks.map((c) => <Chip key={c.key} title={`${c.name}: ${c.state}${c.detail ? ` · ${c.detail}` : ''}${c.at ? ` · ${when(c.at)}` : ''}`}>{dot(c)}{c.name} · <b>{c.state}</b></Chip>)}
+        🩺 {h.red ? `${h.red} failing` : h.amber ? `${h.amber} stale` : 'all fresh'} · checked {when(h.at)} · {h.checks.length} checks</Chip>
+      {shown.map(chip)}
+      <Chip c="more" title={open ? 'fold the health line' : `show all ${h.checks.length} checks`} onClick={() => setOpenRaw(!open)}>{open ? '▴ less' : `▾ all${hidden ? ` · ${hidden} more` : ''}`}</Chip>
     </div>;
   }
   if (!full) {

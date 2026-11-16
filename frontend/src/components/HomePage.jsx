@@ -12,7 +12,7 @@ import PhonePositions from './PhonePositions';
 import AiDot from './AiDot';
 import AiSuggestions from './AiSuggestions';
 import { useAiViews, viewOf, AiView, aiChanged } from './AiView';
-import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, Chip } from './ui2';
+import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, AiTag, Chip } from './ui2';
 
 // 🏠 Home: the day on one screen. Timeline (click a dot: Activity filters to it), account cards with sparklines (Real
 // and Paper E+ against NIFTY), the stats strip, today's live P&L with who made the day, the positions map (one tile
@@ -131,7 +131,7 @@ function HoverCard({ p, at }) {
       {p.entry && <><line x1="0" x2={w} y1={y(p.entry)} y2={y(p.entry)} stroke="var(--blue)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" /><text x="4" y={y(p.entry) - 3} fill="var(--blue)" fontSize="9">entry {p.entry}</text></>}
       {p.stop && <><line x1="0" x2={w} y1={y(p.stop)} y2={y(p.stop)} stroke="var(--bad)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" /><text x="4" y={y(p.stop) + 10} fill="var(--bad)" fontSize="9">stop {p.stop}</text></>}</svg>
       : <div className="muted small" style={{ height: 80 }}>{c ? 'no candles' : 'loading…'}</div>}
-    {p.aiv && <div className="small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>🤖 AI {p.aiv.score} {p.aiv.verdict} · <span className="muted">{aiChanged(p.aiv)}</span></div>}
+    {p.aiv && <div className="small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>🤖 {p.aiv.score} {p.aiv.verdict} · <AiTag of={p.aiv} /> <span className="muted">{aiChanged(p.aiv)}</span></div>}
     <div className="muted small">last 60 sessions · click the row for the full chart</div></div>;
 }
 
@@ -185,7 +185,8 @@ export default function HomePage({ onGo, onStock }) {
   const [mapView, setMapViewRaw] = useState(() => remembered('bp.home.map', 'both'));
   const setMapView = (v) => { setMapViewRaw(v); remember('bp.home.map', v); };
   const [filter, setFilter] = useState('all');
-  const [view, setView] = useState('all');
+  const [view, setViewRaw] = useState(() => remembered('bp.home.posview', 'real'));   // which books: Real by default, remembered per device
+  const setView = (v) => { setViewRaw(v); remember('bp.home.posview', v); };
   const [sort, setSort] = useState({ key: 'pnl', dir: 'desc' });
   const [picked, setPicked] = useState(null);                 // timeline events chosen for the Activity panel
   const stale = useStale(stamp, 180000, o?.feed === 'live');

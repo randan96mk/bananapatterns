@@ -481,9 +481,18 @@ FILING_ICONS = {"results": "📊", "order": "📦", "deal": "🤝", "rating": "�
                 "exchange": "❓"}
 
 
+AI_MARK = "<i>AI ·</i> "                    # 🤖 starts every model-written line (code-written lines carry nothing)
+AI_HEAD = "[AI] "                          # 🤖 opens the bold header of a message the model wrote entirely
+
+
+def ai_mark(text: str) -> str:
+    """One model-written line as Telegram shows it: "<i>AI ·</i> <i>text</i>" (the text escaped)."""
+    return f"{AI_MARK}<i>{escape(text)}</i>"
+
+
 def ai_line(note: Optional[dict]) -> str:
-    """🤖 The last line of a filing / deal alert when the AI has a note for that source: "🤖 AI · high · …"."""
-    return f"\n🤖 <i>AI · {escape(note['severity'])} · {escape(note['text'])}</i>" if note else ""
+    """🤖 The last line of a filing / deal alert when the AI has a note for that source: "🤖 <i>AI ·</i> <i>high · …</i>"."""
+    return f"\n🤖 {ai_mark(note['severity'] + ' · ' + note['text'])}" if note else ""
 
 
 def filing_alert(f: dict, why: str, note: Optional[dict] = None) -> str:
@@ -509,8 +518,8 @@ def note_alert(note: dict, where: str, skip_hint: Optional[str] = None) -> str:
     AI line, then the part code knows (held in Real (+x%) / in tomorrow's plan at #n / on your watchlist, the skip hint),
     the source time and a link to the filing."""
     cat = (note.get("category") or note.get("kind") or "note").replace("_", " ")
-    lines = [f"📰 <b>{escape(note['symbol'])} · {escape(cat)}</b>",
-             f"🤖 <i>AI · {escape(note['severity'])} · {escape(note['text'])}</i>"]
+    lines = [f"📰 <b>{AI_HEAD}{escape(note['symbol'])} · {escape(cat)}</b>",
+             f"🤖 {ai_mark(note['severity'] + ' · ' + note['text'])}"]
     tail = [escape(where, quote=False)]
     if skip_hint:
         tail.append(escape(skip_hint, quote=False))
@@ -706,7 +715,7 @@ def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: boo
             lines.append(f"🟢 BUY <b>{escape(o['symbol'])}</b> {qty}{was} · stop {_rup(o['stop'])} · ~{_rup(qty * o['close'])}{tag}")
             flag = ((m or {}).get("ai_flags") or {}).get(o["symbol"])        # 🤖 suggestions: the AI's flag on a planned name
             if flag:
-                lines.append(f"   🤖 <i>{escape(flag)}</i>")
+                lines.append(f"   🤖 {ai_mark(flag)}")
             av = ai_view_line(mo.get("ai_view"))
             if av:
                 lines.append(f"   · {av}")
@@ -1215,9 +1224,10 @@ def options_alert(a: dict) -> Optional[str]:
 # --- 🤖 brief ---------------------------------------------------------------------------------------------------------------
 
 def ai_brief(day: str, at: str, lines: list[str]) -> str:
-    """☀️ The morning brief: the day and time, the model's lines (≤ 5), the footer that says where it came from."""
-    head = f"☀️ <b>Morning brief · {escape(_day_label(day))} · {ampm(at)}</b> <i>AI</i>"
-    return "\n".join([head, *(escape(ln, quote=False) for ln in lines), "<i>written from the plans and filings · no action taken</i>"])
+    """☀️ [AI] The morning brief: the day and time, the model's lines (≤ 5, each marked "<i>AI ·</i>"), the footer that
+    says where it came from."""
+    head = f"☀️ <b>{AI_HEAD}Morning brief · {escape(_day_label(day))} · {ampm(at)}</b>"
+    return "\n".join([head, *(AI_MARK + escape(ln, quote=False) for ln in lines), "<i>written from the plans and filings · no action taken</i>"])
 
 
 # --- 🤖 ask ------------------------------------------------------------------------------------------------------------------
@@ -1228,13 +1238,15 @@ def ai_thinking(question: str) -> str:
 
 
 def ai_ask_reply(row: dict) -> str:
-    """💬 The answer: the question, 'AI · the answer', then what was read, the seconds and 'read-only'."""
+    """💬 [AI] The answer: the question, '<i>AI ·</i> the answer' (an error carries no marker: the app wrote it), then
+    what was read, the seconds and 'read-only'."""
     tail = [row["read"]] if row.get("read") else []
     if row.get("ms"):
         tail.append(f"{max(1, round(row['ms'] / 1000))} s")
     tail.append("read-only")
     body = escape(row.get("answer") or row.get("error") or "no answer", quote=False)
-    return f"💬 <b>ask</b> {escape(row['question'], quote=False)}\n<i>AI</i> · {body} <i>({escape(' · '.join(tail), quote=False)})</i>"
+    mark = AI_MARK if row.get("answer") else ""                               # an error is the app's, not the model's
+    return f"💬 <b>{AI_HEAD}ask</b> {escape(row['question'], quote=False)}\n{mark}{body} <i>({escape(' · '.join(tail), quote=False)})</i>"
 
 
 # --- 🤖 suggestions (PR 3 · A) ----------------------------------------------------------------------------------------------
@@ -1259,14 +1271,15 @@ def _until(iso: Optional[str]) -> str:
 
 def _sugg_line(s: dict) -> str:
     conf = f" · {s['confidence']}" if s.get("confidence") else ""
+    why = f"<i>{escape(s.get('why') or '')}</i>" if s.get("why_source") == "code" else ai_mark(s.get("why") or "")
     return (f"<b>#{s['id']}</b> {s.get('icon', '🤖')} <b>{escape(s['title'])}</b>{conf}\n"
-            f"   <i>{escape(s.get('why') or '')}</i> · {escape(_until(s.get('expires_at')))}")
+            f"   {why} · {escape(_until(s.get('expires_at')))}")
 
 
 def ai_suggestions(rows: list, for_day: Optional[str] = None) -> str:
     """The evening list "🤖 N suggestions for Monday": numbered by id, the kind icon, the title, the why, until when."""
     n = len(rows)
-    head = f"🤖 <b>{n} suggestion{'s' if n != 1 else ''}</b>" + (f" for {_day_full(for_day)}" if for_day else "")
+    head = f"🤖 <b>{AI_HEAD}{n} suggestion{'s' if n != 1 else ''}</b>" + (f" for {_day_full(for_day)}" if for_day else "")
     lines = [head] + [_sugg_line(s) for s in rows]
     lines.append("Reply <b>accept N</b> · <b>dismiss N [wrong|knew|later]</b> · <b>why N</b> (the evidence) · <b>sugg</b> (the list). "
                  "Nothing happens without your reply; the model only proposes.")
@@ -1333,15 +1346,36 @@ def _month(m: str) -> str:
 WHY_ICON = {"real": "💰", "paper": "📝", "futures": "📐", "options": "🧩", "held": "📦"}
 
 
-def ai_why_evening(rows: list, day: str) -> str:
-    """🧾 Today's exits, explained: one line per trade closed today (the book, the name, how it ended, the net) with the
-    AI's "likely cause" under it."""
-    lines = [f"🧾 <b>Today's exits, explained</b> · {_day_full(day, '%a %d %b')}"]
-    for n in rows:
-        t = n.get("trade") or ((n.get("data") or {}).get("trade") if isinstance(n.get("data"), dict) else None) or {}
+WHY_BOOK = {"real": "Real", "paper": "Paper", "futures": "Futures", "options": "Options", "held": "Held"}
+
+
+def _why_trades(n: dict) -> list:
+    """The trade rows one why line covers: `trades` (a stock closed in several books, merged) or the single `trade`."""
+    data = n.get("data") if isinstance(n.get("data"), dict) else {}
+    many = n.get("trades") or data.get("trades")
+    return many or [n.get("trade") or data.get("trade") or {}]
+
+
+def _why_head(n: dict) -> str:
+    """'💰 <b>RT</b> · stop hit · −₹620' for one trade; '💰📝 <b>SYM</b> · stop hit · Real −₹1,702 · Paper −₹1,751' when
+    several books closed the stock the same day (the books' nets on one line)."""
+    ts = _why_trades(n)
+    if len(ts) == 1:
+        t = ts[0]
         net = f" · {inr(t['net'], sign=True)}" if t.get("net") is not None else ""
-        lines.append(f"{WHY_ICON.get(n['book'], '📦')} <b>{escape(n['symbol'])}</b> · {escape(str(t.get('label') or ''))}{net}\n"
-                     f"   🤖 <i>{escape(n['text'])}</i>")
+        return f"{WHY_ICON.get(n['book'], '📦')} <b>{escape(n['symbol'])}</b> · {escape(str(t.get('label') or ''))}{net}"
+    icons = "".join(dict.fromkeys(WHY_ICON.get(t.get("book"), "📦") for t in ts))
+    label = " / ".join(dict.fromkeys(str(t.get("label") or "") for t in ts if t.get("label")))
+    nets = " · ".join(f"{WHY_BOOK.get(t.get('book'), t.get('book') or '?')} {inr(t['net'], sign=True)}" for t in ts if t.get("net") is not None)
+    return f"{icons} <b>{escape(n['symbol'])}</b>" + (f" · {escape(label)}" if label else "") + (f" · {nets}" if nets else "")
+
+
+def ai_why_evening(rows: list, day: str) -> str:
+    """🧾 [AI] Today's exits, explained: one line per stock closed today (the book or books, the name, how it ended, the
+    net per book) with the AI's "likely cause" under it."""
+    lines = [f"🧾 <b>{AI_HEAD}Today's exits, explained</b> · {_day_full(day, '%a %d %b')}"]
+    for n in rows:
+        lines.append(f"{_why_head(n)}\n   🤖 {ai_mark(n['text'])}")
     lines.append("<i>written from the trade rows, the day's bars and the filings · no action taken</i>")
     return "\n".join(lines)
 
@@ -1352,11 +1386,12 @@ VIEW_ICON = {"buy": "🟢", "wait": "🟡", "avoid": "🔴", "hold": "🟢", "tr
 
 
 def ai_view_line(v: Optional[dict]) -> str:
-    """'🤖 AI 82 buy · <reason 1>' (the dry run's line under a BUY); '' without a view."""
+    """'🤖 AI 82 buy · <i>AI ·</i> <i>reason 1</i>' (the dry run's line under a BUY: the score and verdict are code's
+    chip, the reason the model's line); '' without a view."""
     if not v or v.get("score") is None:
         return ""
     reason = (v.get("reasons") or [""])[0]
-    return f"🤖 AI {v['score']} {escape(v['verdict'])}" + (f" · <i>{escape(reason)}</i>" if reason else "")
+    return f"🤖 AI {v['score']} {escape(v['verdict'])}" + (f" · {ai_mark(reason)}" if reason else "")
 
 
 def ai_view_night(night: dict) -> str:
@@ -1385,3 +1420,85 @@ def ai_view_week(w: dict, rec: dict) -> str:
             if u.get("unlocked") else f"🔒 locked · {u.get('streak', 0)} of {u.get('need', 4)} weeks in a row")
     return (f"📊 <b>AI view · week {escape(n)}</b> · buy hit@20 {pct(w['buy_hit20'])} · avoid {pct(w['avoid_hit20'])} · "
             f"plan {pct(w['baseline20'])} · {'beat' if w['beat'] else 'did not beat'} the plan\n{tail}")
+
+
+# --- 🌙 day summary (one close-of-day message across the books) ----------------------------------------------------------------
+
+def _n(n: int, word: str, plural: Optional[str] = None) -> str:
+    """'1 trade' · '3 trades' (`plural` for irregular words)."""
+    return f"{n} {word if n == 1 else plural or word + 's'}"
+
+
+def _today(v: Optional[float], marks_at: Optional[str] = None) -> str:
+    """'today −₹1,702'; a book not yet marked today says when it is ('today at the 6:30 PM mark')."""
+    return f"today {inr(v, sign=True)}" if v is not None else f"today at the {ampm(marks_at or '18:30')} mark"
+
+
+def _sum_real(r: dict) -> str:
+    stops = r.get("stops") or []
+    bits = [f"💰 Real · {inr(r['value'])}", _today(r.get("today"))]
+    if stops:
+        bits.append(f"{_n(len(stops), 'stop')} hit ({escape(', '.join(stops))})")
+    bits.append(f"{_n(r.get('failed') or 0, 'order')} failed")
+    tm = r.get("tomorrow")
+    if tm:
+        bits.append(f"tomorrow {_n(tm.get('buys', 0), 'BUY')} {_n(tm.get('exits', 0), 'EXIT')}")
+    return " · ".join(bits)
+
+
+def _sum_paper(p: dict) -> str:
+    bits = [f"📝 Paper {escape(p.get('name') or 'E+')} · {inr(p['value'])}", _today(p.get("today"), p.get("marks_at"))]
+    if p.get("stops"):
+        bits.append(f"{_n(p['stops'], 'stop')} hit")
+    return " · ".join(bits)
+
+
+def _sum_futures(f: dict) -> str:
+    bits = [f"📐 Futures · {escape(f.get('tag') or 'paper')} · {inr(f['value'])}", _today(f.get("today")), _n(f.get("lots") or 0, "lot")]
+    if f.get("roll"):
+        bits.append(f"roll {_day_full(f['roll'], '%a')}")
+    return " · ".join(bits)
+
+
+def _sum_options(o: dict) -> str:
+    n = o.get("trades") or 0
+    bits = [f"🧩 Options · {escape(o.get('tag') or 'paper')} · {inr(o['value'])}", _today(o.get("today"))]
+    bits.append(_n(n, "trade") if n else "no trade")
+    if o.get("result"):
+        bits.append(escape(str(o["result"])))
+    return " · ".join(bits)
+
+
+def _sum_flow(f: dict) -> str:
+    head = "⚡ Signal track" if f.get("kind") == "signal" else "⚡ Paper intraday"
+    return (f"{head} · {_n(f['trades'], 'trade')} · {f.get('won', 0)} won · net {inr(f.get('net') or 0.0, sign=True)} "
+            f"on {inr(f.get('capital') or 0.0)}")
+
+
+def _sum_ai(a: dict) -> str:
+    if a.get("ran"):
+        return f"🤖 AI · {_n(a.get('notes', 0), 'note')} · {_n(a.get('suggestions', 0), 'suggestion')} · {a.get('rated', 0)} rated"
+    return f"🤖 AI · tonight after {ampm(a.get('after') or '18:30')}: {', '.join(a.get('parts') or ['notes'])}"
+
+
+DAY_SUMMARY_ORDER = (("real", _sum_real), ("paper", _sum_paper), ("futures", _sum_futures), ("options", _sum_options),
+                     ("flow", _sum_flow), ("ai", _sum_ai))
+
+
+def day_summary(parts: dict, day: str) -> Optional[str]:
+    """🌙 Day summary · Mon 16 Nov: one line per book that had anything today, in a fixed order (Real, Paper, Futures,
+    Options, the signal track, the AI), the value and the day's P&L always in the same place; a book with nothing is
+    left out (`parts` has no key for it; paper is a list, one per account). None when no book has a line."""
+    lines = []
+    for key, line in DAY_SUMMARY_ORDER:
+        part = parts.get(key)
+        for p in (part if isinstance(part, list) else [part] if part else []):
+            lines.append(line(p))
+    if not lines:
+        return None
+    return "\n".join([f"🌙 <b>Day summary · {_day_full(day, '%a %d %b')}</b>", *lines])
+
+
+def quiet_flushed(n: int) -> str:
+    """🤖 The one line before the AI messages held in the quiet hours."""
+    return f"🤖 held overnight · {_n(n, 'message')}"

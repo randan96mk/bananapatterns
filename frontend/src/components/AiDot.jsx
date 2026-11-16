@@ -1,5 +1,6 @@
 import React from 'react';
 import { stamp } from '../timefmt';
+import { AiTag } from './ui2';
 
 // 🤖 A position row's AI note: a small robot and a coloured dot after the symbol when the stock has a note in the last
 // 7 days (`row.ai_note` = {title, severity, at} from the overview). The dot is red for high, amber for medium, muted
@@ -20,5 +21,5 @@ export default function AiDot({ note, dot }) {
 export function AiWhy({ why }) {
   if (!why || !why.text) return null;
   return <div className="muted" title={`🤖 AI · likely cause · ${why.text}${why.at ? ` · ${stamp(why.at)}` : ''} · System → AI › Notes › Why`}
-    style={{ fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>🤖 {why.text}</div>;
+    style={{ fontSize: 11, lineHeight: '16px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}><AiTag of={why} /> {why.text}</div>;
 }

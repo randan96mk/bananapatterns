@@ -575,7 +575,7 @@ def test_telegram_full_symbol_and_the_dry_run_line(cfg):
     fake = BotTG([update(1, "full PLAN1", at=when), update(2, "full", at=when)])
     assert BotCommands(st, clock=lambda: when).poll_once(Notifier(cfg.alerts, fake)) == 2
     a, b = (h for _, h in fake.sent)
-    assert a.startswith("↩️ PLAN1 goes out at the rule size today.") and "🟢 BUY <b>PLAN1</b> 40 ·" in a and "🤖 AI 64 buy · <i>tight base</i>" in a
+    assert a.startswith("↩️ PLAN1 goes out at the rule size today.") and "🟢 BUY <b>PLAN1</b> 40 ·" in a and "🤖 AI 64 buy · <i>AI ·</i> <i>tight base</i>" in a
     assert b == "Which stock? /full SYMBOL" and real._state()["ai_full"]["2026-11-18"] == ["PLAN1"]
     real._save({**real._state(), "ai_full": {}})
     m = real.morning(cfg, when)

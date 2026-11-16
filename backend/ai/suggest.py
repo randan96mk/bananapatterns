@@ -545,7 +545,7 @@ def run_night(config: AppConfig, now: Optional[datetime] = None, notifier=None) 
     day = notes.night_day(now, config)
     n = len(res["born"])
     try:
-        notifier = notifier or Notifier(config.alerts)
+        notifier = notifier or Notifier(config.alerts, ai=config.ai)
         if n:
             rows = [get(i) for i in res["born"]]
             notifier.send(f"{day}|ai-sugg", "ai", msg.ai_suggestions(rows, real.next_session(day)))

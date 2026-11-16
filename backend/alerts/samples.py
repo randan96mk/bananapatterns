@@ -73,7 +73,7 @@ def _report_sample(as_of: Optional[str], rows: list[dict], config: AppConfig) ->
     from backend.alerts import plan as pl
     from backend.alerts import report
     with get_db() as conn:
-        batch = conn.execute("SELECT MAX(batch) FROM alert_outbox WHERE batch != 'sample'").fetchone()[0]
+        batch = conn.execute("SELECT MAX(batch) FROM alert_outbox WHERE batch != 'sample' AND batch NOT LIKE 'ai-quiet:%'").fetchone()[0]
     if not batch:                                     # nothing held yet: example lines from the latest scan
         batch = "sample"
         uniq = list({r["symbol"]: r for r in rows}.values())
