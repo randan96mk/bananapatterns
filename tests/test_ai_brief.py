@@ -187,7 +187,7 @@ def test_validate_strips_numbers_not_in_facts_and_rejects_brokers():
     assert v["numbers_checked"] is False and "1.1" not in v["lines"][0] and v["lines"][1] == "VIX 13.2."
     with pytest.raises(brief.BriefInvalid, match="broker"):
         brief.validate('["Orders go to Zerodha at 9:16 AM."]', SRC)
-    for bad in ("not json", "[]", '{"a": 1}', '[""]'):
+    for bad in ("not json", "[]", '{"a": {"b": 1}}', '[""]'):
         with pytest.raises(brief.BriefInvalid):
             brief.validate(bad, SRC)
 
@@ -321,3 +321,17 @@ def test_routes_show_the_brief(api, ollama, cfg):
     r = tc.get("/api/ai/notes?kind=brief").json()
     assert r["total"] == 1 and r["rows"][0]["kind"] == "brief" and r["rows"][0]["title"].startswith("Morning brief")
     assert DAY not in (r["rows"][0]["model"] or "")                                        # the night model wrote it
+
+
+def test_validate_accepts_the_shapes_json_mode_produces():
+    """Under JSON mode the 7B model answers with an object: {"lines": [...]}, numbered string values, a list of
+    {"text": ...}, or one string with newlines — all become the list of lines; a bare list still works."""
+    facts = "Real sends 3 orders at 9:16 AM. VIX 15.9."
+    want = ["Real sends 3 orders at 9:16 AM", "VIX 15.9"]
+    for raw in (json.dumps(want), json.dumps({"lines": want}), json.dumps({"brief": want}),
+                json.dumps({"line1": want[0], "line2": want[1]}), json.dumps([{"text": want[0]}, {"line": want[1]}]),
+                json.dumps({"morning_brief": want[0] + "\n" + want[1]}), json.dumps({"summary": {"k": "x"}, "lines": want})):
+        assert brief.validate(raw, facts)["lines"] == want, raw
+    with pytest.raises(brief.BriefInvalid):
+        brief.validate(json.dumps({"a": {"b": 1}}), facts)
+    assert '{"lines": ["…", "…"]}' in brief.SYSTEM_PROMPT
