@@ -103,6 +103,7 @@ def test_routes_and_stream(api, monkeypatch):
         def now(cls, tz=None):
             return datetime(2026, 11, 10, 12, 0, tzinfo=tz or IST)
     monkeypatch.setattr(book, "datetime", _Clock)
+    monkeypatch.setattr(book, "now_ist", lambda: "2026-11-10T12:00:00+05:30")   # chain_view and the state stamps read it too
     d = tc.get("/api/options").json()
     assert d["started"] is True and d["capital"] == 300000.0 and d["switches"] == {"paper": True, "real": False, "enabled": True, "killed": False,
                                                                                     "real_allowed": False, "real_note": "no webhook yet · stays off"}
