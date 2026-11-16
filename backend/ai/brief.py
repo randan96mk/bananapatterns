@@ -38,13 +38,13 @@ GEN_OPTIONS = {"temperature": 0.2, "num_predict": 400, "num_ctx": 4096, "top_p":
 
 SYSTEM_PROMPT = f"""You write the morning brief for a private investor from the facts below, which the app's own code
 gathered from its plans, books and filings. You read and explain; you never advise, decide or predict. Reply with JSON
-only: a list of at most {LINES_MAX} strings, each at most {LINE_MAX} characters of plain text, one fact per line, the
-most useful first (the orders going out, then a warning, then futures, options, notes). Quote only numbers written in
+only, one object: {{"lines": ["…", "…"]}} with at most {LINES_MAX} strings, each at most {LINE_MAX} characters of plain
+text, one fact per line, the most useful first (the orders going out, then a warning, then futures, options, notes). Quote only numbers written in
 the facts, exactly as given; never compute, convert or estimate a number. Say nothing about a section with no facts.
 Never name a broker or a trading platform. No markdown, no emoji, no prose around the list."""
 
-RETRY_SUFFIX = ("\nYour previous answer was not valid: {why}. Reply with the JSON list of strings only, at most "
-                f"{LINES_MAX} lines of at most {LINE_MAX} characters each.")
+RETRY_SUFFIX = ("\nYour previous answer was not valid: {why}. Reply with one JSON object {{\"lines\": [\"…\"]}} only, at most "
+                f"{LINES_MAX} strings of at most {LINE_MAX} characters each.")
 
 
 class BriefInvalid(ValueError):
@@ -210,6 +210,35 @@ def fact_lines(f: dict) -> list[str]:
 
 # --- the answer --------------------------------------------------------------------------------------------------------
 
+def _as_lines(d):
+    """The model's answer as a list of strings, whatever JSON shape it chose under JSON mode: {"lines": [...]}, any list
+    value, a dict of numbered string values, a list of {"text"|"line": ...}, or one string with newlines."""
+    if isinstance(d, str):
+        return [x.strip(" -•") for x in d.splitlines() if x.strip(" -•")]
+    if isinstance(d, dict):
+        for k in ("lines", "brief", "items"):
+            if isinstance(d.get(k), list):
+                return _as_lines(d[k])
+        lst = next((v for v in d.values() if isinstance(v, list)), None)
+        if lst is not None:
+            return _as_lines(lst)
+        strs = [v for v in d.values() if isinstance(v, (str, int, float)) and str(v).strip()]
+        if strs:
+            return _as_lines([str(v) for v in strs]) if len(strs) > 1 else _as_lines(str(strs[0]))
+        return None
+    if isinstance(d, list):
+        out = []
+        for x in d:
+            if isinstance(x, dict):
+                v = x.get("text") or x.get("line") or next((v for v in x.values() if isinstance(v, str)), None)
+                if v:
+                    out.append(v)
+            elif isinstance(x, (str, int, float)):
+                out.append(x)
+        return out
+    return None
+
+
 def validate(raw: str, source_text: str) -> dict:
     """{lines, numbers_checked}: a JSON list (or {"lines": [...]}) of strings, at most LINES_MAX, each clipped to
     LINE_MAX; a broker name anywhere is invalid; a figure not in the facts is stripped (numbers_checked False).
@@ -218,10 +247,9 @@ def validate(raw: str, source_text: str) -> dict:
         d = json.loads(raw)
     except ValueError as exc:
         raise BriefInvalid(f"not JSON: {raw[:80]!r}") from exc
-    if isinstance(d, dict):
-        d = d.get("lines") or d.get("brief") or next((v for v in d.values() if isinstance(v, list)), None)
+    d = _as_lines(d)
     if not isinstance(d, list):
-        raise BriefInvalid("not a JSON list of strings")
+        raise BriefInvalid(f"not a JSON list of strings: {raw[:60]!r}")
     lines = [notes._clip(x, LINE_MAX) for x in d if isinstance(x, (str, int, float)) and str(x).strip()][:LINES_MAX]
     if not lines:
         raise BriefInvalid("no line")
