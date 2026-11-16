@@ -95,8 +95,14 @@ def api(fake_kite, make_client, monkeypatch):
         yield tc
 
 
-def test_routes_and_stream(api):
+def test_routes_and_stream(api, monkeypatch):
     tc = api
+
+    class _Clock(datetime):                                   # the summary reads the wall clock: pin it away from DAY
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 10, 12, 0, tzinfo=tz or IST)
+    monkeypatch.setattr(book, "datetime", _Clock)
     d = tc.get("/api/options").json()
     assert d["started"] is True and d["capital"] == 300000.0 and d["switches"] == {"paper": True, "real": False, "enabled": True, "killed": False,
                                                                                     "real_allowed": False, "real_note": "no webhook yet · stays off"}
