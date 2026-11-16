@@ -36,7 +36,10 @@ def _http(method: str, path: str, body: Optional[dict] = None, timeout: float = 
     except urllib.error.HTTPError as exc:
         raise AIError(f"HTTP {exc.code} on {path}: {exc.read()[:200].decode(errors='replace')}") from exc
     except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as exc:
-        raise AIError(f"service unreachable at {url()} ({getattr(exc, 'reason', None) or exc})") from exc
+        reason = getattr(exc, "reason", None) or exc
+        if "timed out" in str(reason).lower() or isinstance(reason, (socket.timeout, TimeoutError)):
+            raise AIError(f"no answer from {path} within {timeout:g} s") from exc     # a slow generation, not a dead service
+        raise AIError(f"service unreachable at {url()} ({reason})") from exc
     if stream:
         return (line.decode(errors="replace") for line in resp)
     try:

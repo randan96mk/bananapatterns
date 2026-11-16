@@ -273,19 +273,35 @@ def test_validate_ok_snaps_and_drops_change_without_previous():
 
 
 @pytest.mark.parametrize("bad, fault", [
-    (dict(levels={"support_1": 480.0, "fails_below": 490}), "not one of the candidate prices"),
-    (dict(levels={"support_1": 490, "fails_below": 520}), "below the close"),
-    (dict(reasons=["RS 97 today"]), "not in the facts"),
     (dict(verdict="hold"), "verdict must be one of"),
     (dict(score=140), "0-100"),
     (dict(reasons=["a" * 61]), "longer than 60"),
     (dict(reasons=["a", "b", "c", "d"]), "1-3 phrases"),
     (dict(confidence=3), "confidence"),
-    (dict(levels={"support_1": 490}), "fails_below missing"),
 ])
 def test_validate_refusals(bad, fault):
     with pytest.raises(view.ViewInvalid, match=fault):
         view.validate(answer(**bad), CTX)
+
+
+def test_validate_softens_figures_and_levels_instead_of_failing():
+    """The three live faults of the first night: a figure not in the facts is stripped (numbers_checked False), a
+    rounded level snaps to the nearest candidate within 1% (levels_checked False), a level the model invented falls
+    back to the nearest candidate below the close; fails_below above the close falls back to support_1."""
+    v = view.validate(answer(reasons=["RS 97 today", "volume ratio 1.8"]), CTX)
+    assert v["numbers_checked"] is False and "97" not in v["reasons"][0] and v["reasons"][1] == "volume ratio 1.8" and v["score"] == 72
+    v = view.validate(answer(levels={"support_1": 487.0, "support_2": 470, "resistance": 520, "fails_below": 487.0}), CTX)
+    assert v["levels"]["support_1"] == 490.0 and v["levels"]["fails_below"] == 490.0 and v["levels_checked"] is False
+    v = view.validate(answer(levels={"support_1": 123.45, "support_2": 3057.33, "resistance": 520, "fails_below": 9394.36}), CTX)
+    assert v["levels"]["support_1"] == 490.0 and v["levels"]["support_2"] is None and v["levels"]["fails_below"] == 490.0 and v["levels_checked"] is False
+    v = view.validate(answer(levels={"support_1": 490, "fails_below": 520}), CTX)
+    assert v["levels"]["fails_below"] == 490.0 and v["levels"]["resistance"] is None
+    v = view.validate(answer(levels={"support_1": 490}), CTX)
+    assert v["levels"]["fails_below"] == 490.0
+    ok = view.validate(answer(), CTX)
+    assert ok["numbers_checked"] is True and ok["levels_checked"] is True
+    with pytest.raises(view.ViewInvalid, match="no candidate below"):
+        view.validate(answer(levels={"support_1": 1, "fails_below": 1}), {**CTX, "cands": [c for c in CANDS if c["price"] > 500.5]})
 
 
 def test_validate_refuses_a_broker_name_and_non_json():
