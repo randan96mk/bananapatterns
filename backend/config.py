@@ -466,7 +466,7 @@ class AIConfig:
     day_answers: bool = True               # day answers (the 3B model only) 9:00-15:40
     night_model: str = "qwen2.5:7b-instruct"   # ~4.7 GB; the evening / night batch
     day_model: str = "qwen2.5:3b-instruct"     # ~1.9 GB; quick answers while the market is open
-    timeout_s: int = 90                    # one generate call may take at most this long
+    timeout_s: int = 180                   # one generate call may take at most this long (a long filing on 2.5 cores)
     keep_alive: str = "10m"                # how long a model stays loaded after a call (0 = unload at once)
     min_free_ram_gb: float = 4.0           # no AI work when the server's free RAM is under this
     slow_tick_s: float = 2.0               # ... or when the scheduler's last tick took longer than this

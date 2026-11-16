@@ -116,7 +116,7 @@ def test_config_defaults_and_section():
     c = AIConfig()
     assert (c.enabled, c.night_batch, c.day_answers, c.night_model, c.day_model) == (False, True, True, NIGHT, DAY)
     assert (c.timeout_s, c.keep_alive, c.min_free_ram_gb, c.slow_tick_s, c.breaker_failures, c.breaker_minutes, c.night_end, c.max_queue) == \
-        (90, "10m", 4.0, 2.0, 3, 60, "06:00", 200)
+        (180, "10m", 4.0, 2.0, 3, 60, "06:00", 200)
     assert PERSISTED_SECTIONS["ai"] is AIConfig and AppConfig().section("ai").enabled is False
     cfg = AppConfig()
     out = cfg.update_section("ai", {"timeout_s": "120", "night_batch": "false", "min_free_ram_gb": "6"})
@@ -541,3 +541,18 @@ def test_no_broker_names_in_the_module_texts():
     srv, models = {"ram_free_gb": 10, "app_tick_ms": 1}, {"night": {"present": True}, "day": {"present": True}, "error": None}
     assert guard.allowed("night", at("17:00"), cfg, srv, models) == (True, "ok")                       # before night_end
     assert guard.allowed("night", at("19:00"), cfg, srv, models)[1].endswith("to 6:00 PM)")           # 12-hour times in every text
+
+
+def test_warm_loads_the_model_and_timeouts_get_one_retry(ollama, cfg):
+    """The night batch warms the model once (an empty-prompt generate) and a source that failed once on a timeout is
+    offered again; a second failure or a non-timeout failure is not."""
+    from backend.ai import client, notes
+    r = client.warm("qwen2.5:7b-instruct")
+    assert r["loaded"] is True and ollama.calls[-1][1] == "/api/generate" and ollama.calls[-1][2]["prompt"] == ""
+    with get_db() as conn:
+        for key, err in (("note:filing:1", "no answer from /api/generate within 180 s"), ("note:filing:2", "NoteInvalid: x"),
+                         ("note:filing:3", "no answer from /api/generate within 180 s"), ("note:filing:3", "no answer from /api/generate within 180 s")):
+            conn.execute("INSERT INTO ai_jobs (created, kind, key, status, error) VALUES (?, 'night', ?, 'failed', ?)", (now_ist(), key, err))
+    failed = notes._failed_keys("2000-01-01")
+    assert "note:filing:1" not in failed and "note:filing:2" in failed and "note:filing:3" in failed
+    assert cfg.ai.timeout_s == 180

@@ -362,11 +362,25 @@ class Scheduler:
             logger.exception("AI view enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
 
+    def _ai_warm(self, now: datetime) -> None:
+        """🤖 Load the night model once at the start of the night batch (a "warm" job through the queue, so the guard
+        still decides): the first real job then starts with the model in RAM instead of spending its timeout loading."""
+        try:
+            from backend.ai import client, guard, queue as aiq
+            c = self.state.config.ai
+            if not guard.allowed("night", now, self.state.config)[0]:
+                return
+            aiq.enqueue(self.state.config, "night", f"warm:{now.date().isoformat()}",
+                        lambda: client.warm(c.night_model, c.keep_alive), model=c.night_model, note="model warm-up")
+        except Exception:
+            logger.exception("AI warm-up enqueue failed")
+
     def run_ai_notes(self, now: datetime) -> dict:
         """🤖 Queue tonight's AI notes (the guard decides at run time; nothing runs while the AI is off). Never raises."""
         from backend.ai import notes
         if not self.state.config.ai.enabled:
             return {"status": "off"}
+        self._ai_warm(now)
         try:
             return notes.enqueue_tonight(self.state.config, now, self.notifier())
         except Exception as exc:

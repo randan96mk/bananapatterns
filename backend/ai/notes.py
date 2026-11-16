@@ -369,10 +369,18 @@ def _noted_keys(kind: str) -> set:
 
 
 def _failed_keys(since: str) -> set:
-    """Sources whose job failed since `since`: not retried that night (the breaker already counted them)."""
+    """Sources whose job failed since `since`: not retried that night (the breaker already counted them) — except a
+    source that failed ONCE on a timeout ("no answer … within"), which gets one more try: the first call of a night
+    pays the model load and a long filing can run past the limit."""
     with get_db() as conn:
-        return {r[0] for r in conn.execute("SELECT key FROM ai_jobs WHERE kind = 'night' AND key LIKE ? AND status = 'failed' AND created >= ?",
-                                           (KEY_PREFIX + "%", since))}
+        rows = conn.execute("SELECT key, error FROM ai_jobs WHERE kind = 'night' AND key LIKE ? AND status = 'failed' AND created >= ?",
+                            (KEY_PREFIX + "%", since)).fetchall()
+    n = {}
+    timeouts = {}
+    for key, err in rows:
+        n[key] = n.get(key, 0) + 1
+        timeouts[key] = timeouts.get(key, 0) + (1 if "within" in (err or "") else 0)
+    return {k for k, c in n.items() if not (c == 1 and timeouts.get(k) == 1)}
 
 
 def _wanted_filing(f: dict) -> bool:
