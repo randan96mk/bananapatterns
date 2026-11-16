@@ -102,7 +102,7 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   suggest_muted: 'Suggestion kinds never born, comma-separated: skip, exit, flag, hold_options, roll_or_exit, backtest (the switches on System → AI → Scorecard set the same list)',
   why: 'The nightly "why" line under every trade closed today (Real, Paper, Futures, Options) and the evening "exits, explained" message (true/false)',
   brief: 'The morning brief on trading days: ≤ 5 lines from the plans, the books and the night\'s notes; one Telegram message, kept as a note (true/false)',
-  brief_time: 'When the brief is written (24-hour HH:MM, IST); its window runs to 9:00 AM, the night model, one call',
+  brief_time: 'When the brief is written (24-hour HH:MM, IST); its window runs to 9:15 AM (before the 9:16 send), the night model, one call',
   ask: '"Ask the app": the day model picks one read-only tool, code runs it, the model answers from its result · any time of day, never on the trading path (true/false)',
   // 🤖 the AI view: a rating beside every system-suggested stock (it rates and explains, never acts)
   view_enabled: 'Rate the plan, held, futures plan, Follow and Screens names every evening with the night model (true/false)',

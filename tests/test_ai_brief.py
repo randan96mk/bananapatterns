@@ -97,7 +97,7 @@ def seed_options(cfg, vix=13.2):
 
 def test_config_fields_and_asks_table():
     c = AIConfig()
-    assert (c.brief, c.brief_time, c.ask) == (True, "06:30", True)
+    assert (c.brief, c.brief_time, c.ask) == (True, "09:00", True)
     with get_db() as conn:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_asks)")]
     assert cols[:9] == ["id", "created", "who", "question", "tool", "args", "answer", "ms", "model"]
@@ -107,8 +107,9 @@ def test_guard_brief_window_and_ask_any_time(ollama, cfg):
     cfg.alerts.job_time = "17:30"                                                    # the night window: eod's end to 6:00
     assert guard.allowed("brief", now_at("06:31"), cfg) == (True, "ok")              # after night_end, before 9:00
     assert guard.allowed("night", now_at("06:31"), cfg)[0] is False                  # the night window itself ended
-    ok, why = guard.allowed("brief", now_at("09:01"), cfg)
-    assert ok is False and why == "outside the brief window (evening job's end to 9:00 AM)"
+    assert guard.allowed("brief", now_at("09:10"), cfg) == (True, "ok")              # 9:00 brief: before the 9:16 send
+    ok, why = guard.allowed("brief", now_at("09:16"), cfg)
+    assert ok is False and why == "outside the brief window (evening job's end to 9:15 AM)"
     cfg.ai.brief = False
     assert guard.allowed("brief", now_at("06:31"), cfg) == (False, "morning brief off")
     for hhmm in ("03:00", "12:30", "22:15"):
@@ -234,9 +235,9 @@ def test_run_skips_without_facts(ollama, cfg):
 # --- the job ----------------------------------------------------------------------------------------------------------------------
 
 def test_due_rule(cfg):
-    assert brief.due(now_at("06:30"), cfg, set(), True) == ["ai_brief"] and brief.due(now_at("08:59"), cfg, set(), True) == ["ai_brief"]
-    assert brief.due(now_at("06:29"), cfg, set(), True) == [] and brief.due(now_at("09:00"), cfg, set(), True) == []
-    assert brief.due(now_at("06:30"), cfg, set(), False) == [] and brief.due(now_at("06:30"), cfg, {"ai_brief"}, True) == []
+    assert brief.due(now_at("09:00"), cfg, set(), True) == ["ai_brief"] and brief.due(now_at("09:14"), cfg, set(), True) == ["ai_brief"]
+    assert brief.due(now_at("08:59"), cfg, set(), True) == [] and brief.due(now_at("09:15"), cfg, set(), True) == []
+    assert brief.due(now_at("09:00"), cfg, set(), False) == [] and brief.due(now_at("09:00"), cfg, {"ai_brief"}, True) == []
     cfg.ai.brief_time = "07:15"
     assert brief.due(now_at("07:00"), cfg, set(), True) == [] and brief.due(now_at("07:15"), cfg, set(), True) == ["ai_brief"]
     cfg.ai.brief = False
@@ -255,7 +256,7 @@ def test_scheduler_queues_the_brief_once(ollama, cfg, monkeypatch):
     st.config = cfg
     fake = FakeTG()
     sch = Scheduler(st, notifier_factory=lambda c: Notifier(c, fake))
-    when = now_at("06:31")
+    when = now_at("09:01")
     jobs = sch.tick(when)
     assert "ai_brief" in jobs
     q._items.join()
@@ -312,7 +313,7 @@ def test_routes_show_the_brief(api, ollama, cfg):
     tc = api
     d = tc.get("/api/ai").json()
     assert d["brief"] == {"last_at": None, "lines": [], "day": None, "id": None} and d["asks"] == {"today": 0, "last": None}
-    assert d["settings"]["brief"] is True and d["settings"]["brief_time"] == "06:30" and d["settings"]["ask"] is True
+    assert d["settings"]["brief"] is True and d["settings"]["brief_time"] == "09:00" and d["settings"]["ask"] is True
     seed_real()
     out = brief.run(cfg, now_at("06:30"), Notifier(cfg.alerts, FakeTG()))
     d = tc.get("/api/ai").json()

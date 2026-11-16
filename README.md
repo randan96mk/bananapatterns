@@ -1630,12 +1630,12 @@ and the route).
 
 `backend/ai/brief.py` and `backend/ai/ask.py`. Both read; neither acts (no order, setting, switch or stop is ever touched).
 
-- **☀️ Morning brief** (`brief.py`): at `ai.brief_time` (6:30 AM) on a trading day the scheduler queues one job (kind
+- **☀️ Morning brief** (`brief.py`): at `ai.brief_time` (9:00 AM) on a trading day the scheduler queues one job (kind
   `brief`, key `brief:<day>`, recorded as `ai_brief` so it is queued once) and the **night model** writes at most 5 lines
   (each ≤ 160 chars) from the facts code gathered: the Real morning plan (EXITs, BUYs, cash after, free slots, the skips
   with their reason), the futures plan, lots held, roll day and roll queue, the options book (the open spread, the last
   chain line: PCR, put / call walls, VIX against `options.vix_half`, an event day), the night's high notes, results due
-  within 3 sessions on held names. The guard's window for kind `brief` is the night window extended to 9:00 AM
+  within 3 sessions on held names. The guard's window for kind `brief` is the night window extended to 9:15 AM
   (`guard.brief_window`). The answer is validated like a note: a JSON list, clipped, **no broker name** (invalid, one
   retry), **no figure that is not in the facts** (stripped, `numbers_checked: false`). Stored as an `ai_notes` row of kind
   `brief` (`source_key brief:<day>`, severity info, `data.lines`, `data.facts`), sent once on Telegram (channel `system`,
@@ -1663,7 +1663,7 @@ and the route).
 | Key | Default | Meaning |
 |---|---|---|
 | `brief` | true | the morning brief on trading days (one night-model call, one Telegram message) |
-| `brief_time` | 06:30 | when the brief is written (its window runs to 9:00 AM) |
+| `brief_time` | 09:00 | when the brief is written (its window runs to 9:15 AM, before the 9:16 send) |
 | `ask` | true | ask the app: the day model answers from one whitelisted read-only tool, any time |
 
 Tests: `tests/test_ai_brief.py` (the settings and the guard windows, the facts from the books, the validator, the run with
@@ -2948,7 +2948,7 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - `backend/ai/brief.py`: the facts from the books (Real morning plan, futures plan and roll queue, options state and chain
   line, the night's high notes, results on held names, VIX, event days), the night model's ≤ 5 lines validated like a
   note, the `ai_notes` row of kind `brief`, the Telegram message, the `ai_brief` scheduler job at `ai.brief_time` through
-  the queue (kind `brief`; `guard.brief_window` to 9:00 AM). `backend/ai/ask.py`: the 14 whitelisted read-only tools with
+  the queue (kind `brief`; `guard.brief_window` to 9:15 AM). `backend/ai/ask.py`: the 14 whitelisted read-only tools with
   typed arguments coerced by code, the tool pick, the answer on the day model with the numbers check and the rejection,
   the refusal text, table `ai_asks`, kind `ask` allowed any time on the day model only.
 - Hooks: `AIConfig.brief / brief_time / ask`; Telegram `ask <question>` ("thinking…" first, 60 s); `POST /api/ai/ask`,
