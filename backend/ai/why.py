@@ -6,7 +6,13 @@ time), the model writes the one line (≤ 180 chars, numbers only from the evide
 an `ai_notes` row of kind "why" (severity info) and sends ONE evening message "🧾 Today's exits, explained" when at
 least one trade closed (key {day}|ai-why). The model explains; it never grades a rule or proposes a change.
 
+A stock closed the same day in several books (Real and Paper E+ on the same stop) is ONE item: one evidence block
+(each book's trade line, then the stock's lines once), one model call, one row with source_key multi:<SYM>:<day> and
+the books' trade keys in data.keys, so `attach()` finds the line for every trade row; the evening message lists the
+stock once with the books' nets on one line.
+
   closed_today(day)              the normalised trade rows of the four books closed on `day`
+  merge(items, day)              one item per stock closed in several books (options spreads stay apart)
   moved_today(day, config)       held names that gapped > 1% at the open or whose stop was hit today
   evidence(item, day, config)    the evidence lines for one item (trade or held name)
   run_night(config, now)         one job "why:<day>" through the queue (kind "night"): one model call per item
@@ -85,6 +91,26 @@ def _cash(t: dict, book: str) -> dict:
     return {"book": book, "key": f"{book}:{t['id']}", "symbol": t["symbol"], "side": "long", "qty": t.get("qty"), "entry": t.get("buy"),
             "exit": t.get("sell"), "net": t.get("net"), "why": t.get("why"), "label": t.get("why"), "in": t.get("in"), "out": t.get("out"),
             "days": t.get("days"), "stop": t.get("stop"), "extra": {"best": t.get("best")}}
+
+
+def merge(items: list[dict], day: str) -> list[dict]:
+    """One item per stock closed in several books on `day` (order kept): {book (the first book's), key
+    multi:<SYM>:<day>, symbol, label, members: the books' trade items, ...the first item's fields}. A stock closed in one
+    book and the options spreads (all NIFTY) pass through unchanged."""
+    groups: dict[str, list] = {}
+    for t in items:
+        if t["book"] != "options":
+            groups.setdefault(t["symbol"], []).append(t)
+    out, seen = [], set()
+    for t in items:
+        g = groups.get(t["symbol"]) if t["book"] != "options" else None
+        if not g or len(g) == 1:
+            out.append(t)
+        elif t["symbol"] not in seen:
+            seen.add(t["symbol"])
+            label = " / ".join(dict.fromkeys(str(m["label"]) for m in g if m.get("label")))
+            out.append({**g[0], "key": f"multi:{t['symbol']}:{day}", "label": label or g[0]["label"], "members": g})
+    return out
 
 
 def _bars(symbol: str, day: str, n: int = 2) -> list[dict]:
@@ -194,9 +220,9 @@ def _trade_line(t: dict) -> str:
 
 
 def evidence(t: dict, day: str, config: Optional[AppConfig] = None) -> list[dict]:
-    """The evidence lines for one item: the trade row, the stock's day move (gap and close), the industry's average
-    move, NIFTY's move, the filings and deals of the last 3 days."""
-    ev = [{"icon": BOOK_ICON.get(t["book"], "📦"), "text": _trade_line(t)}]
+    """The evidence lines for one item: the trade row (one per book for a merged stock), the stock's day move (gap and
+    close), the industry's average move, NIFTY's move, the filings and deals of the last 3 days."""
+    ev = [{"icon": BOOK_ICON.get(m["book"], "📦"), "text": _trade_line(m)} for m in t.get("members") or [t]]
     sym = t["symbol"]
     if t["book"] != "options":
         m = t["extra"].get("move") if t["book"] == "held" else day_move(sym, day)
@@ -216,7 +242,8 @@ def evidence(t: dict, day: str, config: Optional[AppConfig] = None) -> list[dict
 # --- the model's line --------------------------------------------------------------------------------------------------------
 
 def prompt(t: dict, ev: list[dict]) -> str:
-    lines = [f"Trade: {t['symbol']} · {t['book']} · {t['label']}", "Evidence:"] + [f"- {e['text']}" for e in ev]
+    books = " + ".join(m["book"] for m in t.get("members") or [t])
+    lines = [f"Trade: {t['symbol']} · {books} · {t['label']}", "Evidence:"] + [f"- {e['text']}" for e in ev]
     lines.append('Write the one line "likely cause: ...". Quote only the numbers above.')
     return "\n".join(lines)
 
@@ -262,10 +289,18 @@ def ask(config: AppConfig, t: dict, ev: list[dict]) -> tuple[dict, dict]:
 
 # --- rows ------------------------------------------------------------------------------------------------------------------------
 
+def _plain(t: dict) -> dict:
+    """The trade row as stored and shown (no `extra`, no `members`)."""
+    return {k: v for k, v in t.items() if k not in ("extra", "members")}
+
+
 def save(t: dict, line: dict, ev: list[dict], day: str, model: str, ms: int) -> Optional[int]:
-    """One `ai_notes` row of kind "why" (None when the item has its line already: the UNIQUE guard on source_key)."""
-    data = {"trade": {k: v for k, v in t.items() if k != "extra"}, "extra": t["extra"], "evidence": ev, "numbers_checked": line["numbers_checked"],
+    """One `ai_notes` row of kind "why" (None when the item has its line already: the UNIQUE guard on source_key). A
+    merged stock keeps its books' trade rows in data.trades and their keys in data.keys (what `attach()` reads)."""
+    data = {"trade": _plain(t), "extra": t["extra"], "evidence": ev, "numbers_checked": line["numbers_checked"],
             "source": {"dt": day, "category": "why", "url": next((e["url"] for e in ev if e.get("url")), "")}, "alerted": False}
+    if t.get("members"):
+        data.update(trades=[_plain(m) for m in t["members"]], keys=[m["key"] for m in t["members"]], books=[m["book"] for m in t["members"]])
     with get_db() as conn:
         cur = conn.execute("INSERT OR IGNORE INTO ai_notes (created, day, kind, symbol, book, severity, title, text, data, model, prompt_version, ms, "
                            "source_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -275,17 +310,23 @@ def save(t: dict, line: dict, ev: list[dict], day: str, model: str, ms: int) -> 
 
 
 def _done_keys(day: str) -> set:
+    """Every item key with a line already: the rows' source keys and the trade keys a merged row covers."""
     with get_db() as conn:
-        return {r[0] for r in conn.execute("SELECT source_key FROM ai_notes WHERE kind = 'why' AND prompt_version = ?", (PROMPT_V,))}
+        done = {r[0] for r in conn.execute("SELECT source_key FROM ai_notes WHERE kind = 'why' AND prompt_version = ?", (PROMPT_V,))}
+        done |= {r[0] for r in conn.execute("SELECT j.value FROM ai_notes n, json_each(n.data, '$.keys') j WHERE n.kind = 'why' "
+                                            "AND n.source_key LIKE 'multi:%' AND n.prompt_version = ?", (PROMPT_V,))}
+    return done
 
 
 def items_for(day: str, config: AppConfig) -> list[dict]:
-    """Tonight's items: the trades closed today, then the held names that moved; the ones noted already left out."""
+    """Tonight's items: the trades closed today (a stock closed in several books merged into one), then the held names
+    that moved; the ones noted already left out."""
     done = _done_keys(day)
-    closed = closed_today(day)
-    closed_syms = {t["symbol"] for t in closed}
+    every = closed_today(day)
+    closed = [t for t in every if t["key"] not in done]
+    closed_syms = {t["symbol"] for t in every}
     moved = [m for m in moved_today(day, config) if m["symbol"] not in closed_syms]
-    return [t for t in closed + moved if t["key"] not in done]
+    return [t for t in merge(closed, day) + moved if t["key"] not in done]
 
 
 def run_night(config: AppConfig, now: Optional[datetime] = None, notifier=None) -> dict:
@@ -311,11 +352,14 @@ def run_night(config: AppConfig, now: Optional[datetime] = None, notifier=None) 
         tokens += r["tokens"]
         nid = save(t, line, ev, day, r["model"], r["ms"])
         if nid:
-            written.append({**notes.get_note(nid), "trade": {k: v for k, v in t.items() if k != "extra"}})
+            row = {**notes.get_note(nid), "trade": _plain(t)}
+            if t.get("members"):
+                row["trades"] = [_plain(m) for m in t["members"]]
+            written.append(row)
     closed = [n for n in written if n["book"] in BOOKS]
     if closed and config.ai.why:
         try:
-            (notifier or Notifier(config.alerts)).send(f"{day}|ai-why", "ai", msg.ai_why_evening(closed, day))
+            (notifier or Notifier(config.alerts, ai=config.ai)).send(f"{day}|ai-why", "ai", msg.ai_why_evening(closed, day))
             for n in closed:
                 notes.mark_alerted(n["id"])
         except Exception:
@@ -349,14 +393,18 @@ def enqueue_tonight(config: AppConfig, now: Optional[datetime] = None, notifier=
 # --- reading ---------------------------------------------------------------------------------------------------------------------
 
 def for_keys(keys) -> dict[str, dict]:
-    """{source_key: {id, text, created}} of the why lines for trade keys such as "real:12"."""
+    """{trade key: {id, text, at}} of the why lines for trade keys such as "real:12": the row keyed by the trade, or
+    the merged row (multi:<SYM>:<day>) whose data.keys lists it."""
     keys = sorted(set(keys))
     if not keys:
         return {}
+    marks = ",".join("?" * len(keys))
     with get_db() as conn:
-        rows = conn.execute(f"SELECT id, source_key, text, created FROM ai_notes WHERE kind = 'why' AND source_key IN ({','.join('?' * len(keys))}) "
+        rows = conn.execute(f"SELECT id, source_key, text, created FROM ai_notes WHERE kind = 'why' AND source_key IN ({marks}) "
                             "ORDER BY id", keys).fetchall()
-    return {r["source_key"]: {"id": r["id"], "text": r["text"], "at": r["created"]} for r in rows}
+        merged = conn.execute(f"SELECT n.id, j.value AS source_key, n.text, n.created FROM ai_notes n, json_each(n.data, '$.keys') j "
+                              f"WHERE n.kind = 'why' AND n.source_key LIKE 'multi:%' AND j.value IN ({marks}) ORDER BY n.id", keys).fetchall()
+    return {r["source_key"]: {"id": r["id"], "text": r["text"], "at": r["created"]} for r in [*merged, *rows]}
 
 
 def attach(rows: list, book: str) -> list:

@@ -32,6 +32,7 @@
 .rd .rtag.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 .rd .rtag.w { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .rd .rtag.a { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 40%, transparent); }
+.rd .rtag.ai { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); font-weight: 600; flex: none; }
 .rd .rtag:first-child { margin-left: 0; }
 
 .rd .rpanel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; overflow: hidden; box-shadow: var(--shadow); }

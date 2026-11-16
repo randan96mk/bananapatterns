@@ -3,7 +3,7 @@ import * as api from '../services/api';
 import { useLive } from '../services/live';
 import { clock, stamp } from '../timefmt';
 import { inr } from '../fmt';
-import { Panel, Tag } from './ui2';
+import { Panel, Tag, AiTag } from './ui2';
 import { useIsPhone } from '../useMedia';
 
 // 🤖 Home › "AI · Suggestions · for your review": what the local AI proposes for the next session (GET
@@ -74,7 +74,7 @@ function Row({ s, open, onOpen, onGo, onChanged }) {
       <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--panel)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flex: 'none', marginTop: 1 }}>{s.icon || '🤖'}</span>
       <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, flexWrap: phone ? 'wrap' : 'nowrap' }}>
-          <Tag c="a">AI</Tag><span className="mono muted" style={{ flex: 'none' }}>#{s.id}</span>
+          <AiTag of={s} /><span className="mono muted" style={{ flex: 'none' }}>#{s.id}</span>
           <span style={{ ...ELL, flex: phone ? '1 1 100%' : '0 1 auto' }}><Title s={s} /></span>
           <span className="muted" style={{ ...ELL, flex: phone ? '1 1 100%' : '1 1 auto' }}>· {(SUB[s.kind] || (() => s.book || ''))(s)}</span>
           <span style={{ flex: 'none', display: 'flex', gap: 4 }}>{conf}{until}</span></div>
@@ -118,7 +118,7 @@ export default function AiSuggestions({ onGo }) {
   const goAi = (anchor) => { onGo('ai'); if (anchor) setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 350); };
   const right = <><button type="button" className="btn small" onClick={() => goAi('sugg-scorecard')} title="System › AI · how each kind has done">Scorecard</button>
     <button type="button" className="btn small" onClick={() => goAi('sugg-scorecard')} title="switch a kind off or on (System › AI › Scorecard)">Kinds…</button></>;
-  return <Panel id="suggestions" title={<><Tag c="a">AI</Tag> Suggestions · for your review</>} meta={rows == null ? '…' : `${n} open · nothing happens until you tap`} right={right}>
+  return <Panel id="suggestions" title={<><AiTag title="suggestions written by the local model · nothing happens until you tap" /> Suggestions · for your review</>} meta={rows == null ? '…' : `${n} open · nothing happens until you tap`} right={right}>
     {err && <div className="rbanner bad" style={{ margin: '8px 14px' }}>{err}</div>}
     {rows == null ? <p className="muted small rempty">Loading…</p>
       : !n ? <p className="muted small rempty">No suggestions · they are born after the evening job from the night's notes</p>

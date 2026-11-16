@@ -81,7 +81,7 @@ def test_messages_escape_and_digest_chunks():
 
 def test_due_jobs():
     cfg = AlertsConfig(login_links=False, top_setups=False, morning_plan=False, gap_check=False,
-                       filings=False)                                                # tested elsewhere
+                       filings=False, day_summary=False)                             # tested elsewhere
     assert due_jobs(ist(2026, 10, 23, 15, 40), cfg, set(), True) == ["reminder"]
     assert due_jobs(ist(2026, 10, 23, 18, 31), cfg, set(), True) == ["eod"]
     assert due_jobs(ist(2026, 10, 23, 18, 31), cfg, {"eod"}, True) == []
@@ -92,7 +92,7 @@ def test_due_jobs():
     assert due_jobs(ist(2026, 10, 23, 11, 0), cfg, set(), True, last_intraday=ist(2026, 10, 23, 10, 57)) == []
     assert due_jobs(ist(2026, 10, 25, 10, 5), cfg, set(), False) == ["weekly"]     # Sunday
     assert due_jobs(ist(2026, 10, 23, 18, 31), AlertsConfig(job_enabled=False, login_links=False, morning_plan=False,
-                                                            filings=False), set(), True) == []
+                                                            filings=False, day_summary=False), set(), True) == []
 
 
 def test_volume_pace():

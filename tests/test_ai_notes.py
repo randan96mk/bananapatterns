@@ -370,7 +370,7 @@ def test_deal_note_through_the_queue(ollama, cfg):
     n = notes.list_notes(kind="deal")["rows"][0]
     assert n["severity"] == "high" and n["book"] == "held" and n["source"]["n"] == 2 and n["source"]["date"] == "2026-11-13" and n["numbers_checked"]
     assert sorted(x["label"] for x in n["numbers"]) == ["price", "qty", "stake"]
-    assert len(sent.sent) == 1 and sent.sent[0][1].startswith("📰 <b>AAA · deal</b>\n🤖 <i>AI · high · PROMO HOLDINGS sold 2.50%")
+    assert len(sent.sent) == 1 and sent.sent[0][1].startswith("📰 <b>[AI] AAA · deal</b>\n🤖 <i>AI ·</i> <i>high · PROMO HOLDINGS sold 2.50%")
     assert notes.get_note(n["id"])["alerted"] is True
 
 
@@ -410,9 +410,9 @@ def test_alert_lines_when_a_note_exists():
     note = {"severity": "high", "text": "Loss of 4.2 crore; margins fell <b>sharply</b>."}
     plain = msg.filing_alert(f, "you hold it")
     assert plain.endswith("Outcome of Board Meeting · 14 Nov, 6:32 PM</i>") and msg.filing_alert(f, "you hold it", None) == plain
-    assert msg.filing_alert(f, "you hold it", note) == plain + "\n🤖 <i>AI · high · Loss of 4.2 crore; margins fell &lt;b&gt;sharply&lt;/b&gt;.</i>"
+    assert msg.filing_alert(f, "you hold it", note) == plain + "\n🤖 <i>AI ·</i> <i>high · Loss of 4.2 crore; margins fell &lt;b&gt;sharply&lt;/b&gt;.</i>"
     item = {"label": "Promoter sold 2.5%", "text": "X sold 2.50%, disclosed 13 Nov"}
-    assert msg.deal_alert("HELD", "🚩", item, "you hold it", note).endswith("\n🤖 <i>AI · high · Loss of 4.2 crore; margins fell &lt;b&gt;sharply&lt;/b&gt;.</i>")
+    assert msg.deal_alert("HELD", "🚩", item, "you hold it", note).endswith("\n🤖 <i>AI ·</i> <i>high · Loss of 4.2 crore; margins fell &lt;b&gt;sharply&lt;/b&gt;.</i>")
     assert "🤖" not in msg.deal_alert("HELD", "🚩", item, "you hold it")
 
 
@@ -432,7 +432,7 @@ def test_filing_alert_carries_the_note_and_the_note_is_not_pushed_again(ollama, 
     fake = FakeTG()
     sch = Scheduler(st, notifier_factory=lambda c: Notifier(c, fake))
     assert sch.alert_filings([row], datetime.now(IST)) == 1
-    assert fake.sent[0][1].endswith("\n🤖 <i>AI · high · Revenue fell; PAT 128.4 crore.</i>") and notes.get_note(out["id"])["alerted"] is True
+    assert fake.sent[0][1].endswith("\n🤖 <i>AI ·</i> <i>high · Revenue fell; PAT 128.4 crore.</i>") and notes.get_note(out["id"])["alerted"] is True
     assert notes.alert_high(notes.get_note(out["id"]), cfg, Notifier(cfg.alerts, fake)) is False and len(fake.sent) == 1
 
 
@@ -454,7 +454,7 @@ def test_high_note_message_where_and_skip_hint(ollama, cfg):
             "url": "https://nsearchives.nseindia.com/x.pdf", "alerted": False, "scope": {"book": "plan", "rank": 3}}
     cfg.real.enabled = True
     text = msg.note_alert(note, *notes.where_text("GLENMARK", cfg, note["scope"]))
-    assert text == ("📰 <b>GLENMARK · pledge</b>\n🤖 <i>AI · high · Promoter pledge raised to 9.92% of the share capital.</i>\n"
+    assert text == ("📰 <b>[AI] GLENMARK · pledge</b>\n🤖 <i>AI ·</i> <i>high · Promoter pledge raised to 9.92% of the share capital.</i>\n"
                     "<i>in tomorrow's plan at #3 · reply skip GLENMARK before 9:16 AM to leave it out · 14 Nov, 6:10 PM · "
                     '<a href="https://nsearchives.nseindia.com/x.pdf">filing</a></i>')
     assert no_brokers(text) and not re.search(r"\b\d{2}:\d{2}\b(?! [AP]M)", text.replace("18:10", ""))

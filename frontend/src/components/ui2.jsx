@@ -69,6 +69,12 @@ export const Switch = ({ on, onChange, label, red, disabled, title }) => (
 
 export const Tag = ({ children, c = '', title }) => <span className={`rtag ${c}`} title={title}>{children}</span>;
 
+// 🤖 The purple "AI" tag on every sentence the local model wrote (never on a score or a verdict: code sets those).
+// Tooltip: "written by the local model · <model> · <time> · <prompt version>" with whatever the row carries.
+const aiMs = (ms) => (ms == null || ms === '' ? null : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+export const aiTip = (r) => ['written by the local model', r?.model, aiMs(r?.ms), r?.prompt_version].filter(Boolean).join(' · ');
+export const AiTag = ({ of, title }) => <Tag c="ai" title={title || aiTip(of)}>AI</Tag>;
+
 // A row in a list: icon · text (+ small meta) · a button on the right.
 export const Act = ({ icon, text, meta, btn, onBtn, cls = '', onClick, children }) => (
   <div className={`ract ${onClick ? 'click' : ''}`} onClick={onClick}><span className={`i ${cls}`}>{icon}</span>

@@ -279,7 +279,7 @@ def test_telegram_ask_flow(ollama, cfg):
     assert b.poll_once(n) == 4
     texts = [h for _, h in fake.sent]
     assert texts[0] == "💬 <b>ask</b> why did we skip S3 today\n<i>thinking…</i>"
-    assert texts[1].startswith("💬 <b>ask</b> why did we skip S3 today\n<i>AI</i> · S3 was skipped by the results guard")
+    assert texts[1].startswith("💬 <b>[AI] ask</b> why did we skip S3 today\n<i>AI ·</i> S3 was skipped by the results guard")
     assert texts[1].endswith(f"<i>(why_skipped(symbol=S3, day={TODAY}) · 2 s · read-only)</i>")
     assert texts[2].startswith("Ask what?") and "ask &lt;question&gt;" in texts[3]
     assert texts[4].startswith("💬 <b>ask</b> what is in &lt;the&gt; plan") and all(no_brokers(t) for t in texts)
@@ -292,8 +292,8 @@ def test_telegram_ask_flow(ollama, cfg):
 
 def test_ask_reply_text():
     row = {"question": "cash?", "answer": "Cash 1 & 2", "read": "real_summary()", "ms": 5400, "ok": True}
-    assert msg.ai_ask_reply(row) == "💬 <b>ask</b> cash?\n<i>AI</i> · Cash 1 &amp; 2 <i>(real_summary() · 5 s · read-only)</i>"
-    assert msg.ai_ask_reply({"question": "x", "answer": None, "error": "boom", "read": None, "ms": None}) == "💬 <b>ask</b> x\n<i>AI</i> · boom <i>(read-only)</i>"
+    assert msg.ai_ask_reply(row) == "💬 <b>[AI] ask</b> cash?\n<i>AI ·</i> Cash 1 &amp; 2 <i>(real_summary() · 5 s · read-only)</i>"
+    assert msg.ai_ask_reply({"question": "x", "answer": None, "error": "boom", "read": None, "ms": None}) == "💬 <b>[AI] ask</b> x\nboom <i>(read-only)</i>"
 
 
 # --- the routes --------------------------------------------------------------------------------------------------------------------

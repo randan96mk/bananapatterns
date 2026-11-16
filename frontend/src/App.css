@@ -909,6 +909,7 @@ tr.row-new td, .it.row-new { background: color-mix(in srgb, var(--blue) 12%, tra
 .rd .hthree { gap: 12px; } .rd .hthree .rpanel { min-height: 190px; }
 .hhealth { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
 .hhealth .rchip { cursor: default; } .hhealth .rchip.click { cursor: pointer; }
+.hhealth .rchip.more { color: var(--muted); }
 .hhealth .rchip .dot { width: 7px; height: 7px; border-radius: 50%; } .hhealth .rchip .dot.ok { background: var(--ok); } .hhealth .rchip .dot.warn { background: var(--warn); } .hhealth .rchip .dot.bad { background: var(--bad); }
 .htl .ev, .htl .cl { cursor: pointer; } .htl .cl.on, .htl .ev.on i { box-shadow: 0 0 0 2px var(--blue); } .htl .cl.on { border-color: var(--blue); background: var(--blue-bg); }
 .htl .tlf { position: absolute; left: 8%; top: 5px; font-size: 10px; color: var(--blue); font-weight: 600; white-space: nowrap; background: var(--panel); padding: 0 6px; border-radius: 8px; border: 1px solid var(--blue); cursor: pointer; z-index: 2; }

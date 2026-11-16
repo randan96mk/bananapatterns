@@ -131,8 +131,9 @@ def test_tick_sends_every_alert_once():
     run_sched(sch, w)
     state = book._state()
     kinds = [a["kind"] for a in state["alerts"]]
-    assert kinds == ["entry", "exit", "summary"] and len(fake.sent) == 3
-    bias, exit_, summ = (h for _, h in fake.sent)
+    assert kinds == ["entry", "exit", "summary"] and len(fake.sent) == 2            # 🌙 the summary goes in the one day summary
+    bias, exit_ = (h for _, h in fake.sent)
+    summ = msg.options_alert(state["alerts"][-1])                                     # its text is still built (the API lists it)
     assert bias.startswith("🧭 <b>Options · paper · bias BULLISH · 9:50 AM</b>") and "SELL <b>24,800 PE</b>" in bias and "BUY 24,550 PE" in bias
     assert "2 lots" in bias and "above the 9:15–9:30 range (25,000–25,100)" in bias and "prev high taken" in bias and "5 sessions to expiry" in bias
     assert "VIX 14.0" in bias and "chain:" in bias and "→ 3/3" in bias and "(+50%)" in bias and "(60%)" in bias
@@ -144,7 +145,7 @@ def test_tick_sends_every_alert_once():
     # another minute, a new scheduler on the same DB (a restart), the whole day again: nothing goes twice
     sch.run_options_tick(at("15:41"))
     scheduler(st, fake).run_options_tick(at("15:42"))
-    assert len(fake.sent) == 3
+    assert len(fake.sent) == 2
     assert len(sch.options_sent) == 3 and all(k.startswith(f"{DAY.isoformat()}|opt-") for k in sch.options_sent)
 
 
@@ -155,10 +156,11 @@ def test_no_trade_day_sends_the_no_trade_line_and_the_summary():
     sch = scheduler(st, fake)
     book.start(st.config)
     run_sched(sch, w)
-    assert [a["kind"] for a in book._state()["alerts"]] == ["no_trade", "summary"] and len(fake.sent) == 2
+    assert [a["kind"] for a in book._state()["alerts"]] == ["no_trade", "summary"] and len(fake.sent) == 1
     nt = fake.sent[0][1]
     assert nt.startswith("🧭 <b>Options · no trade today</b> · no break of the 9:15–9:30 range by 11:00 AM (25,000–25,100") and "next look Wed 9:45 AM" in nt
-    assert "VWAP" in nt and "no trade (no break by 11:00 AM)" in fake.sent[1][1] and "0 traded of 1 day" in fake.sent[1][1]
+    summ = msg.options_alert(book._state()["alerts"][-1])
+    assert "VWAP" in nt and "no trade (no break by 11:00 AM)" in summ and "0 traded of 1 day" in summ
 
 
 def test_no_login_alerts_once_and_a_quiet_notifier_sends_nothing():

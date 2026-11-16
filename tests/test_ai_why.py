@@ -202,7 +202,7 @@ def test_run_night_writes_rows_and_the_evening_message_once(ollama, cfg):
     assert body["model"] == "qwen2.5:7b-instruct" and body["format"] == "json" and "never advise, grade the rule" in body["system"]
     assert len(fake.sent) == 1
     text = fake.sent[0][1]
-    assert text.startswith("🧾 <b>Today's exits, explained</b> · Tue 17 Nov") and "💰 <b>RT</b> · stop hit · −₹620\n   🤖 <i>likely cause:" in text
+    assert text.startswith("🧾 <b>[AI] Today's exits, explained</b> · Tue 17 Nov") and "💰 <b>RT</b> · stop hit · −₹620\n   🤖 <i>AI ·</i> <i>likely cause:" in text
     assert "🧩 <b>NIFTY</b> · premium stop · −₹2,450" in text and "📐 <b>FT</b>" in text and "GAP" not in text and "no action taken" in text
     assert no_brokers(text)
     assert why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake)) == {"skip": f"nothing closed or moved on {DAY}"} and len(fake.sent) == 1
@@ -261,8 +261,8 @@ def test_evening_message_text():
     rows = [{"book": "paper", "symbol": "PT", "text": "likely cause: <b>x</b>", "trade": {"label": "close under SMA50", "net": 390.0}},
             {"book": "futures", "symbol": "FT", "text": "likely cause: y", "data": {"trade": {"label": "stop hit", "net": -3100.0}}}]
     text = msg.ai_why_evening(rows, "2026-11-17")
-    assert text.split("\n") == ["🧾 <b>Today's exits, explained</b> · Tue 17 Nov", "📝 <b>PT</b> · close under SMA50 · +₹390", "   🤖 <i>likely cause: &lt;b&gt;x&lt;/b&gt;</i>",
-                                "📐 <b>FT</b> · stop hit · −₹3,100", "   🤖 <i>likely cause: y</i>",
+    assert text.split("\n") == ["🧾 <b>[AI] Today's exits, explained</b> · Tue 17 Nov", "📝 <b>PT</b> · close under SMA50 · +₹390", "   🤖 <i>AI ·</i> <i>likely cause: &lt;b&gt;x&lt;/b&gt;</i>",
+                                "📐 <b>FT</b> · stop hit · −₹3,100", "   🤖 <i>AI ·</i> <i>likely cause: y</i>",
                                 "<i>written from the trade rows, the day's bars and the filings · no action taken</i>"]
 
 
@@ -300,3 +300,63 @@ def test_run_eod_hook_and_the_route(monkeypatch, ollama, cfg, fake_kite, make_cl
         q.wait(job["id"], 10)
         assert tc.get("/api/ai/notes?kind=why").json() == {"rows": [], "total": 0}
         assert tc.get("/api/ai").json()["settings"]["why"] is True
+
+
+# --- one entry per stock across books ----------------------------------------------------------------------------------------------------------
+
+def seed_both():
+    """LAURUSLABS stopped out in Real and in Paper E+ the same day (and one other paper trade)."""
+    ids = {"real": trade("real_trades", {"symbol": "LAURUSLABS", "qty": 30, "in": "2026-11-03", "out": DAY, "buy": 600.0, "sell": 545.0, "stop": 545.0,
+                                         "days": 10, "gross": -1650.0, "costs": 52.0, "net": -1702.0, "why": "stop hit"}),
+           "paper": trade("paper_trades", {"symbol": "LAURUSLABS", "qty": 31, "in": "2026-11-03", "out": DAY, "buy": 600.0, "sell": 545.0, "stop": 545.0,
+                                           "days": 10, "gross": -1705.0, "costs": 46.0, "net": -1751.0, "why": "stop hit"}, account="E"),
+           "other": trade("paper_trades", {"symbol": "PT", "qty": 20, "in": "2026-11-10", "out": DAY, "buy": 500.0, "sell": 520.0, "stop": 470.0, "days": 5,
+                                           "gross": 400.0, "costs": 10.0, "net": 390.0, "why": "close under SMA50"}, account="E")}
+    bars("LAURUSLABS", 560.0, 552.0, 544.0)
+    bars("PT", 500.0, 505.0, 520.0)
+    return ids
+
+
+def test_merge_one_item_per_stock_across_books():
+    ids = seed_both()
+    items = why.merge(why.closed_today(DAY), DAY)
+    assert [t["symbol"] for t in items] == ["LAURUSLABS", "PT"]
+    m = items[0]
+    assert m["key"] == f"multi:LAURUSLABS:{DAY}" and m["book"] == "real" and m["label"] == "stop hit"
+    assert [x["key"] for x in m["members"]] == [f"real:{ids['real']}", f"paper:{ids['paper']}"] and "members" not in items[1]
+    opt = {"book": "options", "key": "options:1", "symbol": "NIFTY", "label": "stop"}
+    assert why.merge([opt, {**opt, "key": "options:2"}], DAY) == [opt, {**opt, "key": "options:2"}]          # spreads stay apart
+
+
+def test_merged_evidence_and_prompt(cfg):
+    seed_both()
+    m = why.merge(why.closed_today(DAY), DAY)[0]
+    ev = [e["text"] for e in why.evidence(m, DAY, cfg)]
+    assert ev[0].startswith("real trade: 30 from 600.00") and ev[1].startswith("paper trade: 31 from 600.00")
+    assert sum(t.startswith("LAURUSLABS today:") for t in ev) == 1                          # the stock's lines once
+    assert "Trade: LAURUSLABS · real + paper · stop hit" in why.prompt(m, [])
+
+
+def test_run_night_one_call_one_row_attach_for_every_trade(ollama, cfg):
+    ids = seed_both()
+    fake = FakeTG()
+    out = why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
+    assert out["note"] == "2 why line(s) · 0 failed" and len(ollama.calls) == 2              # one call for the two LAURUSLABS trades
+    rows = notes.list_notes(kind="why")["rows"]
+    assert len(rows) == 2
+    lr = next(r for r in rows if r["symbol"] == "LAURUSLABS")
+    assert lr["source_key"] == f"multi:LAURUSLABS:{DAY}" and lr["book"] == "real" and lr["alerted"] is True
+    assert why.attach([{"id": ids["real"]}], "real")[0]["ai_why"]["id"] == lr["id"]
+    assert why.attach([{"id": ids["paper"]}, {"id": ids["other"]}], "paper")[0]["ai_why"]["id"] == lr["id"]
+    assert why.attach([{"id": ids["other"]}], "paper")[0]["ai_why"]["id"] != lr["id"]
+    text = fake.sent[0][1]
+    assert "💰📝 <b>LAURUSLABS</b> · stop hit · Real −₹1,702 · Paper −₹1,751\n   🤖 <i>AI ·</i> <i>likely cause:" in text
+    assert text.count("LAURUSLABS") == 1 and "📝 <b>PT</b> · close under SMA50 · +₹390" in text
+    assert why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))["skip"].startswith("nothing closed") and len(ollama.calls) == 2
+
+
+def test_merged_evening_line_from_the_stored_row():
+    row = {"book": "real", "symbol": "LAURUSLABS", "text": "likely cause: z",
+           "data": {"trades": [{"book": "real", "label": "stop hit", "net": -1702.0}, {"book": "paper", "label": "stop hit", "net": -1751.0}]}}
+    assert msg.ai_why_evening([row], DAY).split("\n")[1:3] == ["💰📝 <b>LAURUSLABS</b> · stop hit · Real −₹1,702 · Paper −₹1,751",
+                                                               "   🤖 <i>AI ·</i> <i>likely cause: z</i>"]

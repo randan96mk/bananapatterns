@@ -99,7 +99,7 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
     try:                                                   # 🧩 the options book: one tick a minute
         from backend.options import book as obook
         if obook.active(config):
-            add("options_tick", "🧩", "Options book", "every minute 9:15-15:40 · range 9:30, bias on 5-minute closes, exits, 15:35 summary",
+            add("options_tick", "🧩", "Options book", "every minute 9:15-15:40 · range 9:30, bias on 5-minute closes, exits, the 3:35 PM day row",
                 _next_every(now, time(9, 15), time(15, 41), 1, getattr(sch, "last_options_tick", None)), 1)
     except Exception:
         pass
@@ -131,6 +131,9 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
             "paper A & E, real orders for tomorrow, backtest re-run", _next_at(now, _hm(a.job_time)))
     if a.top_setups or a.alert_style == "summary":
         add("top_setups", "📨", "Evening report", "one silent Telegram message", _next_at(now, _hm(a.top_setups_time)))
+    if a.day_summary:
+        add("day_summary", "🌙", "Day summary", "one Telegram message: each book's value and the day's P&L, the signal track, the AI",
+            _next_at(now, _hm(a.day_summary_time)))
     if a.morning_plan:
         add("morning_plan", "🌅", "Morning plan", "top setups for the day", _next_at(now, _hm(a.morning_plan_time)))
     if a.gap_check:

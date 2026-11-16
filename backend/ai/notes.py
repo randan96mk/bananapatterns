@@ -586,14 +586,15 @@ def where_text(symbol: str, config: AppConfig, sc: Optional[dict] = None) -> tup
 
 def alert_high(note: dict, config: AppConfig, notifier=None) -> bool:
     """The separate message for a high note that no filing / deal alert carried: key {day}|ai-note-{id}, channel
-    "filing"; once. Builds a Notifier from the alerts config when none is given."""
+    "filing" (held in the AI quiet hours: `quiet=True`); once. Builds a Notifier from the alerts config when none is given."""
     from backend.alerts import messages as msg
     from backend.alerts.dispatch import Notifier
     if note.get("alerted") or note["severity"] != "high":
         return False
-    notifier = notifier or Notifier(config.alerts)
+    notifier = notifier or Notifier(config.alerts, ai=config.ai)
     where, hint = where_text(note["symbol"], config, note.get("scope"))
-    sent = notifier.send(f"{note['day']}|ai-note-{note['id']}", "filing", msg.note_alert(note, where, hint), note["symbol"])
+    sent = notifier.send(f"{note['day']}|ai-note-{note['id']}", "filing", msg.note_alert(note, where, hint), note["symbol"],
+                         quiet=True)                         # 🤖 held in the AI quiet hours like the "ai" kind
     if sent:
         mark_alerted(note["id"])
     return sent

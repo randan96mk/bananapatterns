@@ -12,6 +12,7 @@ A failed send is recorded with ok=0 and retried on the next dispatch.
 import json
 import os
 import re
+from datetime import datetime, time, timedelta
 from html import escape, unescape
 from typing import Optional
 
@@ -19,8 +20,8 @@ from backend.alerts import messages as msg
 from backend.alerts import charts
 from backend.alerts import intraday as itd
 from backend.alerts.telegram import MAX_CAPTION, TelegramClient, TelegramError
-from backend.config import AlertsConfig, BaseConfig, VcpConfig
-from backend.database.models import get_candles, get_db, now_ist
+from backend.config import IST, AIConfig, AlertsConfig, BaseConfig, VcpConfig
+from backend.database.models import get_candles, get_db, get_setting, now_ist
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("alerts")
@@ -57,18 +58,64 @@ def split_caption(html: str, limit: int = MAX_CAPTION) -> tuple[str, str]:
     return "\n".join(cap), "\n".join(lines).strip("\n")
 
 
-NEVER_HELD = ("system", "bot", "report", "real", "flow")                 # always sent at once, even while holding
+NEVER_HELD = ("system", "bot", "report", "real", "flow", "summary")      # always sent at once, even while holding
+AI_QUIET_KINDS = ("ai",)            # 🤖 held in the AI quiet hours; note alerts go as "filing" and pass quiet=True instead
+QUIET_BATCH = "ai-quiet:"           # alert_outbox batch of the held AI messages: ai-quiet:<the day the window ends>
+
+
+def _now() -> datetime:
+    """The IST clock the quiet hours read (one place, so the tests can set the hour)."""
+    return datetime.now(IST)
+
+
+def _hm(s: str) -> time:
+    h, m = str(s).split(":")[:2]
+    return time(int(h), int(m))
+
+
+def in_quiet(now: datetime, ai: AIConfig) -> bool:
+    """🤖 Is `now` (IST) inside the AI quiet hours [quiet_from, quiet_to)? The window may run over midnight
+    (23:00-09:00); equal times switch it off."""
+    f, t, x = _hm(ai.quiet_from), _hm(ai.quiet_to), now.time()
+    if f == t:
+        return False
+    return f <= x < t if f < t else (x >= f or x < t)
+
+
+def quiet_day(now: datetime, ai: AIConfig) -> str:
+    """The day the current quiet window ends on (after quiet_from in the evening: tomorrow), for the batch name."""
+    over_midnight = _hm(ai.quiet_from) > _hm(ai.quiet_to)
+    d = now.date() + timedelta(days=1) if over_midnight and now.time() >= _hm(ai.quiet_from) else now.date()
+    return d.isoformat()
+
+
+def saved_ai() -> AIConfig:
+    """The saved 🤖 settings (for a Notifier built without them); the defaults when none are saved."""
+    c = AIConfig()
+    try:
+        with get_db() as conn:
+            raw = get_setting(conn, "config.ai")
+        for k, v in json.loads(raw or "{}").items():
+            if hasattr(c, k):
+                setattr(c, k, v)
+    except (ValueError, TypeError):
+        pass
+    return c
 
 
 class Notifier:
     """Sends through Telegram and records every attempt in sent_alerts. With `hold` set to a batch (the scan date,
-    summary alert style), alerts are stored in alert_outbox for the evening report instead of being sent."""
+    summary alert style), alerts are stored in alert_outbox for the evening report instead of being sent. 🤖 An AI
+    message (kind "ai", or `quiet=True`) inside the AI quiet hours is stored in the batch ai-quiet:<day> and sent by
+    `flush_quiet()` at quiet_to or with the morning brief."""
 
-    def __init__(self, cfg: AlertsConfig, client: Optional[TelegramClient] = None, hold: Optional[str] = None):
+    def __init__(self, cfg: AlertsConfig, client: Optional[TelegramClient] = None, hold: Optional[str] = None,
+                 ai: Optional[AIConfig] = None):
         self.cfg = cfg
         self.client = client or TelegramClient()
         self.chat_id = (cfg.chat_id or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
         self.hold = hold
+        self.ai = ai                                       # 🤖 the quiet hours; None: the saved settings
 
     @property
     def ready(self) -> bool:
@@ -80,11 +127,17 @@ class Notifier:
         return bool(row and row["ok"])
 
     def send(self, key: str, kind: str, html: str, symbol: Optional[str] = None, png: Optional[bytes] = None,
-             buttons: Optional[list] = None, silent: bool = False, meta: Optional[dict] = None) -> bool:
+             buttons: Optional[list] = None, silent: bool = False, meta: Optional[dict] = None, quiet: bool = False) -> bool:
+        """Send once per key. `quiet` marks a model-written message sent on a non-AI channel (the note alerts) so the
+        AI quiet hours hold it like kind "ai"."""
         if not self.ready or self.already_sent(key):
             return False
         if symbol and kind in RESULTS_NOTE_KINDS:
             html += results_note(symbol, self.cfg) + news_note(symbol, kind, self.cfg) + flags_note(symbol, self.cfg)
+        if (quiet or kind in AI_QUIET_KINDS) and kind not in NEVER_HELD:
+            ai, now = self.ai or saved_ai(), _now()
+            if in_quiet(now, ai):
+                return self._hold(key, kind, html, symbol, meta, QUIET_BATCH + quiet_day(now, ai), "held for the AI quiet hours")
         if self.hold and kind not in NEVER_HELD:
             return self._hold(key, kind, html, symbol, meta)
         ok, err = True, None
@@ -113,16 +166,52 @@ class Notifier:
                          (key, now_ist(), kind, symbol, html, int(ok), err))
         return ok
 
-    def _hold(self, key: str, kind: str, html: str, symbol: Optional[str], meta: Optional[dict]) -> bool:
-        """Keep the alert for the evening report; recorded in sent_alerts as handled (so it isn't sent twice)."""
+    def _hold(self, key: str, kind: str, html: str, symbol: Optional[str], meta: Optional[dict], batch: Optional[str] = None,
+              note: str = "in the evening report") -> bool:
+        """Keep the alert for the evening report (or the AI quiet hours' `batch`); recorded in sent_alerts as handled
+        (so it isn't sent twice)."""
         with get_db() as conn:
             conn.execute("INSERT OR IGNORE INTO alert_outbox (batch, key, kind, symbol, html, meta, created_at) "
-                         "VALUES (?, ?, ?, ?, ?, ?, ?)", (self.hold, key, kind, symbol, html, json.dumps(meta or {}),
+                         "VALUES (?, ?, ?, ?, ?, ?, ?)", (batch or self.hold, key, kind, symbol, html, json.dumps(meta or {}),
                                                           now_ist()))
             conn.execute("INSERT INTO sent_alerts (key, sent_at, kind, symbol, text, ok, error) VALUES (?,?,?,?,?,?,?) "
                          "ON CONFLICT(key) DO UPDATE SET sent_at=excluded.sent_at, ok=1, error=excluded.error",
-                         (key, now_ist(), kind, symbol, html, 1, "in the evening report"))
+                         (key, now_ist(), kind, symbol, html, 1, note))
         return True
+
+    @staticmethod
+    def quiet_held() -> list[dict]:
+        """🤖 The AI messages held in the quiet hours, oldest first ({rowid, batch, key, kind, symbol, html})."""
+        with get_db() as conn:
+            return [dict(r) for r in conn.execute("SELECT rowid, batch, key, kind, symbol, html FROM alert_outbox WHERE batch LIKE ? "
+                                                  "ORDER BY created_at, rowid", (QUIET_BATCH + "%",))]
+
+    def flush_quiet(self) -> int:
+        """🤖 Send the AI messages held in the quiet hours, in order, each as its own message, after one line
+        "🤖 held overnight · n messages". Called at quiet_to (the scheduler) or with the morning brief, whichever comes
+        first. A failed send stops the flush: it and the rest stay held for the next try. Returns how many went out."""
+        if not self.ready:
+            return 0
+        rows = self.quiet_held()
+        if not rows:
+            return 0
+        try:
+            self.client.send_message(self.chat_id, msg.quiet_flushed(len(rows)))
+        except TelegramError as exc:
+            logger.error("Telegram send failed (quiet flush): %s", exc)
+            return 0
+        sent = 0
+        for r in rows:
+            try:
+                self.client.send_message(self.chat_id, r["html"])
+            except TelegramError as exc:
+                logger.error("Telegram send failed (quiet flush %s): %s", r["key"], exc)
+                break
+            with get_db() as conn:
+                conn.execute("DELETE FROM alert_outbox WHERE rowid = ?", (r["rowid"],))
+                conn.execute("UPDATE sent_alerts SET sent_at = ?, ok = 1, error = NULL WHERE key = ?", (now_ist(), r["key"]))
+            sent += 1
+        return sent
 
     def system(self, key: str, text: str) -> bool:
         return self.cfg.system and self.send(key, "system", msg.system_alert(text))
