@@ -472,7 +472,7 @@ class AIConfig:
     why: bool = True                       # the nightly "why" line under every trade closed today (and the evening message)
     # 🤖 brief
     brief: bool = True                     # the morning brief on trading days (one night-model call; a Telegram message)
-    brief_time: str = "06:30"              # when the brief is written (HH:MM; the window for kind "brief" runs to 9:00 AM)
+    brief_time: str = "09:00"              # when the brief is written (HH:MM; the window for kind "brief" runs to 9:15 AM)
     # 🤖 ask
     ask: bool = True                       # "ask the app": the day model answers from one whitelisted read-only tool, any time
     # 🤖 AI view: a rating beside every system-suggested stock (the model rates, it never acts)

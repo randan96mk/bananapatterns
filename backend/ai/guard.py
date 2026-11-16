@@ -14,7 +14,7 @@ from backend.database.models import get_db, get_setting, set_setting
 from backend.timefmt import ampm_date
 
 DAY_START, DAY_END = time(9, 0), time(15, 40)      # day answers (the day model only)
-BRIEF_END = time(9, 0)                             # 🤖 brief: kind "brief" may run past night_end, until here
+BRIEF_END = time(9, 15)                            # 🤖 brief: kind "brief" may run past night_end, until here (before the 9:16 send)
 EOD_DONE = ("ok", "partial", "failed", "no_session")  # the evening job ended for the day with one of these
 
 _lock = threading.Lock()
