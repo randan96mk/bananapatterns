@@ -556,3 +556,20 @@ def test_warm_loads_the_model_and_timeouts_get_one_retry(ollama, cfg):
     failed = notes._failed_keys("2000-01-01")
     assert "note:filing:1" not in failed and "note:filing:2" in failed and "note:filing:3" in failed
     assert cfg.ai.timeout_s == 180
+
+
+def test_slow_generation_is_reported_as_a_timeout_not_a_dead_service(monkeypatch):
+    """urlopen raises URLError("timed out") when Ollama is still generating when the timeout passes: that is a slow
+    answer, reported as "no answer … within", so the one-retry rule for timeouts applies."""
+    import importlib.util
+    import urllib.error
+    from backend.ai import client
+    spec = importlib.util.spec_from_file_location("ai_client_real", client.__file__)   # conftest replaces _http: load a real copy
+    real = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(real)
+
+    def boom(*a, **k):
+        raise urllib.error.URLError("timed out")
+    monkeypatch.setattr(real.urllib.request, "urlopen", boom)
+    with pytest.raises(real.AIError, match="no answer from /api/generate within"):
+        real.generate("m", "p", timeout=7)

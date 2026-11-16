@@ -41,6 +41,7 @@ CANDIDATE_VERDICTS = ("buy", "wait", "avoid")
 HELD_VERDICTS = ("hold", "trim", "exit-watch")
 VERDICTS = CANDIDATE_VERDICTS + HELD_VERDICTS
 REASONS_MAX, REASON_LEN, CHANGE_LEN, WOULD_LEN = 3, 60, 100, 120
+LEVEL_TOL_WIDE = 0.01                 # a rounded level snaps to the nearest candidate within 1% (levels_checked False)
 LEVEL_TOL = 0.002                                  # a picked price matches a candidate within 0.2%
 MAX_CANDIDATES = 10
 SWING_SESSIONS, PIVOT_BARS = 120, 2                # 5-bar pivots (2 bars each side) over the last 120 sessions
@@ -332,14 +333,14 @@ def levels(symbol: str, as_of: str, item: Optional[dict] = None) -> list[dict]:
     return sorted(uniq[:MAX_CANDIDATES], key=lambda c: -c["price"])
 
 
-def snap(price, cands: list[dict]) -> Optional[dict]:
-    """The candidate a picked price matches (within 0.2%), else None."""
+def snap(price, cands: list[dict], tol: Optional[float] = None) -> Optional[dict]:
+    """The candidate a picked price matches (within LEVEL_TOL, 0.2%, or `tol`), else None."""
     try:
         x = float(price)
     except (TypeError, ValueError):
         return None
     best = min(cands, key=lambda c: abs(c["price"] - x), default=None)
-    return best if best and abs(best["price"] - x) <= best["price"] * LEVEL_TOL else None
+    return best if best and abs(best["price"] - x) <= best["price"] * (tol or LEVEL_TOL) else None
 
 
 # --- memory: the previous view and the calibration note ------------------------------------------------------------------
@@ -449,6 +450,23 @@ def _num(t: str) -> Optional[float]:
         return None
 
 
+def _forms(allowed: set) -> set:
+    """Every way a fact's figure may be written: 490 = 490.0 = 490.00 = 490.5 → "490.5"; keeps the strip helper's
+    plain-token comparison honest."""
+    out = set()
+    for a in allowed:
+        t = a.replace(",", "")
+        out.add(t)
+        n = _num(t)
+        if n is None:
+            continue
+        if n == int(n):
+            out.update({str(int(n)), f"{int(n)}.0", f"{int(n)}.00"})
+        else:
+            out.update({f"{n:g}", f"{n:.1f}", f"{n:.2f}"})
+    return out
+
+
 def _figures_ok(text: str, allowed: set) -> bool:
     """Every figure (more than one digit) in `text` is a figure of the facts, written any way (490 = 490.0 = 490.00)."""
     nums = {_num(a) for a in allowed}
@@ -489,29 +507,49 @@ def validate(raw: str, ctx: dict) -> dict:
     reasons = [_text(r, REASON_LEN, "a reason") for r in reasons]
     change = _text(d.get("change"), CHANGE_LEN, "change") or None if ctx.get("has_prev") else None
     would = _text(d.get("would_change"), WOULD_LEN, "would_change")
+    numbers_ok = True
     for t in [*reasons, change or "", would]:
-        if not _figures_ok(t, allowed):
-            raise ViewInvalid("a figure that is not in the facts")
         w = notes._blocked_word(t)
         if w:
             raise ViewInvalid(f"names a broker ({w[:3]}…)")
+    # a figure the model did not take from the facts is stripped from the sentence (as the notes do), never a reason
+    # to throw the whole rating away: the score, the verdict and the levels stay usable
+    allowed_tokens = _forms(allowed)
+    cleaned = []
+    for t in reasons:
+        t2, ok = notes._strip_numbers(t, allowed_tokens)
+        numbers_ok = numbers_ok and ok
+        cleaned.append(t2 or t)
+    reasons = cleaned
+    if change:
+        change, ok = notes._strip_numbers(change, allowed_tokens)
+        numbers_ok = numbers_ok and ok
+    would, ok = notes._strip_numbers(would, allowed_tokens)
+    numbers_ok = numbers_ok and ok
     lv = d.get("levels") if isinstance(d.get("levels"), dict) else {}
-    out_lv = {}
-    for k, need in (("support_1", True), ("support_2", False), ("resistance", False), ("fails_below", True)):
+    out_lv, levels_ok = {}, True
+    close = ctx.get("close")
+    below = [c for c in ctx["cands"] if not close or c["price"] <= close]
+    above = [c for c in ctx["cands"] if close and c["price"] > close]
+    for k in ("support_1", "support_2", "resistance", "fails_below"):
         v = lv.get(k)
-        if v in (None, "", "null"):
-            if need:
-                raise ViewInvalid(f"levels.{k} missing")
-            out_lv[k] = None
-            continue
-        c = snap(v, ctx["cands"])
-        if not c:
-            raise ViewInvalid(f"levels.{k} {v} is not one of the candidate prices")
-        out_lv[k] = c["price"]
-    if ctx.get("close") and out_lv["fails_below"] > ctx["close"]:
-        raise ViewInvalid("fails_below must be below the close")
+        c = snap(v, ctx["cands"]) if v not in (None, "", "null") else None
+        if c is None and v not in (None, "", "null"):
+            c = snap(v, ctx["cands"], tol=LEVEL_TOL_WIDE)            # the model rounded: the nearest candidate within 1%
+            levels_ok = False
+        out_lv[k] = c["price"] if c else None
+    # the two that must exist: fall back to the nearest candidate on the right side of the close rather than fail
+    if out_lv["support_1"] is None:
+        c = max(below, key=lambda c: c["price"], default=None)
+        if c is None:
+            raise ViewInvalid("levels.support_1 missing and no candidate below the close")
+        out_lv["support_1"], levels_ok = c["price"], False
+    if out_lv["fails_below"] is None or (close and out_lv["fails_below"] > close):
+        out_lv["fails_below"], levels_ok = out_lv["support_1"], False
+    if out_lv["resistance"] is None and above:
+        out_lv["resistance"] = None                                   # optional: left empty when the model gave none
     return {"score": int(round(score)), "verdict_model": vm, "confidence": round(conf, 2), "reasons": reasons, "change": change,
-            "would_change": would, "levels": out_lv}
+            "would_change": would, "levels": out_lv, "numbers_checked": numbers_ok, "levels_checked": levels_ok}
 
 
 def verdict_for(score: int, held: bool, config: AppConfig, close: Optional[float] = None, fails_below: Optional[float] = None) -> str:
@@ -570,7 +608,9 @@ def rate(config: AppConfig, it: dict, day: str) -> dict:
         logger.warning("view: no usable rating for %s (%s)", it["symbol"], exc)
         return save({**base, "status": "failed", "error": str(exc)[:200], "model": config.ai.night_model, "ms": None})
     v = verdict_for(a["score"], p["ctx"]["held"], config, p["f"].get("close"), a["levels"]["fails_below"])
-    return save({**base, **a, "verdict": v, "status": "ok", "model": r["model"], "ms": r["ms"], "tokens": r["tokens"]})
+    checks = {"numbers_checked": a.pop("numbers_checked", True), "levels_checked": a.pop("levels_checked", True)}
+    return save({**base, **a, "features": {**p["f"], **checks}, "verdict": v, "status": "ok", "model": r["model"], "ms": r["ms"],
+                 "tokens": r["tokens"]})
 
 
 # --- rows -----------------------------------------------------------------------------------------------------------------------------
