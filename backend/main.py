@@ -107,5 +107,19 @@ def health():
 
 app.include_router(router)
 
+
+
+class _Static(StaticFiles):
+    """The build's hashed assets may be cached for a year; index.html never (a stale index after a deploy would ask
+    for chunk files that no longer exist)."""
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 if FRONTEND_BUILD.exists() and os.getenv("BP_NO_STATIC") != "1":
-    app.mount("/", StaticFiles(directory=str(FRONTEND_BUILD), html=True), name="frontend")
+    app.mount("/", _Static(directory=str(FRONTEND_BUILD), html=True), name="frontend")
