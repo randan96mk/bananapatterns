@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useBeat } from '../heartbeat';
 import { signed } from '../fmt';
 import { useNarrow } from '../useMedia';
@@ -46,13 +46,31 @@ export function Panel({ title, meta, right, children, className = '', id }) {
 // expected), key, onClick (a sortable header)}]; the first column takes
 // the remaining width. rows: [{key, cells: [...], cls, onClick, title}], a string for a group row, or {key, span}
 // for one full-width row whose content wraps (an inline editor under the row above it).
+const FIRST_MIN = 120;                    // the first column never shrinks under this (the stock name stays readable)
+
 export function FixedTable({ cols: allCols, rows: allRows, empty, className = '' }) {
+  // Columns are dropped by the width the table really has (zoom, a side column), not the window: first the `nw` ones,
+  // then the `lo` ones from the right, until the first (flex) column keeps at least FIRST_MIN px.
   const narrow = useNarrow();
-  const drop = narrow && allCols.some((c) => c.nw);
-  const cols = drop ? allCols.filter((c) => !c.nw) : allCols;
-  const rows = drop ? (allRows || []).map((r) => (typeof r === 'string' || r.span ? r : { ...r, cells: r.cells.filter((_, i) => !allCols[i]?.nw) })) : allRows;
+  const ref = useRef(null);
+  const [avail, setAvail] = useState(0);
+  useEffect(() => {
+    const el = ref.current?.parentElement;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver((es) => setAvail(Math.round(es[0]?.contentRect?.width || 0)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const fixed = (cs) => cs.reduce((t, c, i) => t + (i ? (c.w || 80) : 0), 0);
+  let keep = allCols.map((_, i) => i);
+  const room = () => (avail ? avail - fixed(keep.map((i) => allCols[i])) : Infinity);
+  if ((narrow || room() < FIRST_MIN) && allCols.some((c) => c.nw)) keep = keep.filter((i) => !allCols[i].nw);
+  for (let i = allCols.length - 1; i > 0 && room() < FIRST_MIN; i--) if (allCols[i].lo && keep.includes(i)) keep = keep.filter((k) => k !== i);
+  const drop = keep.length !== allCols.length;
+  const cols = drop ? keep.map((i) => allCols[i]) : allCols;
+  const rows = drop ? (allRows || []).map((r) => (typeof r === 'string' || r.span ? r : { ...r, cells: r.cells.filter((_, i) => keep.includes(i)) })) : allRows;
   if (!rows?.length) return empty ? <p className="muted small rempty">{empty}</p> : null;
-  return <table className={`ftab ${className}`}><colgroup>{cols.map((c, i) => <col key={c.key || c.h || i} style={i ? { width: c.w } : undefined} className={c.lo ? 'lo' : ''} />)}</colgroup>
+  return <table ref={ref} className={`ftab ${className}`}><colgroup>{cols.map((c, i) => <col key={c.key || c.h || i} style={i ? { width: c.w } : undefined} className={c.lo ? 'lo' : ''} />)}</colgroup>
     <thead><tr>{cols.map((c, i) => <th key={c.key || c.h || i} className={`${c.n ? 'n' : ''} ${c.lo ? 'lo' : ''} ${c.onClick ? 'sort' : ''}`} title={c.title} onClick={c.onClick}>{c.h}</th>)}</tr></thead>
     <tbody>{rows.map((r, i) => (typeof r === 'string' ? <tr key={`g${i}`} className="grp"><td colSpan={cols.length}>{r}</td></tr>
       : r.span ? <tr key={r.key ?? i} className={`span ${r.cls || ''}`}><td colSpan={cols.length} style={{ height: 'auto', whiteSpace: 'normal', padding: '10px 14px', overflow: 'visible' }}>{r.span}</td></tr>
