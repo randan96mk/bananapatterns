@@ -437,8 +437,9 @@ class OptionsConfig:
     max_delta: float = 0.30                # the sold strike: the first with |delta| at most this
     min_premium: float = 20.0              # the sold premium must be at least this (else one strike nearer, delta 0.35 at most)
     otm_pct: float = 1.0                   # the sold strike: at least this % out of the money (50-strike grid)
-    stop_pct: float = 50.0                 # stop when the sold premium rises this % over the entry ...
-    stop_pct_expiry: float = 35.0          # ... this on expiry day
+    stop_pct: float = 100.0                # stop when the sold premium rises this % over the entry (100 = 2x) ...
+    stop_pct_expiry: float = 70.0          # ... this on expiry day (70 = 1.7x)
+    vwap_exit: bool = True                 # the VWAP exit: a 5-minute close back through VWAP against the bias closes the spread
     be_after_pct: float = 40.0             # after the sold premium has decayed this %, the stop becomes breakeven
     target_pct: float = 60.0               # target: the spread's value down this % from the entry credit
     time_exit: str = "15:10"               # the time exit (a hard exit at 15:20 if it failed; nothing is held overnight)

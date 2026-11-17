@@ -5,7 +5,7 @@ import { inr, signed, pct, cls, lakh } from '../fmt';
 import { useLive } from '../services/live';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
-import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Bar } from './ui2';
+import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Bar, Seg } from './ui2';
 import { AiWhy } from './AiDot';
 import { useNarrow, useIsPhone } from '../useMedia';
 
@@ -31,6 +31,42 @@ const STRIP_LABEL = { contracts: 'contracts', range: 'range set', open_snap: 'sn
   summary: 'summary', hold: 'hold', skip: 'no entry', disagree: 'chain says no', nochain: 'no chain', nolots: 'no size', nostrike: 'no strike', fail: 'failed', noquote: 'no quote', no_data: 'no data' };
 const ENDED = (r) => (/target/.test(r) ? 'ok' : /stop|kill/.test(r) ? 'bad' : /hard|no data|closed by you/.test(r) ? 'w' : '');
 const ALERT_ICON = (a) => ({ entry: '🧭', exit: /stop|kill/.test(a.text) ? '🛑' : '🎯', summary: '🌙', no_trade: '◦', chain_disagrees: '🧩', no_data: '❗' }[a.kind] || '⚠');
+const EXIT_WORD = { premium: 'premium', breakeven: 'breakeven', target: 'target', vwap: 'VWAP', time: 'time' };
+const EXIT_C = { premium: 'bad', breakeven: 'w', vwap: 'bad', target: 'ok', time: '' };
+const times = (p) => `${+(1 + (p || 0) / 100).toFixed(2)}×`;                   // stop_pct 100 -> "2×"
+
+// Report as if · exit rules: every closed spread replayed on its day's chain snapshots under other stops (GET /api/options/asif).
+function AsIf({ a, asDays, setAsDays, err }) {
+  const narrow = useNarrow();
+  const phone = useIsPhone();
+  const rules = a?.rules || [];
+  const cols = [{ h: 'Rule', ell: true }, { h: 'Trades', w: 76, n: true }, { h: 'Won', w: 88, n: true }, { h: 'Net', w: 104, n: true }, { h: 'Avg', w: 92, n: true },
+    { h: 'Worst', w: 92, n: true }, { h: 'Exits', w: 300, ell: true }];
+  const rows = rules.map((r) => ({ key: r.key, cls: r.actual ? 'asis' : undefined, title: `${r.label} · stop +${r.stop_pct}% (${times(r.stop_pct)}) · +${r.stop_pct_expiry}% on expiry day · VWAP exit ${r.vwap ? 'on' : 'off'} · breakeven ${r.exits.breakeven}`,
+    cells: [r.actual ? <b>{r.label}</b> : <span>{r.label}</span>, r.trades, `${r.won}${r.trades ? ` · ${Math.round((100 * r.won) / r.trades)}%` : ''}`,
+      r.actual ? <b className={cls(r.net)}>{signed(r.net)}</b> : <span className={cls(r.net)}>{signed(r.net)}</span>, r.avg == null ? '—' : <span className={cls(r.avg)}>{signed(r.avg)}</span>,
+      r.worst == null ? '—' : <span className={cls(r.worst)}>{signed(r.worst)}</span>,
+      phone ? `stop ${r.exits.premium} · VWAP ${r.exits.vwap} · tgt ${r.exits.target} · time ${r.exits.time}${r.exits.breakeven ? ` · BE ${r.exits.breakeven}` : ''}`
+        : `premium ${r.exits.premium} · VWAP ${r.exits.vwap} · target ${r.exits.target} · time ${r.exits.time}${r.exits.breakeven ? ` · breakeven ${r.exits.breakeven}` : ''}`] }));
+  const keys = rules.map((r) => r.key);
+  const label = Object.fromEntries(rules.map((r) => [r.key, r.label.replace(/^as is · /, 'as is ')]));
+  const ptCols = [{ h: 'Day', ell: true }, { h: 'Bias', w: 50 }, { h: 'Actual', w: narrow ? 132 : 158, ell: true }, ...keys.map((k) => ({ h: label[k], w: narrow ? 132 : 158, ell: true }))];
+  const cell = (x) => (x?.why ? <span title={`${EXIT_WORD[x.why] || x.why}${x.exit_t ? ` at ${x.exit_t}` : ''} · net ${signed(x.net)}`}><span className={cls(x.net)}>{signed(x.net)}</span> <Tag c={EXIT_C[x.why] ?? ''}>{EXIT_WORD[x.why] || x.why}</Tag></span> : <span className="muted">—</span>);
+  const ptRows = (a?.per_trade || []).map((p) => ({ key: `${p.day}-${p.id}`, cls: p.skipped ? 'dim' : undefined,
+    title: `${p.day} · ${p.strikes || ''}${p.skipped ? ` · skipped: ${p.skipped}` : ''}${p.thin ? ' · thin snapshots' : ''}`,
+    cells: [<><b>{wday(p.day)} {day(p.day)}</b> <small className="muted">{p.skipped ? `skipped · ${p.skipped}` : `${p.strikes || ''}${p.thin ? ' · thin' : ''}`}</small></>,
+      p.bias ? <span className={p.bias === 'BULLISH' ? 'up' : 'down'}>{p.bias === 'BULLISH' ? '↑' : '↓'}</span> : <span className="muted">—</span>,
+      cell(p.actual), ...keys.map((k) => cell(p.by_rule?.[k]))] }));
+  return <Panel title="Report as if · exit rules" meta={a ? `${a.trades} trade${a.trades === 1 ? '' : 's'}${a.skipped ? ` · ${a.skipped} skipped` : ''}` : null}
+    right={<Seg small opts={[[30, '30 d'], [60, '60 d'], [90, '90 d']]} v={asDays} set={setAsDays} />}>
+    {err ? <div className="rbanner bad">{err}</div> : null}
+    <FixedTable className="asif" cols={cols} rows={rows} empty={a ? 'No closed spread in this window yet.' : 'Loading…'} />
+    <div className="rnote">{a?.note || 'replayed from the 5-minute chain snapshots · VWAP exits kept at their real time, never invented · paper only'}{a ? ` · ${a.snapshots_ok} of ${a.replayed} replayed with full snapshots · time exit ${a.time_exit}` : ''}</div>
+    {ptRows.length > 0 && <details className="fold" style={{ margin: '0 14px 10px' }}><summary>per trade · {ptRows.length}</summary>
+      <FixedTable cols={ptCols} rows={ptRows} /></details>}
+  </Panel>;
+}
+
 const ALERTS = [['🧭', '9:45–11:00', 'bias found with the strikes, credit, stop and worst case · or “no trade today” at 11:00'], ['🛑', 'live', 'premium stop · VWAP stop · breakeven stop armed'],
   ['🎯', 'live', 'target 60% hit · time exit 3:10'], ['⚠', 'daily', 'event day skipped · VIX > 20 half size · daily loss limit · chain disagrees'], ['🌙', '3:35', 'day summary: credit kept, trades, book']];
 
@@ -67,10 +103,14 @@ export default function OptionsPage() {
   const [tick, setTick] = useState(0);
   const [cap, setCap] = useState('');
   const [busy, setBusy] = useState('');
+  const [asDays, setAsDays] = useState(60);
+  const [asif, setAsif] = useState(null);
+  const [asErr, setAsErr] = useState('');
   const narrow = useNarrow();
   const phone = useIsPhone();
   const reload = () => setTick((t) => t + 1);
   useEffect(() => { api.getOptions().then((x) => { setD(x); setErr(''); setCap((c) => c || String(x.capital)); }).catch((e) => setErr(e.message)); }, [tick]);
+  useEffect(() => { api.getOptionsAsif(asDays).then((x) => { setAsif(x); setAsErr(''); }).catch((e) => setAsErr(e.message)); }, [asDays, tick]);
   useEffect(() => { if (live && !live.error) { setD(live); setCap((c) => c || String(live.capital)); } }, [live]);
   const act = (key, p) => { setBusy(key); p.then(() => { setErr(''); reload(); }).catch((e) => setErr(e.message)).finally(() => setBusy('')); };
   const setSw = (body, text) => { if (!text || window.confirm(text)) act('sw', api.putOptionsSettings(body)); };
@@ -177,6 +217,7 @@ export default function OptionsPage() {
         <div style={ROW}><Switch on={sw.paper} disabled={!!busy} onChange={(on) => setSw({ paper: on }, on ? 'Turn the Paper switch on?\n\nThe book ticks every minute 9:15–3:40 on trading days: range at 9:30, the bias 9:45–11:00, paper fills at the mid ± ₹1 a leg.' : 'Turn the Paper switch off?\n\nNo new spread is opened; an open spread still runs to its exit (nothing is held overnight).')} /><b>Paper</b><Meta><span className="muted">fills at mid ± ₹1 a leg · MTM every minute</span></Meta></div>
         <div style={ROW}><Switch red on={false} disabled title={sw.real_note} /><b className="muted">Real</b><Meta><span className="muted">{sw.real_note || 'no webhook yet · stays off'}</span></Meta></div>
         <div style={ROW}><Switch on={sw.enabled} disabled={!!busy} onChange={(on) => setSw({ enabled: on }, on ? `Enable the options book?\n\nIt looks for a bias ${G.window?.start}–${G.window?.end} on 5-minute closes and opens one credit spread when the chain agrees.` : 'Disable the options book?\n\nNo new entries; an open spread keeps its stops, target and the time exit. Paper marks go on.')} /><b>Enabled</b><Meta><span className="muted">looks for a bias {G.window?.start}–{G.window?.end}</span></Meta></div>
+        <div style={ROW}><Switch on={sw.vwap_exit} disabled={!!busy} onChange={(on) => setSw({ vwap_exit: on })} title="the VWAP exit: a 5-minute close back through VWAP against the bias closes the spread" /><b>VWAP exit</b><Meta><span className="muted">{sw.vwap_exit ? 'on' : 'off'} · premium stop {times(st.stop_pct)} the entry · paper</span></Meta></div>
         <div style={ROW}><Switch red on={G.kill} disabled={!!busy} onChange={kill} /><b>Kill switch</b><Meta><span className="muted">closes the spread, no new entries</span></Meta></div>
         <div className="rnote">{T.hold ? '⏸ on hold today · ' : ''}{G.no_data ? '❗ no data today · ' : ''}tagged “paper” · Telegram: opt close · opt hold</div>
       </Panel>
@@ -218,11 +259,11 @@ export default function OptionsPage() {
     </Cards>
     <div className="two">
       <div className="rd" style={COL}>
-        <Panel title="Open spread · paper" meta={o ? 1 : 0} right={<><Meta>marked every minute from the quotes’ mids · stops every minute · VWAP on 5-minute closes · nothing held overnight</Meta>
+        <Panel title="Open spread · paper" meta={o ? 1 : 0} right={<><Meta>marked every minute from the quotes’ mids · stops every minute · {st.vwap_exit ? 'VWAP on 5-minute closes' : 'VWAP exit off'} · nothing held overnight</Meta>
           {o && <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={!!busy} onClick={closeNow}>{busy === 'close' ? 'Closing…' : 'Close now…'}</button>}</>}>
           <FixedTable cols={legCols} rows={legRows} empty={statusText} />
           {!o && (T.closed || []).length > 0 && <div className="rnote">closed today: {T.closed.map((c) => `#${c.n} ${c.why} ${signed(c.net)} at ${c.t}`).join(' · ')}</div>}
-          <div className="rnote">Sold leg: stop at +{st.stop_pct}% of its entry premium ({st.stop_pct_expiry}% on expiry day) or a 5-minute close back through VWAP · breakeven stop once it has decayed {st.be_after_pct}% · target when the spread is worth {100 - st.target_pct}% of the credit · time exit {ampm(st.time_exit)} · hard exit 3:20 PM. Paper fills at the mid ± ₹1 a leg, never at the last price. Nothing here places an order.</div>
+          <div className="rnote">Sold leg: stop at +{st.stop_pct}% of its entry premium ({times(st.stop_pct)}; +{st.stop_pct_expiry}% on expiry day){st.vwap_exit ? ' or a 5-minute close back through VWAP' : ' · VWAP exit off'} · breakeven stop once it has decayed {st.be_after_pct}% · target when the spread is worth {100 - st.target_pct}% of the credit · time exit {ampm(st.time_exit)} · hard exit 3:20 PM. Paper fills at the mid ± ₹1 a leg, never at the last price. Nothing here places an order.</div>
         </Panel>
         <Panel title={`Option chain${C.expiry ? ` · ${day(C.expiry)}` : ''}`} meta={C.score != null ? `score ${C.score} of 3 · PCR ${C.pcr ?? '—'}` : C.pcr != null ? `PCR ${C.pcr}${C.kind ? ` · ${SNAP_KIND[C.kind] || `last ${C.kind} snapshot`}` : ''}` : null}
           right={<Meta>+1 spot above the call wall or ≥ 0.5% over the put wall · +1 put OI building, call OI not · +1 PCR &gt; {st.pcr_bull} (bullish; mirror for bearish, PCR &lt; {st.pcr_bear}) · 2–3 full size · 1 half · 0 no trade</Meta>}>
@@ -241,6 +282,7 @@ export default function OptionsPage() {
           {steps.map((s) => <Act key={s.n} icon={s.n} cls={s.ok === true ? 'up' : s.ok === false ? 'down' : ''} text={<><b>{s.name}</b> · {s.text}</>} meta={s.meta || STEP_META[s.name]} />)}
           {(B.checks || []).length > 0 && <div className="rnote">checked {B.checks.map((c) => c.t).join(' · ')}{B.checks.length >= 16 ? '' : ' · a 5-minute close is tested on each slot'}</div>}
         </Panel>
+        <AsIf a={asif} asDays={asDays} setAsDays={setAsDays} err={asErr} />
       </div>
       <div className="rd" style={COL}>
         <Panel title="Rules" meta="directional seller">

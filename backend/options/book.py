@@ -49,10 +49,24 @@ RULES = [
     "Chain score 0-3 at the bias: walls, OI change since 9:30 (else the previous close), PCR · 2-3 full size · 1 half · 0 no trade",
     "Sold strike: the farther of 1% OTM and delta ≤ 0.30, at the wall when it is within 1.5%, premium ≥ ₹20 · hedge 250 points out (200 when under ₹2)",
     "Size: 1 lot per ₹1,50,000, 2 lots at most · VIX > 20 or a crowded PCR halves it",
-    "Exits: sold premium +50% (+35% on expiry day) · a 5-minute close back through VWAP · breakeven after a 40% decay · target at 60% of the credit · 15:10 time exit · 15:20 hard exit",
+    "Exits: sold premium 2× its entry (+100%; 1.7× = +70% on expiry day) · a 5-minute close back through VWAP (the vwap_exit switch) · breakeven after a 40% decay · target at 60% of the credit · 15:10 time exit · 15:20 hard exit",
     "No entry: event day, gap > 1%, daily loss 1.5% of capital, kill switch, hold-today, 2 trades done, outside the window",
     "Paper fills at the mid ∓ ₹1 a leg, never at the last price · charges per order like a real account · nothing is held overnight",
 ]
+
+
+def exits_text(stop_pct: float, vwap: bool) -> str:
+    """'exits: premium 2× · VWAP on' (the "n×" = 1 + stop_pct / 100): on the entry line, the timeline and the open footer."""
+    return f"exits: premium {1 + float(stop_pct) / 100:g}× · VWAP {'on' if vwap else 'off'}"
+
+
+def rules_text(c) -> list[str]:
+    """RULES with the exits line from the saved settings."""
+    out = list(RULES)
+    out[5] = (f"Exits: sold premium {1 + c.stop_pct / 100:g}× its entry (+{c.stop_pct:g}%; +{c.stop_pct_expiry:g}% on expiry day) · "
+              + ("a 5-minute close back through VWAP" if c.vwap_exit else "VWAP exit off") + f" · breakeven after a {c.be_after_pct:g}% decay · "
+              f"target at {c.target_pct:g}% of the credit · {c.time_exit} time exit · 15:20 hard exit")
+    return out
 
 
 # --- switches -------------------------------------------------------------------------------------------------
@@ -83,16 +97,17 @@ def set_killed(on: bool, config: AppConfig, client=None, now: Optional[datetime]
 
 def switches(config: AppConfig) -> dict:
     c = config.options
-    return {"paper": bool(c.paper), "real": False, "enabled": bool(c.enabled), "killed": killed(), "real_allowed": False, "real_note": REAL_NOTE}
+    return {"paper": bool(c.paper), "real": False, "enabled": bool(c.enabled), "vwap_exit": bool(c.vwap_exit), "killed": killed(), "real_allowed": False,
+            "real_note": REAL_NOTE}
 
 
 def set_switches(config: AppConfig, **flags) -> dict:
-    """paper / enabled; real=True is refused (ValueError "not wired"). Saved with the settings."""
+    """paper / enabled / vwap_exit; real=True is refused (ValueError "not wired"). Saved with the settings."""
     from backend.config import save_config
     if flags.get("real"):
         raise ValueError(NOT_WIRED)
     start(config)
-    for k in ("paper", "enabled"):
+    for k in ("paper", "enabled", "vwap_exit"):
         if flags.get(k) is not None:
             setattr(config.options, k, bool(flags[k]))
     config.options.real = False
@@ -603,14 +618,16 @@ def _enter(st: dict, config: AppConfig, now: datetime, bias: str, q: dict, sc: d
          "be_at": round(sold_px * (1 - c.be_after_pct / 100), 2), "be_active": False, "target_value": round(credit * (1 - c.target_pct / 100), 2),
          "worst_case": round(sel["width"] * qty - credit * qty, 2), "margin_est": round(c.margin_per_lot * lots, 2), "charges_in": round(ch_in, 2),
          "opened_at": now.isoformat(timespec="seconds"), "opened_t": ampm(now), "spot_at_entry": q["spot"], "vwap_at_entry": d.get("vwap"),
-         "score": sc["score"], "chain_line": sc["line"], "value": credit, "pnl": round(-ch_in, 2), "spot": q["spot"], "vwap_checked": [], "n": d["trades"] + 1}
+         "score": sc["score"], "chain_line": sc["line"], "value": credit, "pnl": round(-ch_in, 2), "spot": q["spot"], "vwap_checked": [], "n": d["trades"] + 1,
+         "vwap_exit": bool(c.vwap_exit), "exits": exits_text(stop_pct, c.vwap_exit)}
     st["open"] = o
     d["biases"].append(bias)
     d["trades"] += 1
     d["status"] = "open"
     s, h = o["sold"], o["hedge"]
     _tl(st, now, f"{'re-entry · ' if o['n'] > 1 else ''}sold {s['strike']:,.0f} {s['type']} @ {s['entry']:.2f} · bought {h['strike']:,.0f} {h['type']} @ {h['entry']:.2f} · "
-        f"credit {credit:.2f} x {qty} = ₹{credit * qty:,.0f} · {lots} lot{'s' if lots != 1 else ''} · stop {o['stop_premium']:.2f} · target {o['target_value']:.2f}", key=f"entry|{o['n']}")
+        f"credit {credit:.2f} x {qty} = ₹{credit * qty:,.0f} · {lots} lot{'s' if lots != 1 else ''} · stop {o['stop_premium']:.2f} · target {o['target_value']:.2f} · {o['exits']}",
+        key=f"entry|{o['n']}")
     _alert(st, now, "entry", f"{bias} · sold {s['strike']:,.0f} {s['type']} / bought {h['strike']:,.0f} {h['type']} · credit ₹{credit * qty:,.0f} · "
            f"stop {o['stop_premium']:.2f} · target {o['target_value']:.2f} · worst case ₹{o['worst_case']:,.0f} · {sc['line']}", key=f"entry|{o['n']}",
            data={**o, "range": d.get("range"), "prev": d.get("prev"), "vix": d.get("vix"), "close": (d.get("checks") or [{}])[-1].get("close") if d.get("checks") else None,
@@ -659,7 +676,7 @@ def _mark(st: dict, config: AppConfig, client, now: datetime) -> Optional[str]:
         return "target"
     t = now.time()
     slot = bs.slot_of(t)
-    if bs.is_5m_close(t) and slot not in o["vwap_checked"] and t < bs.hm(c.time_exit):
+    if c.vwap_exit and bs.is_5m_close(t) and slot not in o["vwap_checked"] and t < bs.hm(c.time_exit):     # the vwap_exit switch
         o["vwap_checked"].append(slot)
         try:
             today = now.date().isoformat()
@@ -875,7 +892,7 @@ def _open_view(o: Optional[dict], c) -> Optional[dict]:
             "legs": legs, "value": value, "value_rs": round(value * o["qty"], 2), "pnl": _open_pnl(o), "spot": o.get("spot"), "vwap": o.get("vwap") or o.get("vwap_at_entry"),
             "marked_at": o.get("marked_at"), "near_stop": near_stop, "decay_pct": round((1 - o["sold"]["last"] / o["sold"]["entry"]) * 100, 1) if o["sold"]["entry"] else None,
             "footer": f"credit ₹{o['credit_rs']:,.0f} · value ₹{value * o['qty']:,.0f} · stop {o['stop_premium']:.2f} ({o['stop_pct']:g}%)"
-                      f"{' · breakeven stop on' if o['be_active'] else ''} · target {o['target_value']:.2f} · time exit {ampm(c.time_exit)}"}
+                      f"{' · breakeven stop on' if o['be_active'] else ''} · target {o['target_value']:.2f} · time exit {ampm(c.time_exit)} · {exits_text(o['stop_pct'], c.vwap_exit)}"}
 
 
 def _cards(st: Optional[dict], cfg, dl: list, eq: float, open_pnl: float) -> list[dict]:
@@ -948,7 +965,7 @@ def summary(config: AppConfig, now: Optional[datetime] = None) -> dict:
                                    {"t": ampm(c.time_exit), "text": "time exit"}, {"t": ampm("15:20"), "text": "hard exit"}, {"t": ampm("15:30"), "text": "close snapshot"},
                                    {"t": ampm("15:35"), "text": "day summary"}]},
             "guards": guards, "margin": margin, "cards": _cards(st, c, dl, eq, open_pnl), "open": _open_view(o, c), "bias": _bias_steps(d, c),
-            "chain": chain_view(st, today), "rules": RULES, "days": dl, "trades": _ai_why(trades(50)), "alerts": [{k: v for k, v in a.items() if k != "data"} for a in reversed((st or {}).get("alerts") or [])][:30],
+            "chain": chain_view(st, today), "rules": rules_text(c), "days": dl, "trades": _ai_why(trades(50)), "alerts": [{k: v for k, v in a.items() if k != "data"} for a in reversed((st or {}).get("alerts") or [])][:30],
             "deposits": (st or {}).get("deposits") or [], "curve": _curve(), "notes": (st or {}).get("notes") or [], "last_day": (st or {}).get("last_day"),
             "contracts": oi.status(), "updated_at": (st or {}).get("updated_at"), "now": now.isoformat(timespec="seconds")}
     return base

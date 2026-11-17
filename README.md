@@ -1339,8 +1339,8 @@ the sold premium must be ≥ `min_premium` ₹20, else one strike nearer up to d
 `hedge_points` (250); 200 when its premium is under ₹2. **Size**: 1 lot per `capital_per_lot` (₹1,50,000), `max_lots` 2;
 India VIX > `vix_half` (20) halves (1 lot at least).
 
-**Exits** (checked every minute while open): the sold premium ≥ entry × (1 + `stop_pct`/100) (50%; `stop_pct_expiry` 35%
-on expiry day), or a 5-minute close back through VWAP against the bias; once the sold premium has decayed `be_after_pct`
+**Exits** (checked every minute while open): the sold premium ≥ entry × (1 + `stop_pct`/100) (100% = 2×; `stop_pct_expiry`
+70% on expiry day), or — while `vwap_exit` is on — a 5-minute close back through VWAP against the bias; once the sold premium has decayed `be_after_pct`
 (40%) the stop becomes **breakeven** (exit when the spread's value is back at the entry credit); **target** when the
 spread's value ≤ (1 − `target_pct`/100 = 40%) of the credit; **time exit** at `time_exit` (15:10); a **hard exit** at
 15:20 at the last known mids if the 15:10 one found no quote; the kill switch closes at once; **nothing is ever held
@@ -1413,14 +1413,43 @@ premium stop, the daily loss limit hit, no data on a trading day, no login with 
 |---|---|---|
 | `capital` / `capital_per_lot` / `max_lots` | 300000 / 150000 / 2 | the book's capital; 1 lot per this much; lots at most |
 | `hedge_points` / `max_delta` / `min_premium` / `otm_pct` | 250 / 0.30 / 20 / 1.0 | the hedge distance; the sold strike's delta cap, premium floor and OTM floor |
-| `stop_pct` / `stop_pct_expiry` / `be_after_pct` / `target_pct` | 50 / 35 / 40 / 60 | the premium stop (expiry day), the breakeven switch, the target |
+| `stop_pct` / `stop_pct_expiry` / `be_after_pct` / `target_pct` | 100 / 70 / 40 / 60 | the premium stop (2×; 1.7× on expiry day), the breakeven switch, the target |
+| `vwap_exit` | on | the VWAP exit (a switch on the Options page too) |
 | `time_exit` / `window_start` / `window_end` | 15:10 / 09:45 / 11:00 | the time exit; the bias window |
 | `max_trades_day` / `daily_loss_pct` / `max_gap_pct` | 2 / 1.5 / 1.0 | one re-entry; the daily loss limit (% of capital); the gap filter |
 | `vix_half` / `pcr_bull` / `pcr_bear` | 20 / 1.1 / 0.9 | VIX half size; the PCR thresholds of the chain score |
 | `margin_per_lot` / `event_days` | 52000 / "" | the margin estimate per lot; no-entry dates (ISO, comma-separated) |
 | `paper` / `enabled` / `real` | on / on / off | the switches (`real` stays off: not wired) |
 
-Tests: `tests/test_options_rules.py`, `tests/test_options_book.py`, `tests/test_options_api.py`, `tests/test_options_alerts.py`.
+#### Options · exit rules and Report as if
+
+The premium stop defaults to **2×** (`stop_pct` 100: sold at ₹60 → stop at ₹120; `stop_pct_expiry` 70 = 1.7× on expiry
+day; it was 1.5× / 35%), and the VWAP exit has its own switch, `vwap_exit` (default on; the "VWAP exit" switch next to
+"Enabled" on the Options page, `PUT /api/options/settings {"vwap_exit": false}`, paper only). **Saved settings on the
+server override these defaults**: a server that saved `stop_pct` 50 keeps 1.5× until it is changed in Settings → NIFTY
+options. The entry message, the timeline's entry line and the open spread's footer say which rules are live, e.g.
+"exits: premium 2× · VWAP on" (n× = 1 + `stop_pct`/100).
+
+**Report as if · exit rules** (`backend/options/asif.py`, `GET /api/options/asif?days=60`, the panel on the Options page
+with 30 / 60 / 90 days and a "per trade" fold) replays every closed spread of the window on its day's chain snapshots
+(`options_chain_snap` kinds live / bias / close, the trade's expiry, the two legs; mid = (bid + ask) / 2, else the last
+price) from its real entry, under four rules: **as is** (the saved settings), **2× only** (100 / 70, VWAP off), **2× +
+VWAP** (100 / 70, VWAP on), **1.5× only** (50 / 35, VWAP off). Each snapshot before `time_exit` is tested as the book
+does (breakeven armed after `be_after_pct`, the premium stop, the breakeven stop, the target); the first snapshot at or
+after the time exit closes it (the 15:30 close snapshot when the 15:10 one is missing). Exit fills mid ± ₹1 a leg, the
+book's `charges()`. The snapshots carry no VWAP path, so **a VWAP exit is never invented**: a rule with VWAP on keeps a
+real VWAP exit at its real time and fills; a rule with VWAP off ignores it and keeps stepping. After a real price stop
+the book stopped snapping every minute, so such a replay runs on the bias snapshots to 11:00 AM and the close snapshot
+("thin", counted in the note). A trade whose day has no snapshots (or an old row without legs) is counted in `trades`,
+marked `skipped` and left out of the sums.
+
+Shape: `{from, to, days, trades, replayed, skipped, snapshots_ok, thin, rules: [{key, label, stop_pct, stop_pct_expiry,
+vwap, actual, trades, won, net, avg, worst, exits: {premium, breakeven, target, vwap, time}}], per_trade: [{id, day, bias,
+strikes, actual: {why, label, net}, by_rule: {key: {why, net, exit_t}}, skipped, thin}], note, time_exit}` (rupees
+rounded to 2; `exit_t` 12-hour).
+
+Tests: `tests/test_options_rules.py`, `tests/test_options_book.py`, `tests/test_options_api.py`, `tests/test_options_alerts.py`,
+`tests/test_options_asif.py`.
 
 ### 🤖 Local AI (PR 1 · infrastructure)
 
@@ -3093,3 +3122,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   `ai_notes` row of kind `week`), the Sunday 8:00 PM job and the guard's Sunday night window, the catch-up after the
   ratings in `run_eod`, `POST /api/week/write`, `messages.ai_week_story`; `AIConfig.week`.
 - Tests: `tests/test_today_card.py` (18), `tests/test_plan_heat.py` (11), `tests/test_week.py` (28).
+
+### 2026-11-17: 🧩 Options · exit rules and Report as if
+- `OptionsConfig.stop_pct` 50 → 100 (2×), `stop_pct_expiry` 35 → 70, new `vwap_exit` (on) gating the VWAP branch of
+  `book._mark`; `book.exits_text` ("exits: premium 2× · VWAP on") on the entry message, the timeline and the open footer;
+  the rules text follows the settings; `PUT /api/options/settings` takes `vwap_exit`; the Options page's "VWAP exit"
+  switch; Settings help. Saved settings still win over the new defaults.
+- `backend/options/asif.py` + `GET /api/options/asif?days=` + the "Report as if · exit rules" panel (as is · 2× only ·
+  2× + VWAP · 1.5× only, per-trade fold): closed spreads replayed on the chain snapshots, VWAP exits kept at their real
+  time, never invented.
+- Tests: `tests/test_options_asif.py` (9), `tests/test_options_book.py` (+3), `tests/test_options_alerts.py` (+1).

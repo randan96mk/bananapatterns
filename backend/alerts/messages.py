@@ -1048,8 +1048,11 @@ def options_bias(o: dict, tag: str = "paper") -> str:
     lots = o["lots"]
     legs = (f"SELL <b>{_strike(s)}</b> @ {s['entry']:.2f} · BUY {_strike(h)} @ {h['entry']:.2f} · {lots} lot{'s' if lots != 1 else ''} · "
             f"credit {inr(o['credit_rs'])}")
-    stop = (f"stop {o['stop_premium']:.2f} (+{o['stop_pct']:g}%) or a 5-min close {'under' if bull else 'over'} VWAP · "
+    vwap = o.get("vwap_exit", True)
+    stop = (f"stop {o['stop_premium']:.2f} (+{o['stop_pct']:g}%)" + (f" or a 5-min close {'under' if bull else 'over'} VWAP" if vwap else "") + " · "
             f"target {o['target_value']:.2f} ({o.get('target_pct', 60):g}%) · worst case {inr(-o['worst_case'], sign=True)}")
+    from backend.options.book import exits_text
+    stop += f" · {exits_text(o['stop_pct'], vwap)}"
     dim = [f"margin ~{inr(o['margin_est'])}"]
     if o.get("sessions") is not None:
         dim.append("expiry day" if o["sessions"] == 0 else f"{o['sessions']} session{'s' if o['sessions'] != 1 else ''} to expiry")
