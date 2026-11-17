@@ -6,6 +6,7 @@ import { Head, Chip, Panel, Box, FixedTable, Tag, Act, KV } from './ui2';
 
 // Universe refresh + candle sync with live progress and run history, the NSE sources, backups, health.
 const mb = (b) => `${(b / 1e6).toFixed(1)} MB`;
+const size = (m) => (m == null ? '—' : m >= 1000 ? `${(m / 1000).toFixed(1)} GB` : `${Math.round(m)} MB`);   // from MB
 const STATUS = { ok: 'ok', partial: 'w', running: 'w', waiting: 'w', retry: 'w', failed: 'bad', aborted: 'bad' };
 export default function DataPanel({ hasToken, onDataChanged }) {
   const [st, setSt] = useState(null);
@@ -17,7 +18,10 @@ export default function DataPanel({ hasToken, onDataChanged }) {
   const [bk, setBk] = useState(null);
   const [h, setH] = useState(null);
   const [sel, setSel] = useState('candles');
+  const [arc, setArc] = useState(null);                  // 🧹 archive and vacuum
+  const [arcBusy, setArcBusy] = useState(false);
   useEffect(() => { api.backups().then(setBk).catch(() => {}); }, []);
+  useEffect(() => { api.maintenance().then(setArc).catch(() => {}); }, []);
   const loadEvents = () => {
     api.eventsStatus().then(setEvs).catch(() => setEvs(null));
     api.filingsStatus().then(setFils).catch(() => setFils(null));
@@ -70,6 +74,13 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       await load();
     } catch (e) { setMsg(e.message); }
     setBusy(false);
+  };
+  const archiveNow = async () => {
+    if (!window.confirm('Move log rows older than the archive window to data/archive.db and compact the database now? Nothing is deleted.')) return;
+    setArcBusy(true);
+    try { await api.maintenanceArchive(); } catch (e) { setMsg(e.message); }
+    api.maintenance().then(setArc).catch(() => {});
+    setArcBusy(false);
   };
   const backupNow = () => api.backupsRun().then(() => api.backups().then(setBk)).catch((e) => setMsg(e.message));
 
@@ -144,6 +155,9 @@ export default function DataPanel({ hasToken, onDataChanged }) {
         {(bk?.backups || []).map((b) => <Act key={b.name} icon="💾" text={stamp(b.at)} meta={`${mb(b.bytes)} · ${b.name}`} />)}
         <div className="rwrap"><button className="btn small" onClick={backupNow}>Back up now</button><span>a copy every evening after the job</span></div>
         <div className="rnote">Folder {bk?.folder}. To restore: stop the app, copy a backup over data/bananapatterns.db, start it again.</div>
+        {arc && <div className="rwrap"><button className="btn small" disabled={arcBusy || arc.running} onClick={archiveNow}>Run now</button>
+          <span title={`rows older than ${arc.settings?.archive_days} days move to ${arc.archive_file}; nothing is deleted`}>archive: live {size(arc.live_mb)} · archive {size(arc.archive_mb)}
+            {' · '}{arc.last_run ? `last ${arc.last_label} · ${arc.moved} rows moved` : 'not run yet'}</span></div>}
       </Panel>
       <Panel title="NSE sources">
         <KV pairs={[['Results calendar', evs?.last_fetch ? `${evs.upcoming_results} upcoming · ${stamp(evs.last_fetch)}` : 'not fetched yet'],

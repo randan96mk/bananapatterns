@@ -4,7 +4,7 @@
 #   ./docker.sh down      stop
 #   ./docker.sh logs      follow the logs (Ctrl+C to stop following)
 #   ./docker.sh status    container state and health
-#   ./docker.sh update    git pull, rebuild and restart (after a PR is merged)
+#   ./docker.sh update    git pull, rebuild and restart (after a PR is merged), then prune the old dangling images
 #   ./docker.sh restart   restart without rebuilding
 #   ./docker.sh rebuild   rebuild from the code as it is now (no git pull), e.g. after checking out an older version
 #   ./docker.sh verify-eplus  read-only check of E+ (late trail): backtest vs expected, trail exits, open positions
@@ -61,7 +61,7 @@ case "${1:-up}" in
     logs) docker compose logs -f --tail 200 ;;
     status) docker compose ps; curl -fs "http://127.0.0.1:$PORT/health" && echo "" || echo "health: not answering" ;;
     restart) docker compose restart && wait_healthy ;;
-    update) git pull --ff-only && up --build ;;
+    update) git pull --ff-only && up --build && docker image prune -f ;;   # old untagged images would fill the disk
     rebuild) up --build ;;
     verify-e300) docker compose exec banana python -m backend.tools.verify_e300 ;;
     verify-eplus) docker compose exec banana python -m backend.tools.verify_eplus ;;

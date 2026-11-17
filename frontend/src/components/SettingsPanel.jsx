@@ -74,8 +74,8 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['real', 'paper', 'futures', 'options', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
-const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
+const SECTIONS = ['real', 'paper', 'futures', 'options', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest', 'maintenance'];
+const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest', maintenance: '🧹 Archive' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
 const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'], ai: ['enabled'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
@@ -148,7 +148,15 @@ const HELP_TIPS = {
   model_classify: 'Let the local model sort the posts code could not (hint / follow-up / chatter) and link follow-ups (true/false)',
   preview_fallback: 'When the account reader is down, read the channel\'s public preview page every 30 s (true/false)',
 };
-const HELP_SEC = { tips: HELP_TIPS };
+// 🧹 archive and vacuum (section-scoped: enabled / day / time are generic names)
+const HELP_MAINT = {
+  enabled: 'The weekly archive job runs (true/false). The Data page\'s Run now works either way',
+  archive_days: 'Rows older than this many days in the log tables (option chain snapshots, tips quotes, AI jobs, job runs, sent alerts) MOVE to data/archive.db; nothing is deleted (at least 30; the options replay reads up to 90)',
+  vacuum: 'Compact the live database after the move so the space goes back to the disk (true/false; needs free disk about the size of the database)',
+  day: 'Weekday the archive runs (monday … sunday)',
+  time: 'Time the archive runs on that day (24-hour HH:MM, IST); a missed run catches up later the same day',
+};
+const HELP_SEC = { tips: HELP_TIPS, maintenance: HELP_MAINT };
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
 function useNarrow() {
@@ -185,7 +193,7 @@ export default function SettingsPanel() {
     <div className="rd">
       <Head title="Settings" right={<><span className="msg">{msg}</span><button className="btn" disabled={!vals || !dirty} onClick={save}>Save</button></>}>
         <Chip>{NAMES[section]} · <b>{vals ? Object.keys(vals).length : '…'}</b> fields</Chip>
-        {section !== 'ingest' && <Chip title="Charts update when reopened">after saving, press Rescan on the Screens tab</Chip>}
+        {!['ingest', 'maintenance'].includes(section) && <Chip title="Charts update when reopened">after saving, press Rescan on the Screens tab</Chip>}
       </Head>
       <div className="two" style={narrow ? undefined : { gridTemplateColumns: '220px minmax(0, 1fr) 380px' }}>
         <Panel title="Sections">

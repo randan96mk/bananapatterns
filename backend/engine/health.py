@@ -121,6 +121,12 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
     except Exception as exc:
         out.append({"key": "tips_reader", "name": "Tips reader", "ok": True, "warn": True, "state": "unknown",
                     "detail": str(exc)[:80], "at": None})
+    try:                                                    # 🧹 the weekly archive and vacuum
+        from backend.database import archive
+        out.append(archive.health_row(config))
+    except Exception as exc:
+        out.append({"key": "archive", "name": "Archive", "ok": True, "warn": True, "state": "unknown",
+                    "detail": str(exc)[:80], "at": None})
     out.append({"key": "follow", "name": "Follow book", "ok": True, "warn": bool(follow_as_of and day and follow_as_of < day),
                 "state": f"as of {follow_as_of}" if follow_as_of else "not built", "detail": "steps after the evening scan", "at": None})
     return out

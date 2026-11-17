@@ -1,8 +1,5 @@
 import StockEverywhere from './StockEverywhere';
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, LineSeries, LineStyle,
-} from 'lightweight-charts';
 import * as api from '../services/api';
 import { BasesPrimitive } from '../chart/basesPrimitive';
 import BaseCard from './BaseCard';
@@ -12,6 +9,11 @@ import { cssVar, useTheme } from '../theme';
 import { useIsPhone } from '../useMedia';
 import FilingsList from './FilingsList';
 import { AiViewCard, levelRows, norm } from './AiView';
+import Loading from './Loading';
+
+// lightweight-charts is fetched only when a chart mounts (code splitting); later charts reuse the loaded module.
+let LW = null;
+const loadLW = () => import('lightweight-charts').then((m) => { LW = m; return m; });
 
 function sma(candles, n) {
   const out = [];
@@ -60,6 +62,13 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
   const [err, setErr] = useState('');
   const [preview, setPreview] = useState(null);       // {kind, stamp} while the alert-chart preview is open
   const [aiv, setAiv] = useState(null);               // 🤖 the stock's latest AI view (levels drawn, card under the chart)
+  const [lw, setLw] = useState(LW);                   // the chart library, once loaded
+  useEffect(() => {
+    if (lw) return undefined;
+    let alive = true;
+    loadLW().then((m) => { if (alive) setLw(m); }).catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+  }, [lw]);
 
   useEffect(() => {
     if (!symbol) return undefined;
@@ -70,7 +79,8 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
   }, [symbol]);
 
   useEffect(() => {
-    if (!symbol || !box.current) return undefined;
+    if (!symbol || !box.current || !lw) return undefined;
+    const { createChart, createSeriesMarkers, CandlestickSeries, HistogramSeries, LineSeries, LineStyle } = lw;
     const pal = palette();
     const chart = createChart(box.current, {
       autoSize: true,
@@ -128,7 +138,7 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
     // handles for the overlay effect below
     box.current.__bp = { boxes, markers, candles, pal, get pivotLine() { return pivotLine; } };
     return () => { alive = false; chart.remove(); };
-  }, [symbol, theme]);
+  }, [symbol, theme, lw]);
 
   // draw (or hide) boxes, breakout markers and the pivot line; no refetch on toggle
   useEffect(() => {
@@ -158,10 +168,10 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
   useEffect(() => {
     const h = box.current && box.current.__bp;
     if (!h || !trade?.entry || !info) return undefined;
-    const lines = [h.candles.createPriceLine({ price: trade.entry, color: h.pal.text, lineWidth: 1, lineStyle: LineStyle.Dotted,
+    const lines = [h.candles.createPriceLine({ price: trade.entry, color: h.pal.text, lineWidth: 1, lineStyle: LW.LineStyle.Dotted,
       axisLabelVisible: true, title: `entry ₹${trade.entry.toFixed(2)}` })];
     if (trade.stop) {
-      lines.push(h.candles.createPriceLine({ price: trade.stop, color: h.pal.down, lineWidth: 1, lineStyle: LineStyle.Dashed,
+      lines.push(h.candles.createPriceLine({ price: trade.stop, color: h.pal.down, lineWidth: 1, lineStyle: LW.LineStyle.Dashed,
         axisLabelVisible: true, title: `stop ₹${trade.stop.toFixed(2)}` }));
     }
     return () => lines.forEach((l) => { try { h.candles.removePriceLine(l); } catch { /* chart rebuilt */ } });
@@ -175,7 +185,7 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
     const COL = { support_1: '--ok', support_2: '--muted', pivot: '--blue', resistance: '--warn' };
     const basePivot = bases?.latest?.pivot;
     const lines = levelRows(aiv).filter(([k, , , price]) => !(k === 'pivot' && basePivot && Math.abs(price - basePivot) <= basePivot * 0.002))
-      .map(([k, name, , price, label, fails]) => h.candles.createPriceLine({ price, color: cssVar(COL[k]), lineWidth: 1, lineStyle: LineStyle.Dashed,
+      .map(([k, name, , price, label, fails]) => h.candles.createPriceLine({ price, color: cssVar(COL[k]), lineWidth: 1, lineStyle: LW.LineStyle.Dashed,
         axisLabelVisible: true, title: `${name} ${Math.round(price * 100) / 100}${label ? ` · ${label}` : ''}${fails ? ' · setup fails below' : ''}` }));
     return () => lines.forEach((l) => { try { h.candles.removePriceLine(l); } catch { /* chart rebuilt */ } });
   }, [aiv, info, bases]);
@@ -209,7 +219,7 @@ export default function StockChart({ symbol, onClose, trade: tradeProp }) {
           <img alt={`${symbol} alert chart`} src={api.alertChartUrl(symbol, preview.kind, preview.stamp)}
                onError={() => setErr('No alert chart for this stock/kind (no base to annotate, or matplotlib missing)')} />
         </div>)}
-      <div ref={box} className="chart" />
+      <div ref={box} className="chart">{!lw && <Loading />}</div>
       <AiViewCard symbol={symbol} v={aiv} pivot={bases?.latest?.pivot} />
       <details className="fold" open={!phone}><summary>Everywhere in the app{overlay ? ' · entry / stop drawn' : ''}</summary>
         <StockEverywhere symbol={symbol} onOverlay={setOverlay} /></details>

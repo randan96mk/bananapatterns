@@ -51,7 +51,7 @@ class Feed:
             ticker_cls = self.ticker_cls
         self.ticker = ticker_cls(self.api_key, self.access_token)
 
-        def on_connect(ws, response):
+        def on_connect(ws, _response):           # KiteTicker passes the handshake response; unused
             ws.subscribe(self.tokens)
             ws.set_mode(ws.MODE_QUOTE, self.tokens)
             _feed.update(state="live", error=None)

@@ -110,7 +110,7 @@ when needed), or send `/login` to the bot, or use **Login with Kite** on the das
 
 🖥 Server (after Step 0):
 ```bash
-./docker.sh update                 # git pull + rebuild + restart, about 3-5 min
+./docker.sh update                 # git pull + rebuild + restart + docker image prune -f, about 3-5 min
 ./docker.sh status                 # "healthy" and {"status":"ok"} = done
 ```
 Then reload the dashboard (Mac: ⌘⇧R; iPhone: close the app and reopen it). If `update` stops with "local changes
@@ -156,6 +156,36 @@ rm -f data/bananapatterns.db-wal data/bananapatterns.db-shm
 gunzip -c ~/banana-backups/<day>/bananapatterns.db.gz > data/bananapatterns.db
 ./docker.sh up
 ```
+
+### 🧹 Archive and vacuum
+
+Once a week (Settings › 🧹 Archive: `maintenance.day` **sunday**, `maintenance.time` **03:00** IST, `enabled` true) the
+`archive` job MOVES old rows of the fast-growing log tables out of the live database into **`data/archive.db`** (the same
+folder as the live DB; with `BP_DB_PATH` set, next to that file). Nothing is deleted: every row is copied into the archive
+first, and only rows whose exact copy is in the archive are then removed from the live DB.
+
+| Table | Moved when older than `maintenance.archive_days` (120) by | Always kept in the live DB |
+|---|---|---|
+| `options_chain_snap` | `day` | — (the options replay reads at most 90 days; its window is capped at `archive_days`) |
+| `tips_quotes` | `t` | — |
+| `ai_jobs` | `created` | jobs still queued / running |
+| `job_runs` | `run_date` | the latest row of every job |
+| `sent_alerts` | `sent_at` | alerts not sent yet (`ok = 0`) and undated dedup keys (e.g. `near|…`, once per base) |
+
+Nothing else is touched. After the move: `PRAGMA wal_checkpoint(TRUNCATE)` and, with `maintenance.vacuum` (true),
+`VACUUM` of the live DB (needs free disk about the size of the database while it runs). Each run writes a `job_runs`
+row (rows moved per table, the two file sizes). The Data page shows `archive: live … · archive … · last Sun 3:00 AM ·
+n rows moved` with **Run now** (asks first; `POST /api/maintenance/archive`, 409 while one is running);
+`GET /api/maintenance` has the details and the next run; the health row `archive` turns amber when the last run is
+more than 10 days old.
+
+Read archived rows back (the archive has the same table shapes):
+```bash
+sqlite3 data/bananapatterns.db
+sqlite> ATTACH 'data/archive.db' AS a;
+sqlite> SELECT * FROM a.options_chain_snap WHERE day = '2026-03-02' UNION ALL SELECT * FROM options_chain_snap WHERE day = '2026-03-02';
+```
+`scripts/backup.sh` backs up `data/archive.db` next to the live DB (as `archive.db.gz`) whenever the file exists.
 
 ### Roll back to an earlier version
 
@@ -248,7 +278,7 @@ Keep your `.env` as it is: it is read at start-up and never copied into the imag
 ./docker.sh up        # start in the background (the first time it builds the image, ~3-5 min)
 ./docker.sh logs      # follow what it is doing (Ctrl+C stops following, not the app)
 ./docker.sh status    # running / healthy?
-./docker.sh update    # after a PR is merged: git pull + rebuild + restart (~1 min)
+./docker.sh update    # after a PR is merged: git pull + rebuild + restart (~1 min), then `docker image prune -f` drops the old images
 ./docker.sh rebuild   # rebuild from the code as it is (no pull), e.g. after checking out an older version
 ./docker.sh down      # stop
 ```
@@ -2128,6 +2158,8 @@ Interactive docs: http://localhost:8000/docs
 | Method | Path | Description |
 |---|---|---|
 | GET | `/health` | liveness |
+| GET | `/api/maintenance` | 🧹 archive: last run, rows moved per table, live / archive MB, next run, settings |
+| POST | `/api/maintenance/archive` | 🧹 run the archive now (409 while one is running) |
 | GET | `/api/kite/login-url` | Kite login URL (400 if keys missing) |
 | GET | `/api/kite/callback` | OAuth redirect target; stores the token, confirms in Telegram. With `n` (Telegram link) the one-time code must be valid and a phone page is shown; without it, redirects to the dashboard |
 | POST | `/api/kite/token` | `{access_token}`: store a token obtained elsewhere |

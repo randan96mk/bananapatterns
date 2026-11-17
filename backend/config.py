@@ -558,6 +558,32 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("lots, capital and rupees must be positive")
 
 
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+@dataclass
+class MaintenanceConfig:
+    """🧹 Archive and vacuum: once a week, rows older than `archive_days` in the fast-growing log tables MOVE to
+    data/archive.db (never deleted), then the live DB is checkpointed and, with `vacuum`, compacted."""
+    enabled: bool = True                   # the weekly archive job runs
+    archive_days: int = 120                # rows older than this many days move to the archive file
+    vacuum: bool = True                    # VACUUM the live DB after the move (gives the space back to the disk)
+    day: str = "sunday"                    # the weekday the job runs
+    time: str = "03:00"                    # HH:MM (IST) on that day; a missed run catches up later that day
+
+
+def check_maintenance(sec: "MaintenanceConfig") -> None:
+    """🧹 day is a weekday name, time HH:MM, archive_days at least 30 (the options replay reads up to 90 days)."""
+    if str(sec.day).lower() not in WEEKDAYS:
+        raise ValueError(f"day must be one of {list(WEEKDAYS)}")
+    sec.day = str(sec.day).lower()
+    h, _, m = str(sec.time).partition(":")
+    if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+        raise ValueError(f"time {sec.time!r} must be HH:MM")
+    if int(sec.archive_days) < 30:
+        raise ValueError("archive_days must be at least 30")
+
+
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
 
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
@@ -570,7 +596,7 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
                       "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig, "ai": AIConfig,
-                      "tips": TipsConfig}
+                      "tips": TipsConfig, "maintenance": MaintenanceConfig}
 
 
 @dataclass
@@ -592,6 +618,7 @@ class AppConfig:
     options: OptionsConfig = field(default_factory=OptionsConfig)
     ai: AIConfig = field(default_factory=AIConfig)
     tips: TipsConfig = field(default_factory=TipsConfig)
+    maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
@@ -624,9 +651,10 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name in ("alerts", "ai", "options", "tips"):
+        if name in ("alerts", "ai", "options", "tips", "maintenance"):
             try:
-                {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times, "tips": check_tips}[name](sec)
+                {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times, "tips": check_tips,
+                 "maintenance": check_maintenance}[name](sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))

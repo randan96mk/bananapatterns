@@ -220,6 +220,11 @@ class Scheduler:
             jobs += week_story.due(now, self.state.config, self.done_today(today))
         except Exception:
             logger.exception("AI week due check failed")
+        try:                                               # 🧹 archive and vacuum: once a week (maintenance.day / time)
+            from backend.database import archive
+            jobs += archive.due(now, self.state.config, self.done_today(today))
+        except Exception:
+            logger.exception("Archive due check failed")
         try:                                               # 🤖 suggestions: an open one past its time expires (no tap)
             from backend.ai import suggest
             suggest.expire_open(now)
@@ -377,6 +382,19 @@ class Scheduler:
             return week_story.enqueue_due(self.state.config, now, self.notifier())
         except Exception as exc:
             logger.exception("AI week story enqueue failed")
+            return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_archive(self, now: datetime) -> dict:
+        """🧹 Move the old log rows to data/archive.db, checkpoint and VACUUM (archive.run records the job_runs row).
+        Never raises; a run already going (the Data page's Run now) is left alone and retried on the next tick."""
+        from backend.database import archive
+        try:
+            return {"status": "ok", **archive.run(self.state.config, now)}
+        except archive.Busy:
+            return {"status": "busy"}
+        except Exception as exc:
+            logger.exception("Archive job failed")
+            self.record(archive.JOB, now.date(), "failed", str(exc)[:200], now_ist())
             return {"status": "failed", "error": str(exc)[:200]}
 
     def run_ai_week(self, now: datetime) -> dict:

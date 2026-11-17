@@ -6,6 +6,7 @@
 #
 # Each run writes ~/banana-backups/YYYY-MM-DD/ (outside the repo, never committed):
 #   bananapatterns.db.gz   SQLite's own online backup, checked with PRAGMA integrity_check
+#   archive.db.gz          the archive file (rows moved out by the weekly archive job), when it exists
 #   env                    a copy of .env (secrets: the folder is private, chmod 700 / 600)
 #   config.tar.gz          config/
 # The last BP_BACKUP_KEEP (14) days are kept. A failure is written to logs/backup.log and sent to Telegram
@@ -88,6 +89,16 @@ chat="$(sqlite3 -readonly "$TMP/bananapatterns.db" "SELECT json_extract(value, '
 [ -z "$chat" ] || echo "$chat" > "$DEST/.chat_id"           # so a failure alert still finds the chat
 rm -f "$TMP"/bananapatterns.db-wal "$TMP"/bananapatterns.db-shm
 gzip -9 "$TMP/bananapatterns.db" || fail "gzip failed"
+
+# the archive file (rows the weekly archive job moved out of the live DB; never deleted): same online backup
+ARCH="$(dirname "$DB")/archive.db"
+if [ -f "$ARCH" ]; then
+    sqlite3 "$ARCH" ".timeout 30000" ".backup '$TMP/archive.db'" 2>>"$LOG" || fail "sqlite3 .backup of archive.db failed"
+    acheck="$(sqlite3 -readonly "$TMP/archive.db" "PRAGMA integrity_check" 2>&1 | head -1 || true)"
+    [ "$acheck" = "ok" ] || fail "integrity check on the archive copy: ${acheck:-no answer}"
+    rm -f "$TMP"/archive.db-wal "$TMP"/archive.db-shm
+    gzip -9 "$TMP/archive.db" || fail "gzip of archive.db failed"
+fi
 
 [ -f .env ] && cp .env "$TMP/env"
 [ -d config ] && tar -czf "$TMP/config.tar.gz" config

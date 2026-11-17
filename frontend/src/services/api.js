@@ -77,6 +77,8 @@ export const health = () => req('GET', '/api/health');
 export const configChanges = () => req('GET', '/api/config-changes');
 export const backups = () => req('GET', '/api/backups');
 export const backupsRun = () => req('POST', '/api/backups/run');
+export const maintenance = () => req('GET', '/api/maintenance');                    // 🧹 archive and vacuum
+export const maintenanceArchive = () => req('POST', '/api/maintenance/archive');
 export const realReconcile = (days = 30) => req('GET', `/api/real/reconcile?days=${days}`);
 export const corpActions = () => req('GET', '/api/corp-actions');
 export const followRebuild = () => req('POST', '/api/follow/rebuild');
