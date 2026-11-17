@@ -234,9 +234,56 @@ def _clip(s, n: int) -> str:
     return s if len(s) <= n else s[:n - 1].rstrip() + "…"
 
 
+_CURRENCY = re.compile(r"(?<![A-Za-z])(?:\$|Rs\.?|INR|rupees?)\s*(?=\d)", re.I)
+_PCT_SRC = re.compile(r"(?<![A-Za-z\d])(\d[\d,]*(?:\.\d+)?)\s*%")
+_RS_SRC = re.compile(r"(?:₹|\$|Rs\.?|INR)\s*(\d[\d,]*(?:\.\d+)?)", re.I)
+
+_typed_cache: dict = {}
+
+
+def normalise_currency(text: str) -> str:
+    """The model sometimes writes $ or Rs before an Indian figure: every money figure shows the rupee sign."""
+    return _CURRENCY.sub("₹", text or "")
+
+
+def _typed(allowed: set) -> tuple[set, set]:
+    """(percent figures, rupee figures) among the allowed tokens, remembered per source (set by `typed_tokens`)."""
+    return _typed_cache.get(id(allowed), (set(), set()))
+
+
+def typed_tokens(text: str) -> set:
+    """`_digit_tokens` plus a memory of which figures the source writes as a percent and which as rupees, so a figure
+    quoted as "52.78%" must be a percent in the facts and "₹8,156" a rupee amount — not a number of another kind."""
+    allowed = _digit_tokens(text)
+    pct = {t.replace(",", "") for t in _PCT_SRC.findall(text or "")}
+    rs = {t.replace(",", "") for t in _RS_SRC.findall(text or "")}
+    _typed_cache[id(allowed)] = (pct, rs)
+    if len(_typed_cache) > 64:
+        for k in list(_typed_cache)[:-32]:
+            _typed_cache.pop(k, None)
+    return allowed
+
+
+def _kind_ok(text: str, token: str, pct: set, rs: set) -> bool:
+    """A figure written with % must be a percent fact; one written with ₹ a rupee fact (when the source typed any)."""
+    if not pct and not rs:
+        return True
+    t = token.replace(",", "")
+    esc = re.escape(token)
+    if re.search(esc + r"\s*%", text) and pct and t not in pct and not _partial(token, pct):
+        return False
+    if re.search(r"₹\s*" + esc, text) and rs and t not in rs and not _partial(token, rs):
+        return False
+    return True
+
+
 def _strip_numbers(text: str, allowed: set) -> tuple[str, bool]:
-    """Drop every number in `text` that is neither in the source text nor found by code; (text, all_ok)."""
-    bad = [t for t in _DIGITS.findall(text) if len(t) > 1 and t.replace(",", "") not in allowed and not _partial(t, allowed)]
+    """Drop every number in `text` that is neither in the source text nor found by code, or that is quoted as a percent
+    or a rupee amount when the source has it as another kind; (text, all_ok). $ / Rs become ₹ first."""
+    text = normalise_currency(text)
+    pct, rs = _typed(allowed)
+    bad = [t for t in _DIGITS.findall(text) if len(t) > 1 and (
+        (t.replace(",", "") not in allowed and not _partial(t, allowed)) or not _kind_ok(text, t, pct, rs))]
     if not bad:
         return text, True
     for t in bad:

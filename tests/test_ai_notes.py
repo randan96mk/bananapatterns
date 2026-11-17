@@ -27,7 +27,7 @@ from tests.test_login import LoginState
 
 ROOT = Path(__file__).resolve().parent.parent
 GOOD = {"category": "results", "severity": "medium", "direction": "positive", "title": "Q2 profit up on higher volumes",
-        "line": "Revenue Rs. 1,412.6 crore, up 21.4% YoY; PAT 128.4 crore. A strong quarter for the owner.",
+        "line": "Revenue ₹1,412.6 crore, up 21.4% YoY; PAT 128.4 crore. A strong quarter for the owner.",
         "acts": ["check the margin trend", "read the presentation"], "confidence": 0.82}
 RESULTS_TEXT = ("Outcome of Board Meeting: the Board approved the unaudited results for the quarter ended September 30, 2026. "
                 "Revenue from operations of Rs. 1,412.6 crore, up 21.4% YoY. EBITDA of Rs. 318.2 crore. Net profit of Rs. 128.4 crore.")
@@ -193,7 +193,7 @@ def test_validate_strips_numbers_not_in_the_source():
     made_up = {**GOOD, "line": "Revenue Rs. 1,412.6 crore, up 21.4% YoY; margin 22.5% and PAT up 311% to 999 crore."}
     n = notes.validate(json.dumps(made_up), RESULTS_TEXT, nums)
     assert n["numbers_checked"] is False and "22.5" not in n["line"] and "311" not in n["line"] and "999" not in n["line"]
-    assert n["line"].startswith("Revenue Rs. 1,412.6 crore, up 21.4% YoY") and "1,412.6" in n["line"]
+    assert n["line"].startswith("Revenue ₹1,412.6 crore, up 21.4% YoY") and "1,412.6" in n["line"]
     ok = {**GOOD, "line": "Revenue 1412.60 crore (Rs 1,412.6 crore in the filing), PAT 128.4 crore, Q2 FY27, 3 plants, 2026."}
     n = notes.validate(json.dumps(ok), RESULTS_TEXT, nums)
     assert n["numbers_checked"] is True                                              # the same numbers written differently
@@ -694,3 +694,19 @@ def test_synonyms_map_to_listed_values_and_retry_names_the_fault(monkeypatch):
     assert "weather" in calls[1][0] and "legal" in calls[1][0] and calls[1][0].startswith(notes.SYSTEM_PROMPT)
     assert calls[0][1] == notes.GEN_OPTIONS and calls[0][1]["num_predict"] <= 400 and calls[0][1]["temperature"] <= 0.2
     assert notes.PROMPT_V == "notes-v2" and "neutral = only when" in notes.SYSTEM_PROMPT
+
+
+def test_figures_keep_their_kind_and_currency_is_normalised():
+    """A figure quoted as a percent must be a percent in the facts, a rupee amount a rupee amount; $ / Rs become ₹."""
+    src = "Total: net ₹8,156 lost; 9 trades; 1 won; books +52.78% vs NIFTY +0.63%; PNB net +₹9,230"
+    allowed = notes.typed_tokens(src)
+    t, ok = notes._strip_numbers("net -₹8,156, 1 win in 9 trades, +52.78% vs NIFTY +0.63%", allowed)
+    assert ok and "52.78%" in t and "₹8,156" in t
+    t, ok = notes._strip_numbers("PNB rose 8,156% on the week", allowed)                  # a rupee figure dressed as a percent
+    assert not ok and "8,156" not in t
+    t, ok = notes._strip_numbers("net ₹52.78 on PNB", allowed)                             # a percent dressed as rupees
+    assert not ok and "52.78" not in t
+    t, ok = notes._strip_numbers("cash $9,230 and Rs 8,156 left", allowed)
+    assert ok and t == "cash ₹9,230 and ₹8,156 left"
+    plain = notes._digit_tokens(src)                                                        # no typed memory: the old check only
+    assert notes._strip_numbers("8,156% is fine here", plain) == ("8,156% is fine here", True)

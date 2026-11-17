@@ -247,7 +247,7 @@ def test_run_writes_one_row_and_sends_once(ollama, cfg):
     assert len(r) == 1 and r[0]["source_key"] == f"week:{W}" and r[0]["prompt_version"] == "week-v1" and r[0]["day"] == FRI
     data = json.loads(r[0]["data"])
     assert data["week"] == W and data["model"] == NIGHT and data["prompt_version"] == "week-v1" and "ms" in data and data["alerted"] is True
-    assert json.loads(r[0]["text"])[0].startswith("TCS gave the week")
+    assert r[0]["text"].split("\n")[0].startswith("TCS gave the week")                  # lines, not JSON (real ₹ in the feed)
     obs = wk.week(W, TODAY)["observations"]
     assert [o["day"] for o in obs] == ["Wed", "Fri", "week"] and obs[0]["day_iso"] == WED and all(o["ai"] and o["checked"] for o in obs)
     assert len(fake.sent) == 1 and fake.sent[0][1].startswith("📖 <b>[AI] Week 46 · the story</b>\n<i>AI ·</i> TCS gave")
