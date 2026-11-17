@@ -74,8 +74,8 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['real', 'paper', 'futures', 'options', 'ai', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
-const NAMES = { real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
+const SECTIONS = ['real', 'paper', 'futures', 'options', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest'];
+const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
 const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'], ai: ['enabled'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
@@ -130,6 +130,25 @@ Object.assign(HELP_AI, {
 Object.assign(HELP_AI, {
   week: 'Sunday evening: the local model writes up to three observations about the week from the trade rows; figures are checked by code. Off = the Week page shows the numbers only.' });
 Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
+// 💡 Tips (a channel's calls, decoded and scored; a separate paper book, never linked to any strategy). Section-scoped:
+// these keys share names with other sections, so they are looked up for the tips section only.
+const HELP_TIPS = {
+  enabled: 'The Tips module: read the channels, decode the calls, push them to Telegram (true/false; off until the reader is logged in)',
+  channels: 'Channels to read, comma-separated (any channel your Telegram account is a member of)',
+  capital: 'Starting capital of the Tips paper book (rupees; separate from every other book)',
+  lots: 'Lots per taken hint when the post names no size (the Take field starts here)',
+  size_mode: 'How a take is sized when the post names no size: "lots" (the lots above) or "rupees" (the amount below)',
+  rupees: 'With size_mode rupees: about this much premium per taken hint, in whole lots',
+  push_hints: 'Push every new hint to Telegram at once (true/false)',
+  push_followups: 'Push the channel\'s follow-ups on a hint as one line each (true/false)',
+  auto_follow_channel_exit: 'The paper book follows the channel\'s own exit / SL hit / "exit near cost" by itself and tells you (true/false)',
+  intraday_time_stop: 'An intraday hint still open is closed here (24-hour HH:MM, IST); a "when comes" zone never reached is skipped then',
+  partial_at_t1: 'Book half at target 1 (true/false)',
+  trail_to_cost_after_t1: 'After target 1, move the stop to the entry price (true/false)',
+  model_classify: 'Let the local model sort the posts code could not (hint / follow-up / chatter) and link follow-ups (true/false)',
+  preview_fallback: 'When the account reader is down, read the channel\'s public preview page every 30 s (true/false)',
+};
+const HELP_SEC = { tips: HELP_TIPS };
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
 function useNarrow() {
@@ -177,7 +196,7 @@ export default function SettingsPanel() {
           {!vals ? <p className="muted small rempty">{msg || 'Loading…'}</p>
             : <div className="rform">{Object.entries(draft).filter(([k]) => !(HIDE[section] || []).includes(k)).map(([k, v]) => (
               <div key={k} className="fr">
-                <div><code>{k}</code><small>{HELP[k] || ''}{/^\d{1,2}:\d{2}$/.test(String(v)) && ` (= ${ampm(String(v))} IST)`}</small></div>
+                <div><code>{k}</code><small>{HELP_SEC[section]?.[k] || HELP[k] || ''}{/^\d{1,2}:\d{2}$/.test(String(v)) && ` (= ${ampm(String(v))} IST)`}</small></div>
                 <div style={{ textAlign: 'right' }}>{Array.isArray(v)
                   ? <textarea rows={Math.min(4, v.length || 1)} style={{ width: 220, maxWidth: '100%', fontSize: 11, textAlign: 'left' }} value={v.join('\n')}
                       onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />

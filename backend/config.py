@@ -523,6 +523,41 @@ class AIConfig:
     quiet_to: str = "09:00"
 
 
+TIPS_SIZE_MODES = ("lots", "rupees")
+
+
+@dataclass
+class TipsConfig:
+    """💡 Tips: a Telegram channel's calls caught, decoded, tracked and scored. Standalone: not linked to any other book
+    or rule. Nothing is automatic except the Tips paper book following the plan and the channel's own exits (and
+    telling you). The reader logs in with your own Telegram account (TIPS_TG_* in .env, never here)."""
+    enabled: bool = False                  # the reader runs (stays off until the reader is logged in)
+    channels: str = "aakankshatrading"     # comma list of channel usernames your account can read
+    capital: float = 100000.0              # the Tips paper book's own capital
+    lots: int = 1                          # lots per taken hint (a size in the post wins; `take N 2` overrides)
+    size_mode: str = "lots"                # lots | rupees (rupees: as many lots as `rupees` buys at the fill, 1 at least)
+    rupees: float = 20000.0                # the premium per taken hint in rupees mode
+    push_hints: bool = True                # every new hint pushed to Telegram at once
+    push_followups: bool = True            # each channel follow-up pushed as one line
+    auto_follow_channel_exit: bool = True  # the paper book follows the channel's own exit / SL hit / SL change (you are told)
+    intraday_time_stop: str = "15:20"      # option buys: anything still open is closed here (HH:MM; shown 12-hour)
+    partial_at_t1: bool = True             # half the position booked at target 1
+    trail_to_cost_after_t1: bool = True    # after target 1 the stop moves to the entry price
+    model_classify: bool = True            # the local 3B model sorts the posts code could not place (hint / follow-up / chatter)
+    preview_fallback: bool = True          # the public preview page every 30 s while the reader is down
+
+
+def check_tips(sec: "TipsConfig") -> None:
+    """💡 size_mode lots|rupees, the time stop HH:MM, sizes and capital positive."""
+    if sec.size_mode not in TIPS_SIZE_MODES:
+        raise ValueError("size_mode must be lots or rupees")
+    h, _, m = str(sec.intraday_time_stop).partition(":")
+    if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+        raise ValueError(f"intraday_time_stop {sec.intraday_time_stop!r} must be HH:MM")
+    if int(sec.lots) < 1 or float(sec.capital) <= 0 or float(sec.rupees) <= 0:
+        raise ValueError("lots, capital and rupees must be positive")
+
+
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
 
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
@@ -534,7 +569,8 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "vcp": VcpConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
-                      "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig, "ai": AIConfig}
+                      "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig, "ai": AIConfig,
+                      "tips": TipsConfig}
 
 
 @dataclass
@@ -555,6 +591,7 @@ class AppConfig:
     futures: FuturesConfig = field(default_factory=FuturesConfig)
     options: OptionsConfig = field(default_factory=OptionsConfig)
     ai: AIConfig = field(default_factory=AIConfig)
+    tips: TipsConfig = field(default_factory=TipsConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
@@ -587,9 +624,9 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name in ("alerts", "ai", "options"):
+        if name in ("alerts", "ai", "options", "tips"):
             try:
-                {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times}[name](sec)
+                {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times, "tips": check_tips}[name](sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))

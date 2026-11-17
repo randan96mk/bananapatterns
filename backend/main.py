@@ -67,15 +67,26 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_scan_if_behind, args=(state,), name="startup-scan", daemon=True).start()
     state.scheduler = Scheduler(state)
     bot = BotCommands(state)
+    from backend.tips import reader as tips_reader
+    from backend.tips import track as tips_track
+    state.tips_tracker = tips_track.Tracker(state)
     if os.getenv("BP_NO_SCHEDULER") != "1":
         state.scheduler.start()           # evening job, reminders, login links, intraday heads-up, weekly refresh
         bot.start()                       # Telegram /login and /status
+        state.tips_tracker.start()        # 💡 Tips: quotes every 5 s while a hint is open or waiting
+        try:                              # 💡 Tips: the reader starts only when tips.enabled and a session exist
+            tips_reader.ensure(state)
+        except Exception:
+            logger.exception("Tips reader start failed")
     if security.password():
         logger.info("Dashboard password on (BP_DASHBOARD_PASSWORD)")
     logger.info("Banana Patterns backend ready")
     yield
     state.scheduler.stop()
     bot.stop()
+    state.tips_tracker.stop()
+    if tips_reader.READER is not None:
+        tips_reader.READER.stop()
     logger.info("Banana Patterns backend stopped")
 
 

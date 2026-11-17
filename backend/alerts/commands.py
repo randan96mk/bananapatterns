@@ -13,6 +13,9 @@
                                hold need `yes N` within 10 min; a skip goes straight through); dismiss with a reason;
                                the evidence of #N. Nothing runs without your reply
   ask <question>               🤖 ask the app: the day model answers from one read-only tool ("thinking…" first)
+  tips / tip N / take N [lots|half] / skip N / exit N / trail N <px> / pause N / resume N / tips channels
+                               💡 Tips: the status line, a hint's card, take it into the Tips paper book (2 = lots),
+                               skip it (still scored), close it, move its stop, pause / resume it, the channels read
 
 Only messages from the configured chat_id are answered; anyone else is ignored.
 Commands older than STALE_SEC (sent while the app was off) are skipped. The poller
@@ -41,6 +44,7 @@ MORNING_WORDS = ("skip", "unskip", "hold", "full")         # full SYM: 🤖 the 
 OPTIONS_WORDS = ("close", "hold")
 AI_WORDS = ("stop", "start")
 SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
+TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume")   # 💡 with a hint number: "take 12 2", "skip 12"
 
 
 class BotCommands:
@@ -82,6 +86,11 @@ class BotCommands:
             m = u.get("message") or {}
             parts = (m.get("text") or "").strip().split()
             if str((m.get("chat") or {}).get("id")) != notifier.chat_id or not parts:
+                continue
+            w0 = parts[0].lstrip("/").split("@")[0].lower()
+            if w0 == "tips" or (w0 in TIPS_WORDS and len(parts) > 1 and parts[1].isdigit()):   # 💡 "skip 12" (a number) is Tips
+                if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
+                    handled += int(self._say(notifier, self.tips(w0, parts[1:])))
                 continue
             if parts[0].lower() == "fut" and len(parts) > 1 and parts[1].lower() in MORNING_WORDS:   # "fut skip NRL" / "fut hold"
                 parts = ["/fut" + parts[1].lower()] + parts[2:]
@@ -305,6 +314,53 @@ class BotCommands:
         except (suggest.SuggestionState, ValueError) as exc:
             return f"Not changed: {msg.escape(str(exc))}"
 
+    def tips(self, word: str, args: list) -> str:
+        """💡 tips · tips channels · tip N · take N [lots|half] · skip N · exit N · trail N <px> · pause N · resume N. The
+        same functions the Tips page's buttons call; paper only."""
+        from backend.tips import book as tb
+        from backend.tips import reader as rd
+        from backend.tips import track as tt
+        cfg, now = self.state.config, self.clock()
+        if word == "tips":
+            if args and args[0].lower() == "channels":
+                return msg.tips_channels(rd.channels_of(cfg), rd.status())
+            return msg.tips_status(tt.summary(cfg))
+        hid = int(args[0])
+        rest = [a.lower() for a in args[1:]]
+        try:
+            if word == "tip":
+                h = tb.load(hid)
+                if not h:
+                    return f"No hint #{hid}."
+                return msg.tips_card({**tt.hint_view(h), "pos": h.get("pos")})
+            if word == "take":
+                half = "half" in rest or "½" in rest
+                lots = next((float(a) for a in rest if a.replace(".", "", 1).isdigit()), None)
+                h = tb.take(cfg, hid, lots=lots, half=half, who="Telegram", now=now, notify=False)
+                return msg.tips_taken(h, now)
+            if word == "skip":
+                tb.skip(cfg, hid, who="Telegram", now=now)
+                return f"⏭ #{hid} skipped · still scored for the channel's record"
+            if word == "exit":
+                h = tb.exit_now(cfg, hid, who="Telegram", now=now)
+                pos = h.get("pos") or {}
+                if pos.get("entry_px") is None:
+                    return f"✖ #{hid} take cancelled · nothing was filled"
+                return msg.tips_line(hid, f"closed by you at {pos.get('exit_px'):g} · {msg.inr(pos.get('realised'), 0, True)} total", now)
+            if word == "trail":
+                if not rest:
+                    return f"Trail to what? trail {hid} &lt;price&gt;"
+                tb.trail(cfg, hid, float(rest[0]), who="Telegram", now=now)
+                return msg.tips_line(hid, f"stop moved to {rest[0]} · trail on", now)
+            if word in ("pause", "resume"):
+                tb.pause(cfg, hid, word == "pause", who="Telegram", now=now)
+                return msg.tips_line(hid, "paused · no entry until you resume" if word == "pause" else "resumed", now)
+        except tb.TipsError as exc:
+            return f"Not changed: {msg.escape(str(exc))}"
+        except ValueError as exc:
+            return f"Not changed: {msg.escape(str(exc))}"
+        return ""
+
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
         if command in ("/ai", "/aistop", "/aistart"):
@@ -350,5 +406,5 @@ class BotCommands:
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
                                        "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
-                                       "book) · ai / ai stop / ai start (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "book) · ai / ai stop / ai start (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

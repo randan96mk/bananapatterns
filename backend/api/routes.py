@@ -49,6 +49,7 @@ class AppState:
         self.scheduler = None                 # backend.alerts.jobs.Scheduler, set at startup
         self._ticker = None
         self._live = None
+        self.tips_tracker = None              # 💡 backend.tips.track.Tracker, set at startup
 
     @property
     def ticker(self):
@@ -2383,6 +2384,253 @@ def portfolio_view(days: int = 365):
     return ov.portfolio(st.config, max(1, min(days, 3650)), st.live.quotes if st.client.has_token else None)
 
 
+# --- 💡 Tips: a Telegram channel's calls, decoded, tracked and scored (standalone; backend/tips) ---------------------
+
+class TipsTake(BaseModel):
+    lots: Optional[float] = None
+    rupees: Optional[float] = None
+    half: Optional[bool] = False
+
+
+class TipsTrail(BaseModel):
+    to: float
+
+
+class TipsLogin(BaseModel):
+    phone: str
+
+
+class TipsCode(BaseModel):
+    code: str
+    password: Optional[str] = None
+
+
+class TipsTestPost(BaseModel):
+    text: str
+    channel: Optional[str] = None
+
+
+def _tips_err(exc):
+    raise HTTPException(exc.code, str(exc))
+
+
+@router.get("/tips")
+def tips_summary():
+    """💡 The Tips page: reader, cards, hints (open + today + the last 20), feed (last 50 posts), record (30 d), the
+    paper book, the settings."""
+    from backend.tips import track as tt
+    return tt.summary(S().config)
+
+
+@router.get("/tips/hints")
+def tips_hints(status: Optional[str] = None, days: Optional[int] = Query(None, ge=1, le=3650), channel: Optional[str] = None):
+    from backend.tips import track as tt
+    return {"rows": tt.hints_list(status, days, channel)}
+
+
+@router.get("/tips/hints/{hid}")
+def tips_hint(hid: int):
+    from backend.tips import book as tb
+    from backend.tips import track as tt
+    h = tb.load(hid)
+    if not h:
+        raise HTTPException(404, f"no hint #{hid}")
+    v = tt.hint_view(h)
+    with get_db() as conn:
+        v["quotes"] = [dict(r) for r in conn.execute("SELECT t, ltp, spot FROM tips_quotes WHERE hint_id = ? ORDER BY t", (hid,))]
+        v["posts"] = [dict(r) for r in conn.execute("SELECT post_id, posted_at, kind, text FROM tips_posts WHERE hint_id = ? ORDER BY posted_at", (hid,))]
+    return v
+
+
+def _tips_act(fn, hid: int, *a, **kw):
+    from backend.tips import book as tb
+    from backend.tips import track as tt
+    try:
+        return tt.hint_view(fn(S().config, hid, *a, **kw))
+    except tb.TipsError as exc:
+        _tips_err(exc)
+
+
+@router.post("/tips/hints/{hid}/take")
+def tips_take(hid: int, req: Optional[TipsTake] = None):
+    """Take a hint into the Tips paper book: {lots?|rupees?, half?}. 404 / 409 (taken, over, not tracked) / 400 (no plan,
+    bad size)."""
+    from backend.tips import book as tb
+    req = req or TipsTake()
+    return _tips_act(tb.take, hid, lots=req.lots, rupees=req.rupees, half=bool(req.half), who="page")
+
+
+@router.post("/tips/hints/{hid}/skip")
+def tips_skip(hid: int):
+    from backend.tips import book as tb
+    return _tips_act(tb.skip, hid, who="page")
+
+
+@router.post("/tips/hints/{hid}/exit")
+def tips_exit(hid: int):
+    from backend.tips import book as tb
+    return _tips_act(tb.exit_now, hid, who="page")
+
+
+@router.post("/tips/hints/{hid}/trail")
+def tips_trail(hid: int, req: TipsTrail):
+    from backend.tips import book as tb
+    return _tips_act(tb.trail, hid, req.to, who="page")
+
+
+@router.post("/tips/hints/{hid}/pause")
+def tips_pause(hid: int):
+    from backend.tips import book as tb
+    return _tips_act(tb.pause, hid, True, who="page")
+
+
+@router.post("/tips/hints/{hid}/resume")
+def tips_resume(hid: int):
+    from backend.tips import book as tb
+    return _tips_act(tb.pause, hid, False, who="page")
+
+
+@router.get("/tips/feed")
+def tips_feed(kind: Optional[str] = None, limit: int = Query(50, ge=1, le=1000), channel: Optional[str] = None):
+    from backend.tips import track as tt
+    return {"rows": tt.feed_rows(kind, limit, channel)}
+
+
+@router.get("/tips/record")
+def tips_record(days: int = Query(30, ge=1, le=3650), channel: Optional[str] = None):
+    from backend.tips import track as tt
+    return tt.record(days, channel)
+
+
+@router.put("/tips/settings")
+def tips_settings(values: dict):
+    """TipsConfig keys (422 on an unknown key or a bad value). The reader restarts when enabled / channels change."""
+    from backend.tips import reader as rd
+    st = S()
+    before = asdict(st.config.tips)
+    if "channels" in values:
+        chans = [c.strip().lstrip("@") for c in str(values["channels"]).split(",") if c.strip()]
+        if not chans or any(not re.fullmatch(r"[A-Za-z0-9_]{3,64}", c) for c in chans):
+            raise HTTPException(422, "channels: comma-separated channel usernames (letters, digits, _)")
+        values["channels"] = ",".join(chans)
+    try:
+        out = st.config.update_section("tips", values)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc))
+    save_config(st.config)
+    what = [f"{k}: {before[k]} → {out[k]}" for k in out if before.get(k) != out[k]]
+    if what:
+        with get_db() as conn:
+            log = json.loads(get_setting(conn, "config.changes") or "[]")
+            log.insert(0, {"at": now_ist(), "section": "tips", "what": what})
+            set_setting(conn, "config.changes", json.dumps(log[:100]))
+    if before["enabled"] != out["enabled"] or before["channels"] != out["channels"]:
+        try:
+            if rd.READER is not None and rd.READER.running and before["channels"] != out["channels"]:
+                rd.READER.stop()
+            rd.ensure(st)
+        except Exception:
+            logger.exception("Tips reader restart failed")
+    return out
+
+
+@router.post("/tips/login")
+def tips_login(req: TipsLogin):
+    """Step 1: Telegram sends a code to your app. 400 without TIPS_TG_API_ID / TIPS_TG_API_HASH or a bad phone."""
+    from backend.tips import reader as rd
+    try:
+        return rd.LOGIN.start(req.phone)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, rd._reason(exc))
+
+
+@router.post("/tips/login/code")
+def tips_login_code(req: TipsCode):
+    """Step 2: the code (and the 2-step password when asked). The session string goes to .env; the reader starts when
+    tips.enabled is on."""
+    from backend.tips import reader as rd
+    try:
+        r = rd.LOGIN.code(req.code, req.password)
+    except LookupError as exc:
+        raise HTTPException(409, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if r.get("ok"):
+        try:
+            rd.ensure(S())
+        except Exception:
+            logger.exception("Tips reader start after login failed")
+    return r
+
+
+def _multipart_files(body: bytes, ctype: str) -> list[tuple[str, bytes]]:
+    """The file parts of a multipart/form-data body (the stdlib email parser; no extra dependency)."""
+    from email.parser import BytesParser
+    from email.policy import HTTP
+    msg = BytesParser(policy=HTTP).parsebytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + body)
+    out = []
+    for part in msg.iter_parts():
+        name = part.get_filename() or part.get_param("name", header="content-disposition") or "file"
+        out.append((str(name), part.get_payload(decode=True) or b""))
+    return out
+
+
+@router.post("/tips/import")
+async def tips_import(request: Request, channel: Optional[str] = None):
+    """The Telegram HTML export (multipart files messages.html, messages2.html, ...; or one HTML body): every post with
+    its kind, hints decoded and planned (old ones expire untracked), follow-ups linked. Never pushes alerts."""
+    from starlette.concurrency import run_in_threadpool
+    from backend.tips import reader as rd
+    ctype = request.headers.get("content-type") or ""
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "no file")
+    files = _multipart_files(body, ctype) if ctype.startswith("multipart/") else [("messages.html", body)]
+    files = [(n, b) for n, b in files if b and b"message" in b]
+    if not files:
+        raise HTTPException(400, "no Telegram HTML export in the upload")
+    try:
+        return await run_in_threadpool(rd.import_export, S().config, files, channel)
+    except Exception as exc:
+        logger.exception("Tips import failed")
+        raise HTTPException(400, f"import failed: {str(exc)[:160]}")
+
+
+@router.post("/tips/test-post")
+def tips_test_post(req: TipsTestPost):
+    """The page's "try a post" box: a dry sort + decode + plan (no save, no model, no alert)."""
+    from backend.tips import decode as dc
+    from backend.tips import filter as flt
+    from backend.tips import plan as pl
+    from backend.tips import track as tt
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(400, "paste a post")
+    now = datetime.now(IST)
+    kind = flt.code_kind(text, False)
+    d = dc.decode(text, now)
+    is_hint = kind is None and dc.looks_like_hint(d, text)
+    out = {"kind": kind or ("hint" if is_hint else "follow_up?" if flt.FOLLOW_CODE.search(text) else "chatter"),
+           "by": "code", "decoded": None, "plan": None, "followup": None}
+    if is_hint:
+        h = {k: d.get(k) for k in ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "entry", "stop",
+                                   "targets", "open_ended", "size_hint", "decoded")}
+        h["exchange"] = tt.exchange_of(h)
+        day, _ = pl.plan_day(now, h["exchange"])
+        tt.resolve(h, None, day)
+        h["plan"] = pl.build(h, S().config.tips, now)
+        h["id"] = 0
+        from backend.alerts import messages as msg
+        out.update(decoded={**h, "title": dc.title(h), "entry_text": pl.entry_text(h["entry"]), "stop_text": pl.stop_text(h["stop"]),
+                            "targets_text": pl.targets_text(h["targets"], bool(h["open_ended"]))},
+                   plan=h["plan"], telegram=re.sub(r"<[^>]+>", "", msg.tips_hint_body(h)))
+    else:
+        out["followup"] = pl.followup_action(text)
+    return out
+
+
 # --- 📡 one live connection: the page subscribes to topics; each is sent when it changes ---------------------
 
 def _stream_topics() -> dict:
@@ -2409,6 +2657,7 @@ def _stream_topics() -> dict:
         "options": (options_summary, lambda d: 15 if (d or {}).get("open") or __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
         "today_card": (today_card_view, lambda d: 60),
         "plan_heat": (plan_heat_view, lambda d: 60 if (d or {}).get("market_open") else 600),
+        "tips": (tips_summary, lambda d: 5 if (d or {}).get("any_open") else 60),
         "ai": (ai_summary, lambda d: 5 if ((d or {}).get("models") or {}).get("pull", {}).get("running") or ((d or {}).get("queue") or {}).get("job") else 60),
     }
 

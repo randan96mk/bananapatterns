@@ -1547,3 +1547,139 @@ def day_summary(parts: dict, day: str) -> Optional[str]:
 def quiet_flushed(n: int) -> str:
     """🤖 The one line before the AI messages held in the quiet hours."""
     return f"🤖 held overnight · {_n(n, 'message')}"
+
+
+# --- 💡 Tips: a Telegram channel's calls (backend/tips); kind "tips", never held ------------------------------------------
+
+TIP = "💡"
+
+
+def _tip_t(iso_or_dt) -> str:
+    """'9:43 AM' (today) / 'Mon 2:00 PM' (an earlier day) in IST."""
+    from backend.config import IST
+    dt = iso_or_dt if isinstance(iso_or_dt, datetime) else datetime.fromisoformat(str(iso_or_dt))
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(IST)
+    return ampm(dt) if dt.date() == datetime.now(IST).date() else f"{dt:%a} {ampm(dt)}"
+
+
+def _expiry_label(iso: Optional[str]) -> str:
+    if not iso:
+        return ""
+    from datetime import date
+    d = date.fromisoformat(iso[:10])
+    return f"{d:%a} {d.day} {d:%b}"
+
+
+def tips_hint_body(h: dict) -> str:
+    """'BUY BANKNIFTY 50300 PE · near 250–270 when comes · SL 190 · Tgt 320 / 350 / 400++ · expiry Wed 19 Nov <i>AI</i>'."""
+    from backend.tips import decode as dc
+    from backend.tips import plan as pl
+    p = h.get("plan") or {}
+    dec = h.get("decoded") or {}
+    ai = any(v == "ai" for v in dec.values()) or h.get("expiry_src") == "ai"
+    bits = [escape(dc.title(h)), escape(pl.entry_text(h.get("entry") or {})), escape(pl.stop_text(h.get("stop") or {})),
+            escape(pl.targets_text(h.get("targets") or [], bool(h.get("open_ended"))))]
+    if h.get("expiry"):
+        bits.append("expiry " + _expiry_label(h["expiry"]) + (" (computed)" if h.get("expiry_src") == "computed" else ""))
+    out = " · ".join(bits) + (" <i>AI</i>" if ai else "")
+    if not p.get("ok", True):
+        out += f" · <b>no plan: {escape(p.get('why') or '')}</b>"
+    return out
+
+
+def tips_hint(h: dict, ltp: Optional[float] = None) -> str:
+    """💡 Tip #12 · channel · 9:43 AM / the call / the plan / the replies (the mock's first card)."""
+    n = h["id"]
+    lines = [f"{TIP} <b>Tip #{n} · {escape(h.get('channel') or '')} · {_tip_t(h['posted_at'])}</b>", tips_hint_body(h)]
+    p = h.get("plan") or {}
+    if p.get("text"):
+        lines.append(f"<i>plan: {escape(p['text'])}</i>")
+    if not h.get("tradingsymbol"):
+        lines.append(f"<i>not tracked: {escape(h.get('untracked_why') or 'no instrument')}</i>")
+    elif h.get("untracked_why"):
+        lines.append(f"<i>quotes start after you {escape(h['untracked_why'])}</i>")
+    size = "" if (h.get("size_hint") or {}) else f" · size not stated → <b>take {n} N</b>"
+    now = f" · now {ltp:g}, waiting" if ltp is not None else ""
+    lines.append(f"reply <b>take {n}</b> · <b>take {n} 2</b> (lots) · <b>skip {n}</b> · <b>tip {n}</b>{size}{now}")
+    return "\n".join(lines)
+
+
+def tips_taken(h: dict, now: datetime) -> str:
+    """✅ #12 taken · 1 lot at 262 · 9:51 AM · paper · stop 190 · T1 320 (or "waiting for the entry")."""
+    from backend.tips import plan as pl
+    pos = h.get("pos") or {}
+    tg = (h.get("plan") or {}).get("targets") or []
+    size = ("½ lot" if pos.get("half") and pos.get("lots") == 1 else f"{pos.get('lots', 1):g} lot" + ("s" if pos.get("lots", 1) != 1 else ""))
+    run = pos.get("run") or {}
+    if pos.get("state") == "open":
+        head = f"✅ <b>#{h['id']} taken · {size} at {pl.fmt(pos.get('entry_px'))} · {ampm(now)}</b>"
+    else:
+        head = f"✅ <b>#{h['id']} taken · {size} · {ampm(now)}</b> · waiting for the entry ({escape(pl.entry_text(h.get('entry') or {}))})"
+    stop = f"stop {pl.fmt(run.get('stop'))}" if run.get("stop") is not None else escape(pl.stop_text((h.get("plan") or {}).get("stop") or {}))
+    return head + " · paper · " + stop + (f" · T1 {pl.fmt(tg[0])}" if tg else "")
+
+
+def tips_line(hid: int, text: str, now: datetime, note: str = "") -> str:
+    """💡 #12 · <text> · 10:08 AM (one line for each step the book took)."""
+    return f"{TIP} #{hid} · {text} · {ampm(now)}" + (f" · {escape(note)}" if note else "")
+
+
+def tips_followup(h: dict, text: str, line: str, now: datetime, act: Optional[dict] = None) -> str:
+    """💡 #12 · channel: "2 targets done" · <what code did> · 10:08 AM · auto, as you set."""
+    quote = escape((text or "").strip().replace("\n", " ")[:80])
+    auto = " · auto, as you set" if (line or "").startswith("followed") else ""
+    return f'{TIP} #{h["id"]} · channel: "{quote}" · {escape(line or "")} · {ampm(now)}{auto}'
+
+
+def tips_status(s: dict) -> str:
+    """tips → 1 active (#12 +₹2,148) · 1 waiting (#13) · today 2 hints · 30 d: 7 hints · T1 first 4 · stop 2 · no fill 1 · avg +0.9 R."""
+    hs = s.get("hints") or []
+    act = [h for h in hs if h.get("status") == "active"]
+    wait = [h for h in hs if h.get("status") in ("new", "waiting", "paused")]
+    bits = []
+    if act:
+        bits.append(f"{len(act)} active (" + ", ".join(f"#{h['id']}" + (f" {inr(h['pnl'], 0, True)}" if h.get("pnl") is not None else "") for h in act) + ")")
+    if wait:
+        bits.append(f"{len(wait)} waiting (" + ", ".join(f"#{h['id']}" for h in wait) + ")")
+    if not bits:
+        bits.append("nothing open")
+    c = (s.get("cards") or {})
+    today = (c.get("open") or {}).get("today") or {}
+    bits.append(f"today {today.get('hints', 0)} hints")
+    r = c.get("channel30") or {}
+    avg = r.get("avg_r")
+    bits.append(f"30 d: {r.get('hints', 0)} hints · T1 first {r.get('t1_first', 0)} · stop {r.get('stop_first', 0)} · no fill {r.get('no_fill', 0)}"
+                + (f" · avg {avg:+.1f} R" if avg is not None else ""))
+    rd = s.get("reader") or {}
+    return "<b>tips</b> → " + " · ".join(bits) + f"\nreader {escape(rd.get('state') or '?')}" + (f" · {escape(rd['reason'])}" if rd.get("reason") else "")
+
+
+def tips_card(h: dict) -> str:
+    """tip N: the card: the raw post, the decoded call, the plan, the status, the last events."""
+    from backend.tips import plan as pl
+    lines = [f"{TIP} <b>#{h['id']} {escape(h.get('title') or '')}</b> · {escape(h.get('status') or '')}"
+             + (f" · {escape(h['ended'])}" if h.get("ended") else "") + f" · {escape(h.get('channel') or '')} · {_tip_t(h['posted_at'])}",
+             "<i>" + escape((h.get("raw") or "")[:400]) + "</i>", tips_hint_body(h)]
+    p = h.get("plan") or {}
+    if p.get("text"):
+        lines.append("plan: " + escape(p["text"]))
+    pos = h.get("pos")
+    if h.get("taken") and pos:
+        lines.append(f"paper: {escape(pos.get('state') or '')} · entry {pl.fmt(pos.get('entry_px'))} · P&L {inr(h.get('pnl'), 0, True)}")
+    elif h.get("pnl") is not None:
+        lines.append(f"at the plan: {inr(h['pnl'], 0, True)} per lot")
+    if not h.get("tracked"):
+        lines.append(f"not tracked: {escape(h.get('untracked_why') or '')}")
+    for e in (h.get("events") or [])[-5:]:
+        lines.append(f"{_tip_t(e['t'])} · {escape(e['text'])}")
+    n = h["id"]
+    if h.get("status") in ("new", "waiting", "active", "paused"):
+        lines.append(f"reply <b>take {n}</b> · <b>take {n} 2</b> · <b>skip {n}</b> · <b>exit {n}</b> · <b>trail {n} &lt;px&gt;</b> · <b>pause {n}</b>")
+    return "\n".join(lines)
+
+
+def tips_channels(channels: list, reader: dict) -> str:
+    return f"{TIP} <b>Tips channels</b>: " + (", ".join(escape(c) for c in channels) or "none") + \
+        f"\nreader {escape(reader.get('state') or '?')}" + (f" · {escape(reader['account_masked'])}" if reader.get("account_masked") else "") + \
+        "\nchange them on the Tips page (Channels…) or Settings › tips.channels"

@@ -34,6 +34,10 @@ export default function StatusBar({ kite, onKite, onGo }) {
   const real = data?.real;
   const ai = useLive('ai');                               // 🤖 the local AI's state for the chip next to Real
   const aiState = ai && !ai.error ? (ai.switches?.stopped ? 'stopped' : !ai.url_ok ? 'unreachable' : ai.queue?.job ? 'running' : !ai.switches?.enabled ? 'off' : 'idle') : null;
+  const tips = useLive('tips');                           // 💡 Tips: shown only while the module is on
+  const tipsOn = !!(tips && !tips.error && tips.enabled === true);
+  const tipsOpen = tipsOn ? (Array.isArray(tips.hints) ? tips.hints.filter((h) => ['new', 'waiting', 'active', 'paused'].includes(h?.status)).length : (tips.cards?.open?.active ?? 0) + (tips.cards?.open?.new ?? 0)) : 0;
+  const tipsState = tipsOn ? (tips.reader?.state === 'logged_out' ? 'logged out' : tips.reader?.state || '—') : '';
   const needs = att ? Object.entries(att).filter(([, a]) => a?.level && a.level !== 'running') : [];
   const [open, setOpen] = useState(false);                // the needs-a-look list under the chip
   useEffect(() => { if (!open) return undefined; const close = (e) => { if (!e.target.closest?.('.needwrap')) setOpen(false); }; document.addEventListener('click', close); return () => document.removeEventListener('click', close); }, [open]);
@@ -48,6 +52,7 @@ export default function StatusBar({ kite, onKite, onGo }) {
       {eod?.at && <span className="sb hide-phone">Evening run {at12(eod.at)} {eod.status === 'ok' ? '✓' : '⚠'}</span>}
       {real && <button className="sb" onClick={() => onGo('real')}>💰 Real <b className={real.enabled && !real.killed ? 'up' : 'down'}>{real.killed ? 'KILLED' : real.enabled ? 'ON' : 'OFF'}</b> · {real.variant === 'E' ? 'E+' : real.variant}</button>}
       {aiState && <button className="sb" onClick={() => onGo('ai')} title="System › AI · the local model: it reads and explains, never trades">🤖 AI <b className={aiState === 'idle' || aiState === 'running' ? 'up' : aiState === 'off' ? 'muted' : 'down'}>{aiState}</b> · {ai.queue?.queued ?? 0} queued{ai.suggestions?.open > 0 && <> · <b>{ai.suggestions.open}</b> suggestion{ai.suggestions.open === 1 ? '' : 's'}</>}{ai.view?.on !== false && ai.view?.last_night?.n > 0 && <> · view on <b>{ai.view.last_night.n}</b></>}</button>}
+      {tipsOn && <button className="sb" onClick={() => onGo('tips')} title="Research › Tips · a channel's calls, decoded and scored · never linked to any strategy">💡 Tips · <b className={tipsState === 'live' ? 'up' : tipsState === 'preview' ? 'warn' : 'down'}>{tipsState}</b> · {tipsOpen} open</button>}
       {next && <span className="sb">⏱ Next: <b>{next.name}</b> in <b className="mono">{left(next.at, now)}</b>
         <span className="hide-phone muted">{later.map((j) => ` · ${j.name.toLowerCase()} ${left(j.at, now)}`).join('')}</span></span>}
       <span className="sbfill" />

@@ -58,7 +58,7 @@ def split_caption(html: str, limit: int = MAX_CAPTION) -> tuple[str, str]:
     return "\n".join(cap), "\n".join(lines).strip("\n")
 
 
-NEVER_HELD = ("system", "bot", "report", "real", "flow", "summary")      # always sent at once, even while holding
+NEVER_HELD = ("system", "bot", "report", "real", "flow", "summary", "tips")   # 💡 tips: never held (quiet hours, batch)      # always sent at once, even while holding
 AI_QUIET_KINDS = ("ai",)            # 🤖 held in the AI quiet hours; note alerts go as "filing" and pass quiet=True instead
 QUIET_BATCH = "ai-quiet:"           # alert_outbox batch of the held AI messages: ai-quiet:<the day the window ends>
 
