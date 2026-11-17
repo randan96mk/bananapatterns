@@ -339,6 +339,35 @@ class Scheduler:
             out["ai_week_story"] = self.run_ai_week_story(now)   # 📖 the last closed week's story when Sunday's was missed (after the ratings)
         return out
 
+    def rerun_night(self, now: datetime) -> dict:
+        """🤖 Queue the night batch again (warm-up, notes, why, suggestions, ratings, the week's story): the AI page's
+        "Re-run tonight" button, Telegram `ai rerun`, and the start after a deploy when the night's jobs had been
+        skipped. Each step queues only what is still missing (a filing already noted, a name already rated, a job already
+        queued is not repeated); the guard decides at run time."""
+        return {"ai_notes": self.run_ai_notes(now), "ai_why": self.run_ai_why(now), "ai_suggest": self.run_ai_suggest(now),
+                "ai_view": self.run_ai_view(now), "ai_week_story": self.run_ai_week_story(now)}
+
+    def rerun_if_skipped(self, now: Optional[datetime] = None) -> dict:
+        """At start-up (a deploy restarts the app): when the night window is open and today's night jobs were skipped
+        for a passing reason (a busy app, low RAM, the breaker — not a switch or a full stop), queue them again."""
+        now = now or datetime.now(IST)
+        try:
+            from backend.ai import guard, queue as aiq
+            if not self.state.config.ai.enabled or not guard.night_window(now, self.state.config):
+                return {"status": "not now"}
+            day = now.date().isoformat()
+            with get_db() as conn:
+                rows = conn.execute("SELECT error FROM ai_jobs WHERE kind = 'night' AND status = 'skipped' AND created >= ? "
+                                    "AND created < ?", (f"{day}T00:00", f"{day}T23:59:59")).fetchall()
+            why = [r[0] or "" for r in rows if aiq.transient(r[0] or "") and not (r[0] or "").startswith("stale")]
+            if not why:
+                return {"status": "nothing skipped"}
+            logger.info("AI: %d night jobs were skipped today (%s); queuing the night batch again", len(why), why[0][:60])
+            return {"status": "requeued", "skipped": len(why), **self.rerun_night(now)}
+        except Exception as exc:
+            logger.exception("AI rerun after start failed")
+            return {"status": "failed", "error": str(exc)[:200]}
+
     def run_ai_why(self, now: datetime) -> dict:
         """🤖 why: queue tonight's "why" lines for the trades closed today (one job; the guard decides at run time)."""
         if not self.state.config.ai.enabled:

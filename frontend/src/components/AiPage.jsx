@@ -156,6 +156,7 @@ export default function AiPage() {
   const fullStop = (on) => { if (window.confirm(on ? STOP_TEXT : START_TEXT)) act('stop', on ? api.aiStop() : api.aiStart()); };
   const pull = () => { if (window.confirm(`Download the missing models?\n\n${[d.models.night, d.models.day].filter((m) => !m.present).map((m) => m.name).join(' and ')} are pulled into data/ai in the background (a few GB; some minutes on the server). The page shows the progress; nothing else changes.`)) act('pull', api.aiPull()); };
   const test = () => act('test', api.aiTest());
+  const rerun = () => { if (window.confirm('Queue tonight\'s batch again?\n\nWarm-up, notes, why lines, suggestions, ratings and the week\'s story are queued once more. What is already done is not repeated; the guard decides when each job runs. Nothing acts on its own.')) act('rerun', api.aiRerun()); };
   const runNotes = () => { if (window.confirm("Queue tonight's notes now?\n\nEvery in-scope filing and deal of the last days not noted yet goes into the queue (held names first, then the plan, then the watchlist). The guard still decides when each job runs; nothing is sent anywhere.")) act('notes', api.aiNotesRun()); };
   const runTestset = () => { if (window.confirm('Run the test set?\n\n30 hand-labelled filings go through the night model one by one (a few minutes); the score is kept next to the best run so far. No note or alert comes out of it.')) act('testset', api.aiTestsetRun()); };
   const more = () => { setBusy('more'); api.getAiNotes({ limit: 20, offset: notes.rows.length, ...FILTER_PARAMS[filt] }).then((x) => setNotes((s) => ({ ...s, rows: [...s.rows, ...(x.rows || [])], total: x.total ?? s.total }))).catch((e) => setErr(e.message)).finally(() => setBusy('')); };
@@ -331,7 +332,7 @@ export default function AiPage() {
           {earlier && asks.filter((a) => a.id !== ans?.id).map((a) => <AskRow key={a.id} a={a} />)}
           <div className="rnote">it can only call a fixed list of read-only tools · it cannot switch, send, edit or delete anything · the same works on Telegram: <b>ask why did we skip NMDC</b></div>
         </Panel>
-        <Panel title="Recent jobs" meta={jobs.length || null} right={<Meta>every job stays in the database · newest first</Meta>}>
+        <Panel title="Recent jobs" meta={jobs.length || null} right={<><Meta>every job stays in the database · newest first</Meta><button type="button" className="btn small" disabled={!!busy || !sw.enabled || !!sw.stopped} onClick={rerun} title="queue the night batch again (after a fix or a deploy); what is done is not repeated">{busy === 'rerun' ? 'Queuing…' : 'Re-run tonight'}</button></>}>
           <FixedTable cols={jobCols} rows={jobRows} empty="No AI job yet · the first comes from a test prompt or the night batch." />
         </Panel>
       </div>

@@ -6,7 +6,7 @@ commands, the health rows, the attention items and the scheduler's tick gauge. N
 import json
 import re
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -208,7 +208,11 @@ def test_guard_free_ram_and_slow_tick(ollama, cfg):
     srv = {"ram_free_gb": 3.2, "app_tick_ms": 100}
     assert guard.allowed("day", at("10:00"), cfg, srv) == (False, "free RAM 3.2 GB under 4 GB")
     srv = {"ram_free_gb": 9.0, "app_tick_ms": 2600}
+    guard.record_tick(2600)                                                              # a fresh slow tick blocks ...
     assert guard.allowed("day", at("10:00"), cfg, srv) == (False, "app tick 2.6 s over 2 s")
+    guard._tick_at = guard._time.monotonic() - guard.TICK_FRESH_S - 1                    # ... an old one (the evening job is over) does not
+    assert guard.allowed("day", at("10:00"), cfg, srv) == (True, "ok")
+    guard.record_tick(100)
     assert guard.allowed("day", at("10:00"), cfg, {"ram_free_gb": None, "app_tick_ms": None}) == (True, "ok")   # off Linux: no gauge, no block
 
 
@@ -269,7 +273,10 @@ def test_queue_records_failures_and_the_breaker(ollama, cfg):
         assert row["status"] == "failed" and row["error"] == "AI: timed out"
     assert guard.breaker()["open"] and q.status()["failed_today"] == 3
     row = q.wait(q.enqueue(cfg, "test", "after", lambda: {"tokens": 1})["id"])
-    assert row["status"] == "skipped" and row["error"].startswith("breaker open until")
+    assert row["status"] == "skipped" and row["error"].startswith("breaker open until")            # a test answers at once ...
+    row = q.wait(q.enqueue(cfg, "night", "after-night", lambda: {"tokens": 1})["id"], timeout_s=0.5)
+    assert row["status"] == "queued" and row["note"].startswith("waiting · breaker open until")   # ... night work waits, not skipped
+    q.clear("test over")
 
 
 def test_queue_skips_when_the_guard_says_no_and_refuses_when_full(ollama, cfg):
@@ -586,3 +593,73 @@ def test_slow_generation_is_reported_as_a_timeout_not_a_dead_service(monkeypatch
     monkeypatch.setattr(real.urllib.request, "urlopen", boom)
     with pytest.raises(real.AIError, match="no answer from /api/generate within"):
         real.generate("m", "p", timeout=7)
+
+
+def test_queue_transient_refusal_waits_then_runs_and_a_stale_job_skips(ollama, cfg, monkeypatch):
+    """The evening job's long tick (or a RAM dip, the breaker, a window not open yet) must not cost the night: the job
+    stays queued with "waiting · …" and is looked at again; once the guard allows it runs. A job older than 24 h skips."""
+    monkeypatch.setattr(q, "RETRY_S", 0.2)
+    guard.record_tick(900_000)                                                           # the evening job just took 15 min
+    monkeypatch.setattr(guard, "night_window", lambda now, config: True)
+    row = q.wait(q.enqueue(cfg, "night", "night-work", lambda: {"tokens": 2})["id"], timeout_s=0.5)
+    assert row["status"] == "queued" and row["note"].startswith("waiting · app tick 900.0 s over 2 s")
+    guard.record_tick(80)                                                                # the next tick was quick
+    row = q.wait(row["id"], timeout_s=5)
+    assert row["status"] == "done" and row["tokens"] == 2
+    assert q.transient("breaker open until 11:00 AM") and q.transient("free RAM 3.2 GB under 4 GB") and q.transient("outside the night window (x)")
+    assert not q.transient("AI switched off") and not q.transient("full stop") and not q.transient("night batch off")
+    guard.record_tick(900_000)
+    with get_db() as conn:
+        conn.execute("INSERT INTO ai_jobs (created, kind, key, status) VALUES (?, 'night', 'old', 'queued')", ((datetime.now(IST) - timedelta(hours=25)).isoformat(),))
+        old = conn.execute("SELECT id FROM ai_jobs WHERE key = 'old'").fetchone()[0]
+    q._items.put((old, cfg, lambda: {"tokens": 1}))
+    row = q.wait(old, timeout_s=5)
+    assert row["status"] == "skipped" and row["error"].startswith("stale · app tick")
+    guard.record_tick(80)
+
+
+def test_rerun_night_and_rerun_after_a_start(monkeypatch, cfg):
+    """`rerun_night` queues every night step again (each step repeats nothing already done); `rerun_if_skipped` does it
+    at start-up only inside the night window and only when today's night jobs were skipped for a passing reason."""
+    from backend.alerts import jobs
+    st = St(cfg)
+    sch = jobs.Scheduler(st, notifier_factory=lambda c: type("N", (), {"send": lambda *a, **k: False, "system": lambda *a, **k: None, "hold": None})())
+    calls = []
+    for name in ("run_ai_notes", "run_ai_why", "run_ai_suggest", "run_ai_view", "run_ai_week_story"):
+        monkeypatch.setattr(sch, name, lambda now, _n=name: calls.append(_n) or {"queued": 1})
+    out = sch.rerun_night(at("20:00"))
+    assert set(out) == {"ai_notes", "ai_why", "ai_suggest", "ai_view", "ai_week_story"} and len(calls) == 5
+    calls.clear()
+    monkeypatch.setattr(guard, "night_window", lambda now, config: False)
+    assert sch.rerun_if_skipped(at("20:05"))["status"] == "not now" and calls == []
+    monkeypatch.setattr(guard, "night_window", lambda now, config: True)
+    assert sch.rerun_if_skipped(at("20:05"))["status"] == "nothing skipped" and calls == []
+    with get_db() as conn:
+        conn.execute("INSERT INTO ai_jobs (created, kind, key, status, error) VALUES (?, 'night', 'view:x', 'skipped', 'app tick 892.3 s over 2 s')",
+                     (at("18:45").isoformat(),))
+        conn.execute("INSERT INTO ai_jobs (created, kind, key, status, error) VALUES (?, 'night', 'old', 'skipped', 'full stop')", (at("18:46").isoformat(),))
+    r = sch.rerun_if_skipped(at("20:05"))
+    assert r["status"] == "requeued" and r["skipped"] == 1 and len(calls) == 5          # the full-stop skip does not count
+    cfg.ai.enabled = False
+    assert sch.rerun_if_skipped(at("20:06"))["status"] == "not now"
+    cfg.ai.enabled = True
+
+
+def test_ai_rerun_command_and_route(ollama, cfg, monkeypatch):
+    from backend.alerts.commands import BotCommands
+    from backend.alerts.dispatch import Notifier
+    from backend.alerts import jobs
+    from tests.test_login import BotTG, update
+    when = at("20:12")
+    st = St(cfg)
+    st.scheduler = jobs.Scheduler(st, notifier_factory=lambda c: type("N", (), {"send": lambda *a, **k: False, "system": lambda *a, **k: None, "hold": None})())
+    monkeypatch.setattr(st.scheduler, "rerun_night", lambda now: {"ai_notes": {"queued": 3}, "ai_view": {"queued": 1}, "ai_why": {"status": "nothing"}})
+    fake = BotTG([update(1, "ai rerun", at=when), update(2, "/help", at=when)])
+    b, n = BotCommands(st, clock=lambda: when), Notifier(cfg.alerts, fake)
+    assert b.poll_once(n) == 2
+    rerun, help_ = (h for _, h in fake.sent)
+    assert rerun.startswith("🔁 Night batch queued again · 4 job(s)") and "ai rerun" in help_
+    cfg.ai.enabled = False
+    fake2 = BotTG([update(3, "ai rerun", at=when)])
+    assert BotCommands(st, clock=lambda: when).poll_once(Notifier(cfg.alerts, fake2)) == 1 and fake2.sent[0][1].startswith("🤖 AI is off")
+    cfg.ai.enabled = True

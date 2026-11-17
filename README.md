@@ -1582,7 +1582,7 @@ the guard, the breaker, the queue, the downloads and a test prompt. No Queue / N
   `POST /api/ai/stop`, `POST /api/ai/start`, `POST /api/ai/pull` (502 when the service does not answer),
   `POST /api/ai/test`, `GET /api/ai/jobs?limit=`. Stream topic `ai` (every 5 s while a download or a job runs, else
   60 s). Health rows `ai_service`, `ai_models`, `ai_breaker` (all ok with a note while the AI is off).
-- **Telegram**: `ai` (one status line: enabled / stopped, models, RAM in use, queue, breaker), `ai stop`, `ai start`;
+- **Telegram**: `ai` (one status line: enabled / stopped, models, RAM in use, queue, breaker), `ai stop`, `ai start`, `ai rerun` (queue tonight's batch again after a fix or a deploy; what is done is not repeated);
   `/help` lists them.
 - **Page** (per the approved mock, the infrastructure panels only): Switches (AI enabled, Night batch, Day answers, Full
   stop with its confirm and the Telegram commands) / Server (RAM gauge app vs AI, CPU, app tick, the guard thresholds,
@@ -1599,6 +1599,8 @@ the guard, the breaker, the queue, the downloads and a test prompt. No Queue / N
 | `night_model` / `day_model` | qwen2.5:7b-instruct / qwen2.5:3b-instruct | the Ollama tags (~4.7 GB / ~1.9 GB) |
 | `timeout_s` / `keep_alive` | 90 / 10m | one call at most; how long a model stays loaded after a call |
 | `min_free_ram_gb` / `slow_tick_s` | 4.0 / 2.0 | the guard: free RAM floor; the scheduler's tick ceiling |
+
+**A passing refusal never costs the night (17 Nov 2026).** A slow tick counts against the AI only for 120 s after it ended (the evening job's own long tick must not block the batch that follows it). A job the guard refuses for a passing reason (busy app, low RAM, the breaker, a window not open yet) stays queued as "waiting · …" and is looked at again every 60 s; only a switch, a full stop or a job older than 24 h ("stale") is skipped. After a deploy at night the app queues the day's skipped night jobs again by itself; the AI page's **Re-run tonight** button, `POST /api/ai/rerun` and Telegram `ai rerun` do the same by hand. The candle sync no longer refetches a stock's whole history when only the newest bar's close was revised by the exchange: the overlap upsert takes the revised bar (a full refetch across every stock once took the evening job 15 minutes).
 | `breaker_failures` / `breaker_minutes` | 3 / 60 | failures in a row that open the breaker; for how long |
 | `night_end` / `max_queue` | 06:00 / 200 | night work stops here; waiting jobs at most |
 
@@ -2022,7 +2024,7 @@ chat only):
 
 Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
 `/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` / `full SYM` (today's real BUYs; `full` restores the rule size when the locked AI view size-by-score is on), `fut skip SYM` / `fut hold`
-(the futures plan), `opt` / `opt close` / `opt hold` (the options book), `ai` / `ai stop` / `ai start` (the local AI).
+(the futures plan), `opt` / `opt close` / `opt hold` (the options book), `ai` / `ai stop` / `ai start` / `ai rerun` (the local AI).
 
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 

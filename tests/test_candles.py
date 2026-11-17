@@ -96,3 +96,20 @@ def test_run_sync_aborts_on_token_expiry(fake_kite, make_client):
     snap = cd.run_sync(client, client.ingest, cd.JobState(), now=datetime(2026, 10, 23, 18, 0, tzinfo=IST))
     assert snap["status"] == "aborted" and "Log in again" in snap["message"]
     assert snap["done"] == 0
+
+
+def test_revised_latest_close_refreshes_the_overlap_without_a_full_refetch(fake_kite, make_client):
+    """Kite serves a provisional close the same evening and the exchange's final one the next day: only the newest
+    bar differs, which is not a split; the overlap upsert takes the revised bar, no full refetch (that once took 15
+    minutes across every stock)."""
+    fake_kite.series[7] = make_series(date(2024, 1, 1), date(2026, 10, 20), base=1000)
+    client = make_client(fake_kite, history_years=3)
+    cd.sync_symbol(client, client.ingest, 7, "X", date(2026, 10, 20))
+    fake_kite.series[7] = make_series(date(2024, 1, 1), END, base=1000)
+    last = [c for c in fake_kite.series[7] if c["date"].date() == date(2026, 10, 20)][0]
+    last["close"] = round(last["close"] * 1.02, 2)                                           # +2%: over the 0.5% tolerance, newest bar only
+    r = cd.sync_symbol(client, client.ingest, 7, "X", END)
+    assert r["outcome"] != "refetched"
+    with get_db() as conn:
+        rows = {c["date"]: c for c in get_candles(conn, 7)}
+    assert rows["2026-10-20"]["close"] == pytest.approx(last["close"])
