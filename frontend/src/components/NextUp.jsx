@@ -6,6 +6,18 @@ const at12 = (iso) => new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asi
 const dayOf = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const wday = (iso) => new Date(iso).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short' });
 
+// ⏱ The one-line form of Next up for the book pages: "next · Filings check · 5h 42m" (the full schedule lives on Home and
+// System › Alerts & schedule). Tap → Home. It renders nothing until the schedule has loaded.
+export function NextChip() {
+  const { data, now } = useSchedule();
+  const next = (data?.jobs || []).find((j) => !j.skip);
+  if (!next) return null;
+  const m = data.market;
+  const mk = m?.open ? `NSE closes in ${left(m.closes_at, now)}` : m?.opens_at ? `NSE opens in ${left(m.opens_at, now)}` : 'NSE closed';
+  return <span className="rchip click nextchip" title={`${next.desc || next.name} · ${at12(next.at)} · ${mk} · the full schedule is on Home and System › Alerts & schedule`}
+    onClick={() => { window.location.hash = '#/home/home'; }}>⏱ next · {next.icon} {next.name} · <b className="mono">{left(next.at, now)}</b></span>;
+}
+
 // ⏱ Next up: every scheduled job with a live countdown (GET /api/schedule; the times come from the scheduler's settings).
 export default function NextUp() {
   const { data, now } = useSchedule();

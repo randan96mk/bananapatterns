@@ -4,7 +4,7 @@ import { stamp, clock, ampm } from '../timefmt';
 import { inr, signed, pct, cls, lakh } from '../fmt';
 import { useLive } from '../services/live';
 import AttentionStrip from './AttentionStrip';
-import NextUp from './NextUp';
+import { NextChip } from './NextUp';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Bar, Seg } from './ui2';
 import { AiWhy } from './AiDot';
 import { useNarrow, useIsPhone } from '../useMedia';
@@ -218,7 +218,7 @@ export default function OptionsPage() {
   return <div className="rd">
     <AttentionStrip tab="options" />
     {err && <div className="rbanner bad">{err}</div>}
-    <Head title={phone ? '🧩 NIFTY Options' : '🧩 NIFTY Options · directional credit spreads · intraday'} right={<>
+    <Head title={phone ? '🧩 NIFTY Options' : '🧩 NIFTY Options · directional credit spreads · intraday'} right={<><NextChip />
       {o && <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={!!busy} onClick={closeNow} title="close the open spread now at the quotes (paper) · confirm first">{busy === 'close' ? 'Closing…' : 'Close now…'}</button>}
       <button type="button" className="btn ghost small" disabled={!!busy || T.hold} onClick={hold} title={T.hold ? 'already on hold today' : 'no new spread today · an open one keeps its exits'}>{T.hold ? 'On hold today' : busy === 'hold' ? 'Holding…' : 'Hold today…'}</button></>}>
       <Chip>capital <b>{inr(d.capital)}</b> · separate book</Chip>
@@ -315,7 +315,6 @@ export default function OptionsPage() {
           {(d.alerts || []).length ? d.alerts.slice(0, 8).map((a, i) => <Act key={i} icon={ALERT_ICON(a)} cls={a.kind === 'entry' ? 'up' : /stop|kill/.test(a.text) && a.kind === 'exit' ? 'down' : a.kind === 'exit' ? 'up' : a.kind === 'summary' ? '' : 'warn'} text={<><b>{a.t}</b> · {a.text}</>} meta={`${day(a.day)} · ${a.kind.replace('_', ' ')} · ${a.tag}`} />)
             : ALERTS.map(([i, t, x]) => <Act key={t} icon={i} text={<><b>{t}</b> · {x}</>} />)}
         </Panel>
-        {!phone && <NextUp />}
       </div>
     </div>
     <div className="rnote">NIFTY weekly options only, paper only: the bias on the index’s 5-minute closes, VWAP from the near-month future, the chain from one quote call. Fills at the mid ± ₹1 a leg; charges per order like a real account. The Real switch stays off until a webhook exists. The app never places an order in Kite; Kite is used only for quotes and candles. Past results don’t guarantee future returns.</div>
