@@ -224,7 +224,7 @@ def test_backtest_rule_sunday_only(cfg):
     assert suggest._backtest_candidates(cfg, DAY, NIGHT) == []                                   # a Tuesday: never
     out = suggest._backtest_candidates(cfg, DAY, sunday)
     assert len(out) == 1 and out[0]["confidence"] == "low" and out[0]["expires_at"] is None and out[0]["symbol"] == ""
-    assert out[0]["action"]["prefill"] == {"max_stop_pct": 6.0, "roll_mode": "always"} and out[0]["action"]["route"] == "strategies/futures"
+    assert out[0]["action"]["prefill"] == {"max_stop_pct": 5.0, "roll_mode": "always"} and out[0]["action"]["route"] == "strategies/futures"
     assert out[0]["evidence"][0]["text"].startswith("9 of the last 12 stops")
     cfg.ai.suggest_muted = "backtest"
     assert suggest.candidates(cfg, sunday) == []                                                 # muted: never born
