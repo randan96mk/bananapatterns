@@ -39,6 +39,7 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 17. [Exchange filings (news)](#exchange-filings-news)
 18. [Red flags and fund buying](#red-flags-and-fund-buying)
 19. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
+19a. [💡 Tips · a Telegram channel's calls](#-tips--a-telegram-channels-calls-decoded-tracked-and-scored)
 20. [REST API](#rest-api)
 21. [CLI](#cli)
 22. [Configuration](#configuration)
@@ -2018,6 +2019,108 @@ refreshed weekly; special sessions such as Diwali Muhurat are handled by checkin
 
 Personal use only: send alerts to your own chat. Broadcasting signals to others may count as investment advice (SEBI).
 
+## 💡 Tips · a Telegram channel's calls, decoded, tracked and scored
+
+A standalone module (`backend/tips/`): it reads a Telegram channel's posts, decodes the trade calls ("hints"), plans
+each one, lets you take it into a **Tips paper book** of its own, and scores every hint (taken or not) from stored
+quotes. It is **not connected** to E+, VCP, the AI view, the options or futures books or any other rule; nothing else
+reads its tables. Every number comes from code (quotes); the channel's "target done" words never set a price or a P&L.
+
+**Setup (once)**
+1. On **my.telegram.org** → *API development tools* create an app; copy `api_id` and `api_hash` into `.env` as
+   `TIPS_TG_API_ID` and `TIPS_TG_API_HASH` (only there; never in git, chat or logs). Restart the app.
+2. Research › Tips → the login panel: your phone (with +91) → Telegram sends a code to your Telegram app → the code
+   (and your 2-step password if you set one) → done. The session string is written once to `.env` as `TIPS_TG_SESSION`
+   (`data/.tips_session` when `.env` is not writable) and never shown or logged. API: `POST /api/tips/login {phone}` →
+   `POST /api/tips/login/code {code, password?}`.
+3. Settings › tips: `enabled` on (the reader starts only when it is on **and** a session exists). Channels: the
+   **Channels…** dialog or `tips.channels` (comma list of usernames your account can read; default `aakankshatrading`).
+
+**How a post flows**
+- **Catch** (`reader.py`): Telethon on your own account in its own thread and asyncio loop; new posts in ~1 s, edits and
+  deletions too (rows are never deleted: `deleted_at` / `edited_at`). Any failure → reader `down` with the reason (the
+  app never crashes) and, with `preview_fallback`, the public page `t.me/s/<channel>` every 30 s (state `preview`);
+  the reader is retried every 5 min. **Import export** takes the Telegram Desktop HTML export (messages.html,
+  messages2.html, …) so the history starts on day one (code only, never pushes; old hints are `expired`, "history · no
+  quotes").
+- **Filter** (`filter.py`): code first — no text + media = `image`; links-only / Guidelines / disclaimer / quotes / ads =
+  `promo`; no 3+ digit number and no trade word = `chatter` (never shown to the model). Code decodes calls itself; the
+  rest goes to the local 3B model (`model_classify`, when the AI is on) which only says hint / follow_up / chatter and
+  picks one of the open hints' ids; code checks the symbol / strike. Without the model: follow-up words + an open hint
+  → follow_up (linked by symbol / strike, the figures near a hint's levels, or the trade in progress), else chatter.
+- **Decode** (`decode.py`): side, symbol (BNF / BN / bank nifty → BANKNIFTY, FN → FINNIFTY, MIDCP → MIDCPNIFTY, SENSEX,
+  NIFTY, CRUDE → MCX CRUDEOIL, stocks), strike + CE/PE, entry (at / zone "250-270" / "near 267 and 263" / above / below /
+  cmp, "when comes"), stop (premium, or a spot level on 15-minute closes: "stop: spot 43,450 (15-min close)"; none = "no
+  usable stop", no plan), targets ("320-350-400++", "120/130/140/150++", "60 80 100 PLUS", "Target 0"), lots / qty when
+  stated, the expiry ("For 8th November, 2023 expiry", "Sensex 22nd April") else the nearest listed (weekly for indices
+  that have one, monthly for stocks and CRUDE), else computed with `tradingsymbol` empty and untracked "no instrument".
+  The model may fill a missing field only with a figure that is in the text (`decoded[field] = "ai"`, an AI tag).
+- **Plan** (`plan.py`): "when comes" → wait for the zone (skipped at the time stop if it never comes, unless the channel
+  later says active / cmp / enter); above / below → a trigger; otherwise at the market. Half at T1, the stop to cost,
+  the rest at T2 (or riding target to target with the stop one behind once "trail" is on); option buys close at the
+  time stop (3:20 PM; MCX 11:20 PM); "Target 0" sells are held to expiry. After-hours / holiday hints are planned for
+  the next open.
+- **Track** (`track.py`): the option contracts from the instruments dumps (NFO, BFO for SENSEX, **MCX for CRUDE**), once
+  a day per exchange into `tips_instruments`; quotes every 5 s while a hint is open or waiting (60 s otherwise) into
+  `tips_quotes` (thinned to one a minute after the hint closes), in its own thread. Without the market-data login the
+  hints show `tracked: false · untracked_why: "log in"`.
+
+**What is automatic, what is not**
+- Automatic: storing and sorting posts, decoding, planning, the record, and — **only for hints you took** — the paper
+  book following the plan (fills at quotes, stop, half at T1 + stop to cost, T2 / trail, time stop, expiry) and the
+  channel's own exit / SL hit / SL change / trail / partial booking (`auto_follow_channel_exit`; you get one Telegram
+  line each, "auto, as you set"). Once you override a position (your trail / exit) the channel is no longer followed
+  for it.
+- Never automatic: taking a hint (Take / `take N`), real orders (a later PR, behind enable, confirm and a kill switch).
+
+**The record** (`GET /api/tips/record`): every hint with quotes, taken or not: entry reached, the first of T1 / stop /
+time / expiry, minutes to it, best / worst move, P&L per lot at the plan, R (risk = entry to the premium stop); per
+channel by instrument (index options buy / sell, stock options, CRUDE, …) and by posting hour; untracked hints counted
+with the reason; your takes' book P&L vs "took every hint"; how often your skips were right.
+
+**API**: `GET /api/tips` (summary: `enabled, reader {state live|preview|down|logged_out, reason, account_masked,
+last_post_at, lag_ms, via, since, channels}, channels, cards {open, book, channel30, you_vs_all}, hints, feed, record,
+book {positions, trades, curve, equity, capital, …}, settings, quotes_at, any_open, at`) · `GET /api/tips/hints?status=&days=&channel=`
+· `GET /api/tips/hints/{id}` (+ quotes, posts) · `POST /api/tips/hints/{id}/take {lots?|rupees?, half?}` · `…/skip` ·
+`…/exit` · `…/trail {to}` · `…/pause` · `…/resume` (404 no hint · 409 taken / over / not trackable / nothing open · 400
+no plan / bad size / stop on the wrong side) · `GET /api/tips/feed?kind=&limit=` · `GET /api/tips/record?days=&channel=`
+· `PUT /api/tips/settings` (TipsConfig keys; 422) · `POST /api/tips/import` (multipart HTML export) ·
+`POST /api/tips/test-post {text}` (a dry sort + decode + plan for the "try a post" box; nothing saved) ·
+`POST /api/tips/login`, `POST /api/tips/login/code`. Stream topic `tips` (5 s while a hint is open or waiting, else
+60 s). Health rows `tips_reader`, `tips_quotes`.
+
+**Telegram** (kind `tips`: never held by the AI quiet hours or the evening batch): every new hint at once ("💡 Tip #12 ·
+channel · 9:43 AM", the call, the plan, the replies), each follow-up as one line, every step the paper book takes.
+Commands: `tips` (status line) · `tips channels` · `tip N` (the card) · `take N` · `take N 2` (lots) · `take N half` ·
+`skip N` (still scored) · `exit N` · `trail N <px>` · `pause N` · `resume N`. `skip` with a number is Tips; `skip SYM`
+stays the morning dry-run skip.
+
+**Settings** (`tips`, persisted; Settings › tips):
+
+| Key | Default | What it does |
+|---|---|---|
+| `enabled` | off | The reader runs (it starts only when this is on and you have logged the reader in). |
+| `channels` | aakankshatrading | Comma list of channel usernames your Telegram account can read. |
+| `capital` | 1,00,000 | The Tips paper book's own capital (separate from every other book). |
+| `lots` | 1 | Lots per taken hint when neither the post nor you name a size (`take N 2` overrides). |
+| `size_mode` | lots | `lots` = `lots` per take · `rupees` = as many lots as `rupees` buys at the fill (1 at least). |
+| `rupees` | 20,000 | The premium per taken hint in rupees mode. |
+| `push_hints` | on | Every new hint pushed to Telegram at once (and "entry reached" for hints you have not taken). |
+| `push_followups` | on | Each channel follow-up pushed as one line. |
+| `auto_follow_channel_exit` | on | The paper book follows the channel's exit / SL hit / SL change / trail / partial booking for hints you took (you are told; not after you override). |
+| `intraday_time_stop` | 15:20 | Option buys still open are closed here (HH:MM; shown 12-hour); waiting hints that never filled are "no fill". |
+| `partial_at_t1` | on | Half the position is booked at target 1 (the rest at target 2 or the trail). |
+| `trail_to_cost_after_t1` | on | After target 1 the stop moves to the entry price. |
+| `model_classify` | on | The local 3B model sorts the posts code could not place (hint / follow-up / chatter); it never sets a number. |
+| `preview_fallback` | on | While the reader is down, the channel's public page is read every 30 s (no login). |
+
+**Tables** (never deleted): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`.
+
+**Tests**: `tests/test_tips_decode.py` (32: the 15 real calls of `tests/fixtures/tips_posts.json`, aliases, shapes),
+`test_tips_filter.py` (14), `test_tips_plan.py` (12), `test_tips_book.py` (8), `test_tips_track.py` (6),
+`test_tips_reader.py` (9: fake Telethon client, preview, import, login), `test_tips_api.py` (5),
+`test_tips_telegram.py` (12). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs
@@ -3198,3 +3301,13 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   2× + VWAP · 1.5× only, per-trade fold): closed spreads replayed on the chain snapshots, VWAP exits kept at their real
   time, never invented.
 - Tests: `tests/test_options_asif.py` (9), `tests/test_options_book.py` (+3), `tests/test_options_alerts.py` (+1).
+
+### 2026-11-17: 💡 Tips · a Telegram channel's calls, decoded, tracked and scored
+- New standalone `backend/tips/` (reader, filter, decode, plan, book, track): Telethon reader on your own account
+  (own thread + asyncio loop; down → the public preview page every 30 s), HTML export import, code-first filter with
+  the 3B model for the rest, regex decode (aliases, zones, spot stops, Target 0, CRUDE on MCX), plans, the Tips paper
+  book (fills at quotes, charges, half at T1 + stop to cost, trail, time stop, the channel's exit auto-followed), quotes
+  every 5 s, the record. `TipsConfig` (section `tips`), env `TIPS_TG_API_ID` / `TIPS_TG_API_HASH` / `TIPS_TG_SESSION`,
+  the login flow, `/api/tips/*`, stream topic `tips`, Telegram 💡 lines and commands, health rows `tips_reader` /
+  `tips_quotes`, kind `tips` in `NEVER_HELD`, `telethon==1.45.0`.
+- Tests: `tests/test_tips_*.py` (98) with `tests/fixtures/tips_posts.json` (30 real posts).

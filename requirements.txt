@@ -14,6 +14,9 @@ kiteconnect>=5.2.2
 # HTTP client (NSE universe/holidays, Telegram Bot API)
 httpx>=0.27.0
 
+# 💡 Tips: the Telegram channel reader (a user client on your own account)
+telethon==1.45.0
+
 # Chart images for Telegram alerts
 matplotlib>=3.8
 

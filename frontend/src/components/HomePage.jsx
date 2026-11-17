@@ -212,6 +212,7 @@ export default function HomePage({ onGo, onStock }) {
       setToasts((t) => [...t, { id, text: `${a.account} · ${a.text}`, at: a.at }]);
     });
   }, [freshAct, o]);
+  const tipsLive = useLive('tips');                            // 💡 Tips: a small card only while a hint is open
   const aiLive = useLive('ai');                                // 🤖 the AI view: tonight's count, the record summary
   const [plan, setPlan] = useState(null);
   useEffect(() => { api.getPlan().then(setPlan).catch(() => setPlan(null)); }, []);
@@ -269,6 +270,8 @@ export default function HomePage({ onGo, onStock }) {
   const vsNifty = (f) => (f?.vs_nifty != null ? ptsOf(f.vs_nifty) : '—');
   const cardTip = (parts) => parts.filter(Boolean).join(' · ');
 
+  const tipsOpen = tipsLive && !tipsLive.error && Array.isArray(tipsLive.hints) ? tipsLive.hints.filter((h) => ['new', 'waiting', 'active', 'paused'].includes(h?.status)) : [];
+  const tipsLead = tipsOpen.find((h) => h.status === 'active') || tipsOpen[0];
   return <div className="rd">
     <HealthStrip onGo={onGo} compact />
     <TodayCard onGo={onGo} />
@@ -302,6 +305,11 @@ export default function HomePage({ onGo, onStock }) {
         fact={F.follow ? <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{sgn(F.follow.open_pnl)}</b> · {F.follow.pending ?? 0} pending</> : <span className="muted">—</span>}
         title={cardTip([`${A.follow.breakouts} breakouts`, `won ${A.follow.win_rate ?? '—'}%`, `${inr(A.follow.per_position)} each`, F.follow && `${F.follow.open} open at ${signed(F.follow.open_pnl)}`, F.follow && `${F.follow.pending ?? 0} buys at the next open`, A.follow.as_of && `as of ${dayName(A.follow.as_of)}`])} />}
     </Cards>
+    {tipsOpen.length > 0 && <Cards n={4}><Card unit="n" label={<>Tips <span className="muted">· paper · separate</span></>} value={`${tipsOpen.length} open`} num={tipsOpen.length} live
+        k={tipsLead?.pnl > 0 ? 'up' : tipsLead?.pnl < 0 ? 'down' : ''}
+        sub={tipsLead ? <>#{tipsLead.id} {tipsLead.status === 'new' ? 'waiting' : tipsLead.status}{tipsLead.taken && tipsLead.pnl != null ? <> · <span className={cls(tipsLead.pnl)}>{tipsLead.pnl > 0 ? '+' : ''}{inr(tipsLead.pnl)}</span></> : ''}</> : '—'}
+        fact={tipsLead ? tipsLead.title || [tipsLead.side, tipsLead.symbol, tipsLead.strike, tipsLead.opt_type].filter((x) => x != null && x !== '').join(' ') : ''}
+        title="Research › Tips · a channel's calls, decoded and scored · never linked to any strategy" onClick={() => onGo('tips')} /></Cards>}
     <OvernightPanel />
     {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
       <div title={cardTip([`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`, `${it.trades || 0} trades`, F.intraday && `loss limit ${inr(F.intraday.loss_used)} / ${inr(F.intraday.loss_limit)}`])}><span className="l">Intraday · open · risk</span><b className={cls(it.day_pnl)}>{sgn(it.day_pnl)}<span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {it.open || 0} open · {inr(it.at_risk)}</span></b></div>

@@ -382,6 +382,39 @@ CREATE TABLE IF NOT EXISTS options_trades (id INTEGER PRIMARY KEY AUTOINCREMENT,
 CREATE TABLE IF NOT EXISTS options_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS options_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
 
+-- 💡 Tips (backend/tips): a Telegram channel's posts (every one, with its kind), the hints decoded from them, the quotes
+-- sampled while a hint is open or waiting (thinned to one a minute after it closes), the Tips paper book's fills and its
+-- equity per day, the option / MCX contracts the hints resolve to. Standalone: no other book reads these. Never deleted.
+CREATE TABLE IF NOT EXISTS tips_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, channel TEXT NOT NULL, post_id INTEGER NOT NULL, posted_at TEXT NOT NULL,
+    edited_at TEXT, deleted_at TEXT, text TEXT NOT NULL DEFAULT '', has_media INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL CHECK(kind IN ('chatter', 'promo', 'image', 'hint', 'follow_up')), hint_id INTEGER,
+    classified_by TEXT NOT NULL DEFAULT 'code', model TEXT, ms INTEGER, source TEXT NOT NULL DEFAULT 'live',
+    created TEXT NOT NULL, UNIQUE (channel, post_id));
+CREATE INDEX IF NOT EXISTS idx_tips_posts_at ON tips_posts(posted_at);
+CREATE TABLE IF NOT EXISTS tips_hints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, channel TEXT NOT NULL, post_id INTEGER NOT NULL, created TEXT NOT NULL,
+    posted_at TEXT NOT NULL, raw TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT 'live',
+    symbol TEXT, side TEXT, instrument TEXT NOT NULL DEFAULT 'unknown'
+        CHECK(instrument IN ('option', 'future', 'cash', 'commodity', 'crypto', 'unknown')),
+    strike REAL, opt_type TEXT, expiry TEXT, expiry_src TEXT, tradingsymbol TEXT, exchange TEXT, lot_size INTEGER,
+    entry TEXT, stop TEXT, targets TEXT, open_ended INTEGER NOT NULL DEFAULT 0, size_hint TEXT, decoded TEXT, plan TEXT,
+    status TEXT NOT NULL DEFAULT 'new'
+        CHECK(status IN ('new', 'waiting', 'active', 'paused', 'closed', 'skipped', 'expired')),
+    ended TEXT, taken INTEGER NOT NULL DEFAULT 0, lots REAL, entry_px REAL, exit_px REAL, pnl REAL,
+    events TEXT NOT NULL DEFAULT '[]', tracked INTEGER NOT NULL DEFAULT 0, untracked_why TEXT,
+    run TEXT, pos TEXT, score TEXT, updated TEXT, UNIQUE (channel, post_id));
+CREATE INDEX IF NOT EXISTS idx_tips_hints_status ON tips_hints(status);
+CREATE TABLE IF NOT EXISTS tips_quotes (hint_id INTEGER NOT NULL, t TEXT NOT NULL, ltp REAL, spot REAL, PRIMARY KEY (hint_id, t));
+CREATE TABLE IF NOT EXISTS tips_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NOT NULL, opened_at TEXT, closed_at TEXT NOT NULL, side TEXT,
+    symbol TEXT, lots REAL, qty INTEGER, entry_px REAL, exit_px REAL, gross REAL, charges REAL, net REAL, why TEXT);
+CREATE TABLE IF NOT EXISTS tips_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, realised REAL, open_pnl REAL);
+CREATE TABLE IF NOT EXISTS tips_instruments (
+    as_of TEXT NOT NULL, exchange TEXT NOT NULL, tradingsymbol TEXT NOT NULL, name TEXT NOT NULL, expiry TEXT,
+    strike REAL, type TEXT, token INTEGER, lot_size INTEGER, PRIMARY KEY (as_of, exchange, tradingsymbol));
+CREATE INDEX IF NOT EXISTS idx_tips_instr_name ON tips_instruments(name, as_of);
+
 -- 🤖 Local AI (backend/ai): every job the queue ran (queued / running / done / failed / skipped) and the notes the
 -- model wrote (filled from PR 2). Nothing here is ever deleted.
 CREATE TABLE IF NOT EXISTS ai_jobs (

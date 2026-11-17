@@ -115,6 +115,12 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
                 "state": f"{snap_h:g} h ago · {opt_snap['kind']}" if snap_h is not None else "none yet",
                 "detail": f"last snapshot of expiry {opt_snap['expiry']}" if opt_snap else "9:30, the bias window, every minute while open, 15:30", "at": opt_snap["ts"] if opt_snap else None})
     out.extend(_ai_rows(config))
+    try:                                                    # 💡 Tips: the reader and its quotes
+        from backend.tips import track as tips_track
+        out.extend(tips_track.health_rows(config))
+    except Exception as exc:
+        out.append({"key": "tips_reader", "name": "Tips reader", "ok": True, "warn": True, "state": "unknown",
+                    "detail": str(exc)[:80], "at": None})
     out.append({"key": "follow", "name": "Follow book", "ok": True, "warn": bool(follow_as_of and day and follow_as_of < day),
                 "state": f"as of {follow_as_of}" if follow_as_of else "not built", "detail": "steps after the evening scan", "at": None})
     return out

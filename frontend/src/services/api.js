@@ -192,3 +192,35 @@ export const getOvernight = (day) => req('GET', `/api/ai/overnight${qs({ day })}
 export const getPlanHeat = () => req('GET', '/api/plan/heat');
 export const getWeek = (week) => req('GET', `/api/week${qs({ week })}`);
 export const writeWeek = (week) => req('POST', `/api/week/write${qs({ week })}`);
+// 💡 Tips: a channel's calls caught, decoded and scored; a separate paper book (never linked to any strategy).
+export const getTips = () => req('GET', '/api/tips');
+export const getTipsHints = (params = {}) => req('GET', `/api/tips/hints${qs(params)}`);
+export const getTipsHint = (id) => req('GET', `/api/tips/hints/${encodeURIComponent(id)}`);
+export const tipsTake = (id, body = {}) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/take`, body);
+export const tipsSkip = (id) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/skip`, {});
+export const tipsExit = (id) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/exit`, {});
+export const tipsTrail = (id, to) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/trail`, { to });
+export const tipsPause = (id) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/pause`, {});
+export const tipsResume = (id) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/resume`, {});
+export const getTipsFeed = (params = {}) => req('GET', `/api/tips/feed${qs(params)}`);
+export const getTipsRecord = (params = {}) => req('GET', `/api/tips/record${qs(params)}`);
+export const putTipsSettings = (values) => req('PUT', '/api/tips/settings', values);
+export const tipsTestPost = (text) => req('POST', '/api/tips/test-post', { text });
+export const tipsLogin = (phone) => req('POST', '/api/tips/login', { phone });
+export const tipsLoginCode = (code, password) => req('POST', '/api/tips/login/code', password ? { code, password } : { code });
+// The Telegram HTML export (one or more .html files) as multipart; onProgress(0..1) follows the upload.
+export const tipsImport = (files, onProgress) => new Promise((resolve, reject) => {
+  const fd = new FormData();
+  [...(files || [])].forEach((f) => fd.append('files', f, f.name));
+  const x = new window.XMLHttpRequest();
+  x.open('POST', '/api/tips/import');
+  if (x.upload && onProgress) x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+  x.onload = () => {
+    let data = null;
+    try { data = x.responseText ? JSON.parse(x.responseText) : null; } catch { data = null; }
+    if (x.status >= 200 && x.status < 300) resolve(data);
+    else { const err = new Error(typeof data?.detail === 'string' ? data.detail : `${x.status} ${x.statusText}`); err.status = x.status; reject(err); }
+  };
+  x.onerror = () => reject(new Error('upload failed (network)'));
+  x.send(fd);
+});

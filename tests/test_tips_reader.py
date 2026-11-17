@@ -1,0 +1,235 @@
+"""💡 Catch: the reader's state machine on a fake Telethon client (live / down with the reason / never a crash), the
+preview page fallback, the HTML export import, a day of posts through ingest (hint, chatter, image, follow-ups linked),
+edits and deletions, the login flow writing the session to .env (never logged, never returned)."""
+
+import logging
+from datetime import timezone
+from types import SimpleNamespace
+
+import pytest
+
+from backend.database.models import get_db
+from backend.tips import book as bk
+from backend.tips import reader as rd
+from tests.tips_world import BN12, BN13, at, cfg, posts, seed, world
+
+
+class St:
+    def __init__(self):
+        self.config = cfg()
+        self.config.tips.enabled = True
+        self.client = world()
+
+
+class FakeTele:
+    """The bits of a Telethon client the reader uses."""
+
+    def __init__(self, fail=None, authorised=True, msgs=(), reader=None):
+        self.fail, self.authorised, self.msgs, self.reader = fail, authorised, list(msgs), reader
+        self.handlers = []
+
+    async def connect(self):
+        if self.fail:
+            raise self.fail
+
+    async def is_user_authorized(self):
+        return self.authorised
+
+    async def get_me(self):
+        return SimpleNamespace(phone="919876543210", username="me")
+
+    async def get_entity(self, name):
+        return SimpleNamespace(id=1001, username=name)
+
+    async def get_messages(self, ent, limit=20):
+        return list(reversed(self.msgs))
+
+    def add_event_handler(self, fn, ev):
+        self.handlers.append((fn, type(ev).__name__))
+
+    async def run_until_disconnected(self):
+        self.seen_state = rd.status()["state"]
+        self.reader._stop.set()
+
+    async def disconnect(self):
+        pass
+
+
+@pytest.fixture
+def session(monkeypatch):
+    monkeypatch.setenv("TIPS_TG_SESSION", "fake-session")
+    monkeypatch.setenv("TIPS_TG_API_ID", "123")
+    monkeypatch.setenv("TIPS_TG_API_HASH", "abc")
+
+
+def msg(mid, text, when, media=None):
+    return SimpleNamespace(id=mid, message=text, date=when.astimezone(timezone.utc), media=media)
+
+
+def test_reader_goes_live_and_catches_up(session):
+    st = St()
+    fake = FakeTele(msgs=[msg(17605, BN12, at("09:43")), msg(17607, "", at("09:46"), media=object())])
+    r = rd.Reader(st, client_factory=lambda: fake)
+    fake.reader = r
+    r.run_once()
+    assert fake.seen_state == "live"
+    s = rd.status()
+    assert s["account_masked"] == "+91••••••3210" and s["last_post_at"].startswith("2026-11-17T09:4")
+    assert sorted(n for _, n in fake.handlers) == ["MessageDeleted", "MessageEdited", "NewMessage"]
+    with get_db() as conn:
+        kinds = [r[0] for r in conn.execute("SELECT kind FROM tips_posts ORDER BY post_id")]
+    assert kinds == ["hint", "image"]
+
+
+def test_reader_failure_is_down_with_the_reason_never_a_crash(session, monkeypatch):
+    st = St()
+    r = rd.Reader(st, client_factory=lambda: FakeTele(fail=ConnectionError("no route to host")))
+    monkeypatch.setattr(r, "fallback", lambda s: r._stop.set())
+    r._run()                                                       # returns; nothing raised
+    s = rd.status()
+    assert s["state"] == "down" and s["reason"] == "ConnectionError: no route to host"
+    r2 = rd.Reader(st, client_factory=lambda: FakeTele(authorised=False))
+    monkeypatch.setattr(r2, "fallback", lambda s: r2._stop.set())
+    r2._run()
+    assert rd.status()["reason"] == "the session is not authorised · log in again"
+
+
+def test_reader_starts_only_when_enabled_with_a_session(monkeypatch):
+    monkeypatch.setenv("TIPS_TG_SESSION", "")
+    monkeypatch.setattr(rd, "SESSION_FILE", rd.SESSION_FILE.parent / "nope" / ".tips_session")
+    st = St()
+    assert rd.Reader(st, client_factory=lambda: FakeTele()).start() is False
+    assert rd.status()["state"] == "logged_out"
+    monkeypatch.setenv("TIPS_TG_SESSION", "x")
+    st.config.tips.enabled = False
+    assert rd.Reader(st, client_factory=lambda: FakeTele()).start() is False
+    assert rd.status() == {**rd.status(), "state": "down", "reason": "Tips switched off"}
+
+
+PREVIEW = """<div class="tgme_widget_message_wrap"><div class="tgme_widget_message js-widget_message" data-post="aakankshatrading/17605">
+<div class="tgme_widget_message_text js-message_text" dir="auto">Buy bank nifty 50300 PE near 250-270 when comes <br/>Sl 190<br/>Tgt 320-350-400++</div>
+<a class="tgme_widget_message_date"><time datetime="2026-11-17T04:13:01+00:00" class="time">9:43</time></a></div></div>
+<div class="tgme_widget_message_wrap"><div class="tgme_widget_message js-widget_message" data-post="aakankshatrading/17607">
+<a class="tgme_widget_message_photo_wrap" style="x"></a><time datetime="2026-11-17T04:16:37+00:00" class="time">9:46</time></div></div>"""
+
+
+def test_preview_fallback_parses_the_public_page(session, monkeypatch):
+    st = St()
+    got = rd.parse_preview(PREVIEW)
+    assert [(p["post_id"], p["has_media"], p["posted_at"].strftime("%H:%M")) for p in got] == [(17605, False, "09:43"), (17607, True, "09:46")]
+    assert "Sl 190" in got[0]["text"]
+    monkeypatch.setattr(rd, "PREVIEW_EVERY_S", 0)
+    r = rd.Reader(st, fetch=lambda url: PREVIEW)
+    r.fallback(0.01)
+    assert rd.status()["state"] == "preview"
+    with get_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tips_posts WHERE source = 'preview'").fetchone()[0] == 2
+
+
+EXPORT = """<html><body><div class="page_header"><div class="content"><div class="body"><div class="name bold">Some Channel</div></div></div></div>
+<div class="history">
+<div class="message default clearfix" id="message17605"><div class="body"><div class="pull_right date details" title="7 August 2024, 09:43:01">09:43</div>
+<div class="text">Buy bank nifty 50300 PE near 250-270 when comes <br>Sl 190<br>Tgt 320-350-400++</div></div></div>
+<div class="message default clearfix joined" id="message17607"><div class="body"><div class="media_wrap clearfix"><a class="photo_wrap clearfix pull_left" href="p.jpg"></a></div>
+<div class="pull_right date details" title="7 August 2024, 09:46:37">09:46</div></div></div>
+<div class="message default clearfix joined" id="message17609"><div class="body"><div class="pull_right date details" title="7 August 2024, 10:08:27">10:08</div>
+<div class="text">2 targets done ✅✅✅✅</div></div></div>
+<div class="message default clearfix joined" id="message17612"><div class="body"><div class="pull_right date details" title="7 August 2024, 10:52:50">10:52</div>
+<div class="text">banknifty is very volatile</div></div></div>
+</div></body></html>"""
+
+
+def test_import_of_the_html_export():
+    c = cfg()
+    r = rd.import_export(c, [("messages.html", EXPORT.encode())], "aakankshatrading")
+    assert r["title"] == "Some Channel" and r["posts"] == 4 and r["kinds"] == {"hint": 1, "image": 1, "follow_up": 1, "chatter": 1}
+    h = bk.rows()[0]
+    assert h["status"] == "expired" and h["untracked_why"] == "history · no quotes" and h["source"] == "import"
+    assert h["events"][-1]["text"].startswith('channel: "2 targets done')
+    again = rd.import_export(c, [("messages.html", EXPORT.encode())], "aakankshatrading")
+    assert again["new"] == 0                                                 # each post once
+
+
+def test_a_day_of_posts_links_follow_ups(monkeypatch):
+    c, w = cfg(), world()
+    pushed = []
+    monkeypatch.setattr(bk, "push", lambda config, key, html: pushed.append(key) or True)
+    monkeypatch.setattr(rd, "PUSH_MAX_AGE_S", 10 ** 9)
+    seed(c, w, BN12, "09:43", 17605)
+    seed(c, w, BN13, "09:46", 17606)
+    day = {p["post_id"]: p for p in posts()}
+    out = {}
+    for pid in (17607, 17608, 17609, 17610, 17611, 17612):
+        p = day[pid]
+        when = at(p["posted_at"][11:16])
+        out[pid] = rd.ingest(c, "aakankshatrading", pid, when, p["text"], p["has_media"], push=True, model=False, client=w)
+    assert out[17607]["kind"] == "image" and out[17612]["kind"] == "chatter"
+    assert [out[i]["kind"] for i in (17608, 17609, 17610, 17611)] == ["follow_up"] * 4
+    assert out[17608]["hint_id"] == 2 and out[17611]["hint_id"] == 2                # "50 to 90" sits on #13's levels
+    assert bk.load(2)["status"] == "paused"
+    assert sum(1 for k in pushed if k.startswith("tips|fu|")) == 4
+
+
+def test_edit_and_delete_keep_the_rows():
+    c, w = cfg(), world()
+    hid = seed(c, w, BN12, "09:43", 17605)["hint_id"]
+    rd.edited(c, "aakankshatrading", 17605, BN12.replace("Sl 190", "Sl 200"), at("09:44"))
+    h = bk.load(hid)
+    assert h["stop"]["value"] == 200 and "edited" in h["events"][-1]["text"]
+    assert rd.deleted("aakankshatrading", [17605], at("09:50")) == 1
+    with get_db() as conn:
+        assert conn.execute("SELECT deleted_at FROM tips_posts WHERE post_id = 17605").fetchone()[0].startswith("2026-11-17T09:50")
+    assert bk.load(hid) is not None
+
+
+class SessionPasswordNeededError(Exception):
+    pass
+
+
+class FakeLogin:
+    def __init__(self):
+        self.session = SimpleNamespace(save=lambda: "SECRET-SESSION-STRING")
+        self.signed = []
+
+    async def connect(self):
+        pass
+
+    async def send_code_request(self, phone):
+        return SimpleNamespace(phone_code_hash="h")
+
+    async def sign_in(self, phone=None, code=None, phone_code_hash=None, password=None):
+        self.signed.append((code, password))
+        if password is None:
+            raise SessionPasswordNeededError("2fa")
+
+    async def get_me(self):
+        return SimpleNamespace(phone="919876543210")
+
+    async def disconnect(self):
+        pass
+
+
+def test_login_flow_writes_the_session_to_env_only(tmp_path, monkeypatch, caplog):
+    env = tmp_path / ".env"
+    env.write_text("KITE_API_KEY=x\nTIPS_TG_SESSION=\n")
+    monkeypatch.setattr(rd, "ENV_FILE", env)
+    monkeypatch.setenv("TIPS_TG_SESSION", "")
+    caplog.set_level(logging.DEBUG)
+    lg = rd.Login(client_factory=FakeLogin)
+    with pytest.raises(LookupError):
+        lg.code("12345")
+    assert lg.start("+91 98765 43210") == {"sent": True, "phone_masked": "+91••••••3210"}
+    assert lg.code("12345") == {"ok": False, "need_password": True}
+    r = lg.code("12345", password="pw")
+    assert r == {"ok": True, "saved_to": ".env", "account_masked": "+91••••••3210"}
+    assert env.read_text() == "KITE_API_KEY=x\nTIPS_TG_SESSION=SECRET-SESSION-STRING\n"
+    assert "SECRET-SESSION-STRING" not in caplog.text and "SECRET" not in str(r)
+    assert rd.session_string() == "SECRET-SESSION-STRING"
+    monkeypatch.delenv("TIPS_TG_API_ID", raising=False)
+    monkeypatch.delenv("TIPS_TG_API_HASH", raising=False)
+    with pytest.raises(ValueError, match="TIPS_TG_API_ID"):
+        rd.Login().start("+919876543210")
+
+
+def test_status_mask():
+    assert rd.mask("+919876543210") == "+91••••••3210" and rd.mask("someone") == "som•••" and rd.mask(None) is None
