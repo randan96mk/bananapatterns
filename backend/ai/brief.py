@@ -259,7 +259,7 @@ def validate(raw: str, source_text: str) -> dict:
         w = notes._blocked_word(text)
         if w:
             raise BriefInvalid(f"names a broker ({w[:3]}…)")
-    allowed = notes._digit_tokens(source_text)
+    allowed = notes.typed_tokens(source_text)
     ok, out = True, []
     for text in lines:
         t, good = notes._strip_numbers(text, allowed)

@@ -43,7 +43,9 @@ computed from his trade books. You read and explain; you never advise, decide, p
 JSON only, one object: {{"observations": [{{"day": "Mon|Tue|Wed|Thu|Fri|week", "text": "..."}}]}} with at most
 {OBS_MAX} observations, each at most {OBS_LEN} characters of plain text, the most telling first, each anchored to the
 day it is about (or "week"). Quote only numbers written in the facts, exactly as given; never compute, convert or
-estimate a number. Never name a broker or a trading platform. No markdown, no emoji."""
+estimate a number. Quote a figure only with the word the facts attach to it (net, won, trades, NIFTY, held) and
+never move a figure from one thing to another; a percent stays a percent and a net stays a net. Never name a broker or a
+trading platform. No markdown, no emoji."""
 
 RETRY_SUFFIX = ("\nYour previous answer was not valid: {why}. Reply with one JSON object {{\"observations\": [{{\"day\": \"...\", "
                 "\"text\": \"...\"}}]}} only, at most " + str(OBS_MAX) + " observations of at most " + str(OBS_LEN) + " characters each.")
@@ -165,7 +167,7 @@ def validate(raw: str, source_text: str) -> dict:
         w = notes._blocked_word(text)
         if w:
             raise WeekInvalid(f"names a broker ({w[:3]}…)")
-    allowed = notes._digit_tokens(source_text)
+    allowed = notes.typed_tokens(source_text)
     ok, out = True, []
     for text, day in obs:
         t, good = notes._strip_numbers(text, allowed)
@@ -216,7 +218,7 @@ def save(week_iso: str, to: str, res: dict, model: str, ms: int, rows_checked: i
     with get_db() as conn:
         cur = conn.execute("INSERT OR IGNORE INTO ai_notes (created, day, kind, symbol, book, severity, title, text, data, model, "
                            "prompt_version, ms, source_key) VALUES (?,?,'week',NULL,NULL,'info',?,?,?,?,?,?,?)",
-                           (now_ist(), to, f"Week {n} · the story", json.dumps([o["text"] for o in obs]), json.dumps(data),
+                           (now_ist(), to, f"Week {n} · the story", "\n".join(o["text"] for o in obs), json.dumps(data, ensure_ascii=False),
                             model, PROMPT_V, ms, KEY_PREFIX + week_iso))
     return cur.lastrowid if cur.rowcount else None
 
@@ -311,7 +313,12 @@ def latest(week_iso: str) -> Optional[dict]:
     d = json.loads(r["data"] or "{}")
     obs = d.get("observations")
     if obs is None:
-        obs = [{"text": t, "ai": True, "checked": True, "day": "week", "day_iso": None} for t in json.loads(r["text"] or "[]")]
+        raw = r["text"] or ""
+        try:
+            lines = json.loads(raw) if raw.startswith("[") else raw.split("\n")
+        except ValueError:
+            lines = raw.split("\n")
+        obs = [{"text": t, "ai": True, "checked": True, "day": "week", "day_iso": None} for t in lines if t]
     at = r["created"]
     try:
         dt = datetime.fromisoformat(at)

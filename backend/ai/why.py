@@ -265,7 +265,7 @@ def validate(raw: str, evidence_text: str) -> dict:
     w = notes._blocked_word(line)
     if w:
         raise WhyInvalid(f"names a broker ({w[:3]}…)")
-    line, ok = notes._strip_numbers(notes._clip(line, LINE_MAX), notes._digit_tokens(evidence_text))
+    line, ok = notes._strip_numbers(notes._clip(line, LINE_MAX), notes.typed_tokens(evidence_text))
     return {"line": line, "numbers_checked": ok}
 
 

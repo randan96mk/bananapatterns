@@ -457,7 +457,7 @@ def validate_why(raw: str, evidence: str) -> dict:
     w = notes._blocked_word(why)
     if w:
         raise SuggestInvalid(f"names a broker ({w[:3]}…)")
-    why, ok = notes._strip_numbers(why, notes._digit_tokens(evidence))
+    why, ok = notes._strip_numbers(why, notes.typed_tokens(evidence))
     return {"why": why or "…", "numbers_checked": ok}
 
 

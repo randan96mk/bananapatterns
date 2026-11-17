@@ -51,7 +51,7 @@ const CHIP = { display: 'inline-block', fontSize: 10.5, padding: '0 6px', border
 // One note: icon · AI tag · symbol (a link to the source) · kind · severity · scope · title / the line / the acts / meta.
 // Every line is one line with an ellipsis (the text may take two), so a row's height never depends on a number.
 function NoteRow({ n }) {
-  if (n.kind === 'brief') return <BriefRow n={n} />;
+  if (n.kind === 'brief' || n.kind === 'week') return <BriefRow n={n} />;
   const sym = n.url ? <a href={n.url} target="_blank" rel="noreferrer" style={{ fontWeight: 700, color: 'var(--blue)' }} title="open the source in a new tab">{n.symbol}</a> : <b>{n.symbol}</b>;
   const meta = [stamp(n.created), n.source_at ? `${n.kind === 'deal' ? 'deals' : 'filing'} ${day(n.source_at)}` : null, pretty(n.model), secs(n.ms), n.prompt_version,
     n.numbers_checked === false ? 'numbers —' : 'numbers ✓'].filter(Boolean).join(' · ');
@@ -68,14 +68,17 @@ function NoteRow({ n }) {
     </div></div>;
 }
 
-// ☀️ A morning brief in the feed: the title line, then its lines one under another (each one line, ellipsis).
+// the lines of a brief / week note: newline-separated text, or (older week rows) a JSON list
+const briefLines = (t) => { const s = t || ''; if (s.startsWith('[')) { try { const a = JSON.parse(s); if (Array.isArray(a)) return a.map(String).filter(Boolean); } catch { /* plain text */ } } return s.split('\n').filter(Boolean); };
+
+// ☀️ A morning brief (or 📖 a week's story) in the feed: the title line, then its lines one under another (each one line, ellipsis).
 function BriefRow({ n }) {
-  const lines = (n.text || '').split('\n').filter(Boolean);
+  const lines = briefLines(n.text);
   const meta = [stamp(n.created), pretty(n.model), secs(n.ms), n.prompt_version, n.numbers_checked === false ? 'numbers —' : 'numbers ✓', 'sent on Telegram'].filter(Boolean).join(' · ');
   return <div style={{ display: 'flex', gap: 10, padding: '9px 14px', borderBottom: '1px solid var(--rowline)', minWidth: 0, alignItems: 'flex-start' }} title={`${n.title} · written from the plans and filings · no action taken`}>
-    <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flex: 'none', marginTop: 1 }}>☀️</span>
+    <span style={{ width: 24, height: 24, borderRadius: 6, background: 'var(--hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flex: 'none', marginTop: 1 }}>{n.kind === 'week' ? '📖' : '☀️'}</span>
     <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, whiteSpace: 'nowrap' }}><AiTag of={n} /><b>{n.title}</b><span className="muted">· brief</span><span className="muted" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>· {lines.length} line{lines.length === 1 ? '' : 's'}</span></div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, whiteSpace: 'nowrap' }}><AiTag of={n} /><b>{n.title}</b><span className="muted">· {n.kind}</span><span className="muted" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>· {lines.length} line{lines.length === 1 ? '' : 's'}</span></div>
       {lines.map((l, i) => <Ell key={i} title={l}><span className="muted">· </span>{l}</Ell>)}
       <div className="muted" style={{ fontSize: 11, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={meta}>{meta}</div>
     </div></div>;
