@@ -204,6 +204,27 @@ def status(today: Optional[str] = None) -> dict:
     return out
 
 
+def progress(text: str) -> None:
+    """The running job's own progress line ("12 of 32 rated · ~9 min left"), written to its row's `note` so the page
+    and `status()` show it; a no-op outside a job."""
+    r = _running
+    if r:
+        try:
+            _set(r["id"], note=str(text)[:300])
+        except Exception:
+            pass
+
+
 def recent(n: int = 20) -> list[dict]:
+    """The latest rows, newest first; a queued row carries `ahead` (how many queued rows are before it), a running one
+    `elapsed_s`."""
     with get_db() as conn:
-        return [dict(r) for r in conn.execute("SELECT * FROM ai_jobs ORDER BY id DESC LIMIT ?", (max(1, min(int(n), 500)),))]
+        rows = [dict(r) for r in conn.execute("SELECT * FROM ai_jobs ORDER BY id DESC LIMIT ?", (max(1, min(int(n), 500)),))]
+        queued_ids = [r[0] for r in conn.execute("SELECT id FROM ai_jobs WHERE status = 'queued' ORDER BY id")]
+    r = _running
+    for row in rows:
+        if row["status"] == "queued" and row["id"] in queued_ids:
+            row["ahead"] = queued_ids.index(row["id"]) + (1 if r else 0)
+        if r and row["id"] == r["id"]:
+            row["elapsed_s"] = round(time.monotonic() - r["since"])
+    return rows

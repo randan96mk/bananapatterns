@@ -5,6 +5,7 @@ commands, the health rows, the attention items and the scheduler's tick gauge. N
 
 import json
 import re
+import time
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -663,3 +664,27 @@ def test_ai_rerun_command_and_route(ollama, cfg, monkeypatch):
     fake2 = BotTG([update(3, "ai rerun", at=when)])
     assert BotCommands(st, clock=lambda: when).poll_once(Notifier(cfg.alerts, fake2)) == 1 and fake2.sent[0][1].startswith("🤖 AI is off")
     cfg.ai.enabled = True
+
+
+def test_job_progress_elapsed_and_queue_position(ollama, cfg, monkeypatch):
+    """A running job can write its own progress line; recent() marks the running row's elapsed seconds and a queued
+    row's place in the line (how many before it)."""
+    import threading as _th
+    gate = _th.Event()
+    def slow():
+        q.progress("3 of 9 rated · 0 failed · ~2 min left")
+        gate.wait(5)
+        return {"tokens": 1}
+    jid = q.enqueue(cfg, "test", "slow", slow)["id"]
+    for _ in range(100):
+        rows = {r["id"]: r for r in q.recent(5)}
+        if (rows.get(jid, {}).get("note") or "").startswith("3 of 9"):
+            break
+        time.sleep(0.05)
+    others = [q.enqueue(cfg, "test", f"later{i}", lambda: {"tokens": 1})["id"] for i in range(2)]
+    rows = {r["id"]: r for r in q.recent(5)}
+    assert rows[jid]["status"] == "running" and rows[jid]["elapsed_s"] >= 0 and (rows[jid]["note"] or "").startswith("3 of 9 rated")
+    assert rows[others[0]]["ahead"] == 1 and rows[others[1]]["ahead"] == 2        # the running one counts as ahead
+    gate.set()
+    assert q.wait(others[1])["status"] == "done"
+    q.progress("outside a job")                                                     # a no-op, never raises

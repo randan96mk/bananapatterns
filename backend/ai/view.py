@@ -779,7 +779,9 @@ def rate_night(config: AppConfig, day: str) -> dict:
     todo = [it for it in scope(config, day) if (it["symbol"], it["source"]) not in done]
     cap = max(0, int(config.ai.view_max_per_night))
     out = {"rated": [], "failed": 0, "capped": max(0, len(todo) - cap), "tokens": 0, "ms_total": 0}
-    for it in todo[:cap]:
+    from backend.ai import queue as aiq
+    n = len(todo[:cap])
+    for k, it in enumerate(todo[:cap], 1):
         row = rate(config, it, day)
         out["tokens"] += row.get("tokens") or 0
         out["ms_total"] += row.get("ms") or 0
@@ -787,6 +789,8 @@ def rate_night(config: AppConfig, day: str) -> dict:
             out["rated"].append(row)
         else:
             out["failed"] += 1
+        left = (out["ms_total"] / k) * (n - k) / 1000 if k else 0            # the average so far, times what is left
+        aiq.progress(f"{k} of {n} rated · {out['failed']} failed · " + (f"~{max(1, round(left / 60))} min left" if n > k else "finishing"))
     return out
 
 
