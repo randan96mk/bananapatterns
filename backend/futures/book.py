@@ -326,6 +326,10 @@ def evening(config: AppConfig, data: Optional[dict] = None, today: Optional[str]
         warnings = _held_warnings(st, config, day)
         st["skips"], st["unskipped"] = {}, {}
         plan = _plan(st, data, i, config)
+        try:
+            store_overlap(config, data)                 # the Futures page's "breakouts in the universe" line (no request ever computes it)
+        except Exception:
+            logger.exception("futures overlap store failed")
         st["as_of"] = day
         with get_db() as conn:
             for k, a in st["accounts"].items():
@@ -1419,11 +1423,14 @@ def account_view(st: dict, config: AppConfig, k: str) -> dict:
 
 
 _overlap_cache: dict = {}
+_overlap_bg: dict = {"running": False}
+OVERLAP_KEY = "futures.overlap"
 
 
 def recent_overlap(config: AppConfig, sessions: int = 20, data: Optional[dict] = None) -> dict:
     """How many E+ breakouts of the last `sessions` sessions were futures names inside the lot cap: the long side can
-    only trade that overlap, so an empty one explains a quiet book. Cached per (last day, cap); never calls Kite."""
+    only trade that overlap, so an empty one explains a quiet book. Heavy (loads every stock's candles): called by the
+    evening job with its data, or in a background thread — NEVER on a request path. Cached per (last day, cap)."""
     cfg = config.futures
     try:
         data = data or tb.load(config)
@@ -1444,10 +1451,43 @@ def recent_overlap(config: AppConfig, sessions: int = 20, data: Optional[dict] =
         n_b += len(ranked)
         names += [{"symbol": sym, "day": cal[i]} for sym, _ in ranked if sym in uni]
     out = {"sessions": len(cal) - first, "from": cal[first] if cal else None, "to": cal[-1] if cal else None, "breakouts": n_b,
-           "in_universe": len(names), "names": names[-12:], "lot_cap": cfg.universe_lot_cap, "universe": len(uni)}
+           "in_universe": len(names), "names": names[-12:], "lot_cap": cfg.universe_lot_cap, "universe": len(uni),
+           "computed_at": now_ist()}
     _overlap_cache.clear()
     _overlap_cache[key] = out
     return out
+
+
+def store_overlap(config: AppConfig, data: Optional[dict] = None) -> dict:
+    """Compute the overlap and keep it in app_settings (the evening job calls this with its loaded data)."""
+    out = recent_overlap(config, data=data)
+    with get_db() as conn:
+        set_setting(conn, OVERLAP_KEY, json.dumps(out))
+    return out
+
+
+def stored_overlap(config: AppConfig) -> dict:
+    """The last stored overlap, instantly. Nothing stored yet → {"pending": True} and ONE background computation is
+    started (it stores the result; the next read has it). Never loads candles on the caller's thread."""
+    with get_db() as conn:
+        raw = get_setting(conn, OVERLAP_KEY)
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    if not _overlap_bg["running"]:
+        _overlap_bg["running"] = True
+
+        def _bg():
+            try:
+                store_overlap(config)
+            except Exception:
+                logger.exception("futures overlap computation failed")
+            finally:
+                _overlap_bg["running"] = False
+        threading.Thread(target=_bg, name="futures-overlap", daemon=True).start()
+    return {"pending": True, "sessions": 0, "breakouts": 0, "in_universe": 0, "names": [], "lot_cap": config.futures.universe_lot_cap}
 
 
 def summary(config: AppConfig) -> dict:
@@ -1472,7 +1512,7 @@ def summary(config: AppConfig) -> dict:
             "send": {"preview_time": config.real.preview_time, "send_time": config.real.send_time, "send_until": config.real.send_until,
                      "stop_check_min": config.real.stop_check_min, "gap_s": _gap(config), "roll_time": ROLL_TIME},
             "universe_count": len(instruments.universe()), "eligible_count": len(uni),
-            "overlap": recent_overlap(config),
+            "overlap": stored_overlap(config),
             "next_expiry": exp[0]["expiry"] if exp else None, "backtest": {"built": bool(bt), "verdict": verdict, "ran_at": (bt or {}).get("ran_at")},
             "log": orders_log(120), "kills": list(sender.sent_kills), "sender": sender.check(gap=_gap(config))}
     if not st:

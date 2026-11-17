@@ -681,3 +681,33 @@ def test_recent_overlap_counts_breakouts_inside_the_universe(monkeypatch):
     assert o2 == o and book.recent_overlap(cfg, sessions=20, data=data) is o2        # the second call is the cached dict
     bad = book.recent_overlap(cfg, data={"error": "no candles"})
     assert bad["in_universe"] == 0 and bad["error"] == "no candles"
+
+
+def test_summary_never_loads_candles_for_the_overlap(monkeypatch):
+    """The overlap is heavy: the evening job stores it with its own data; summary() reads the stored value (or says
+    pending and computes once in the background) and never loads every stock's candles on a request."""
+    cfg = cfg_for()
+    long_world(monkeypatch)
+    data = tb.load(cfg)
+    book._overlap_cache.clear()
+    with get_db() as conn:
+        conn.execute("DELETE FROM app_settings WHERE key = ?", (book.OVERLAP_KEY,))
+    monkeypatch.setattr(book.threading, "Thread", lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    monkeypatch.setattr(tb, "load", lambda c: (_ for _ in ()).throw(AssertionError("summary loaded the candles")))
+    o = book.summary(cfg)["overlap"]
+    assert o["pending"] is True and o["in_universe"] == 0
+    monkeypatch.undo()
+    long_world(monkeypatch)
+    book._overlap_bg["running"] = False
+    stored = book.store_overlap(cfg, data)
+    assert stored["sessions"] == 20 and "computed_at" in stored
+    assert book.summary(cfg)["overlap"]["to"] == data["cal"][-1]
+    i = N - 40
+    with get_db() as conn:
+        conn.execute("UPDATE futures_contracts SET expiry = ?", (sessions_ahead(40),))
+    r = book.evening(cfg, cut(data, i), today=data["cal"][i])
+    if r["status"] == "done":                                                   # the world already ran that evening
+        i += 1
+        r = book.evening(cfg, cut(data, i), today=data["cal"][i])
+    assert r["status"] == "ok", r
+    assert book.summary(cfg)["overlap"]["to"] == data["cal"][i]                 # the evening job refreshed it
