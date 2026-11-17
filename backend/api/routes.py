@@ -1012,6 +1012,23 @@ def backups_run():
     return backup.run()
 
 
+@router.get("/maintenance")
+def maintenance_status():
+    """🧹 Archive and vacuum: {last_run, moved_by_table, live_mb, archive_mb, next_at, running, settings}."""
+    from backend.database import archive
+    return archive.status(S().config)
+
+
+@router.post("/maintenance/archive")
+def maintenance_archive():
+    """🧹 Run the archive now (moves old log rows to data/archive.db, then VACUUM); 409 while one is running."""
+    from backend.database import archive
+    try:
+        return archive.run(S().config)
+    except archive.Busy as exc:
+        raise HTTPException(409, str(exc))
+
+
 @router.get("/real/reconcile")
 def real_reconcile(days: int = Query(30, ge=1, le=365)):
     """💰 vs 📝: every paper fill of the real variant's account in the last `days` against the real order sent that

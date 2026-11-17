@@ -134,7 +134,7 @@ def _items(d) -> Optional[list]:
     return d if isinstance(d, list) else None
 
 
-def _day_of(v, week_days: Optional[list] = None) -> str:
+def _day_of(v) -> str:
     s = str(v or "").strip()[:3].title()
     return s if s in DAYS else "week"
 

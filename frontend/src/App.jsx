@@ -1,35 +1,38 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import KiteBar from './components/KiteBar';
-import UniverseTable from './components/UniverseTable';
-import ScreensHome from './components/ScreensHome';
-import FollowPage from './components/FollowPage';
-import StockChart from './components/StockChart';
 import IndexTicker from './components/IndexTicker';
-import DataPanel from './components/DataPanel';
-import SettingsPanel from './components/SettingsPanel';
-import LogsPanel from './components/LogsPanel';
-import SentAlerts from './components/SentAlerts';
-import AlertsPanel from './components/AlertsPanel';
-import BreakoutPage from './components/BreakoutPage';
-import PaperPage from './components/PaperPage';
-import RealPage from './components/RealPage';
-import FuturesPage from './components/FuturesPage';
-import OptionsPage from './components/OptionsPage';
-import AiPage from './components/AiPage';
 import { AttentionDot } from './components/AttentionStrip';
-import TodayPage from './components/TodayPage';
 import StatusBar from './components/StatusBar';
-import FlowPage from './components/FlowPage';
 import CommandPalette from './components/CommandPalette';
-import HomePage from './components/HomePage';
-import PortfolioPage from './components/PortfolioPage';
-import WeekPage from './components/WeekPage';
-import StrategiesPage from './components/StrategiesPage';
-import SystemHome from './components/SystemHome';
-import TipsPage from './components/TipsPage';
 import * as api from './services/api';
 import { useLive } from './services/live';
 import { useIsPhone } from './useMedia';
+import Loading from './components/Loading';
+
+// Pages load on first visit (code splitting): the top bar, nav, status bar and ⌘K stay in the main bundle.
+const UniverseTable = lazy(() => import('./components/UniverseTable'));
+const ScreensHome = lazy(() => import('./components/ScreensHome'));
+const FollowPage = lazy(() => import('./components/FollowPage'));
+const StockChart = lazy(() => import('./components/StockChart'));
+const DataPanel = lazy(() => import('./components/DataPanel'));
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
+const LogsPanel = lazy(() => import('./components/LogsPanel'));
+const SentAlerts = lazy(() => import('./components/SentAlerts'));
+const AlertsPanel = lazy(() => import('./components/AlertsPanel'));
+const BreakoutPage = lazy(() => import('./components/BreakoutPage'));
+const PaperPage = lazy(() => import('./components/PaperPage'));
+const RealPage = lazy(() => import('./components/RealPage'));
+const FuturesPage = lazy(() => import('./components/FuturesPage'));
+const OptionsPage = lazy(() => import('./components/OptionsPage'));
+const AiPage = lazy(() => import('./components/AiPage'));
+const TodayPage = lazy(() => import('./components/TodayPage'));
+const FlowPage = lazy(() => import('./components/FlowPage'));
+const HomePage = lazy(() => import('./components/HomePage'));
+const PortfolioPage = lazy(() => import('./components/PortfolioPage'));
+const WeekPage = lazy(() => import('./components/WeekPage'));
+const StrategiesPage = lazy(() => import('./components/StrategiesPage'));
+const SystemHome = lazy(() => import('./components/SystemHome'));
+const TipsPage = lazy(() => import('./components/TipsPage'));
 
 // v2 layout: five sections (sidebar on a computer, bottom bar on a phone), each with its pages. The page is kept in the
 // address (#/section/page), so links and the back button work.
@@ -147,8 +150,8 @@ export default function App() {
         {pages.length > 1 && <nav className="subnav" aria-label={title}>{pages.map(([p, pl]) => (
           <button key={p} className={tab === p ? 'active' : ''} onClick={() => go(p)}>{pl}{DOTS.includes(p) && <AttentionDot tab={p} active={tab === p} />}</button>))}</nav>}
         {stock && <><div className="drawer-back" onClick={() => setStock(null)} />
-          <aside className="drawer" aria-label={stock}><StockChart symbol={stock} onClose={() => setStock(null)} /></aside></>}
-        <main>
+          <aside className="drawer" aria-label={stock}><Suspense fallback={<Loading />}><StockChart symbol={stock} onClose={() => setStock(null)} /></Suspense></aside></>}
+        <main><Suspense fallback={<Loading />}>
           {tab === 'home' && <HomePage onGo={go} onStock={setStock} />}
           {tab === 'strategies' && <StrategiesPage onGo={go} />}
           {tab === 'portfolio' && <PortfolioPage onStock={setStock} />}
@@ -173,7 +176,7 @@ export default function App() {
           {tab === 'logs' && <LogsPanel />}
           {tab === 'ai' && <AiPage />}
           {tab === 'sent' && <SentAlerts onStock={setStock} />}
-        </main>
+        </Suspense></main>
       </div>
       {help && <div className="drawer" style={{ maxWidth: 360 }} aria-label="Keyboard shortcuts" onClick={() => setHelp(false)}>
         <b style={{ fontSize: 16 }}>⌨️ Keyboard</b>

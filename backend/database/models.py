@@ -635,14 +635,18 @@ def _config_from(conn):
 
 def _migrate_orb(conn) -> bool:
     """The ORB backtests (Oct 2026) were replaced by the daily Trend Breakout: their results, saved settings and the
-    5-minute candles (only they used them) are dropped. True when something was dropped (worth a VACUUM)."""
-    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    old = [t for t in ("orb_trades", "orb_signals", "candles_5m", "candles_5m_days") if t in have]
+    5-minute candles (only they used them) are dropped. True when something was dropped (worth a VACUUM).
+    Runs on every start, so it is one cheap sqlite_master lookup and nothing else once the tables are gone."""
+    names = ("orb_trades", "orb_signals", "candles_5m", "candles_5m_days")
+    old = [r[0] for r in conn.execute(f"SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+                                      f"({','.join('?' * len(names))})", names)]
+    if not old:
+        return False
     for t in old:
         conn.execute(f"DROP TABLE {t}")
-    if old and "app_settings" in have:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'").fetchone():
         conn.execute("DELETE FROM app_settings WHERE key LIKE 'orb.%' OR key = 'config.orb'")
-    return bool(old)
+    return True
 
 
 def _drop_track_record(conn) -> None:

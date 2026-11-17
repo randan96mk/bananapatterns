@@ -164,6 +164,11 @@ def _trades(since: str) -> list[dict]:
 def report(config: AppConfig, days: int = 60, today: Optional[date] = None) -> dict:
     """GET /api/options/asif: the rules side by side over the closed trades of the last `days` days."""
     today = today or datetime.now(IST).date()
+    # 🧹 The replay reads options_chain_snap, whose rows older than maintenance.archive_days (120) move to
+    # data/archive.db each week: the window is capped there so a replay never silently misses archived snapshots
+    # (the page offers 30 / 60 / 90 days).
+    keep = getattr(getattr(config, "maintenance", None), "archive_days", None)
+    days = min(int(days), int(keep)) if keep else int(days)
     since = (today - timedelta(days=int(days))).isoformat()
     rs = rules(config)
     trades = _trades(since)
