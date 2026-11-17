@@ -14,6 +14,7 @@ from backend.database.models import get_db, get_setting, set_setting
 from backend.timefmt import ampm_date
 
 DAY_START, DAY_END = time(9, 0), time(15, 40)      # day answers (the day model only)
+SUNDAY_FROM = time(20, 0)                          # 📖 the night window opens on Sunday evening too (the week's story)
 BRIEF_END = time(9, 15)                            # 🤖 brief: kind "brief" may run past night_end, until here (before the 9:16 send)
 EOD_DONE = ("ok", "partial", "failed", "no_session")  # the evening job ended for the day with one of these
 
@@ -162,10 +163,13 @@ def _eod_done(today: str) -> bool:
 
 
 def night_window(now: datetime, config: AppConfig) -> bool:
-    """Night work: from the evening job's end (at or after job_time, once the eod job is done) until night_end."""
+    """Night work: from the evening job's end (at or after job_time, once the eod job is done) until night_end; on Sunday
+    also from SUNDAY_FROM (8:00 PM), when the week's story is written."""
     from backend.alerts.jobs import hm
     t = now.time()
     if t < hm(config.ai.night_end):
+        return True
+    if now.weekday() == 6 and t >= SUNDAY_FROM:          # 📖 Sunday evening (no evening job): the week's story
         return True
     return t >= hm(config.alerts.job_time) and _eod_done(now.date().isoformat())
 

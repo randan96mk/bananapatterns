@@ -4,6 +4,7 @@ import StockChart from './StockChart';
 import StageList, { StagePeek } from './StageList';
 import MarketCard, { STATUS } from './MarketCard';
 import PlanCard from './PlanCard';
+import PlanHeat from './PlanHeat';
 import { useIsPhone } from '../useMedia';
 import { NewsList, ResultsList } from './NewsFeed';
 import { Head, Chip, Cards, Card, Bar, Panel, Seg, Act } from './ui2';
@@ -133,6 +134,7 @@ export default function ScreensHome({ hasData }) {
       </Cards>}
       {phone ? <>{stageList}{chart}{summary?.as_of && feedBox}<MarketCard data={mkt} /></>
         : <>{summary?.as_of && (mkt?.health ? <div className="two">{feedBox}<MarketCard data={mkt} /></div> : feedBox)}{stageList}{chart}</>}
+      <PlanHeat onSelect={setSelected} />
       <PlanCard plan={plan} onSelect={setSelected} />
     </div>
   );

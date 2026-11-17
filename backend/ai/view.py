@@ -1253,3 +1253,72 @@ def levels_tool(config: AppConfig, symbol: str) -> dict:
     v = latest([sym]).get(sym)
     return {"symbol": sym, "as_of": as_of, "candidates": levels(sym, as_of), "picked": (v or {}).get("levels"),
             "view": {k: v[k] for k in ("day", "score", "verdict", "reasons")} if v else None}
+
+
+# --- ✨ Overnight: what the night's ratings changed (Home) --------------------------------------------------------------------------------
+
+MOVED_DELTA = 5                                     # a score move of this many points (or a verdict change) is "moved"
+VERDICT_RANK = {"buy": 2, "wait": 1, "avoid": 0, "hold": 2, "trim": 1, "exit-watch": 0}
+
+
+def _fmt_level(x) -> str:
+    """'1,261' / '65' / '61.5' / '2,229.5': a level as the card shows it."""
+    if x is None:
+        return "—"
+    x = float(x)
+    return f"{x:,.0f}" if abs(x - round(x)) < 1e-9 else f"{x:,.2f}".rstrip("0").rstrip(".")
+
+
+def level_text(prev: dict, now_v: dict) -> tuple[str, bool]:
+    """(text, fails_below broken) by code: "pivot 65 reclaimed" when the close is at or over the pivot after a previous
+    close under it; else "support 1 261 held" / "support 1 261 broken" (any close under it since the previous view);
+    else "—". The second value: the latest close is under the previous view's fails_below."""
+    pf, nf = prev.get("features") or {}, now_v.get("features") or {}
+    plv = prev.get("levels") or {}
+    close_then, close_now = pf.get("close"), nf.get("close")
+    fb = plv.get("fails_below")
+    broken = bool(fb and close_now is not None and close_now < fb)
+    pivot = nf.get("pivot") or pf.get("pivot")
+    if pivot and close_then is not None and close_now is not None and close_then < pivot <= close_now:
+        return f"pivot {_fmt_level(pivot)} reclaimed", broken
+    s1 = plv.get("support_1")
+    if s1:
+        closes = [b["close"] for b in _after(now_v["symbol"], prev["day"], 60) if b["date"] <= now_v["day"]]
+        if not closes and close_now is not None:
+            closes = [close_now]
+        if closes:
+            return f"support 1 {_fmt_level(s1)} {'held' if min(closes) >= s1 else 'broken'}", broken
+    return "—", broken
+
+
+def latest_view_day() -> Optional[str]:
+    with get_db() as conn:
+        return conn.execute("SELECT MAX(day) FROM ai_views WHERE status = 'ok'").fetchone()[0]
+
+
+def overnight(day: Optional[str] = None) -> dict:
+    """GET /api/ai/overnight: for every ok view of `day` (default: the latest day with ok views) that has a previous
+    view → {symbol, source, book, prev: {score, verdict, day}, now: {score, verdict}, delta, change: {text, ai} | None,
+    level, moved}; moved = |delta| ≥ 5, a verdict change or the previous fails_below broken. Sorted: a worsened verdict
+    first, then by |delta|. `unchanged` counts the rows that did not move. Code only (the change text is the model's,
+    tagged)."""
+    day = day or latest_view_day()
+    if not day:
+        return {"day": None, "rows": [], "unchanged": 0, "total": 0}
+    out = []
+    for v in rows(" WHERE day = ? AND status = 'ok' AND previous_id IS NOT NULL", (day,)):
+        p = get(v["previous_id"])
+        if not p or p.get("status") != "ok":
+            continue
+        delta = (v["score"] or 0) - (p["score"] or 0)
+        text, broken = level_text(p, v)
+        changed = v["verdict"] != p["verdict"]
+        worse = VERDICT_RANK.get(v["verdict"], 1) < VERDICT_RANK.get(p["verdict"], 1)
+        out.append({"symbol": v["symbol"], "source": v["source"], "book": v["book"], "id": v["id"],
+                    "prev": {"score": p["score"], "verdict": p["verdict"], "day": p["day"]},
+                    "now": {"score": v["score"], "verdict": v["verdict"]}, "delta": delta,
+                    "change": {"text": v["change"], "ai": True} if v.get("change") else None, "level": text,
+                    "moved": abs(delta) >= MOVED_DELTA or changed or broken, "worsened": worse, "verdict_changed": changed,
+                    "fails_below_broken": broken})
+    out.sort(key=lambda r: (not r["worsened"], -abs(r["delta"]), r["symbol"]))
+    return {"day": day, "rows": out, "unchanged": sum(1 for r in out if not r["moved"]), "total": len(out)}

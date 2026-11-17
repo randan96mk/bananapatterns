@@ -1784,6 +1784,68 @@ no skip, no stop, no setting. Every number in a rating comes from code.
 
 Tests: `tests/test_ai_view.py` (fake Ollama, no network).
 
+### ✨ Today card, Overnight, live heat and the Week story
+
+Three Home / Research / Portfolio views built from what the app already knows. **The model never acts and writes only
+two things here**: the morning brief's lines (already written by the brief) and, once a week, up to three observations
+about the closed week. Every other word and every number is code's; model text always carries the AI tag (`ai: true`
+on the API, "<i>AI ·</i>" on Telegram).
+
+- **Today card** (`backend/ai/today.py`, no model call): the phase by the IST clock on a trading day: `morning` (until
+  `real.send_time`, 9:16 AM), `session` (until 3:40 PM), `close` (until the evening job has ended), `evening` (after it,
+  and all day on a weekend or a holiday). The headline by code: "3 orders go out at 9:16 AM" / "2 of 3 orders filled · 1
+  stop hit" / the day summary's first line / "tonight: notes, why, suggestions, ratings after 6:30 PM". **The one thing**
+  (priority): an open high-confidence suggestion before its expiry ("decide on GLENMARK before 9:16 AM"), else a held
+  name in exit-watch ("ITC closed under its support"), else the biggest pending order, else nothing (the line hides).
+  Columns: **orders** (morning: the dry run's EXIT / BUY with qty and the AI score; session: the day's order log, sent →
+  filled, failed, skipped, stops; close / evening: none), **watch** (open suggestions with their time, exit-watch held
+  names, results within 2 sessions on held names, the last session's deal notes), **books** (the day summary's Real /
+  Paper / Futures / Options value and today's P&L). **Actions** are labels only: "Skip SYM" opens the Real page's confirm
+  and calls the existing `POST /api/real/skip`; "Open the dry run"; "Suggestions (n)". Nothing fires by itself.
+- **Overnight** (`view.overnight(day)`): every ok AI view of the day that has a previous view: yesterday's and today's
+  score and verdict, the delta, the model's `change` text (tagged), and the level by code ("support 1 1,261 held |
+  broken", "pivot 65 reclaimed" when the close is back at or over the pivot after a close under it, or "—"). A row
+  *moved* when |delta| ≥ 5, the verdict changed or the previous `fails_below` broke; a worsened verdict sorts first, then
+  |delta|; `unchanged` counts the rest.
+- **Live heat on the Plan** (`backend/engine/heat.py`, no model call, display only): one tile per name of the latest
+  plan. The price is a live quote from the market-data client the breakout opening check uses (only while the market is
+  open; never holdings, positions or orders), else the last close from the daily candles (`live: false`). Levels: the
+  latest AI view's `fails_below` / `support_1` / `resistance` and the plan's pivot / stop / zone top. State by code:
+  `skipped` (in this morning's skips) · `broken` (under `fails_below` or the stop) · `above` (at or over the pivot) ·
+  `testing` (within 0.5% of the pivot or support 1) · `quiet`; `pos` = where the price sits between the stop and the zone
+  top (clipped 0–1). Sorted broken → testing → above → quiet → skipped.
+- **The Week page** (`backend/engine/week.py`): one ISO week, Mon–Fri, by code from the trade tables (Real, Paper E+,
+  Futures, Options, the signal track's closed rows) and the equity tables: the headline ("+₹6,900 · 9 trades · 5 won ·
+  beat NIFTY by 1.2 pts"), totals, by day, the curve (the books' equity summed and normalised to the week's start against
+  NIFTY 50; NIFTY from the daily candles, else the close the equity rows keep), by book, best / worst with the AI score
+  at entry, the suggestions made / accepted / helped, the AI view's buy hit vs the plan baseline that week, the
+  `backtest` suggestion's prefill when one was born, and the observations.
+- **The week's story** (`backend/ai/week_story.py`, job `ai_week`, queue kind `night`, key `week:<iso>`, prompt
+  `week-v1`): facts = the page as text + one line per closed trade (symbol, book, entry, exit, net, the day it ended,
+  days held, results within 3 sessions of the entry, the AI score at entry); at most **3 observations of ≤ 160 chars**,
+  each anchored to a day Mon–Fri or "week". Validated like the brief: a figure not in the facts is stripped, a line with
+  no claim left is dropped, a broker name is refused; one retry. Stored as ONE `ai_notes` row of kind `week` (UNIQUE on
+  `week:<iso>`). Queued on **Sunday from 8:00 PM** (the night window opens on Sunday evening for it) or, when Sunday was
+  missed, by the next evening batch after the ratings; older weeks are never back-filled ("Write now" on the page queues
+  one week; 409 while it runs or once written).
+- **API**: `GET /api/today-card` (stream topic `today_card`, every 60 s) → `{phase, day, at, at_label, headline,
+  the_one_thing, columns {orders, watch, books}, brief_lines [{text, ai}], actions [{label, kind: go|skip|open, arg}],
+  counts, steps}`; `GET /api/ai/overnight?day=` → `{day, rows [{symbol, source, book, prev {score, verdict, day}, now
+  {score, verdict}, delta, change {text, ai} | null, level, moved}], unchanged, total}`; `GET /api/plan/heat` (stream
+  topic `plan_heat`, 60 s while the market is open, else 10 min) → `{at, at_label, live, market_open, as_of, items
+  [{symbol, rank, price, change_pct, state, pos, stop, fails_below, pivot, zone_top, support_1, resistance, score,
+  verdict, reasons [{text, ai}], skipped, live}], counts {above, testing, broken, quiet, skipped}}`; `GET
+  /api/week?week=2026-W46` (default the current week; 400 on a bad week); `POST /api/week/write?week=` (409 while
+  running or written, 400 for a week not over yet).
+- **Telegram** (kind `ai`, held in the quiet hours): "📖 <b>[AI] Week 46 · the story</b>", the observations each with
+  "<i>AI ·</i>", then "checked against n trade rows · written 8:10 PM · no action taken".
+
+| Setting (`ai.*`) | Default | Meaning |
+|---|---|---|
+| `week` | true | the Sunday observations about the closed week (one night-model call a week) |
+
+Tests: `tests/test_today_card.py`, `tests/test_plan_heat.py`, `tests/test_week.py` (fake Ollama, no network).
+
 ### 📝 Paper trading (simulated: never orders)
 
 `backend/engine/paper.py` and the **📝 Paper trading** tab. One virtual account, **E+** (`paper.variants` = `["E"]`;
@@ -3022,3 +3084,12 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
 - 🤖 `AIConfig.quiet_from / quiet_to` (23:00 / 09:00), `dispatch.AI_QUIET_KINDS`, `Notifier.send(..., quiet=True)`, the
   `ai-quiet:<day>` outbox batch, `Notifier.flush_quiet()` at `quiet_to` (scheduler tick) or with the brief.
 - Tests: `tests/test_day_summary.py` (12), `tests/test_ai_quiet.py` (11), `tests/test_ai_why.py` (+4).
+
+### 2026-11-17: ✨ Today card, Overnight, live heat and the Week story (backend)
+- `backend/ai/today.py` + `GET /api/today-card` + stream topic `today_card` (60 s): the phase by the clock, the headline,
+  the one thing, orders / watch / books, the brief's lines (tagged), labels-only actions. `view.overnight(day)` + `GET
+  /api/ai/overnight`. `backend/engine/heat.py` + `GET /api/plan/heat` + stream topic `plan_heat` (60 s open / 10 min
+  closed). `backend/engine/week.py` + `GET /api/week`; `backend/ai/week_story.py` (job `ai_week`, prompt `week-v1`, one
+  `ai_notes` row of kind `week`), the Sunday 8:00 PM job and the guard's Sunday night window, the catch-up after the
+  ratings in `run_eod`, `POST /api/week/write`, `messages.ai_week_story`; `AIConfig.week`.
+- Tests: `tests/test_today_card.py` (18), `tests/test_plan_heat.py` (11), `tests/test_week.py` (28).

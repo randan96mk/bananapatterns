@@ -496,6 +496,8 @@ class AIConfig:
     view_score_buy: int = 60               # score at or over this: buy (held: hold)
     view_score_avoid: int = 40             # score under this: avoid (held: exit-watch); between: wait (held: trim)
     view_max_per_night: int = 40           # names rated a night at most (plan, held, futures, Follow, Screens, in that order)
+    # 📖 the week's story: up to 3 observations about the closed week (one night-model call on Sunday evening)
+    week: bool = True
     # 🤖 quiet hours: AI messages (notes, why, suggestions, ratings) are held from quiet_from to quiet_to and sent then
     # (or with the morning brief, whichever first). Never held: the brief, the Kite login, stops, orders. Equal = off.
     quiet_from: str = "23:00"

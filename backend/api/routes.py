@@ -1381,6 +1381,7 @@ class AiSettings(BaseModel):
     view_score_buy: Optional[int] = None
     view_score_avoid: Optional[int] = None
     view_max_per_night: Optional[int] = None
+    week: Optional[bool] = None                  # 📖 the Sunday observations about the closed week
 
 
 @router.get("/ai")
@@ -1403,6 +1404,8 @@ def ai_settings(req: AiSettings):
         flags = view.apply_settings(S().config, flags)
         if "why" in flags:                                                  # 🤖 why
             S().config.ai.why = bool(flags.pop("why"))
+        if "week" in flags:                                                 # 📖 the week's story
+            S().config.ai.week = bool(flags.pop("week"))
         return control.set_switches(S().config, **flags)                   # the switches' shape; the rest is in GET /api/ai settings
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -1495,6 +1498,16 @@ def ai_view_run():
     if view.running():
         raise HTTPException(409, "the AI view job is running")
     return view.enqueue_tonight(S().config)
+
+
+@router.get("/ai/overnight")
+def ai_overnight(day: Optional[str] = None):
+    """✨ Overnight: the views of `day` (default: the latest day with ok views) that have a previous view, what moved
+    and why: {day, rows: [{symbol, source, book, prev, now, delta, change, level, moved}], unchanged}. Code only."""
+    from backend.ai import view
+    if day and not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+        raise HTTPException(400, "day must be YYYY-MM-DD")
+    return view.overnight(day)
 
 
 # 🤖 ask
@@ -2104,6 +2117,62 @@ def daily_plan():
     return {"as_of": as_of, "items": view.attach(items, "plan")}
 
 
+def _heat_quote():
+    """The market-data client's quote (the breakout opening check's), or None without a session. Never holdings,
+    positions or orders."""
+    st = S()
+    return st.client.quote if st.client.has_token else None
+
+
+@router.get("/plan/heat")
+def plan_heat_view():
+    """🔥 Live heat on the plan: one tile per plan name (state, price, the range bar's position, the AI levels and
+    reasons); live quotes only while the market is open, else the last close (`live: false`). Display only."""
+    from backend.engine import heat
+    return heat.plan_heat(S().config, quote=_heat_quote())
+
+
+@router.get("/today-card")
+def today_card_view():
+    """✨ The Today card on Home: the phase by the clock, the headline, the one thing, orders / watch / books, the
+    morning brief's lines (the only model text, tagged), the actions (labels only: nothing fires by itself)."""
+    from backend.ai import today
+    return today.today_card(S().config)
+
+
+@router.get("/week")
+def week_view(week: Optional[str] = None):
+    """📖 The Week page: one ISO week (default the current one), Mon–Fri, by code from the trade and equity tables, with
+    the AI's observations when written."""
+    from backend.engine import week as wk
+    try:
+        return wk.week(week)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/week/write")
+def week_write(week: str = Query(...)):
+    """📖 "Write now": queue the week's story for that week (the guard decides whether it runs); 409 while it is queued
+    or running or once the week has its story; 400 for a week that is not over yet."""
+    from backend.ai import week_story
+    from backend.engine import week as wk
+    try:
+        y, w = wk.parse(week)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    iso = f"{y}-W{w:02d}"
+    if iso > week_story.closed_week(datetime.now(IST)):
+        raise HTTPException(400, "the week is not over yet (it closes on Friday at 3:30 PM)")
+    if week_story.running(iso):
+        raise HTTPException(409, "the week's story is being written")
+    if week_story.latest(iso):
+        raise HTTPException(409, "this week's story is written")
+    if not S().config.ai.week:
+        raise HTTPException(400, "the week's story is off (Settings: ai.week)")
+    return week_story.enqueue(S().config, iso, telegram=False)
+
+
 @router.get("/changes")
 def changes(screen: str = "bases", limit: int = Query(200, le=1000)):
     _check_screen(screen)
@@ -2325,6 +2394,8 @@ def _stream_topics() -> dict:
         "futures": (futures_summary, lambda d: 30 if __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
         "futures_morning": (futures_morning, lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
         "options": (options_summary, lambda d: 15 if (d or {}).get("open") or __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
+        "today_card": (today_card_view, lambda d: 60),
+        "plan_heat": (plan_heat_view, lambda d: 60 if (d or {}).get("market_open") else 600),
         "ai": (ai_summary, lambda d: 5 if ((d or {}).get("models") or {}).get("pull", {}).get("running") or ((d or {}).get("queue") or {}).get("job") else 60),
     }
 

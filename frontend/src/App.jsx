@@ -23,6 +23,7 @@ import FlowPage from './components/FlowPage';
 import CommandPalette from './components/CommandPalette';
 import HomePage from './components/HomePage';
 import PortfolioPage from './components/PortfolioPage';
+import WeekPage from './components/WeekPage';
 import StrategiesPage from './components/StrategiesPage';
 import SystemHome from './components/SystemHome';
 import * as api from './services/api';
@@ -41,7 +42,7 @@ const ICONS = {
 export const SECTIONS = [
   ['home', 'Home', [['home', 'Overview']]],
   ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout'], ['futures', '📐 Futures'], ['options', '🧩 Options']]],
-  ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing']]],
+  ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing'], ['week', '📖 Week']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe']]],
   ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs'], ['ai', '🤖 AI']]],
 ];
@@ -92,7 +93,7 @@ export default function App() {
       if (e.key === 'Escape') { setHelp(false); return; }
       if (e.key === 'g') { g = Date.now(); return; }
       if (Date.now() - g < 1500) {
-        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', f: 'flow', b: 'breakout', u: 'futures', o: 'options', l: 'follow', c: 'screens', a: 'alerts', d: 'data' }[e.key];
+        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', f: 'flow', b: 'breakout', u: 'futures', o: 'options', w: 'week', l: 'follow', c: 'screens', a: 'alerts', d: 'data' }[e.key];
         if (to) { go(to); g = 0; }
       }
     };
@@ -158,6 +159,7 @@ export default function App() {
           {tab === 'futures' && <FuturesPage />}
           {tab === 'options' && <OptionsPage />}
           {tab === 'paper' && <PaperPage />}
+          {tab === 'week' && <WeekPage onGo={go} />}
           {tab === 'follow' && <FollowPage />}
           {tab === 'screens' && <ScreensHome hasData={(universe?.rows || []).some((r) => r.bars > 0)} />}
           {tab === 'universe' && <>

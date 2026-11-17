@@ -6,6 +6,7 @@ import * as api from '../services/api';
 import StockChart from './StockChart';
 import ResultsTag from './ResultsTag';
 import PlanCard from './PlanCard';
+import PlanHeat from './PlanHeat';
 import { Head, Chip, Cards, Card, Panel, KV, Tag } from './ui2';
 
 const rs = (v) => (v == null ? '—' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -83,6 +84,7 @@ export default function TodayPage() {
       </Head>
       {d.error && <div className="rbanner bad">Live prices failed: {d.error}</div>}
       {err && <div className="rbanner bad">{err}</div>}
+      <PlanHeat onSelect={setSelected} />
       <Cards n={4}>
         <Card unit="n" label="Buys in the plan" value={inPlan} num={inPlan} k={inPlan ? 'up' : ''} sub={`${near} more near the pivot · ${valid} valid right now`} live={liveNow}
           fact={d.live ? <><b>{d.setups.length}</b> names watched live</> : 'live checks need a Kite login'} />

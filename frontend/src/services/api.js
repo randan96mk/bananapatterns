@@ -9,7 +9,9 @@ async function req(method, path, body) {
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const detail = data && data.detail;
-    throw new Error(typeof detail === 'string' ? detail : `${res.status} ${res.statusText}`);
+    const err = new Error(typeof detail === 'string' ? detail : `${res.status} ${res.statusText}`);
+    err.status = res.status;                               // e.g. 409 while a job for the same key runs
+    throw err;
   }
   return data;
 }
@@ -183,3 +185,9 @@ export const getAiAsks = (limit = 10) => req('GET', `/api/ai/asks?limit=${limit}
 export const getAiView = (symbols) => req('GET', `/api/ai/view?symbols=${encodeURIComponent((symbols || []).join(','))}`);
 export const getAiViewRecord = (weeks) => req('GET', `/api/ai/view/record${qs({ weeks })}`);
 export const aiViewRun = () => req('POST', '/api/ai/view/run');
+// ✨ the Today card (Home), the overnight rating changes, the live heat on the plan, the Week story page
+export const getTodayCard = () => req('GET', '/api/today-card');
+export const getOvernight = (day) => req('GET', `/api/ai/overnight${qs({ day })}`);
+export const getPlanHeat = () => req('GET', '/api/plan/heat');
+export const getWeek = (week) => req('GET', `/api/week${qs({ week })}`);
+export const writeWeek = (week) => req('POST', `/api/week/write${qs({ week })}`);
