@@ -4,7 +4,7 @@ import { stamp, ampm, clock } from '../timefmt';
 import { inr, rs, signed, pct, cls } from '../fmt';
 import { useLive, push } from '../services/live';
 import AttentionStrip from './AttentionStrip';
-import NextUp from './NextUp';
+import { NextChip } from './NextUp';
 import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { Head, Chip, Switch, Tag, Panel, FixedTable, KV, Act } from './ui2';
@@ -330,7 +330,7 @@ export default function RealPage() {
         <span className="muted small"> · {o.reply}</span>{' '}
         <button type="button" className="btn small" disabled={!!busy || !live} onClick={() => retry(o)}>{busy === o.symbol ? 'Sending…' : '↻ Retry now'}</button></div>)}
       {!live && <div className="muted small">Retry needs real trading ON and the kill switch off.</div>}</div>}
-    <Head title={`Real · ${variant}`} right={<>
+    <Head title={`Real · ${variant}`} right={<><NextChip />
       <button type="button" className="btn small" onClick={() => scrollTo('orderlog')}>Order log</button>
       <button type="button" className="btn small" onClick={() => scrollTo('tradelog')}>Trade log</button>
       <button type="button" className="btn small" onClick={() => scrollTo('reconcile')}>Reconcile</button></>}>
@@ -411,7 +411,6 @@ export default function RealPage() {
             meta={`${stamp(o.created_at)}${o.reason ? ` · ${o.reason}` : ''}${o.reply ? ` · ${o.reply}` : ''}`}
             btn={o.status === 'failed' && o.day === todayIst ? '↻ Retry' : undefined} onBtn={() => { if (!busy && live) retry(o); }} />)}
         </Panel>
-        <NextUp />
       </div>
     </div> : <div className="two">
       <Panel title="Not started" meta="no trades yet"><p className="muted small rempty">Real trading starts at the next evening run{d.enabled ? '' : ' once real trading is ON'}: the first orders are decided at the close and sent at {ampm(s.send_time)}.</p></Panel>
@@ -420,7 +419,6 @@ export default function RealPage() {
           {!d.log?.length ? <p className="muted small rempty">Nothing sent yet.</p> : d.log.slice(0, 60).map((o, k) => <Act key={k} icon={o.status === 'sent' ? '✓' : '!'} cls={o.status === 'sent' ? 'up' : 'down'}
             text={<><b className={SIDE[o.action] || 'muted'}>{o.action}</b> <b>{o.symbol}</b> {o.qty ?? ''}</>} meta={`${stamp(o.created_at)}${o.reply ? ` · ${o.reply}` : ''}`} />)}
         </Panel>
-        <NextUp />
       </div>
     </div>}
     <div className="rnote">Orders go out by webhook to the broker's side (or stay in its offline mode). The app never places an order in Kite; Kite is used only for prices. Past results don't guarantee future returns.</div>

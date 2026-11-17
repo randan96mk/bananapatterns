@@ -4,7 +4,7 @@ import { stamp } from '../timefmt';
 import { inr, rs, signed, pct, cls } from '../fmt';
 import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
-import NextUp from './NextUp';
+import { NextChip } from './NextUp';
 import ReplanPanel from './ReplanPanel';
 import { StopMeter } from './ui';
 import { useIsPhone } from '../useMedia';
@@ -73,7 +73,7 @@ export default function PaperPage() {
   if (!d) return <div className="rd"><Panel>{err ? <div className="rbanner bad">{err}</div> : <p className="muted small rempty">Loading…</p>}</Panel></div>;
   if (!d.started) {
     return <div className="rd">
-      <Head title="Paper · swing"><Chip>simulated with the Trend Breakout rules · no real orders are placed</Chip></Head>
+      <Head title="Paper · swing"><NextChip /><Chip>simulated with the Trend Breakout rules · no real orders are placed</Chip></Head>
       {err && <div className="rbanner bad">{err}</div>}
       <div className="two">
         <Panel title="Start paper trading">
@@ -131,7 +131,7 @@ export default function PaperPage() {
   return <div className="rd">
     <AttentionStrip tab="paper" />
     {err && <div className="rbanner bad">{err}</div>}
-    <Head title="Paper · swing" right={<>
+    <Head title="Paper · swing" right={<><NextChip />
       <button type="button" className="btn small" onClick={() => setHow((h) => !h)}>{how ? 'Hide how it works' : 'How it works'}</button>
       <button type="button" className="btn small" onClick={() => document.getElementById('papertrades')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Trade log</button>
       <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} onClick={reset}>Reset…</button></>}>
@@ -179,7 +179,6 @@ export default function PaperPage() {
             <span style={{ whiteSpace: 'nowrap' }}>₹<input className="input" type="number" min="10000" step="10000" value={cap} onChange={(e) => setCap(e.target.value)} style={{ width: 110 }} />{' '}
               <button type="button" className="btn small" onClick={saveCap} disabled={!(Number(cap) >= 10000) || Number(cap) === a0.account.capital}>Save</button></span></div></div>
         </Panel>
-        <NextUp />
       </div>
     </div>
   </div>;

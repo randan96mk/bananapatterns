@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import NextUp from './NextUp';
+import { NextChip } from './NextUp';
 import { clock } from '../timefmt';
 import { inr } from '../fmt';
 import * as api from '../services/api';
@@ -75,7 +75,7 @@ export default function TodayPage() {
 
   return (
     <div className="rd">
-      <Head title="Today's plan · for the next open" right={<Chip dot={liveNow ? 'on' : ''} c={d.live ? 'ok' : ''}>
+      <Head title="Today's plan · for the next open" right={<Chip dot={liveNow ? 'on' : ''} c={d.live ? 'ok' : ''}><NextChip />
         {d.live ? (d.status === 'open' ? `Live · ${time}` : `NSE ${d.status.replace('_', '-')} · ${time}`) : 'Last close · log in for live'}</Chip>}>
         <Chip c={hc}>{hl}</Chip>
         {m.nifty500_pct != null && <Chip>Nifty 500 <b className={`mono ${m.nifty500_pct >= 0 ? 'up' : 'down'}`}>{pct(m.nifty500_pct, 2)}</b></Chip>}
@@ -128,7 +128,6 @@ export default function TodayPage() {
       </div>}
       <PlanCard plan={plan} onSelect={setSelected} />
       {anyValid && !d.capital_set && <div className="rbanner warn">Set <b>Capital</b> in Alerts → Size to see a quantity.</div>}
-      <div style={{ minWidth: 0, overflow: "hidden" }}><NextUp /></div>
       <p className="muted small" style={{ margin: 0 }}>Refreshes every 30 s while NSE is open · tap a setup for its checklist, then "Open the chart".
         Unconfirmed until the close: breakouts count only on a closing basis.</p>
       {selected && <StockChart symbol={selected} onClose={() => setSelected(null)} />}

@@ -3,7 +3,7 @@ import * as api from '../services/api';
 import { stamp } from '../timefmt';
 import HowItWorks from './HowItWorks';
 import AttentionStrip from './AttentionStrip';
-import NextUp from './NextUp';
+import { NextChip } from './NextUp';
 import { Tip } from './ui';
 import { Head, Chip, Cards, Card, Bar, Panel, FixedTable, Seg } from './ui2';
 import { signed as signedInr, inr, pct, cls, lakh } from '../fmt';
@@ -103,7 +103,7 @@ export default function BreakoutPage() {
     return (
       <div className="rd">
         <AttentionStrip tab="breakout" />
-        <Head title="📈 Trend Breakout · E+" right={runBtn}>{prog.message && !running && <Chip>{prog.message}</Chip>}</Head>
+        <Head title="📈 Trend Breakout · E+" right={runBtn}><NextChip />{prog.message && !running && <Chip>{prog.message}</Chip>}</Head>
         {err && <div className="rbanner warn">{err}</div>}
         <Panel title="Not run yet"><div className="rbody">A 6-year swing backtest of E+ (half market filter, top {R.top}, late trail) against NIFTY 50, from the stored daily candles
           (no 5-minute data, no Kite requests), plus the evening scan. Run it once to see it.</div></Panel>
@@ -162,7 +162,7 @@ export default function BreakoutPage() {
   return (
     <div className={`rd ${loading ? 'busy' : ''}`}>
       <AttentionStrip tab="breakout" />
-      <Head title="📈 Trend Breakout · E+" right={runBtn}>
+      <Head title="📈 Trend Breakout · E+" right={runBtn}><NextChip />
         <Seg opts={SCEN} v={scen} set={setScen} small />
         <Chip>{scen === 'stress' ? R.stress_slippage_pct : R.slippage_pct}% a fill</Chip>
         <Chip title={`${day(r.from)} → ${day(r.to)} · ${r.sessions} sessions · ${r.stocks} stocks`}>{day(r.from)} → {day(r.to)} · <b>{r.sessions}</b> sessions · <b>{r.stocks}</b> stocks</Chip>
@@ -209,7 +209,6 @@ export default function BreakoutPage() {
             {Object.keys(SKIP).map((e) => <div key={e} className="ract" style={ROW(keys.length)}><div className="t"><div className="muted" style={ONE}>⛔ {SKIP[e]}</div></div>
               {keys.map((k) => <span key={k} className="mono" style={{ ...SLOT, display: 'inline-block', textAlign: 'right' }}>{S(k).skipped?.[e] ?? 0}</span>)}</div>)}
           </Panel>
-          <div style={{ width: 0, minWidth: '100%' }}><NextUp /></div>{/* its own width never sizes the column */}
         </div>
       </div>}
 

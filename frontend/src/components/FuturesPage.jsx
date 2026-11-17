@@ -4,7 +4,7 @@ import { stamp, ampm, clock } from '../timefmt';
 import { inr, rs, signed, pct, cls, lakh } from '../fmt';
 import { useLive, push } from '../services/live';
 import AttentionStrip from './AttentionStrip';
-import NextUp from './NextUp';
+import { NextChip } from './NextUp';
 import ReplanPanel from './ReplanPanel';
 import { useAiViews, viewOf, AiView, aiChanged } from './AiView';
 import FuturesBacktest from './FuturesBacktest';
@@ -250,7 +250,7 @@ export default function FuturesPage() {
   return <div className="rd">
     <AttentionStrip tab="futures" />
     {err && <div className="rbanner bad">{err}</div>}
-    <Head title="📐 Stock Futures · E+ on the near month" right={<>
+    <Head title="📐 Stock Futures · E+ on the near month" right={<><NextChip />
       <Seg opts={VIEWS} v={view} set={setView} small />
       {view === 'book' && <><button type="button" className="btn primary small" disabled={replanning || !d.started} onClick={replan} title="rebuild the plan from the evening's data and the accounts as they are now · nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button>
         <button type="button" className="btn small" onClick={() => scrollTo('fut-orderlog')}>Order log</button>
@@ -347,7 +347,6 @@ export default function FuturesPage() {
               text={<><b className={SIDE_ACT[o.action] || 'muted'}>{o.action}</b> <b>{o.symbol}</b> {o.lots ?? ''}{o.price ? <span className="muted small"> ~{rs(o.price)}</span> : null} <Tag c={STATUS[o.status] || ''}>{o.status}</Tag> <span className="muted small">{o.tag}</span></>}
               meta={`${stamp(o.created_at)}${o.reason ? ` · ${o.reason}` : ''}${o.reply ? ` · ${o.reply}` : ''}`} />)}
           </Panel>
-          {!phone && <NextUp />}
         </div>
       </div>
       <div className="rnote">Signals on the cash candles; execution, stops, MTM and the trail on the near-month future. Orders go by webhook to the futures deployment. The app never places an order in Kite; Kite is used only for quotes. Past results don't guarantee future returns.</div>
