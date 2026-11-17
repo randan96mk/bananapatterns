@@ -11,6 +11,8 @@ it (15:10 live, else the 15:30 close snapshot, else the last one seen).
 VWAP exits: the snapshots carry no VWAP path, so a VWAP exit is never invented. When the real trade ended on a VWAP stop
 and the rule has VWAP on, the replay exits at that real time at the real fills (the real decision); with VWAP off it
 ignores that exit and keeps stepping. After a real price stop no VWAP is known any more, so the replay goes on without it.
+The afternoon pair's rows (kind "afternoon": one row per side, linked by `pair`) replay like any spread with VWAP off
+under every rule (the pair is non-directional and never had a VWAP exit).
 Exit fills as the book: buy the sold leg back at mid + 1, sell the hedge at mid - 1; charges via the book's `charges()`.
 Paper only; nothing here trades."""
 
@@ -119,7 +121,8 @@ def replay(t: dict, snaps: list[dict], rule: dict, config: AppConfig) -> dict:
     be_at = round(sold_in * (1 - c.be_after_pct / 100), 2)
     target = round(credit * (1 - c.target_pct / 100), 2)
     t_exit = bs.hm(c.time_exit)
-    real_vwap = rule["vwap"] and t.get("why") == "vwap stop" and _closed(t) is not None and t["sold"].get("exit") is not None
+    vwap_on = rule["vwap"] and t.get("kind") != "afternoon"         # the afternoon pair never has a VWAP exit
+    real_vwap = vwap_on and t.get("why") == "vwap stop" and _closed(t) is not None and t["sold"].get("exit") is not None
     vwap_at = _closed(t) if real_vwap else None
     be, last_at, gap, last = False, _opened(t), 0.0, None
 
@@ -167,7 +170,7 @@ def report(config: AppConfig, days: int = 60, today: Optional[date] = None) -> d
     per, sums = [], {r["key"]: [] for r in rs}
     skipped = thin = 0
     for t in trades:
-        row = {"id": t["id"], "day": t["day"], "bias": t.get("bias"), "strikes": None, "actual": {"why": WHY.get(t.get("why"), t.get("why")), "label": t.get("label") or t.get("why"),
+        row = {"id": t["id"], "day": t["day"], "bias": t.get("bias"), "kind": t.get("kind") or "first", "pair": t.get("pair"), "strikes": None, "actual": {"why": WHY.get(t.get("why"), t.get("why")), "label": t.get("label") or t.get("why"),
                "net": round(float(t.get("net") or 0.0), 2)}, "by_rule": {}, "skipped": None, "thin": False}
         if not (t.get("sold") and t.get("hedge") and t.get("qty") and t.get("credit") is not None and t.get("expiry")):
             row["skipped"] = "no legs recorded"

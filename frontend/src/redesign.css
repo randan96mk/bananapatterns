@@ -1,6 +1,7 @@
 /* ---- 🎨 Redesign (every page after Home): dense dark/light terminal look, fixed shapes that never move with values ----
    Everything is scoped under .rd so the old page styles are untouched. Cards reuse .kpis/.hcard from the Home redesign. */
-.rd { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.rd { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; min-width: 0; }   /* one column that never widens with a child's min-content (a wide child overflows its own box, not the page) */
+.rd > * { min-width: 0; }
 .rd .rcards { margin: 0; gap: 10px; }
 @media (min-width: 761px) { .rd .rcards[style*="--n"] { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); } }
 .rd .hcard.click { cursor: pointer; }

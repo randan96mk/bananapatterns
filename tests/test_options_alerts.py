@@ -12,7 +12,7 @@ from backend.engine import attention
 from backend.options import book
 from tests.test_alerts import FakeTG
 from tests.test_login import BotTG, update
-from tests.test_options_book import DAY, World, at, minutes, path, run_day, seed_prev_day
+from tests.test_options_book import DAY, OLD_FLOW, World, at, minutes, path, run_day, seed_prev_day
 
 BULL = {"09:30": 25050, "09:45": 25150, "09:55": 25250, "10:05": 25400, "10:30": 25450}
 BROKERS = ("Zerodha", "Tradetron")
@@ -102,6 +102,7 @@ def test_one_liners():
 class St:
     def __init__(self, w, cfg=None):
         self.config = cfg or AppConfig()
+        self.config.options = replace(self.config.options, **OLD_FLOW)     # the flow these tests assume (the entry modes off)
         self.config.alerts = AlertsConfig(chat_id="42", intraday=False, filings=False)
         self.client = w
         self.token_source = "db"

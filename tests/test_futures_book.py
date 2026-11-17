@@ -109,7 +109,7 @@ def sessions_ahead(n, start=None):
 # --- the evening plan ------------------------------------------------------------------------------------------
 
 def test_plan_with_eligibility_reasons_and_waiting(monkeypatch):
-    cfg, data, i = world(monkeypatch)
+    cfg, data, i = world(monkeypatch, max_notional_x=2.5)            # the reasons below assume the 2.5x notional cap
     assert book.evening(cfg, cut(data, i), today=data["cal"][i])["status"] == "ok"
     st = book._state()
     assert st["started"] == data["cal"][i] and set(st["accounts"]) == set(book.ACCOUNTS) and st["capital"] == 500000.0
@@ -120,7 +120,7 @@ def test_plan_with_eligibility_reasons_and_waiting(monkeypatch):
     assert o["risk"] == pytest.approx((o["entry"] - o["stop"]) * 1700, abs=20) and o["why"].startswith("E+ breakout #1 · 1 lot")
     waiting = {w["symbol"]: w["reasons"] for w in st["waiting"]["long"]}
     assert set(waiting) == {"BIG", "ALT"}
-    assert any(r.startswith("lot too big ₹14.1 L > ₹6 L") for r in waiting["BIG"]) and "slots full" in waiting["ALT"]
+    assert any(r.startswith("lot too big ₹14.1 L > ₹10 L") for r in waiting["BIG"]) and "slots full" in waiting["ALT"]
     assert any(r.startswith("notional") for r in waiting["ALT"])
     assert st["plan"]["short"] == [] and st["allowed"] == {"long": True, "short": False} and st["filter"]["state"] == "FULL"
     # a day already processed is not processed again; the summary carries the plan and the waiting list with `why`
@@ -664,3 +664,20 @@ def test_routes_and_stream(api, monkeypatch):
     assert "futures" in tc.get("/api/attention").json()
     assert tc.post("/api/futures/roll").json()["status"] == "ok"
     assert tc.get("/api/schedule").status_code == 200
+
+
+def test_recent_overlap_counts_breakouts_inside_the_universe(monkeypatch):
+    """The long side trades only E+ breakouts that are futures names inside the lot cap: the overlap line says how
+    many of the last sessions' breakouts qualified (none → the book is starved, not broken); cached per day; no raise
+    without candles."""
+    cfg = cfg_for()
+    long_world(monkeypatch)
+    data = tb.load(cfg)
+    o = book.recent_overlap(cfg, sessions=20, data=data)
+    assert o["sessions"] == 20 and o["to"] == data["cal"][-1] and o["breakouts"] >= o["in_universe"] >= 0 and o["lot_cap"] == 2_000_000.0
+    assert all(set(n) == {"symbol", "day"} for n in o["names"]) and len(o["names"]) <= 12
+    book._overlap_cache.clear()
+    o2 = book.recent_overlap(cfg, sessions=20, data=data)
+    assert o2 == o and book.recent_overlap(cfg, sessions=20, data=data) is o2        # the second call is the cached dict
+    bad = book.recent_overlap(cfg, data={"error": "no candles"})
+    assert bad["in_universe"] == 0 and bad["error"] == "no candles"

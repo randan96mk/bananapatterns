@@ -112,8 +112,10 @@ def _options_facts(config: AppConfig, now: datetime) -> Optional[dict]:
     soon = [day_label(d) for d in ev if today <= d <= (now.date() + timedelta(days=3)).isoformat()]
     spread = None
     if o:
-        s = o["sold"]
-        spread = f"{o['bias']} spread, sold {s['strike']:,.0f} {s['type']} at {s['entry']:.2f}, now {s['last']:.2f}, stop {o['stop_premium']:.2f}"
+        spread = "; ".join(f"{x['bias']} spread, sold {x['sold']['strike']:,.0f} {x['sold']['type']} at {x['sold']['entry']:.2f}, now {x['sold']['last']:.2f}, "
+                           f"stop {x['stop_premium']:.2f}" for x in obook.spreads_of(o))
+        if o.get("kind") == "afternoon":
+            spread = "afternoon pair: " + spread
     walls = chain.get("walls") or {}
     return {"open": spread, "chain_at": chain.get("at"), "pcr": chain.get("pcr"), "support": walls.get("support"),
             "resistance": walls.get("resistance"), "line": chain.get("line"), "vix": chain.get("vix") or last_day.get("vix") or _vix_close(),

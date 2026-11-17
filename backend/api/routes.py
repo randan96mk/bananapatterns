@@ -1280,6 +1280,9 @@ class OptionsSettings(BaseModel):
     real: Optional[bool] = None
     enabled: Optional[bool] = None
     vwap_exit: Optional[bool] = None
+    reentry_same_bias: Optional[bool] = None          # 🧩 more entries: the same bias again after a stop
+    reentry_late: Optional[bool] = None               # ... re-entries until reentry_until
+    afternoon_sell: Optional[bool] = None             # ... the afternoon pair
 
 
 class OptionsCapital(BaseModel):
@@ -1299,7 +1302,8 @@ def options_summary():
 
 @router.put("/options/settings")
 def options_settings(req: OptionsSettings):
-    """paper / enabled / vwap_exit; real=true is refused (400 "not wired": no webhook yet)."""
+    """paper / enabled / vwap_exit / reentry_same_bias / reentry_late / afternoon_sell; real=true is refused (400 "not
+    wired": no webhook yet)."""
     from backend.options import book as obook
     try:
         return obook.set_switches(S().config, **req.model_dump(exclude_none=True))

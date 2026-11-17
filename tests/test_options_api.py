@@ -17,8 +17,9 @@ def test_config_defaults_and_section():
     c = OptionsConfig()
     assert (c.capital, c.capital_per_lot, c.max_lots, c.hedge_points, c.max_delta, c.min_premium, c.otm_pct) == (300000, 150000, 2, 250, 0.30, 20, 1.0)
     assert (c.stop_pct, c.stop_pct_expiry, c.be_after_pct, c.target_pct, c.time_exit, c.window_start, c.window_end) == (100, 35 * 2, 40, 60, "15:10", "09:45", "11:00")
-    assert (c.max_trades_day, c.daily_loss_pct, c.vix_half, c.pcr_bull, c.pcr_bear, c.max_gap_pct, c.margin_per_lot) == (2, 1.5, 20, 1.1, 0.9, 1.0, 52000)
+    assert (c.max_trades_day, c.daily_loss_pct, c.vix_half, c.pcr_bull, c.pcr_bear, c.max_gap_pct, c.margin_per_lot) == (3, 1.5, 20, 1.1, 0.9, 1.0, 52000)
     assert (c.event_days, c.paper, c.real, c.enabled, c.vwap_exit) == ("", True, False, True, True)
+    assert (c.reentry_same_bias, c.reentry_late, c.reentry_until, c.afternoon_sell, c.afternoon_time, c.afternoon_max_range_pct) == (True, True, "13:00", True, "13:30", 0.6)
     assert PERSISTED_SECTIONS["options"] is OptionsConfig and AppConfig().section("options").capital == 300000
     cfg = AppConfig()
     out = cfg.update_section("options", {"max_lots": "3", "event_days": "2026-12-05", "paper": "false"})
@@ -105,9 +106,9 @@ def test_routes_and_stream(api, monkeypatch):
     monkeypatch.setattr(book, "datetime", _Clock)
     monkeypatch.setattr(book, "now_ist", lambda: "2026-11-10T12:00:00+05:30")   # chain_view and the state stamps read it too
     d = tc.get("/api/options").json()
-    assert d["started"] is True and d["capital"] == 300000.0 and d["switches"] == {"paper": True, "real": False, "enabled": True, "vwap_exit": True, "killed": False,
-                                                                                    "real_allowed": False, "real_note": "no webhook yet · stays off"}
-    assert d["open"] is None and d["today"]["timeline"] == [] and len(d["cards"]) == 6 and len(d["rules"]) == 8 and d["chain"]["strikes"] == []
+    assert d["started"] is True and d["capital"] == 300000.0 and d["switches"] == {"paper": True, "real": False, "enabled": True, "vwap_exit": True, "reentry_same_bias": True,
+                                                                                    "reentry_late": True, "afternoon_sell": True, "killed": False, "real_allowed": False, "real_note": "no webhook yet · stays off"}
+    assert d["open"] is None and d["today"]["timeline"] == [] and len(d["cards"]) == 6 and len(d["rules"]) == 9 and d["chain"]["strikes"] == []
     assert d["guards"]["daily_loss"] == {"used": 0.0, "limit": 4500.0, "hit": False} and d["margin"]["per_lot"] == 52000.0 and d["bias"]["steps"][0]["text"] == "waiting for 9:30"
     assert d["today"]["schedule"][-1] == {"t": "3:35 PM", "text": "day summary"}
     # the Real switch: refused on both PUTs

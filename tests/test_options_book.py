@@ -127,7 +127,19 @@ class World:
         return rows
 
 
+# The flow these tests were written for: the three "more entries" modes off and two trades a day (the defaults now have
+# all three on and max_trades_day 3: see tests/test_options_entries.py, which uses `cfg_new`).
+OLD_FLOW = {"reentry_same_bias": False, "reentry_late": False, "afternoon_sell": False, "max_trades_day": 2}
+
+
 def cfg_for(**opts) -> AppConfig:
+    c = AppConfig()
+    c.options = replace(c.options, **{**OLD_FLOW, **opts})
+    return c
+
+
+def cfg_new(**opts) -> AppConfig:
+    """The saved defaults (every entry mode on)."""
     c = AppConfig()
     c.options = replace(c.options, **opts)
     return c
@@ -298,7 +310,7 @@ def test_reentry_once_on_a_flipped_bias(prev):
     ts = sorted(book.trades(), key=lambda t: t["n"])
     assert d["trades"] == 2 and d["biases"] == ["BULLISH", "BEARISH"] and [t["bias"] for t in ts] == ["BULLISH", "BEARISH"]
     assert ts[1]["sold"]["type"] == "CE" and ts[1]["n"] == 2 and ts[1]["why"] == "premium stop" and ts[1]["lots"] == 1 and ts[1]["score"] == 1
-    assert any("re-entry · sold" in x for x in tl(st)) and d["status"] == "done"
+    assert any("re-entry · flipped bias · sold" in x for x in tl(st)) and d["status"] == "done"
     assert d["checked"][-1] <= "10:15" and st["day"]["bias"] == "BEARISH"          # two trades done: the bias is not looked for again
 
 
@@ -369,7 +381,8 @@ def test_switches_and_real_refused(prev):
     with pytest.raises(ValueError, match="not wired"):
         book.set_switches(cfg, real=True)
     sw = book.set_switches(cfg, enabled=False)
-    assert sw == {"paper": True, "real": False, "enabled": False, "vwap_exit": True, "killed": False, "real_allowed": False, "real_note": "no webhook yet · stays off"}
+    assert sw == {"paper": True, "real": False, "enabled": False, "vwap_exit": True, "reentry_same_bias": False, "reentry_late": False, "afternoon_sell": False,
+                  "killed": False, "real_allowed": False, "real_note": "no webhook yet · stays off"}
     st = run_day(cfg, World(path({"09:30": 25050, "09:45": 25150})), end="10:00")
     assert st["day"]["trades"] == 0 and any("switched off" in x for x in tl(st))
     assert book.set_switches(cfg, enabled=True, paper=False)["paper"] is False and cfg.options.real is False
@@ -403,7 +416,7 @@ def test_close_now_capital_and_summary_shape(prev):
     assert s["chain"]["walls"] == {"support": 24800.0, "resistance": 25300.0} and s["chain"]["pcr"] > 1.1 and s["chain"]["score"] == 3
     assert len(s["chain"]["strikes"]) == 25 and s["chain"]["strikes"][0]["pe"]["oi"] and s["chain"]["iv"]["put"] == pytest.approx(12.0, abs=0.3)
     assert s["today"]["status"] == "open" and s["today"]["timeline"] and s["today"]["schedule"][0]["t"] == "9:30 AM" and s["guards"]["window"]["open"]
-    assert s["switches"]["real_note"] == "no webhook yet · stays off" and len(s["rules"]) == 8
+    assert s["switches"]["real_note"] == "no webhook yet · stays off" and len(s["rules"]) == 9
     r = book.set_capital(cfg, 350000)
     assert r["delta"] == 50000.0 and book._state()["cash"] == pytest.approx(st["cash"] + 50000, abs=0.01) and cfg.options.capital == 350000.0
     res = book.close_now(cfg, w, at("09:52"))

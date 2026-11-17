@@ -1134,13 +1134,15 @@ stale_days}, universe: [{symbol, lot_size, lot_value, expiry, oi_rank}], univers
 |---|---|---|
 | `capital` | 500000 | the futures book's own capital |
 | `max_pos` / `small_lot_value` | 2 / 450000 | open lots at most; a third when every open lot is under this lot value |
-| `max_lot_value` / `max_risk_pct` / `top_oi` | 600000 / 6.0 / 100 | eligibility: lot value cap, 1-lot risk at the stop (% of capital), OI rank |
-| `max_stop_pct` | 5.0 | the ATR stop is capped here |
+| `max_lot_value` / `max_risk_pct` / `top_oi` | 1000000 / 8.0 / 100 | eligibility: lot value cap, 1-lot risk at the stop (% of capital), OI rank |
+| `max_stop_pct` | 4.0 | the ATR stop is capped here (a ₹10 L lot risks ₹40,000, 8% of a ₹5 L book) |
 | `margin_pct` | 20.0 | margin estimate, % of lot value |
-| `max_notional_x` / `cash_floor` / `daily_loss_pct` / `heat_pct` | 2.5 / 150000 / 3.0 / 12.0 | guards (2.5× lets two ₹6 L lots sit in a ₹5 L book) |
+| `max_notional_x` / `cash_floor` / `daily_loss_pct` / `heat_pct` | 4.0 / 150000 / 3.0 / 12.0 | guards (4× lets two ₹10 L lots sit in a ₹5 L book) |
 | `roll_days` / `results_guard_sessions` | 2 / 3 | roll T-N sessions before expiry; no entry with results within N sessions |
 | `long_paper` / `long_real` / `short_paper` / `short_real` | on / off / on / off | per-side switches (short real stays blocked until its backtest passes) |
-| `universe_lot_cap` / `history_years` | 600000 / 3 | which underlyings get futures candles; how deep |
+| `universe_lot_cap` / `history_years` | 1000000 / 3 | which underlyings get futures candles; how deep |
+
+**Why the caps moved (17 Nov 2026)**: with a ₹6 L cap only 3 of 91 E+ breakouts in 20 sessions were tradeable futures names, so the paper book never traded. The Futures page now shows that overlap ("breakouts · last 20 sessions · in the futures universe", `GET /api/futures` → `overlap`), computed from the stored candles. Saved settings override these defaults; the wider universe is synced by the next futures data job (needs a Kite login).
 
 ### Stock futures — Backtest F
 
@@ -1307,7 +1309,8 @@ Step 4 (`backend/futures/sender.py`): the webhook to the Tradetron deployment "S
 
 The options module (`backend/options/`, `frontend/src/components/OptionsPage.jsx` under Strategies › 🧩 Options, shortcut
 g+o): one **paper** book (`options.capital`, ₹3,00,000, deposits like the other books) that sells **one NIFTY weekly credit
-spread a day** (two at most) on the opening-range bias, confirmed by the option chain, and is flat by 15:10. NIFTY weekly
+spread a day** (three trades at most with the re-entries and the afternoon pair: see "Options · more entries") on the
+opening-range bias, confirmed by the option chain, and is flat by 15:10. NIFTY weekly
 options only; no backtest (Kite keeps no history for expired options). The **Real switch exists but cannot be turned on**:
 "no webhook yet · stays off" (`PUT /api/options/settings {real: true}` and `PUT /api/config/options {real: true}` answer
 400 "not wired"; there is no sender and no token). Kite is used for quotes and 1-minute candles only; nothing reads broker
@@ -1416,10 +1419,59 @@ premium stop, the daily loss limit hit, no data on a trading day, no login with 
 | `stop_pct` / `stop_pct_expiry` / `be_after_pct` / `target_pct` | 100 / 70 / 40 / 60 | the premium stop (2×; 1.7× on expiry day), the breakeven switch, the target |
 | `vwap_exit` | on | the VWAP exit (a switch on the Options page too) |
 | `time_exit` / `window_start` / `window_end` | 15:10 / 09:45 / 11:00 | the time exit; the bias window |
-| `max_trades_day` / `daily_loss_pct` / `max_gap_pct` | 2 / 1.5 / 1.0 | one re-entry; the daily loss limit (% of capital); the gap filter |
+| `max_trades_day` / `daily_loss_pct` / `max_gap_pct` | 3 / 1.5 / 1.0 | trades a day (re-entries count, the afternoon pair = 1; a saved 2 is raised to 3 once); the daily loss limit (% of capital); the gap filter |
+| `reentry_same_bias` | on | after a premium / VWAP / breakeven stop, the same bias once more (once per bias) on a close back over the range and VWAP (a switch on the Options page) |
+| `reentry_late` / `reentry_until` | on / 13:00 | re-entries (same or flipped bias) until this time instead of `window_end`; first entries keep `window_end` (a switch on the Options page) |
+| `afternoon_sell` / `afternoon_time` / `afternoon_max_range_pct` | on / 13:30 / 0.6 | the afternoon pair: at this time, flat, the day's range ≤ this % of spot (a switch on the Options page) |
 | `vix_half` / `pcr_bull` / `pcr_bear` | 20 / 1.1 / 0.9 | VIX half size; the PCR thresholds of the chain score |
 | `margin_per_lot` / `event_days` | 52000 / "" | the margin estimate per lot; no-entry dates (ISO, comma-separated) |
 | `paper` / `enabled` / `real` | on / on / off | the switches (`real` stays off: not wired) |
+
+#### Options · more entries
+
+Three entry modes, **all on by default (paper)**, each its own `OptionsConfig` key, a Settings help line and a switch in
+the Options page's Switches panel (`PUT /api/options/settings {"reentry_same_bias" | "reentry_late" | "afternoon_sell":
+bool}`, like `vwap_exit`). `max_trades_day` is 3 (every entry below counts; the afternoon pair counts as one).
+
+1. **Same bias again** (`reentry_same_bias`): after a directional spread stopped out (premium, VWAP or breakeven stop —
+   not a target, the time exit, the kill switch or "closed by you"), the book may re-enter on the **same** bias, once
+   per bias a day, when a later 5-minute close is back on the right side of the opening range and the futures VWAP
+   (bullish: close > range high and > VWAP; bearish: the mirror; the previous day's level is not needed), the chain
+   score still confirms (≥ 1; 0 = "chain disagrees") and the daily loss guard allows. Timeline "re-entry · same bias ·
+   after the VWAP stop at 9:55 AM: close 25,300 back over the range high 25,100 and VWAP 25,131 · sold …"; Telegram
+   "<i>re-entry (2 of 3) · same bias · …</i>". The flipped-bias re-entry stays as it was ("re-entry · flipped bias ·
+   sold …", Telegram "re-entry (2 of 3) · the bias flipped").
+2. **Re-entries until 1:00 PM** (`reentry_late`, `reentry_until` "13:00"): re-entries (same or flipped bias) are looked
+   for on 5-minute closes until `reentry_until` instead of `window_end`; **first entries keep `window_end`** (no first
+   spread at 11:30). A day with a closed trade stays "closed" (open for a re-entry) until `reentry_until`, then "done";
+   the bias step runs after 11:00 only while flat with a trade done. Expiry day keeps its own stop rules.
+3. **Afternoon sell** (`afternoon_sell`, `afternoon_time` "13:30", `afternoon_max_range_pct` 0.6): once a day, the first
+   tick at / after `afternoon_time` (before the time exit): when no spread is open, the day's range so far (high − low of
+   the index's complete 5-minute bars since 9:15) is ≤ 0.6% of spot and spot is inside the opening range's band (range
+   low − 0.25% … range high + 0.25%), the book sells **two** credit spreads: a call spread above and a put spread below
+   (the usual strike selector per side: delta / premium / OTM / wall rules, `hedge_points`), half the directional size
+   each side (1 lot each at ₹3,00,000; VIX halving as today, 1 lot at least). Exits per side: the premium stop
+   (`stop_pct`; `stop_pct_expiry` on expiry day), breakeven after `be_after_pct`, the target (on that side's own
+   credit), the time / hard exit; **no VWAP exit** (non-directional). Guards: kill switch, enabled / paper, hold-today,
+   event day, the gap filter, the daily loss limit, `max_trades_day`. Telegram "🧩 Options · paper · afternoon sell ·
+   1:30 PM · 25,350 CE / 24,750 PE · credit ₹6,038 · range 0.4% · exits: premium 2× · time 3:10 PM" with the legs and
+   stops under it; a skipped look is a timeline line ("afternoon sell · no entry · day range 0.76% > 0.6%").
+
+**The pair's shape**: `st.open = {kind: "afternoon", pair, sides: [CE spread, PE spread], …}` while open; in
+`options_trades` **two rows, one per side**, each a normal spread row (sold / hedge / credit / qty / net …) plus `kind:
+"afternoon"`, `pair: "<day>|<n>"` (the same on both), `side: "CE" | "PE"`, `bias: "NEUTRAL"`. Directional rows carry
+`kind` first / flip / same and `entry_why`. The `options_days` row counts the pair as **one** trade (`trades`; `rows`
+= rows written, `kinds` = ["first", "same", "afternoon", …]), `strikes` "25,350 CE / 24,750 PE", `result` "afternoon CE
+time exit / PE target"; the 🌙 day summary line says "1 trade (incl. the afternoon pair)". Report as if replays each
+side's row as its own spread with VWAP off under every rule.
+
+**On the page**: the Switches panel (Same bias again · Re-entry to 1:00 PM · Afternoon sell), the Guards' "Entry window"
+(… · re-entry to 1:00 PM) and "More entries" rows, the status lines with what can still open ("re-entry possible until
+1:00 PM · bullish again on a close back over the range and VWAP · or a bearish flip · afternoon sell looks at 1:30 PM"),
+the open panel with four legs for the pair, the bias panel's "Afternoon sell" step (why it did or did not sell), and
+`GET /api/options` → `entries` ("entries: re-entry same bias · until 1:00 PM · afternoon sell 1:30 PM"),
+`today.hint`, `today.afternoon`, `guards.entries`. All three off = the old flow (one re-entry, on a flipped bias,
+inside the window; with `max_trades_day` 2).
 
 #### Options · exit rules and Report as if
 
@@ -3122,6 +3174,20 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   `ai_notes` row of kind `week`), the Sunday 8:00 PM job and the guard's Sunday night window, the catch-up after the
   ratings in `run_eod`, `POST /api/week/write`, `messages.ai_week_story`; `AIConfig.week`.
 - Tests: `tests/test_today_card.py` (18), `tests/test_plan_heat.py` (11), `tests/test_week.py` (28).
+
+### 2026-11-17: 🧩 Options · more entries
+- `OptionsConfig`: `reentry_same_bias` (on), `reentry_late` (on) + `reentry_until` "13:00", `afternoon_sell` (on) +
+  `afternoon_time` "13:30" + `afternoon_max_range_pct` 0.6; `max_trades_day` 2 → 3 (a saved 2 raised once,
+  `migrated.options_entries`); the clock keys checked HH:MM on save (422). `book`: `_same_bias_candidate`, the late bias
+  window (`late_on`, `reentry_end`), the `afternoon` step (`_afternoon`, `_enter_pair`, `_mark_pair`, `_exit_spread`),
+  `entries_text`, `exits_text_afternoon`, `today.hint`, the 9th rule line; `bias.day_range` / `in_band`;
+  `messages.options_afternoon`, "re-entry (2 of 3)", the no-trade line's afternoon look; day summary "(incl. the
+  afternoon pair)"; asif replays the pair's rows with VWAP off; Home / attention / brief read the pair's sides.
+- Options page: three switches, the guards' entry window / more entries, status hints, the pair's four legs, the
+  afternoon step; Settings help for the six keys.
+- Tests: `tests/test_options_entries.py` (21); the old-flow tests run with the three modes off and 2 trades a day
+  (`OLD_FLOW` in `tests/test_options_book.py`); adapted: the flipped re-entry's timeline text, the switches dict, the
+  rules count (9), the config defaults, the day-summary options part.
 
 ### 2026-11-17: 🧩 Options · exit rules and Report as if
 - `OptionsConfig.stop_pct` 50 → 100 (2×), `stop_pct_expiry` 35 → 70, new `vwap_exit` (on) gating the VWAP branch of

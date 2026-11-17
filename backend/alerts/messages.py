@@ -1061,9 +1061,32 @@ def options_bias(o: dict, tag: str = "paper") -> str:
     out = [f"🧭 {_opt_head(tag, f'bias {bias}', o.get('opened_t'))}", escape(price), legs, escape(stop), f"<i>{escape(' · '.join(dim))}</i>"]
     if o.get("chain_line"):
         out.append(f"<i>chain: {escape(o['chain_line'])}</i>")
-    if (o.get("n") or 1) > 1:
-        out.insert(1, "<i>re-entry: the bias flipped</i>")
+    n = o.get("n") or 1
+    if n > 1:
+        of = f" ({n} of {o['max_trades']})" if o.get("max_trades") else ""
+        if o.get("kind") == "same":
+            why = f"same bias · {o['entry_why']}" if o.get("entry_why") else "same bias · back over the range and VWAP after a stop"
+        else:
+            why = "the bias flipped"
+        late = (o.get("window") or {}).get("reentry_until")
+        out.insert(1, f"<i>re-entry{of} · {escape(why)}" + (f" · re-entries to {ampm(late)}" if late and o.get("late") else "") + "</i>")
     return "\n".join(out)
+
+
+def options_afternoon(o: dict, tag: str = "paper") -> str:
+    """🧩 The afternoon pair sold: both strikes, the credit, the day's range, the exits (no VWAP); then the legs with
+    the hedges and the stops, the worst case, the margin."""
+    sides = o.get("sides") or []
+    names = " / ".join(_strike(x["sold"]) for x in sides)
+    head = (f"🧩 {_opt_head(tag, 'afternoon sell', o.get('opened_t'))} · {names} · credit {inr(o.get('credit_rs'))} · range {o.get('range_pct') or 0:.1f}% · "
+            f"{escape(o.get('exits') or '')}")
+    lots = o.get("lots") or 1
+    legs = [f"SELL <b>{_strike(x['sold'])}</b> @ {x['sold']['entry']:.2f} · BUY {_strike(x['hedge'])} @ {x['hedge']['entry']:.2f} · stop {x['stop_premium']:.2f} · "
+            f"target {x['target_value']:.2f}" for x in sides]
+    n, of = o.get("n") or 1, o.get("max_trades")
+    dim = [f"{lots} lot{'s' if lots != 1 else ''} each side", f"worst case {inr(-(o.get('worst_case') or 0), sign=True)}", f"margin ~{inr(o.get('margin_est'))}",
+           f"trade {n} of {of}" if of else "", "non-directional · no VWAP exit"]
+    return "\n".join([head, *legs, f"<i>{escape(' · '.join(x for x in dim if x))}</i>"])
 
 
 EXIT_ICON = {"target": "🎯", "premium stop": "🛑", "vwap stop": "🛑", "breakeven stop": "🛑", "time exit": "⏱", "hard exit": "⏱",
@@ -1076,6 +1099,8 @@ def options_exit(kind: str, t: dict, tag: str = "paper") -> str:
     from backend.options.book import EXIT_LABEL
     s, h = t["sold"], t["hedge"]
     label = EXIT_LABEL.get(kind, kind)
+    if t.get("kind") == "afternoon":
+        label = f"afternoon {t['sold']['type']} · {label}"
     bits = [f"{s['strike']:,.0f} / {h['strike']:,.0f} {escape(s['type'])} closed at {t['cost']:.2f}",
             f"<b>{inr(t['net'], sign=True)}</b>"]
     held = _held(t.get("opened_at"), t.get("closed_at"))
@@ -1099,6 +1124,8 @@ def options_no_trade(d: dict) -> str:
     if d.get("vwap_where"):
         inside += f" · VWAP {d['vwap_where']}"
     nxt = f" · next look {_day_label(d['next'])[:3]} {ampm(d.get('window_start') or '09:45')}" if d.get("next") else ""
+    if d.get("afternoon"):
+        nxt = f" · afternoon sell looks at {ampm(d['afternoon'])}" + nxt
     return f"🧭 {_opt_head('no trade today')} · no break of the 9:15–9:30 range by {ampm(d.get('window_end') or '11:00')} ({escape(inside)}){escape(nxt)}"
 
 
@@ -1159,7 +1186,11 @@ def options_status(s: dict) -> str:
     state = "🔴 kill switch ON" if sw.get("killed") else "OFF" if not sw.get("enabled") else "paper" if sw.get("paper") else "idle"
     lines = [f"🧩 {_opt_head(state, _day_label(t.get('date')))} · {escape(str(t.get('status') or 'waiting').replace('_', ' '))}"
              + (f" · {escape(t['why'])}" if t.get("why") else "") + (" · hold today" if t.get("hold") else "")]
-    if o:
+    if o and o.get("kind") == "afternoon":
+        lines.append("open: afternoon pair · " + " · ".join(f"SELL {_strike(x)} @ {x['entry']:.2f} (now {x['last']:.2f}) stop {x['stop']:.2f}"
+                                                            for x in o["legs"] if x["leg"] == "sold")
+                     + f" · {o['lots']} lot{'s' if o['lots'] != 1 else ''} each side · P&L <b>{inr(o['pnl'], sign=True)}</b> · target {o['target_value']:.2f}")
+    elif o:
         s_, h = o["legs"][0], o["legs"][1]
         lines.append(f"open: {o['bias']} · SELL {_strike(s_)} @ {s_['entry']:.2f} (now {s_['last']:.2f}) · BUY {_strike(h)} @ {h['entry']:.2f} · "
                      f"{o['lots']} lot{'s' if o['lots'] != 1 else ''} · P&L <b>{inr(o['pnl'], sign=True)}</b> · stop {o['stop_premium']:.2f}"
@@ -1201,6 +1232,8 @@ def options_alert(a: dict) -> Optional[str]:
     try:
         if k == "entry" and d.get("sold"):
             return options_bias({**d, "opened_t": d.get("opened_t") or a.get("t")}, tag)
+        if k == "afternoon" and d.get("sides"):
+            return options_afternoon({**d, "opened_t": d.get("opened_t") or a.get("t")}, tag)
         if k == "exit" and d.get("sold"):
             return options_exit(d.get("why") or "closed", d, tag)
         if k == "no_trade":
@@ -1475,7 +1508,7 @@ def _sum_futures(f: dict) -> str:
 def _sum_options(o: dict) -> str:
     n = o.get("trades") or 0
     bits = [f"🧩 Options · {escape(o.get('tag') or 'paper')} · {inr(o['value'])}", _today(o.get("today"))]
-    bits.append(_n(n, "trade") if n else "no trade")
+    bits.append((_n(n, "trade") + (" (incl. the afternoon pair)" if o.get("afternoon") else "")) if n else "no trade")
     if o.get("result"):
         bits.append(escape(str(o["result"])))
     return " · ".join(bits)

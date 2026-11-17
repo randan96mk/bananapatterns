@@ -116,7 +116,7 @@ def test_options_flow_and_ai_parts(cfg, monkeypatch):
     with get_db() as conn:
         conn.execute("INSERT INTO options_days (day, payload) VALUES (?, ?)",
                      (DAY, json.dumps({"day": DAY, "trades": 1, "pnl": -583.0, "equity": 299417.0, "result": "VWAP stop", "why": "VWAP stop"})))
-    assert daysum.options_part(cfg, DAY) == {"tag": "paper", "value": 299417.0, "today": -583.0, "trades": 1, "result": "VWAP stop"}
+    assert daysum.options_part(cfg, DAY) == {"tag": "paper", "value": 299417.0, "today": -583.0, "trades": 1, "result": "VWAP stop", "afternoon": False}
     assert daysum.options_part(cfg, "2026-11-17") is None
     assert daysum.flow_part(cfg, DAY) is None                                                # flow off
     from backend.intraday import flow

@@ -1418,6 +1418,38 @@ def account_view(st: dict, config: AppConfig, k: str) -> dict:
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq]}, "guards": guards(st, config, k)}
 
 
+_overlap_cache: dict = {}
+
+
+def recent_overlap(config: AppConfig, sessions: int = 20, data: Optional[dict] = None) -> dict:
+    """How many E+ breakouts of the last `sessions` sessions were futures names inside the lot cap: the long side can
+    only trade that overlap, so an empty one explains a quiet book. Cached per (last day, cap); never calls Kite."""
+    cfg = config.futures
+    try:
+        data = data or tb.load(config)
+    except Exception as exc:                                                 # no candles yet: say so, never raise
+        return {"sessions": 0, "breakouts": 0, "in_universe": 0, "names": [], "lot_cap": cfg.universe_lot_cap, "error": str(exc)}
+    if "error" in data:
+        return {"sessions": 0, "breakouts": 0, "in_universe": 0, "names": [], "lot_cap": cfg.universe_lot_cap, "error": data["error"]}
+    cal = data["cal"]
+    key = (cal[-1] if cal else None, cfg.universe_lot_cap, sessions)
+    if key in _overlap_cache:
+        return _overlap_cache[key]
+    uni = {u["symbol"] for u in instruments.universe(cfg.universe_lot_cap)}
+    p = tb.rules(config, "E")
+    n_b, names = 0, []
+    first = max(0, len(cal) - sessions)
+    for i in range(first, len(cal)):
+        _, ranked, _, _ = tb.decide(i, data["S"], {}, True, p)
+        n_b += len(ranked)
+        names += [{"symbol": sym, "day": cal[i]} for sym, _ in ranked if sym in uni]
+    out = {"sessions": len(cal) - first, "from": cal[first] if cal else None, "to": cal[-1] if cal else None, "breakouts": n_b,
+           "in_universe": len(names), "names": names[-12:], "lot_cap": cfg.universe_lot_cap, "universe": len(uni)}
+    _overlap_cache.clear()
+    _overlap_cache[key] = out
+    return out
+
+
 def summary(config: AppConfig) -> dict:
     """Everything the Futures page needs (the headline figures are the long side's primary account: real when the
     long side is real, else paper; the short paper book has its own block)."""
@@ -1440,6 +1472,7 @@ def summary(config: AppConfig) -> dict:
             "send": {"preview_time": config.real.preview_time, "send_time": config.real.send_time, "send_until": config.real.send_until,
                      "stop_check_min": config.real.stop_check_min, "gap_s": _gap(config), "roll_time": ROLL_TIME},
             "universe_count": len(instruments.universe()), "eligible_count": len(uni),
+            "overlap": recent_overlap(config),
             "next_expiry": exp[0]["expiry"] if exp else None, "backtest": {"built": bool(bt), "verdict": verdict, "ran_at": (bt or {}).get("ran_at")},
             "log": orders_log(120), "kills": list(sender.sent_kills), "sender": sender.check(gap=_gap(config))}
     if not st:
