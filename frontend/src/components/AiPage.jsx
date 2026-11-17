@@ -20,7 +20,7 @@ const Meta = ({ children, title }) => <span title={title} style={{ flex: 1, minW
 const Ell = ({ children, title, c = '' }) => <span className={c} title={title} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{children}</span>;
 const n1 = (v) => (v == null ? '—' : Number(v).toFixed(1));
 const n0 = (v) => (v == null ? '—' : Math.round(Number(v)).toLocaleString('en-IN'));
-const secs = (ms) => (ms == null ? '—' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+const secs = (ms) => (ms == null ? '—' : ms < 1000 ? `${ms} ms` : ms < 90000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`);
 // "qwen2.5:7b-instruct" -> "Qwen 2.5 7B" on the chips; anything else is shown as it is
 const pretty = (name) => { const m = /^qwen(\d(?:\.\d)?):(\d+)b/i.exec(name || ''); return m ? `Qwen ${m[1]} ${m[2]}B` : name || '—'; };
 const STATUS_TAG = { done: 'ok', failed: 'bad', running: 'a', queued: '', skipped: 'w' };
@@ -198,7 +198,8 @@ export default function AiPage() {
   const jobCols = [{ h: 'Job', ell: true }, { h: 'Time', w: 142 }, { h: 'Model', w: 150, lo: true }, { h: 'Took', w: 70, n: true }, { h: 'Status', w: 78 }, { h: 'Error', w: narrow ? 200 : 320, ell: true, lo: true }];
   const jobRows = jobs.map((j) => ({ key: j.id, title: `#${j.id} · ${j.kind} · ${j.key} · ${j.status}${j.note ? ` · ${j.note}` : ''}${j.tokens ? ` · ${j.tokens} tokens` : ''}${j.error ? ` · ${j.error}` : ''}`,
     cells: [<><b>{j.kind}</b> <small className="muted">· {j.key}</small></>, <span className="mono">{stamp(j.finished || j.started || j.created)}</span>, <span className="muted">{j.model || '—'}</span>,
-      <span className="mono">{secs(j.ms)}</span>, <Tag c={STATUS_TAG[j.status] ?? ''}>{j.status}</Tag>, <Ell title={j.error || ''} c={j.error ? 'down' : 'muted'}>{j.error || (j.note || '—')}</Ell>] }));
+      <span className="mono">{j.status === 'running' && j.elapsed_s != null ? `${secs(j.elapsed_s * 1000)} …` : secs(j.ms)}</span>, <Tag c={STATUS_TAG[j.status] ?? ''}>{j.status}</Tag>,
+      <Ell title={j.error || j.note || ''} c={j.error ? 'down' : 'muted'}>{j.error || (j.status === 'queued' && j.ahead != null ? `${j.ahead ? `${j.ahead} ahead · ` : 'next · '}${j.note || ''}` : (j.note || '—'))}</Ell>] }));
 
   return <div className="rd">
     {err && <div className="rbanner bad">{err}</div>}
