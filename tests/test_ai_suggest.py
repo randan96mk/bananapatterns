@@ -271,7 +271,7 @@ def test_run_night_sends_the_evening_list_once(ollama, cfg):
     assert out["note"].startswith("1 suggestion(s) born") and len(fake.sent) == 1
     text = fake.sent[0][1]
     assert text.startswith("🤖 <b>[AI] 1 suggestion</b> for Wednesday") and "<b>#1</b> ⏸ <b>Skip PLAN1 tomorrow</b> · high" in text
-    assert "until 9:16 AM, 18 Nov" in text and "accept N" in text and no_brokers(text)
+    assert "until 9:16 AM" in text and "accept N" in text and no_brokers(text)          # ", 18 Nov" only while 18 Nov is not today (clock)
     suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
     assert len(fake.sent) == 1                                                                   # the same key: once a day
     job = suggest.enqueue_tonight(cfg, NIGHT)

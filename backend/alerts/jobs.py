@@ -612,9 +612,8 @@ class Scheduler:
             sent = self.alert_filings(new or [], now) + self.alert_deals(deals)
         if new and self.state.config.ai.enabled:          # 🤖 notes for the new in-scope filings (within the night window)
             try:
-                from backend.ai import guard, notes
-                if guard.night_window(now, self.state.config):   # by day the job would only be skipped: tonight's batch picks the filing up
-                    notes.enqueue_new_filings(self.state.config, new, now, self.notifier())
+                from backend.ai import notes
+                notes.enqueue_new_filings(self.state.config, new, now, self.notifier())   # by day the job waits in the queue until the night window opens
             except Exception:
                 logger.exception("AI notes for new filings failed")
         if new is None:
