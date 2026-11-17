@@ -60,8 +60,9 @@ def _options_rows(os_: Optional[dict]) -> list:
     for leg in o["legs"]:
         sold = leg["leg"] == "sold"
         now, entry, qty = leg["last"], leg["entry"], leg["qty"]
-        stop = o["stop_premium"] if sold else None
-        out.append({"book": "options", "account": "Options · paper", "strategy": f"NIFTY {o['bias'].lower()} credit spread",
+        stop = (leg.get("stop") or o["stop_premium"]) if sold else None
+        strat = "NIFTY afternoon pair (call + put spreads)" if o.get("kind") == "afternoon" else f"NIFTY {o['bias'].lower()} credit spread"
+        out.append({"book": "options", "account": "Options · paper", "strategy": strat,
                     "symbol": f"NIFTY {leg['strike']:,.0f} {leg['type']}", "side": "short" if sold else "long", "qty": qty, "lots": o["lots"],
                     "entry": entry, "now": now, "pnl": leg["pnl"], "pct": _pct(leg["pnl"], o.get("margin_est") or entry * qty), "stop": stop,   # % of the margin estimate
                     "stop_dist": round((stop - now) / stop * 100, 2) if sold and stop else None,      # % of the stop premium still to go

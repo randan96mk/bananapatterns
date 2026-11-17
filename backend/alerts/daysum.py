@@ -98,8 +98,8 @@ def options_part(config: AppConfig, day: str) -> Optional[dict]:
         return None
     row = json.loads(r[0])
     n = row.get("trades") or 0
-    return {"tag": obook.TAG, "value": row.get("equity"), "today": row.get("pnl") or 0.0, "trades": n,
-            "result": row.get("result") if n else row.get("why")}
+    return {"tag": obook.TAG, "value": row.get("equity"), "today": row.get("pnl") or 0.0, "trades": n,     # the afternoon pair = 1 trade
+            "result": row.get("result") if n else row.get("why"), "afternoon": "afternoon" in (row.get("kinds") or [])}
 
 
 def flow_part(config: AppConfig, day: str) -> Optional[dict]:

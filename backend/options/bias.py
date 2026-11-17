@@ -109,3 +109,16 @@ def is_5m_close(t: time) -> bool:
 def slot_of(t: time) -> str:
     """The 5-minute slot boundary at or before t, 'HH:MM'."""
     return f"{t.hour:02d}:{t.minute - t.minute % 5:02d}"
+
+
+def day_range(bars: list[dict], until: Optional[str] = None) -> Optional[dict]:
+    """{high, low, bars} of the day so far from the complete 5-minute bars (start + 5 <= until; all without it)."""
+    five = [b for b in resample(bars, 5) if until is None or _add(b["t"], 5) <= until]
+    if not five:
+        return None
+    return {"high": max(b["h"] for b in five), "low": min(b["l"] for b in five), "bars": len(five)}
+
+
+def in_band(spot: float, rng: dict, pct: float = 0.25) -> bool:
+    """Spot inside the opening range's extension band: range low - pct% .. range high + pct%."""
+    return rng["low"] * (1 - pct / 100) <= spot <= rng["high"] * (1 + pct / 100)

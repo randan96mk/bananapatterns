@@ -12,7 +12,7 @@ from backend.engine import attention
 from backend.options import book
 from tests.test_alerts import FakeTG
 from tests.test_login import BotTG, update
-from tests.test_options_book import DAY, World, at, minutes, path, run_day, seed_prev_day
+from tests.test_options_book import DAY, OLD_FLOW, World, at, minutes, path, run_day, seed_prev_day
 
 BULL = {"09:30": 25050, "09:45": 25150, "09:55": 25250, "10:05": 25400, "10:30": 25450}
 BROKERS = ("Zerodha", "Tradetron")
@@ -45,7 +45,7 @@ def test_bias_message_is_the_mock():
     assert lines[0] == "🧭 <b>Options · paper · bias BULLISH · 9:52 AM</b>"
     assert lines[1] == "NIFTY 26,131 above the 9:15–9:30 range (25,980–26,118) and VWAP 26,094 · prev high taken"
     assert lines[2] == "SELL <b>25,900 PE</b> @ 48.50 · BUY 25,650 PE @ 12.00 · 1 lot · credit ₹2,738"
-    assert lines[3] == "stop 54.75 (+50%) or a 5-min close under VWAP · target 14.60 (60%) · worst case −₹13,350"
+    assert lines[3] == "stop 54.75 (+50%) or a 5-min close under VWAP · target 14.60 (60%) · worst case −₹13,350 · exits: premium 1.5× · VWAP on"
     assert lines[4] == "<i>margin ~₹52,000 · 4 sessions to expiry · VIX 13.4</i>" and lines[5].startswith("<i>chain: support 25,800")
     assert no_brokers(t)
     bear = msg.options_bias({**MOCK_OPEN, "bias": "BEARISH", "sold": {"strike": 26300.0, "type": "CE", "entry": 40.0}, "lots": 2, "sessions": 0, "n": 2})
@@ -102,6 +102,7 @@ def test_one_liners():
 class St:
     def __init__(self, w, cfg=None):
         self.config = cfg or AppConfig()
+        self.config.options = replace(self.config.options, **OLD_FLOW)     # the flow these tests assume (the entry modes off)
         self.config.alerts = AlertsConfig(chat_id="42", intraday=False, filings=False)
         self.client = w
         self.token_source = "db"
@@ -136,7 +137,7 @@ def test_tick_sends_every_alert_once():
     summ = msg.options_alert(state["alerts"][-1])                                     # its text is still built (the API lists it)
     assert bias.startswith("🧭 <b>Options · paper · bias BULLISH · 9:50 AM</b>") and "SELL <b>24,800 PE</b>" in bias and "BUY 24,550 PE" in bias
     assert "2 lots" in bias and "above the 9:15–9:30 range (25,000–25,100)" in bias and "prev high taken" in bias and "5 sessions to expiry" in bias
-    assert "VIX 14.0" in bias and "chain:" in bias and "→ 3/3" in bias and "(+50%)" in bias and "(60%)" in bias
+    assert "VIX 14.0" in bias and "chain:" in bias and "→ 3/3" in bias and "(+100%)" in bias and "exits: premium 2× · VWAP on" in bias and "(60%)" in bias
     t = book.trades()[0]
     assert exit_.startswith("🎯 <b>Options · paper · target</b> · 24,800 / 24,550 PE closed at") and msg.inr(t["net"], sign=True) in exit_
     assert "held" in exit_ and "breakeven stop was armed at" in exit_ and t["be_t"] in exit_
@@ -262,3 +263,9 @@ def test_attention_items():
     assert attention._options(cfg, False, at("10:00", DAY.replace(day=22))) == []                      # a Sunday / another day: today's items only
     out = attention.signals(cfg, False)
     assert "options" in out and set(out["options"]) == {"level", "items", "sig"}
+
+
+def test_bias_message_exits_line_follows_the_switch():
+    t = msg.options_bias({**MOCK_OPEN, "stop_pct": 100.0, "stop_premium": 97.0, "vwap_exit": False})
+    line = t.split("\n")[3]
+    assert line == "stop 97.00 (+100%) · target 14.60 (60%) · worst case −₹13,350 · exits: premium 2× · VWAP off" and "5-min close" not in line

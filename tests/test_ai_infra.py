@@ -475,7 +475,19 @@ def test_ai_commands_and_help(ollama, cfg):
 
 # --- health, attention, the scheduler's tick ---------------------------------------------------------------------------------------------
 
-def test_health_rows(ollama, cfg):
+class _Clock(datetime):
+    """guard.breaker() reads the wall clock when no `now` is given: pin it inside the seeded breaker window."""
+    @classmethod
+    def now(cls, tz=None):
+        return at("10:30")
+
+
+def _pin_clock(monkeypatch):
+    monkeypatch.setattr(guard, "datetime", _Clock)
+
+
+def test_health_rows(ollama, cfg, monkeypatch):
+    _pin_clock(monkeypatch)
     from backend.engine import health
     rows = lambda c: {x["key"]: x for x in health.checks(c, has_token=False)}
     cfg.ai.enabled = False
@@ -501,7 +513,8 @@ def test_health_rows(ollama, cfg):
     assert h["ai_service"]["ok"] is True and h["ai_service"]["warn"] is True and h["ai_service"]["state"] == "AI off · unreachable"
 
 
-def test_attention_items(ollama, cfg):
+def test_attention_items(ollama, cfg, monkeypatch):
+    _pin_clock(monkeypatch)
     from backend.engine import attention
     assert attention.signals(cfg, True)["ai"] == {"level": None, "items": [], "sig": ""}
     assert attention._ai(cfg) == []

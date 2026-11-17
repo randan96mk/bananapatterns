@@ -5,12 +5,13 @@ import { inr, signed, pct, cls, lakh } from '../fmt';
 import { useLive } from '../services/live';
 import AttentionStrip from './AttentionStrip';
 import NextUp from './NextUp';
-import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Bar } from './ui2';
+import { Head, Chip, Switch, Tag, Panel, FixedTable, Act, Cards, Card, Bar, Seg } from './ui2';
 import { AiWhy } from './AiDot';
 import { useNarrow, useIsPhone } from '../useMedia';
 
-// 🧩 NIFTY weekly options, paper only: one credit spread a day on the opening-range bias (9:45–11:00), confirmed by the
-// option chain, out by 3:10 PM. Everything here reads GET /api/options (stream topic "options"); the switches, the
+// 🧩 NIFTY weekly options, paper only: a credit spread on the opening-range bias (9:45–11:00), confirmed by the option
+// chain, out by 3:10 PM; more entries (each its own switch): the same bias again after a stop, re-entries until 1:00 PM,
+// the afternoon pair at 1:30 PM on a quiet day (a call spread above + a put spread below). Everything here reads GET /api/options (stream topic "options"); the switches, the
 // kill switch, "Close now", "Hold today" and a deposit confirm first. The Real switch exists but is not wired yet.
 const n2 = (v) => (v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const n0 = (v) => (v == null ? '—' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 }));
@@ -23,15 +24,54 @@ const ROW = { display: 'flex', gap: 10, alignItems: 'center', fontSize: 12.5, mi
 const LINE = { padding: '10px 14px 0', fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
 const Meta = ({ children, title }) => <span title={title} style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{children}</span>;
 const Ell = ({ children, title, c = '' }) => <span className={c} title={title} style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{children}</span>;
-const RULE_LABELS = ['Book', 'Bias', 'Chain', 'Strikes', 'Size', 'Exits', 'No entry', 'Fills'];
+const RULE_LABELS = ['Book', 'Bias', 'Chain', 'Strikes', 'Size', 'Exits', 'No entry', 'Fills', 'Entries'];
+const KIND_TAG = { flip: 're-entry · flip', same: 're-entry · same', afternoon: 'afternoon' };
+const arrow = (b) => (b === 'BULLISH' ? <span className="up">↑</span> : b === 'BEARISH' ? <span className="down">↓</span> : b === 'NEUTRAL' ? <span className="muted" title="the afternoon pair: one spread each side">⇅</span> : <span className="muted">—</span>);
 const STEP_META = { 'Opening range': '15-minute high and low on the NIFTY 50 index, 9:15–9:30', 'VWAP (futures)': 'VWAP from the near-month NIFTY future’s 1-minute candles (the index has no volume)',
   'Previous day': 'the previous session’s high must be taken for a bullish bias, its low for a bearish one', 'Option chain': 'walls · OI change since 9:30 · PCR → score 0–3 · 2–3 full size · 1 half · 0 no trade' };
 const SNAP_KIND = { view: 'last quotes', close: 'last close snapshot', open: '9:30 snapshot', bias: 'bias snapshot', live: 'live snapshot' };
 const STRIP_LABEL = { contracts: 'contracts', range: 'range set', open_snap: 'snapshot', entry: 'entered', be: 'breakeven', exit: 'exited', no_trade: 'no trade', close_snap: 'close snap',
-  summary: 'summary', hold: 'hold', skip: 'no entry', disagree: 'chain says no', nochain: 'no chain', nolots: 'no size', nostrike: 'no strike', fail: 'failed', noquote: 'no quote', no_data: 'no data' };
+  summary: 'summary', hold: 'hold', skip: 'no entry', afternoon: 'afternoon', afternoon_skip: 'afternoon', disagree: 'chain says no', nochain: 'no chain', nolots: 'no size', nostrike: 'no strike', fail: 'failed', noquote: 'no quote', no_data: 'no data' };
 const ENDED = (r) => (/target/.test(r) ? 'ok' : /stop|kill/.test(r) ? 'bad' : /hard|no data|closed by you/.test(r) ? 'w' : '');
-const ALERT_ICON = (a) => ({ entry: '🧭', exit: /stop|kill/.test(a.text) ? '🛑' : '🎯', summary: '🌙', no_trade: '◦', chain_disagrees: '🧩', no_data: '❗' }[a.kind] || '⚠');
-const ALERTS = [['🧭', '9:45–11:00', 'bias found with the strikes, credit, stop and worst case · or “no trade today” at 11:00'], ['🛑', 'live', 'premium stop · VWAP stop · breakeven stop armed'],
+const ALERT_ICON = (a) => ({ entry: '🧭', afternoon: '🧩', exit: /stop|kill/.test(a.text) ? '🛑' : '🎯', summary: '🌙', no_trade: '◦', chain_disagrees: '🧩', no_data: '❗' }[a.kind] || '⚠');
+const EXIT_WORD = { premium: 'premium', breakeven: 'breakeven', target: 'target', vwap: 'VWAP', time: 'time' };
+const EXIT_C = { premium: 'bad', breakeven: 'w', vwap: 'bad', target: 'ok', time: '' };
+const times = (p) => `${+(1 + (p || 0) / 100).toFixed(2)}×`;                   // stop_pct 100 -> "2×"
+
+// Report as if · exit rules: every closed spread replayed on its day's chain snapshots under other stops (GET /api/options/asif).
+function AsIf({ a, asDays, setAsDays, err }) {
+  const narrow = useNarrow();
+  const phone = useIsPhone();
+  const rules = a?.rules || [];
+  const cols = [{ h: 'Rule', ell: true }, { h: 'Trades', w: 76, n: true }, { h: 'Won', w: 88, n: true }, { h: 'Net', w: 104, n: true }, { h: 'Avg', w: 92, n: true },
+    { h: 'Worst', w: 92, n: true }, { h: 'Exits', w: 300, ell: true }];
+  const rows = rules.map((r) => ({ key: r.key, cls: r.actual ? 'asis' : undefined, title: `${r.label} · stop +${r.stop_pct}% (${times(r.stop_pct)}) · +${r.stop_pct_expiry}% on expiry day · VWAP exit ${r.vwap ? 'on' : 'off'} · breakeven ${r.exits.breakeven}`,
+    cells: [r.actual ? <b>{r.label}</b> : <span>{r.label}</span>, r.trades, `${r.won}${r.trades ? ` · ${Math.round((100 * r.won) / r.trades)}%` : ''}`,
+      r.actual ? <b className={cls(r.net)}>{signed(r.net)}</b> : <span className={cls(r.net)}>{signed(r.net)}</span>, r.avg == null ? '—' : <span className={cls(r.avg)}>{signed(r.avg)}</span>,
+      r.worst == null ? '—' : <span className={cls(r.worst)}>{signed(r.worst)}</span>,
+      phone ? `stop ${r.exits.premium} · VWAP ${r.exits.vwap} · tgt ${r.exits.target} · time ${r.exits.time}${r.exits.breakeven ? ` · BE ${r.exits.breakeven}` : ''}`
+        : `premium ${r.exits.premium} · VWAP ${r.exits.vwap} · target ${r.exits.target} · time ${r.exits.time}${r.exits.breakeven ? ` · breakeven ${r.exits.breakeven}` : ''}`] }));
+  const keys = rules.map((r) => r.key);
+  const label = Object.fromEntries(rules.map((r) => [r.key, r.label.replace(/^as is · /, 'as is ')]));
+  const ptCols = [{ h: 'Day', ell: true }, { h: 'Bias', w: 50 }, { h: 'Actual', w: narrow ? 132 : 158, ell: true }, ...keys.map((k) => ({ h: label[k], w: narrow ? 132 : 158, ell: true }))];
+  const cell = (x) => (x?.why ? <span title={`${EXIT_WORD[x.why] || x.why}${x.exit_t ? ` at ${x.exit_t}` : ''} · net ${signed(x.net)}`}><span className={cls(x.net)}>{signed(x.net)}</span> <Tag c={EXIT_C[x.why] ?? ''}>{EXIT_WORD[x.why] || x.why}</Tag></span> : <span className="muted">—</span>);
+  const ptRows = (a?.per_trade || []).map((p) => ({ key: `${p.day}-${p.id}`, cls: p.skipped ? 'dim' : undefined,
+    title: `${p.day} · ${p.strikes || ''}${p.skipped ? ` · skipped: ${p.skipped}` : ''}${p.thin ? ' · thin snapshots' : ''}`,
+    cells: [<><b>{wday(p.day)} {day(p.day)}</b> <small className="muted">{p.skipped ? `skipped · ${p.skipped}` : `${p.strikes || ''}${p.thin ? ' · thin' : ''}`}</small></>,
+      arrow(p.bias),
+      cell(p.actual), ...keys.map((k) => cell(p.by_rule?.[k]))] }));
+  return <Panel title="Report as if · exit rules" meta={a ? `${a.trades} trade${a.trades === 1 ? '' : 's'}${a.skipped ? ` · ${a.skipped} skipped` : ''}` : null}
+    right={<Seg small opts={[[30, '30 d'], [60, '60 d'], [90, '90 d']]} v={asDays} set={setAsDays} />}>
+    {err ? <div className="rbanner bad">{err}</div> : null}
+    <FixedTable className="asif" cols={cols} rows={rows} empty={a ? 'No closed spread in this window yet.' : 'Loading…'} />
+    <div className="rnote">{a?.note || 'replayed from the 5-minute chain snapshots · VWAP exits kept at their real time, never invented · paper only'}{a ? ` · ${a.snapshots_ok} of ${a.replayed} replayed with full snapshots · time exit ${a.time_exit}` : ''}</div>
+    {ptRows.length > 0 && <details className="fold" style={{ margin: '0 14px 10px' }}><summary>per trade · {ptRows.length}</summary>
+      <FixedTable cols={ptCols} rows={ptRows} /></details>}
+  </Panel>;
+}
+
+const ALERTS = [['🧭', '9:45–11:00', 'bias found with the strikes, credit, stop and worst case · or “no trade today” at 11:00'], ['🔁', 'to 1:00', 're-entry (2 of 3) · same bias after a stop or a flipped bias'],
+  ['🧩', '1:30', 'afternoon sell · a call spread above + a put spread below on a quiet day'], ['🛑', 'live', 'premium stop · VWAP stop · breakeven stop armed'],
   ['🎯', 'live', 'target 60% hit · time exit 3:10'], ['⚠', 'daily', 'event day skipped · VIX > 20 half size · daily loss limit · chain disagrees'], ['🌙', '3:35', 'day summary: credit kept, trades, book']];
 
 // Today's strip: what the book did (from the timeline), "now", what is still to come (from the schedule).
@@ -67,10 +107,14 @@ export default function OptionsPage() {
   const [tick, setTick] = useState(0);
   const [cap, setCap] = useState('');
   const [busy, setBusy] = useState('');
+  const [asDays, setAsDays] = useState(60);
+  const [asif, setAsif] = useState(null);
+  const [asErr, setAsErr] = useState('');
   const narrow = useNarrow();
   const phone = useIsPhone();
   const reload = () => setTick((t) => t + 1);
   useEffect(() => { api.getOptions().then((x) => { setD(x); setErr(''); setCap((c) => c || String(x.capital)); }).catch((e) => setErr(e.message)); }, [tick]);
+  useEffect(() => { api.getOptionsAsif(asDays).then((x) => { setAsif(x); setAsErr(''); }).catch((e) => setAsErr(e.message)); }, [asDays, tick]);
   useEffect(() => { if (live && !live.error) { setD(live); setCap((c) => c || String(live.capital)); } }, [live]);
   const act = (key, p) => { setBusy(key); p.then(() => { setErr(''); reload(); }).catch((e) => setErr(e.message)).finally(() => setBusy('')); };
   const setSw = (body, text) => { if (!text || window.confirm(text)) act('sw', api.putOptionsSettings(body)); };
@@ -79,6 +123,11 @@ export default function OptionsPage() {
   };
   const closeNow = () => {
     const o = d.open;
+    if (o.kind === 'afternoon') {
+      const sold = o.legs.filter((l) => l.leg === 'sold');
+      if (window.confirm(`Close the afternoon pair now?\n\nBuy back ${sold.map((l) => `${n0(l.strike)} ${l.type}`).join(' and ')} at the mid + ₹1 and sell both hedges at the mid − ₹1 · ${o.lots} lot${o.lots === 1 ? '' : 's'} each side · MTM now ${signed(o.pnl)} (before the exit charges). Paper only; nothing is sent anywhere.`)) act('close', api.optionsClose());
+      return;
+    }
     if (window.confirm(`Close the open ${o.bias} spread now?\n\nBuy back ${n0(o.legs[0].strike)} ${o.legs[0].type} at the mid + ₹1 and sell the hedge ${n0(o.legs[1].strike)} ${o.legs[1].type} at the mid − ₹1 · ${o.lots} lot${o.lots === 1 ? '' : 's'} · MTM now ${signed(o.pnl)} (before the exit charges). Paper only; nothing is sent anywhere.`)) act('close', api.optionsClose());
   };
   const hold = () => {
@@ -104,29 +153,32 @@ export default function OptionsPage() {
   const otm = (leg) => (o?.spot ? `${(((leg.type === 'PE' ? o.spot - leg.strike : leg.strike - o.spot) / o.spot) * 100).toFixed(1)}% OTM` : '');
   const nextEvent = (G.event_days || []).find((x) => x >= T.date);
   const statusText = { waiting: G.trading_day === false ? 'Not a trading day · the book waits for the next session.' : `Waiting for a bias · ${G.window?.start}–${G.window?.end} on 5-minute closes${T.hold ? ' · on hold today' : ''}${G.kill ? ' · kill switch ON' : ''}.`,
-    no_trade: `No trade today · ${T.why || 'no bias'}.`, closed: `Closed · ${T.why} · realised ${signed(T.realised)}${(T.trades || 0) < (G.trades?.max || 2) && G.window?.open ? ' · one re-entry possible on a flipped bias' : ''}.`,
-    done: `Done for the day · ${T.why} · realised ${signed(T.realised)}.`, no_data: `${T.why || 'no data'} · the day is recorded as no data.`, holiday: 'Not a trading day.' }[T.status] || T.status;
+    no_trade: `No trade today · ${T.why || 'no bias'}${T.hint ? ` · ${T.hint}` : ''}.`, closed: `Closed · ${T.why} · realised ${signed(T.realised)}${T.hint ? ` · ${T.hint}` : ''}.`,
+    done: `Done for the day · ${T.why} · realised ${signed(T.realised)}${T.hint ? ` · ${T.hint}` : ''}.`, no_data: `${T.why || 'no data'} · the day is recorded as no data.`, holiday: 'Not a trading day.' }[T.status] || T.status;
 
   // the open spread's legs
   const legCols = [{ h: 'Leg', ell: true }, { h: 'Side', w: 62 }, { h: 'Lots', w: 50, n: true }, { h: 'Entry', w: 80, n: true }, { h: 'Now', w: 80, n: true }, { h: 'MTM', w: 96, n: true },
     { h: 'Stop · distance', w: narrow ? 170 : 200, ell: true }, { h: 'Delta · OTM', w: 140, lo: true, nw: true }, { h: 'Expiry', w: 140, lo: true }];
   const legRows = o ? o.legs.map((l) => ({ key: l.leg, title: `${l.tradingsymbol} · IV ${l.iv ?? '—'}% · delta ${l.delta?.toFixed(2)} · ${l.leg === 'sold' ? `stop ${n2(o.stop_premium)} (${o.stop_pct}%)${o.be_active ? ' · breakeven stop on' : ''}` : 'the hedge caps the loss at the spread width'}`,
-    cells: [<><b>NIFTY {n0(l.strike)} {l.type}</b> <small className="muted">{l.leg === 'sold' ? 'sold' : 'hedge'} · {day(o.expiry)}</small></>, <Tag c={l.side === 'SELL' ? 'bad' : 'ok'}>{l.side}</Tag>, o.lots, n2(l.entry),
+    cells: [<><b>NIFTY {n0(l.strike)} {l.type}</b> <small className="muted">{l.spread ? `${l.spread} side · ` : ''}{l.leg === 'sold' ? 'sold' : 'hedge'} · {day(o.expiry)}</small></>, <Tag c={l.side === 'SELL' ? 'bad' : 'ok'}>{l.side}</Tag>, o.lots, n2(l.entry),
       <>{n2(l.last)}{o.marked_at && <span className="livedot" title={`marked ${clock(o.marked_at)}`} />}</>, <b className={cls(l.pnl)}>{signed(l.pnl)}</b>,
-      l.leg === 'sold' ? <><StopBar last={l.last} stop={o.stop_premium} /><span className={`mono ${o.near_stop ? 'down' : 'up'}`}>{n2(o.stop_premium)} · {o.near_stop ? 'near stop' : o.be_active ? 'breakeven on' : 'stop far'}</span></> : <span className="muted">exits with the sold leg</span>,
+      l.leg === 'sold' ? (() => { const stop = l.stop ?? o.stop_premium, near = l.near_stop ?? o.near_stop, be = l.be_active ?? o.be_active;
+        return <><StopBar last={l.last} stop={stop} /><span className={`mono ${near ? 'down' : 'up'}`}>{n2(stop)} · {near ? 'near stop' : be ? 'breakeven on' : 'stop far'}</span></>; })() : <span className="muted">exits with the sold leg</span>,
       <span className="mono">{l.delta != null ? Math.abs(l.delta).toFixed(2) : '—'} · {otm(l)}</span>, <>{day(o.expiry)}{sessions != null && <span className="muted"> · {sessions} session{sessions === 1 ? '' : 's'}</span>}</>] })) : [];
   if (o) legRows.push(`${o.footer} · ${o.lots} lot${o.lots === 1 ? '' : 's'} × ${o.lot_size} · opened ${o.opened_t}${o.be_active ? '' : ` · breakeven stop at ${n2(o.be_at)}`}`);
+  if (o && KIND_TAG[o.kind] && o.kind !== 'afternoon') legRows.push(`${KIND_TAG[o.kind]}${o.entry_why ? ` · ${o.entry_why}` : ''}`);
   if ((T.closed || []).length) legRows.push(`closed today: ${T.closed.map((c) => `#${c.n} ${c.why} ${signed(c.net)} at ${c.t}`).join(' · ')}`);
 
   // the chain: ±5 strikes around the money, widened to the open legs
   const strikes = C.strikes || [];
   const atm = C.atm || (strikes.length ? strikes[Math.floor(strikes.length / 2)].strike : null);
   const legStrikes = o ? o.legs.map((l) => l.strike) : [];
+  const soldStrikes = o ? o.legs.filter((l) => l.leg === 'sold').map((l) => l.strike) : [];
   const shown = strikes.filter((s) => Math.abs(s.strike - atm) <= 250 || legStrikes.includes(s.strike)).sort((a, b) => b.strike - a.strike);
   const maxOi = Math.max(1, ...shown.flatMap((s) => [s.ce?.oi || 0, s.pe?.oi || 0]));
   const chg = (x) => { if (!x || x.oi_chg == null) return <span className="muted">—</span>; const base = (x.oi || 0) - x.oi_chg; const p = base ? (100 * x.oi_chg) / base : 0;
     return <span className={`mono ${x.oi_chg > 0 ? 'up' : x.oi_chg < 0 ? 'down' : 'muted'}`} title={`${n0(x.oi)} OI · ${x.oi_chg > 0 ? '+' : ''}${n0(x.oi_chg)} since the baseline`}>{p > 0 ? '+' : p < 0 ? '−' : ''}{Math.abs(p).toFixed(0)}%</span>; };
-  const mark = (k) => { if (o && k === o.legs[0].strike) return <span className="up">sold ✓</span>; if (o && k === o.legs[1].strike) return <span className="muted">hedge</span>; if (k === atm) return <span>◆ spot</span>;
+  const mark = (k) => { if (soldStrikes.includes(k)) return <span className="up">sold ✓</span>; if (legStrikes.includes(k)) return <span className="muted">hedge</span>; if (k === atm) return <span>◆ spot</span>;
     if (k === C.walls?.support) return <span className="muted small">put wall</span>; if (k === C.walls?.resistance) return <span className="muted small">call wall</span>; return ''; };
   const chainCols = [{ h: 'Call OI', n: true }, { h: 'Δ OI', w: 64, n: true }, { h: 'IV', w: 54, n: true, lo: true }, { h: 'Strike', w: 84, n: true }, { h: '', w: 90, key: 'mark' }, { h: 'IV', w: 54, n: true, lo: true }, { h: 'Δ OI', w: 64, n: true },
     { h: 'Put OI', w: narrow ? 160 : 260 }];
@@ -138,16 +190,20 @@ export default function OptionsPage() {
   // the bias steps (+ the entry line when a spread was opened today)
   const steps = (B.steps || []).map((s) => ({ n: s.n, name: s.name, text: s.text, ok: s.ok }));
   const todayTrade = o || (d.trades || []).find((t) => t.day === T.date);
-  if (todayTrade) {
+  if (todayTrade && todayTrade.kind !== 'afternoon') {
     const s = todayTrade.legs ? { sold: { strike: todayTrade.legs[0].strike, type: todayTrade.legs[0].type, entry: todayTrade.legs[0].entry }, hedge: { strike: todayTrade.legs[1].strike, type: todayTrade.legs[1].type, entry: todayTrade.legs[1].entry } } : todayTrade;
     steps.push({ n: 5, name: 'Entry', ok: true, text: `sold ${n0(s.sold.strike)} ${s.sold.type} at ${n2(s.sold.entry)} · hedge ${n0(s.hedge.strike)} ${s.hedge.type} at ${n2(s.hedge.entry)} · ${todayTrade.lots} lot${todayTrade.lots === 1 ? '' : 's'} · credit ₹${n0(todayTrade.credit_rs)}`,
-      meta: `${todayTrade.opened_t || todayTrade.in} · gap ${T.gap_pct != null ? pct(T.gap_pct, 2) : '—'} · VIX ${T.vix ?? '—'} · ${sessions ?? '—'} session${sessions === 1 ? '' : 's'} to expiry${T.size_note ? ` · ${T.size_note}` : ''}` });
+      meta: `${KIND_TAG[todayTrade.kind] ? `${KIND_TAG[todayTrade.kind]} · ` : ''}${todayTrade.opened_t || todayTrade.in} · gap ${T.gap_pct != null ? pct(T.gap_pct, 2) : '—'} · VIX ${T.vix ?? '—'} · ${sessions ?? '—'} session${sessions === 1 ? '' : 's'} to expiry${T.size_note ? ` · ${T.size_note}` : ''}` });
   }
+  const A = T.afternoon;                                                         // the afternoon pair's look (once a day at afternoon_time)
+  if (A) steps.push({ n: 6, name: 'Afternoon sell', ok: A.ok, text: A.ok ? `day range ${A.range_pct}% ≤ ${A.max_pct}% · spot ${n0(A.spot)} inside ${n0(A.band?.[0])}–${n0(A.band?.[1])} · a call spread above + a put spread below` : `no entry · ${A.why}`,
+    meta: `${A.at} · the day's range from the 5-minute bars since 9:15 · band = the opening range ± 0.25%` });
+  else if (st.afternoon_sell && T.status !== 'holiday') steps.push({ n: 6, name: 'Afternoon sell', ok: null, text: `looks at ${ampm(st.afternoon_time)} when flat · day range ≤ ${st.afternoon_max_range_pct}% · spot inside the range ± 0.25%`, meta: 'a call spread above + a put spread below · no VWAP exit · one trade' });
 
   const dayCols = [{ h: 'Day · spread', ell: true }, { h: 'Bias', w: 50 }, { h: 'P&L', w: 96, n: true }, { h: 'Ended', w: 100, ell: true }];
   const whyByDay = Object.fromEntries((d.trades || []).filter((t) => t.ai_why).map((t) => [t.day, t.ai_why]));   // 🤖 the AI's likely cause per traded day
   const dayRows = days.flatMap((x) => [{ key: x.day, title: `${x.day} · ${x.result || x.why || ''}${x.chain_line ? ` · ${x.chain_line}` : ''}${x.size_note ? ` · ${x.size_note}` : ''}`,
-    cells: [<><b>{wday(x.day)} {x.day.slice(8)}</b> <small className="muted">{x.strikes ? `${x.strikes}${x.lots ? ` · ${x.lots} lot${x.lots === 1 ? '' : 's'}` : ''}` : x.no_data ? 'no data' : 'no trade'}</small></>, x.bias ? <span className={x.bias === 'BULLISH' ? 'up' : 'down'}>{x.bias === 'BULLISH' ? '↑' : '↓'}</span> : <span className="muted">—</span>,
+    cells: [<><b>{wday(x.day)} {x.day.slice(8)}</b> <small className="muted">{x.strikes ? `${x.strikes}${x.lots ? ` · ${x.lots} lot${x.lots === 1 ? '' : 's'}` : ''}` : x.no_data ? 'no data' : 'no trade'}</small></>, (x.kinds || []).includes('afternoon') && !x.bias ? arrow('NEUTRAL') : arrow(x.bias),
       <b className={x.trades ? cls(x.pnl) : 'muted'}>{x.trades ? signed(x.pnl) : '₹0'}</b>,
       <Tag c={x.trades ? ENDED(x.result || '') : x.no_data ? 'w' : ''} title={x.result || x.why}>{x.trades ? x.result : x.no_data ? 'no data' : 'no trade'}</Tag>] },
   ...(whyByDay[x.day] ? [{ key: `${x.day}-why`, span: <AiWhy why={whyByDay[x.day]} /> }] : [])]);
@@ -167,7 +223,7 @@ export default function OptionsPage() {
       <button type="button" className="btn ghost small" disabled={!!busy || T.hold} onClick={hold} title={T.hold ? 'already on hold today' : 'no new spread today · an open one keeps its exits'}>{T.hold ? 'On hold today' : busy === 'hold' ? 'Holding…' : 'Hold today…'}</button></>}>
       <Chip>capital <b>{inr(d.capital)}</b> · separate book</Chip>
       {expiryChip}
-      <Chip dot={G.kill ? 'bad' : o ? 'ok' : 'warn'} c={G.kill ? 'bad' : ''}>{G.kill ? 'kill switch ON · nothing opens' : !G.enabled ? 'options OFF · no new entries' : o ? <><b>1</b> spread open · bias <b className={o.bias === 'BULLISH' ? 'up' : 'down'}>{o.bias}</b> since {B.at}</>
+      <Chip dot={G.kill ? 'bad' : o ? 'ok' : 'warn'} c={G.kill ? 'bad' : ''}>{G.kill ? 'kill switch ON · nothing opens' : !G.enabled ? 'options OFF · no new entries' : o?.kind === 'afternoon' ? <><b>{(o.sides || []).length}</b> spread{(o.sides || []).length === 1 ? '' : 's'} open · afternoon pair since {o.opened_t}</> : o ? <><b>1</b> spread open · bias <b className={o.bias === 'BULLISH' ? 'up' : 'down'}>{o.bias}</b> since {B.at}</>
         : B.state ? <>bias <b className={B.state === 'BULLISH' ? 'up' : 'down'}>{B.state}</b> at {B.at} · {T.status === 'closed' || T.status === 'done' ? `closed · ${T.why}` : 'no spread open'}</> : <>no spread open · {T.status === 'no_trade' ? 'no trade today' : G.window?.open ? 'looking for a bias' : G.trading_day === false ? 'not a trading day' : `bias ${G.window?.start}–${G.window?.end}`}</>}</Chip>
       <Chip><Tag c="ok">PAPER</Tag> · real not wired</Chip>
       {d.updated_at && <Chip title="the book's last state change">since {day(d.start_date)} · updated {stamp(d.updated_at)}</Chip>}
@@ -177,8 +233,12 @@ export default function OptionsPage() {
         <div style={ROW}><Switch on={sw.paper} disabled={!!busy} onChange={(on) => setSw({ paper: on }, on ? 'Turn the Paper switch on?\n\nThe book ticks every minute 9:15–3:40 on trading days: range at 9:30, the bias 9:45–11:00, paper fills at the mid ± ₹1 a leg.' : 'Turn the Paper switch off?\n\nNo new spread is opened; an open spread still runs to its exit (nothing is held overnight).')} /><b>Paper</b><Meta><span className="muted">fills at mid ± ₹1 a leg · MTM every minute</span></Meta></div>
         <div style={ROW}><Switch red on={false} disabled title={sw.real_note} /><b className="muted">Real</b><Meta><span className="muted">{sw.real_note || 'no webhook yet · stays off'}</span></Meta></div>
         <div style={ROW}><Switch on={sw.enabled} disabled={!!busy} onChange={(on) => setSw({ enabled: on }, on ? `Enable the options book?\n\nIt looks for a bias ${G.window?.start}–${G.window?.end} on 5-minute closes and opens one credit spread when the chain agrees.` : 'Disable the options book?\n\nNo new entries; an open spread keeps its stops, target and the time exit. Paper marks go on.')} /><b>Enabled</b><Meta><span className="muted">looks for a bias {G.window?.start}–{G.window?.end}</span></Meta></div>
+        <div style={ROW}><Switch on={sw.vwap_exit} disabled={!!busy} onChange={(on) => setSw({ vwap_exit: on })} title="the VWAP exit: a 5-minute close back through VWAP against the bias closes the spread" /><b>VWAP exit</b><Meta><span className="muted">{sw.vwap_exit ? 'on' : 'off'} · premium stop {times(st.stop_pct)} the entry · paper</span></Meta></div>
+        <div style={ROW}><Switch on={sw.reentry_same_bias} disabled={!!busy} onChange={(on) => setSw({ reentry_same_bias: on })} title="after a premium, VWAP or breakeven stop: the same bias once more (once per bias a day) on a 5-minute close back over the range and VWAP, the chain still agreeing and the daily loss guard allowing; counts toward the trades a day" /><b>Same bias again</b><Meta><span className="muted">after a stop · once per bias · close back over range + VWAP</span></Meta></div>
+        <div style={ROW}><Switch on={sw.reentry_late} disabled={!!busy} onChange={(on) => setSw({ reentry_late: on })} title={`re-entries (same or flipped bias) until ${ampm(st.reentry_until)}; a first entry still only ${G.window?.start}–${G.window?.end}`} /><b>Re-entry to {ampm(st.reentry_until)}</b><Meta><span className="muted">first entries to {G.window?.end}</span></Meta></div>
+        <div style={ROW}><Switch on={sw.afternoon_sell} disabled={!!busy} onChange={(on) => setSw({ afternoon_sell: on })} title={`at ${ampm(st.afternoon_time)}, flat, the day's range ≤ ${st.afternoon_max_range_pct}% of spot and spot inside the opening range ± 0.25%: a call spread above + a put spread below, 1 lot each side, premium / breakeven / target / time exits, no VWAP; counts as one trade`} /><b>Afternoon sell</b><Meta><span className="muted">{ampm(st.afternoon_time)} · range ≤ {st.afternoon_max_range_pct}% · both sides</span></Meta></div>
         <div style={ROW}><Switch red on={G.kill} disabled={!!busy} onChange={kill} /><b>Kill switch</b><Meta><span className="muted">closes the spread, no new entries</span></Meta></div>
-        <div className="rnote">{T.hold ? '⏸ on hold today · ' : ''}{G.no_data ? '❗ no data today · ' : ''}tagged “paper” · Telegram: opt close · opt hold</div>
+        <div className="rnote">{T.hold ? '⏸ on hold today · ' : ''}{G.no_data ? '❗ no data today · ' : ''}{d.entries || ''} · tagged “paper” · Telegram: opt close · opt hold</div>
       </Panel>
       <Panel title="Today" meta={`${wday(T.date)} ${day(T.date)}`} right={<Meta>{G.trading_day === false ? 'not a trading day' : T.status === 'open' ? 'holding' : T.status}</Meta>}>
         <DayStrip today={T} open={!!o} phone={phone} />
@@ -189,8 +249,9 @@ export default function OptionsPage() {
       </Panel>
       <Panel title="Guards">
         {[[`Daily loss limit · ${st.daily_loss_pct}%`, <span className={G.daily_loss?.hit ? 'down' : 'up'}><b className="mono">{inr(G.daily_loss?.limit)}</b> · used {lossPct.toFixed(0)}%{G.daily_loss?.hit ? ' · HIT' : ''}</span>],
-          ['Trades today', <span><b>{G.trades?.used ?? 0} of {G.trades?.max}</b> · {Math.max(0, (G.trades?.max || 0) - (G.trades?.used || 0))} re-entry left</span>],
-          ['Entry window', <span>{short(G.window?.start)} – {G.window?.end} · <b className={G.window?.open ? 'up' : 'warn'}>{G.window?.open ? 'open' : 'closed'}</b></span>],
+          ['Trades today', <span><b>{G.trades?.used ?? 0} of {G.trades?.max}</b> · {Math.max(0, (G.trades?.max || 0) - (G.trades?.used || 0))} left{(T.kinds || []).length ? ` · ${T.kinds.map((k) => KIND_TAG[k] || 'first').join(', ')}` : ''}</span>],
+          ['Entry window', <span>{short(G.window?.start)} – {G.window?.end} · <b className={G.window?.open || G.window?.late_open ? 'up' : 'warn'}>{G.window?.open ? 'open' : G.window?.late_open ? 're-entries' : 'closed'}</b>{G.window?.reentry_until ? ` · re-entry to ${G.window.reentry_until}` : ''}</span>],
+          ['More entries', <span title={d.entries}>{G.entries ? [G.entries.same_bias && 'same bias', G.entries.late && `to ${G.entries.until}`, G.entries.afternoon && `afternoon ${G.entries.afternoon_time}`].filter(Boolean).join(' · ') || 'off' : '—'}</span>],
           ['No-trade days', <span title={(G.event_days || []).length ? `event days: ${G.event_days.join(', ')} (settings → options → event_days)` : 'no event days set (settings → options → event_days)'}>{(G.event_days || []).length} event day{(G.event_days || []).length === 1 ? '' : 's'}{nextEvent ? ` (next ${day(nextEvent)})` : ''} · gap &gt; {G.gap?.max}% · VIX &gt; {G.vix?.half_at} halves size</span>],
           ['Expiry day', <span>allowed · premium stop {st.stop_pct_expiry}%{M.expiry_day ? <b className="warn"> · today</b> : ''}</span>],
           ['Now', <span className={G.kill || T.hold || G.no_data ? 'down' : ''}>{[G.kill && 'kill ON', T.hold && 'hold today', G.no_data && 'no data', G.gap?.pct != null && `gap ${pct(G.gap.pct, 2)} ${G.gap.ok ? '✓' : '✗'}`, G.vix?.value != null && `VIX ${G.vix.value}${G.vix.half ? ' · half size' : ''}`].filter(Boolean).join(' · ') || 'all clear'}</span>]]
@@ -218,11 +279,11 @@ export default function OptionsPage() {
     </Cards>
     <div className="two">
       <div className="rd" style={COL}>
-        <Panel title="Open spread · paper" meta={o ? 1 : 0} right={<><Meta>marked every minute from the quotes’ mids · stops every minute · VWAP on 5-minute closes · nothing held overnight</Meta>
+        <Panel title={o?.kind === 'afternoon' ? 'Open spreads · afternoon pair · paper' : 'Open spread · paper'} meta={o ? (o.sides || [o]).length : 0} right={<><Meta>marked every minute from the quotes’ mids · stops every minute · {o?.kind === 'afternoon' ? 'no VWAP exit (non-directional)' : st.vwap_exit ? 'VWAP on 5-minute closes' : 'VWAP exit off'} · nothing held overnight</Meta>
           {o && <button type="button" className="btn ghost small" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={!!busy} onClick={closeNow}>{busy === 'close' ? 'Closing…' : 'Close now…'}</button>}</>}>
           <FixedTable cols={legCols} rows={legRows} empty={statusText} />
           {!o && (T.closed || []).length > 0 && <div className="rnote">closed today: {T.closed.map((c) => `#${c.n} ${c.why} ${signed(c.net)} at ${c.t}`).join(' · ')}</div>}
-          <div className="rnote">Sold leg: stop at +{st.stop_pct}% of its entry premium ({st.stop_pct_expiry}% on expiry day) or a 5-minute close back through VWAP · breakeven stop once it has decayed {st.be_after_pct}% · target when the spread is worth {100 - st.target_pct}% of the credit · time exit {ampm(st.time_exit)} · hard exit 3:20 PM. Paper fills at the mid ± ₹1 a leg, never at the last price. Nothing here places an order.</div>
+          <div className="rnote">Sold leg: stop at +{st.stop_pct}% of its entry premium ({times(st.stop_pct)}; +{st.stop_pct_expiry}% on expiry day){o?.kind === 'afternoon' ? ' · the afternoon pair: each side on its own, no VWAP exit' : st.vwap_exit ? ' or a 5-minute close back through VWAP' : ' · VWAP exit off'} · breakeven stop once it has decayed {st.be_after_pct}% · target when the spread is worth {100 - st.target_pct}% of the credit · time exit {ampm(st.time_exit)} · hard exit 3:20 PM. Paper fills at the mid ± ₹1 a leg, never at the last price. Nothing here places an order.</div>
         </Panel>
         <Panel title={`Option chain${C.expiry ? ` · ${day(C.expiry)}` : ''}`} meta={C.score != null ? `score ${C.score} of 3 · PCR ${C.pcr ?? '—'}` : C.pcr != null ? `PCR ${C.pcr}${C.kind ? ` · ${SNAP_KIND[C.kind] || `last ${C.kind} snapshot`}` : ''}` : null}
           right={<Meta>+1 spot above the call wall or ≥ 0.5% over the put wall · +1 put OI building, call OI not · +1 PCR &gt; {st.pcr_bull} (bullish; mirror for bearish, PCR &lt; {st.pcr_bear}) · 2–3 full size · 1 half · 0 no trade</Meta>}>
@@ -241,6 +302,7 @@ export default function OptionsPage() {
           {steps.map((s) => <Act key={s.n} icon={s.n} cls={s.ok === true ? 'up' : s.ok === false ? 'down' : ''} text={<><b>{s.name}</b> · {s.text}</>} meta={s.meta || STEP_META[s.name]} />)}
           {(B.checks || []).length > 0 && <div className="rnote">checked {B.checks.map((c) => c.t).join(' · ')}{B.checks.length >= 16 ? '' : ' · a 5-minute close is tested on each slot'}</div>}
         </Panel>
+        <AsIf a={asif} asDays={asDays} setAsDays={setAsDays} err={asErr} />
       </div>
       <div className="rd" style={COL}>
         <Panel title="Rules" meta="directional seller">

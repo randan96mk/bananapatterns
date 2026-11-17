@@ -127,11 +127,12 @@ def _options(config, kite: bool, now=None) -> list:
     if book.killed():
         out.append(("warn", "Options kill switch ON: no new spreads" + (" · the open spread is closed at once" if st.get("open") else "")))
     o = st.get("open")
-    if o:
-        s = o["sold"]
-        way = o["stop_premium"] - s["entry"]
+    for x in book.spreads_of(o):                              # the afternoon pair: each side
+        s = x["sold"]
+        way = x["stop_premium"] - s["entry"]
         if way > 0 and s.get("last") is not None and s["last"] >= s["entry"] + NEAR_STOP * way:
-            out.append(("sell", f"Options spread near its stop: {s['strike']:,.0f} {s['type']} at {s['last']:.2f} vs stop {o['stop_premium']:.2f}"))
+            out.append(("sell", f"Options spread near its stop: {s['strike']:,.0f} {s['type']} at {s['last']:.2f} vs stop {x['stop_premium']:.2f}"))
+    if o:
         if not kite:
             out.append(("warn", "Kite not logged in: the open options spread is NOT marked (the 15:20 hard exit still closes it)"))
     if book._daily_loss(st, config.options)["hit"]:

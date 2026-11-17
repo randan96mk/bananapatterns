@@ -1279,6 +1279,10 @@ class OptionsSettings(BaseModel):
     paper: Optional[bool] = None
     real: Optional[bool] = None
     enabled: Optional[bool] = None
+    vwap_exit: Optional[bool] = None
+    reentry_same_bias: Optional[bool] = None          # 🧩 more entries: the same bias again after a stop
+    reentry_late: Optional[bool] = None               # ... re-entries until reentry_until
+    afternoon_sell: Optional[bool] = None             # ... the afternoon pair
 
 
 class OptionsCapital(BaseModel):
@@ -1298,7 +1302,8 @@ def options_summary():
 
 @router.put("/options/settings")
 def options_settings(req: OptionsSettings):
-    """paper / enabled; real=true is refused (400 "not wired": no webhook yet)."""
+    """paper / enabled / vwap_exit / reentry_same_bias / reentry_late / afternoon_sell; real=true is refused (400 "not
+    wired": no webhook yet)."""
     from backend.options import book as obook
     try:
         return obook.set_switches(S().config, **req.model_dump(exclude_none=True))
@@ -1354,6 +1359,14 @@ def options_days(limit: int = Query(30, le=1000)):
 def options_trades(limit: int = Query(100, le=1000)):
     from backend.options import book as obook
     return {"rows": obook.trades(limit)}
+
+
+@router.get("/options/asif")
+def options_asif(days: int = Query(60, ge=1, le=1000)):
+    """Report as if · exit rules: the closed spreads of the last `days` days replayed on their days' chain snapshots
+    under the saved rule, 2× only, 2× + VWAP and 1.5× only (paper; VWAP exits kept at their real time, never invented)."""
+    from backend.options import asif
+    return asif.report(S().config, days)
 
 
 @router.get("/options/chain")

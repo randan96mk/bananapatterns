@@ -398,6 +398,17 @@ def check_ai_times(sec: "AIConfig") -> None:
             raise ValueError(f"time {getattr(sec, f)!r} must be HH:MM")
 
 
+OPTIONS_TIMES = ("window_start", "window_end", "time_exit", "reentry_until", "afternoon_time")
+
+
+def check_options_times(sec: "OptionsConfig") -> None:
+    """🧩 The options book's clock keys are HH:MM (24-hour inside; the pages show them 12-hour)."""
+    for f in OPTIONS_TIMES:
+        h, _, m = str(getattr(sec, f)).partition(":")
+        if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+            raise ValueError(f"{f} {getattr(sec, f)!r} must be HH:MM")
+
+
 @dataclass
 class FuturesConfig:
     """Stock futures book (separate from the cash books): the data layer's universe cap, the eligibility rules and the
@@ -406,12 +417,12 @@ class FuturesConfig:
     capital: float = 500000.0              # the futures book's own capital (deposits like Real / Paper)
     max_pos: int = 2                       # active futures positions at most ...
     small_lot_value: float = 450000.0      # ... a third is allowed when every open lot is under this lot value
-    max_lot_value: float = 600000.0        # eligibility: near-month lot value at most this
-    max_risk_pct: float = 6.0              # eligibility: 1-lot risk at the planned stop, % of capital
-    max_stop_pct: float = 5.0              # the ATR stop is capped at this % of the entry
+    max_lot_value: float = 1000000.0       # eligibility: near-month lot value at most this (6 L starved the book: 3 of 91 breakouts in 20 sessions)
+    max_risk_pct: float = 8.0              # eligibility: 1-lot risk at the planned stop, % of capital
+    max_stop_pct: float = 4.0              # the ATR stop is capped at this % of the entry
     top_oi: int = 100                      # eligibility: futures OI rank within the top N
     margin_pct: float = 20.0               # margin estimate = this % of the lot value (shown as an estimate)
-    max_notional_x: float = 2.5            # guard: open notional at most this x capital
+    max_notional_x: float = 4.0            # guard: open notional at most this x capital
     cash_floor: float = 150000.0           # guard: free cash after margin at least this
     daily_loss_pct: float = 3.0            # guard: no new entries once the day's loss reaches this % of capital
     heat_pct: float = 12.0                 # guard: sum of risk to stops at most this % of capital
@@ -422,7 +433,7 @@ class FuturesConfig:
     long_real: bool = False                # the long side for real (switch on the Futures page)
     short_paper: bool = True               # the short side on paper
     short_real: bool = False               # shorts for real: blocked while the short backtest verdict is False
-    universe_lot_cap: float = 600000.0     # data layer: sync futures candles for underlyings with lot value <= this
+    universe_lot_cap: float = 1000000.0    # data layer: sync futures candles for underlyings with lot value <= this
     history_years: int = 3                 # continuous futures history depth (Kite keeps about 3 years)
 
 
@@ -437,14 +448,22 @@ class OptionsConfig:
     max_delta: float = 0.30                # the sold strike: the first with |delta| at most this
     min_premium: float = 20.0              # the sold premium must be at least this (else one strike nearer, delta 0.35 at most)
     otm_pct: float = 1.0                   # the sold strike: at least this % out of the money (50-strike grid)
-    stop_pct: float = 50.0                 # stop when the sold premium rises this % over the entry ...
-    stop_pct_expiry: float = 35.0          # ... this on expiry day
+    stop_pct: float = 100.0                # stop when the sold premium rises this % over the entry (100 = 2x) ...
+    stop_pct_expiry: float = 70.0          # ... this on expiry day (70 = 1.7x)
+    vwap_exit: bool = True                 # the VWAP exit: a 5-minute close back through VWAP against the bias closes the spread
     be_after_pct: float = 40.0             # after the sold premium has decayed this %, the stop becomes breakeven
     target_pct: float = 60.0               # target: the spread's value down this % from the entry credit
     time_exit: str = "15:10"               # the time exit (a hard exit at 15:20 if it failed; nothing is held overnight)
     window_start: str = "09:45"            # the bias is looked for on 5-minute closes from ...
     window_end: str = "11:00"              # ... to this; no break by then = no trade today
-    max_trades_day: int = 2                # one re-entry at most (only on a flipped bias inside the window)
+    max_trades_day: int = 3                # trades a day at most (re-entries and the afternoon pair count; the pair = 1)
+    # 🧩 more entries (paper): each its own switch on the Options page
+    reentry_same_bias: bool = True         # after a stop: once per bias, the SAME bias again on a close back over range + VWAP
+    reentry_late: bool = True              # re-entries (same or flipped bias) until reentry_until instead of window_end
+    reentry_until: str = "13:00"           # ... to here (first entries keep window_end)
+    afternoon_sell: bool = True            # at afternoon_time on a quiet day: a call spread above + a put spread below
+    afternoon_time: str = "13:30"          # when the afternoon pair is looked at (once a day, flat only)
+    afternoon_max_range_pct: float = 0.6   # ... only when the day's range so far is at most this % of spot
     daily_loss_pct: float = 1.5            # no new entries once the day's realised + open loss reaches this % of capital
     vix_half: float = 20.0                 # India VIX over this halves the size (1 lot at least)
     pcr_bull: float = 1.1                  # chain score: PCR over this confirms a bullish bias ...
@@ -568,9 +587,9 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name in ("alerts", "ai"):
+        if name in ("alerts", "ai", "options"):
             try:
-                (check_alert_times if name == "alerts" else check_ai_times)(sec)
+                {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times}[name](sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))
@@ -620,4 +639,9 @@ def load_config(config: AppConfig | None = None) -> AppConfig:
                 screens.insert(screens.index("vcp") + 1, "flag")
                 set_setting(conn, "config.alerts", json.dumps(asdict(config.alerts)))
             set_setting(conn, "migrated.alerts_flag", "1")
+        if not get_setting(conn, "migrated.options_entries"):  # once: 🧩 more entries: the old default of 2 trades a day -> 3
+            if get_setting(conn, "config.options") and config.options.max_trades_day == 2:
+                config.options.max_trades_day = 3
+                set_setting(conn, "config.options", json.dumps(asdict(config.options)))
+            set_setting(conn, "migrated.options_entries", "1")
     return config

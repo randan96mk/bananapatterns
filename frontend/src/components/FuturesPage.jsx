@@ -304,6 +304,10 @@ export default function FuturesPage() {
         <Card unit="n" label="Short paper" value={`${sp.open ?? 0} open`} num={sp.open} k={sp.open ? '' : 'muted'} sub={`${sp.signals_month ?? 0} signals · 30 d · ${signed(sp.net)}`}
           fact={<>robust <Bar pct={sp.robust?.of ? (100 * sp.robust.pass) / sp.robust.of : 0} bad={sp.verdict === false} ok={sp.verdict === true} /> {sp.robust?.of ? `${sp.robust.pass} / ${sp.robust.of}` : 'not run'}</>} />
       </Cards>
+      {d.overlap && <div className="rnote" title="the long side can only trade E+ breakouts that are also futures names inside the lot cap · computed from the stored candles, no model">
+        breakouts · last {d.overlap.sessions} sessions: <b>{d.overlap.breakouts}</b> · in the futures universe (lot ≤ {lakh(d.overlap.lot_cap)}): <b className={d.overlap.in_universe ? '' : 'warn'}>{d.overlap.in_universe}</b>
+        {d.overlap.names?.length ? <> · {d.overlap.names.map((n) => `${n.symbol} ${day(n.day)}`).join(' · ')}</> : d.overlap.error ? <> · {d.overlap.error}</> : <> · none: the book cannot trade until a breakout lands inside the universe</>}
+      </div>}
       <div className="two">
         <div className="rd" style={COL}>
           {d.started && <MorningPanel onReplan={replan} replanning={replanning} onErr={setErr} />}

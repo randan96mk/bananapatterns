@@ -219,8 +219,8 @@ def test_skips_counted_with_reasons(monkeypatch):
     # a small lot gets the third slot
     s = fb.simulate(data, replace(cfg.futures, small_lot_value=10_000_000.0, max_notional_x=5.0), p, "long", fb.SLIP_PCT)
     assert s["skipped"]["slots"] == 0 and len(s["trades"]) == 3
-    s = fb.simulate(data, replace(cfg.futures, small_lot_value=10_000_000.0), p, "long", fb.SLIP_PCT)
-    assert s["skipped"]["notional"] == 1 and len(s["trades"]) == 2                            # ... within the 2.5x notional
+    s = fb.simulate(data, replace(cfg.futures, small_lot_value=10_000_000.0, max_notional_x=2.5), p, "long", fb.SLIP_PCT)
+    assert s["skipped"]["notional"] == 1 and len(s["trades"]) == 2                            # ... within a 2.5x notional
     # a ban list in force on the entry day holds AUX; results for ALT two sessions after the entry
     with get_db() as conn:
         conn.execute("INSERT INTO fo_ban VALUES (?, 'AUX')", (entry_day,))
@@ -231,7 +231,7 @@ def test_skips_counted_with_reasons(monkeypatch):
     assert {x["sym"] for x in sim["trades"]} == {"UP"}
     assert not any("rule was skipped" in n for n in data["notes"])
     # 3 lots a name: three of these lots (~Rs 14 L) never fit the notional cap at this capital
-    s = fb.simulate(data, cfg.futures, p, "long", fb.SLIP_PCT, lots=3)
+    s = fb.simulate(data, replace(cfg.futures, max_notional_x=2.5), p, "long", fb.SLIP_PCT, lots=3)
     assert s["trades"] == [] and s["skipped"]["notional"] >= 1 and s["skipped"]["lot"] == 1
     # ... smaller lots do, three at a time
     s = fb.simulate(data, replace(cfg.futures, max_notional_x=10.0), p, "long", fb.SLIP_PCT, lots=3)
@@ -310,8 +310,9 @@ def test_short_results_guard_and_stop_above_entry(monkeypatch):
     # the stop: ATR x atr_mult over the entry, within the cap, never over the swing high
     assert fb.stop_for("short", 100.0, 1.0, 101.5, p, cfg.futures) == 101.5
     assert fb.stop_for("short", 100.0, 1.0, None, p, cfg.futures) == pytest.approx(102.0)
-    assert fb.stop_for("short", 100.0, 10.0, None, p, cfg.futures) == pytest.approx(105.0)
-    assert fb.stop_for("long", 100.0, 10.0, None, p, cfg.futures) == pytest.approx(95.0)
+    assert fb.stop_for("short", 100.0, 10.0, None, p, cfg.futures) == pytest.approx(104.0)      # capped at max_stop_pct 4%
+    assert fb.stop_for("long", 100.0, 10.0, None, p, cfg.futures) == pytest.approx(96.0)
+    assert fb.stop_for("long", 100.0, 10.0, None, p, replace(cfg.futures, max_stop_pct=5.0)) == pytest.approx(95.0)
 
 
 # --- the report, the run, the gate and the routes -------------------------------------------------------------------
@@ -322,7 +323,7 @@ def test_report_shape_run_saved_and_verdict(monkeypatch):
     out = fb.build(cfg)
     assert set(out) == {"run", "long", "short", "cash_same_signals", "nifty", "verdict"}
     assert out["run"]["from"] == days(N)[260] and out["run"]["sessions"] == 160 and out["run"]["capital"] == 500000
-    assert out["run"]["settings"]["futures"]["max_notional_x"] == 2.5 and out["run"]["notes"]
+    assert out["run"]["settings"]["futures"]["max_notional_x"] == 4.0 and out["run"]["notes"]
     for side in ("long", "short"):
         x = out[side]
         for k in ("cagr", "net", "gross", "costs", "rolls", "trades", "win_rate", "avg_win", "avg_loss", "profit_factor", "drawdown",

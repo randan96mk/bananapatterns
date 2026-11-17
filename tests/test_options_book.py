@@ -127,7 +127,19 @@ class World:
         return rows
 
 
+# The flow these tests were written for: the three "more entries" modes off and two trades a day (the defaults now have
+# all three on and max_trades_day 3: see tests/test_options_entries.py, which uses `cfg_new`).
+OLD_FLOW = {"reentry_same_bias": False, "reentry_late": False, "afternoon_sell": False, "max_trades_day": 2}
+
+
 def cfg_for(**opts) -> AppConfig:
+    c = AppConfig()
+    c.options = replace(c.options, **{**OLD_FLOW, **opts})
+    return c
+
+
+def cfg_new(**opts) -> AppConfig:
+    """The saved defaults (every entry mode on)."""
     c = AppConfig()
     c.options = replace(c.options, **opts)
     return c
@@ -298,7 +310,7 @@ def test_reentry_once_on_a_flipped_bias(prev):
     ts = sorted(book.trades(), key=lambda t: t["n"])
     assert d["trades"] == 2 and d["biases"] == ["BULLISH", "BEARISH"] and [t["bias"] for t in ts] == ["BULLISH", "BEARISH"]
     assert ts[1]["sold"]["type"] == "CE" and ts[1]["n"] == 2 and ts[1]["why"] == "premium stop" and ts[1]["lots"] == 1 and ts[1]["score"] == 1
-    assert any("re-entry · sold" in x for x in tl(st)) and d["status"] == "done"
+    assert any("re-entry · flipped bias · sold" in x for x in tl(st)) and d["status"] == "done"
     assert d["checked"][-1] <= "10:15" and st["day"]["bias"] == "BEARISH"          # two trades done: the bias is not looked for again
 
 
@@ -310,7 +322,7 @@ def test_same_bias_cannot_reenter(prev):
 
 
 def test_expiry_day_uses_the_35_percent_stop(prev):
-    cfg = cfg_for()
+    cfg = cfg_for(stop_pct=50.0, stop_pct_expiry=35.0)            # the 1.5× rule saved (the defaults are 2× / 70%)
     w = World(path({"09:30": 25050, "09:45": 25150, "09:51": 25040}), expiry=DAY, iv=0.18)
     st = run_day(cfg, w, until=lambda s: s["open"])
     o = st["open"]
@@ -369,7 +381,8 @@ def test_switches_and_real_refused(prev):
     with pytest.raises(ValueError, match="not wired"):
         book.set_switches(cfg, real=True)
     sw = book.set_switches(cfg, enabled=False)
-    assert sw == {"paper": True, "real": False, "enabled": False, "killed": False, "real_allowed": False, "real_note": "no webhook yet · stays off"}
+    assert sw == {"paper": True, "real": False, "enabled": False, "vwap_exit": True, "reentry_same_bias": False, "reentry_late": False, "afternoon_sell": False,
+                  "killed": False, "real_allowed": False, "real_note": "no webhook yet · stays off"}
     st = run_day(cfg, World(path({"09:30": 25050, "09:45": 25150})), end="10:00")
     assert st["day"]["trades"] == 0 and any("switched off" in x for x in tl(st))
     assert book.set_switches(cfg, enabled=True, paper=False)["paper"] is False and cfg.options.real is False
@@ -403,7 +416,7 @@ def test_close_now_capital_and_summary_shape(prev):
     assert s["chain"]["walls"] == {"support": 24800.0, "resistance": 25300.0} and s["chain"]["pcr"] > 1.1 and s["chain"]["score"] == 3
     assert len(s["chain"]["strikes"]) == 25 and s["chain"]["strikes"][0]["pe"]["oi"] and s["chain"]["iv"]["put"] == pytest.approx(12.0, abs=0.3)
     assert s["today"]["status"] == "open" and s["today"]["timeline"] and s["today"]["schedule"][0]["t"] == "9:30 AM" and s["guards"]["window"]["open"]
-    assert s["switches"]["real_note"] == "no webhook yet · stays off" and len(s["rules"]) == 8
+    assert s["switches"]["real_note"] == "no webhook yet · stays off" and len(s["rules"]) == 9
     r = book.set_capital(cfg, 350000)
     assert r["delta"] == 50000.0 and book._state()["cash"] == pytest.approx(st["cash"] + 50000, abs=0.01) and cfg.options.capital == 350000.0
     res = book.close_now(cfg, w, at("09:52"))
@@ -474,3 +487,47 @@ def test_nothing_deleted_and_days_rewritten_not_dropped(prev):
         assert conn.execute("SELECT COUNT(*) FROM options_trades").fetchone()[0] == 1
     assert book.days()[0]["day"] == nxt.isoformat() and book.days()[1]["result"] == "target"
     assert book.summary(cfg, at("16:00", nxt))["curve"]["dates"] == [DAY.isoformat(), nxt.isoformat()]
+
+
+# --- exit rules: the 2× default, the vwap_exit switch, the "exits:" text ------------------------------------------------
+
+def test_default_stop_is_2x_and_the_exits_text(prev):
+    cfg = cfg_for()
+    assert (cfg.options.stop_pct, cfg.options.stop_pct_expiry, cfg.options.vwap_exit) == (100.0, 70.0, True)
+    assert book.exits_text(100, True) == "exits: premium 2× · VWAP on" and book.exits_text(50, False) == "exits: premium 1.5× · VWAP off"
+    assert book.exits_text(70, True) == "exits: premium 1.7× · VWAP on"
+    w = World(path(BULL))
+    st = run_day(cfg, w, until=lambda s: s["open"])
+    o = st["open"]
+    assert o["stop_pct"] == 100.0 and o["stop_premium"] == pytest.approx(o["sold"]["entry"] * 2, abs=0.01) and o["exits"] == "exits: premium 2× · VWAP on"
+    assert any(x.startswith("sold ") and x.endswith("exits: premium 2× · VWAP on") for x in tl(st))           # the entry line on the timeline
+    assert st["alerts"][0]["data"]["exits"] == "exits: premium 2× · VWAP on"
+    v = book.summary(cfg, at("09:52"))
+    assert v["open"]["footer"].endswith("time exit 3:10 PM · exits: premium 2× · VWAP on") and v["switches"]["vwap_exit"] is True
+    assert "2× its entry" in v["rules"][5] and "VWAP" in v["rules"][5]
+    cfg.options.vwap_exit = False                                                                       # the footer follows the switch at once
+    v = book.summary(cfg, at("09:52"))
+    assert v["open"]["footer"].endswith("exits: premium 2× · VWAP off") and "VWAP exit off" in v["rules"][5]
+
+
+def test_expiry_day_default_is_70_percent(prev):
+    cfg = cfg_for()
+    w = World(path({"09:30": 25050, "09:45": 25150, "09:51": 25040}), expiry=DAY, iv=0.18)
+    o = run_day(cfg, w, until=lambda s: s["open"])["open"]
+    assert o["expiry_day"] and o["stop_pct"] == 70.0 and o["stop_premium"] == pytest.approx(o["sold"]["entry"] * 1.7, abs=0.01)
+    assert o["exits"] == "exits: premium 1.7× · VWAP on"
+
+
+def test_vwap_exit_switch_gates_the_vwap_branch(prev):
+    """The VWAP-stop day of test_vwap_stop_day: with vwap_exit off the 9:55 close back under VWAP closes nothing."""
+    cfg = cfg_for(vwap_exit=False)
+    w = World(path({"09:30": 25050, "09:45": 25150, "09:51": 25080}))
+    st = run_day(cfg, w, end="10:30")
+    o = st["open"]
+    assert o is not None and o["vwap_checked"] == [] and o["vwap_exit"] is False and o["exits"].endswith("VWAP off")
+    assert book.trades() == [] and not any("VWAP stop" in x for x in tl(st))
+    sw = book.set_switches(cfg, vwap_exit=True)                                                         # switched back on: the next 5-minute close is tested
+    assert sw["vwap_exit"] is True and cfg.options.vwap_exit is True
+    st = run_day(cfg, w, start="10:31", until=lambda s: s["day"]["closed"])
+    t = book.trades()[0]
+    assert t["why"] == "vwap stop" and t["out"] == "10:35 AM"

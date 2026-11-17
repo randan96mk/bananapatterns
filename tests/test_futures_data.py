@@ -258,6 +258,7 @@ def _contract(lot=500, rank=5):
 
 def test_eligibility_ok_and_every_reason():
     cfg = AppConfig()
+    cfg.futures.max_lot_value, cfg.futures.max_risk_pct, cfg.futures.max_notional_x = 600000.0, 6.0, 2.5   # the reasons below are written for the 6 L / 6% / 2.5x caps
     c = _contract()
     ok = eligibility.check(cfg, "RELIANCE", "long", 1000.0, 960.0, set(), set(), [], contract=c)
     assert ok["ok"] and ok["reasons"] == [] and ok["lot_size"] == 500 and ok["lot_value"] == 500000.0
@@ -305,7 +306,7 @@ def test_eligibility_ok_and_every_reason():
 
 def test_eligibility_reads_the_stored_contract(make_client):
     instruments.refresh(make_client(QuoteKite(_nfo(), QUOTES)), TODAY)
-    out = eligibility.check(FuturesConfig(), "SAIL", "short", 120.0, 125.0, set(), set(), [])
+    out = eligibility.check(FuturesConfig(max_lot_value=600000.0, max_risk_pct=6.0), "SAIL", "short", 120.0, 125.0, set(), set(), [])
     assert out["lot_value"] == 960000.0 and out["reasons"] == ["lot too big ₹9.6 L > ₹6 L", "risk 8% > 6%"] and out["contract"]["token"] == 201
 
 
@@ -315,10 +316,10 @@ def test_futures_config_defaults_and_section():
     from backend.config import PERSISTED_SECTIONS
     f = FuturesConfig()
     assert (f.capital, f.max_pos, f.small_lot_value, f.max_lot_value, f.max_risk_pct, f.max_stop_pct, f.top_oi) == \
-        (500000, 2, 450000, 600000, 6.0, 5.0, 100)
-    assert (f.margin_pct, f.max_notional_x, f.cash_floor, f.daily_loss_pct, f.heat_pct, f.roll_days) == (20.0, 2.5, 150000, 3.0, 12.0, 2)
+        (500000, 2, 450000, 1000000, 8.0, 4.0, 100)
+    assert (f.margin_pct, f.max_notional_x, f.cash_floor, f.daily_loss_pct, f.heat_pct, f.roll_days) == (20.0, 4.0, 150000, 3.0, 12.0, 2)
     assert (f.long_paper, f.long_real, f.short_paper, f.short_real) == (True, False, True, False)
-    assert f.universe_lot_cap == 600000 and f.history_years == 3 and f.results_guard_sessions == 3
+    assert f.universe_lot_cap == 1000000 and f.history_years == 3 and f.results_guard_sessions == 3
     assert PERSISTED_SECTIONS["futures"] is FuturesConfig and AppConfig().section("futures").capital == 500000
     cfg = AppConfig()
     assert cfg.update_section("futures", {"max_pos": "3", "long_real": "true"})["max_pos"] == 3 and cfg.futures.long_real is True
@@ -367,6 +368,7 @@ def test_api_data_summary_and_refresh(api):
     client.set_access_token("tok")
     from backend.api import routes
     routes.S().token_source = "env"
+    tc.put("/api/config/futures", json={"universe_lot_cap": 600000})                     # the 6 L cap this test is written for
     assert tc.post("/api/futures/data/refresh").json() == {"status": "started", "job": "futures_data"}
     import threading
     for t in threading.enumerate():
