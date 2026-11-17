@@ -1422,6 +1422,15 @@ def ai_view_week(w: dict, rec: dict) -> str:
             f"plan {pct(w['baseline20'])} · {'beat' if w['beat'] else 'did not beat'} the plan\n{tail}")
 
 
+def ai_week_story(week: str, lines: list, at: Optional[str] = None, rows: Optional[int] = None) -> str:
+    """📖 [AI] Week 46 · the story: the model's observations (≤ 3, each marked "<i>AI ·</i>"), then a code footer (how
+    many trade rows they were checked against, when they were written, 12-hour)."""
+    n = str(week).split("-W")[-1].lstrip("0") or str(week)
+    foot = ["checked against " + _n(rows, "trade row") if rows is not None else None, f"written {at}" if at else None, "no action taken"]
+    return "\n".join([f"📖 <b>{AI_HEAD}Week {escape(n)} · the story</b>", *(AI_MARK + escape(str(ln), quote=False) for ln in lines),
+                      "<i>" + " · ".join(x for x in foot if x) + "</i>"])
+
+
 # --- 🌙 day summary (one close-of-day message across the books) ----------------------------------------------------------------
 
 def _n(n: int, word: str, plural: Optional[str] = None) -> str:

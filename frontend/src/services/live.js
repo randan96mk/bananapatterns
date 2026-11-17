@@ -52,3 +52,26 @@ export function useLiveStamp(topic) {
   useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 15000); return () => clearInterval(t); }, []);
   return value === undefined ? null : stamps[topic] || null;
 }
+
+// A stream topic with a plain GET behind it (topics `today_card`, `plan_heat`: the server pushes them every 60 s while
+// they change). The GET fills the value at once and keeps polling every `ms` for as long as the stream has not
+// delivered the topic recently (an older server without the topic, or a dropped connection). Returns
+// [value, reload, error]; reload() re-reads at once (after an action that changed it).
+export function useLiveOr(topic, fetcher, ms = 60000) {
+  const streamed = useLive(topic);
+  const [got, setGot] = useState({ v: undefined, at: 0 });
+  const [err, setErr] = useState('');
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let alive = true, t;
+    const load = (force) => {
+      const fresh = !force && stamps[topic] && Date.now() - stamps[topic] < ms * 2;
+      const p = fresh ? Promise.resolve() : fetcher().then((v) => { if (alive) { setGot({ v, at: Date.now() }); setErr(''); } }).catch((e) => { if (alive) setErr(e.message || 'failed'); });
+      p.finally(() => { if (alive) t = setTimeout(() => load(false), ms); });
+    };
+    load(true);
+    return () => { alive = false; clearTimeout(t); };
+  }, [topic, ms, n]);
+  const value = streamed !== undefined && (stamps[topic] || 0) > got.at ? streamed : got.v ?? streamed;
+  return [value, () => setN((x) => x + 1), value === undefined ? err : ''];
+}

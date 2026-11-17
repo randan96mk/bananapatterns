@@ -121,6 +121,9 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
 Object.assign(HELP_AI, {
   day_summary: 'One close-of-day Telegram summary across all the books (Real, Paper E+, Futures, Options, Signal track, AI) on trading days; replaces the separate options and signal-track day lines (true/false)',
   day_summary_time: 'When the day summary is sent (24-hour HH:MM, IST)' });
+// 📖 the Week story page (Portfolio › Week)
+Object.assign(HELP_AI, {
+  week: 'Sunday evening: the local model writes up to three observations about the week from the trade rows; figures are checked by code. Off = the Week page shows the numbers only.' });
 Object.assign(HELP, HELP2, HELP_OPT, HELP_AI);
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).

@@ -215,6 +215,11 @@ class Scheduler:
             jobs += brief.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
         except Exception:
             logger.exception("AI brief due check failed")
+        try:                                               # 📖 the week's story: Sunday evening
+            from backend.ai import week_story
+            jobs += week_story.due(now, self.state.config, self.done_today(today))
+        except Exception:
+            logger.exception("AI week due check failed")
         try:                                               # 🤖 suggestions: an open one past its time expires (no tap)
             from backend.ai import suggest
             suggest.expire_open(now)
@@ -326,6 +331,7 @@ class Scheduler:
             out["ai_why"] = self.run_ai_why(now)          # 🤖 why: the lines under today's exits (FIFO: after the notes)
             out["ai_suggest"] = self.run_ai_suggest(now)  # 🤖 suggestions: for the next session (FIFO: after the notes)
             out["ai_view"] = self.run_ai_view(now)        # 🤖 AI view: a rating beside every suggested stock (after the suggestions)
+            out["ai_week_story"] = self.run_ai_week_story(now)   # 📖 the last closed week's story when Sunday's was missed (after the ratings)
         return out
 
     def run_ai_why(self, now: datetime) -> dict:
@@ -361,6 +367,33 @@ class Scheduler:
         except Exception as exc:
             logger.exception("AI view enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_ai_week_story(self, now: datetime) -> dict:
+        """📖 queue the last closed week's story when it has none (FIFO after the ratings). Never raises."""
+        if not self.state.config.ai.enabled:
+            return {"status": "off"}
+        try:
+            from backend.ai import week_story
+            return week_story.enqueue_due(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI week story enqueue failed")
+            return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_ai_week(self, now: datetime) -> dict:
+        """📖 Sunday evening: queue the week's story (kind "night", key week:<iso>) and record the job so it is queued once.
+        Never raises."""
+        from backend.ai import week_story
+        today, started = now.date(), now_ist()
+        try:
+            job = week_story.enqueue_due(self.state.config, now, self.notifier())
+        except Exception as exc:
+            logger.exception("AI week enqueue failed")
+            self.record(week_story.JOB, today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        msg_ = (f"queued as AI job {job['id']}" + (" (already queued)" if job.get("dedup") else "")) if job.get("id") else \
+            f"{job.get('status')} ({job.get('week', '')})"
+        self.record(week_story.JOB, today, "ok", msg_, started)
+        return {"status": "ok", **job}
 
     def _ai_warm(self, now: datetime) -> None:
         """🤖 Load the night model once at the start of the night batch (a "warm" job through the queue, so the guard

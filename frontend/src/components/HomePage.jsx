@@ -8,6 +8,8 @@ import { useIsPhone } from '../useMedia';
 import { useFlashKeys, useStale, useUnread, useNewIds } from '../heartbeat';
 import * as api from '../services/api';
 import HealthStrip from './HealthStrip';
+import TodayCard from './TodayCard';
+import OvernightPanel from './OvernightPanel';
 import PhonePositions from './PhonePositions';
 import AiDot from './AiDot';
 import AiSuggestions from './AiSuggestions';
@@ -269,6 +271,7 @@ export default function HomePage({ onGo, onStock }) {
 
   return <div className="rd">
     <HealthStrip onGo={onGo} compact />
+    <TodayCard onGo={onGo} />
     <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} picked={picked ? picked.map(evId) : null} onPick={(items) => setPicked(items && items.length ? items : null)} />
     <Cards n={4 + (A.follow && A.follow.breakouts > 0 ? 1 : 0) + (A.futures ? 1 : 0) + (A.options ? 1 : 0)}>
       <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
@@ -299,6 +302,7 @@ export default function HomePage({ onGo, onStock }) {
         fact={F.follow ? <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{sgn(F.follow.open_pnl)}</b> · {F.follow.pending ?? 0} pending</> : <span className="muted">—</span>}
         title={cardTip([`${A.follow.breakouts} breakouts`, `won ${A.follow.win_rate ?? '—'}%`, `${inr(A.follow.per_position)} each`, F.follow && `${F.follow.open} open at ${signed(F.follow.open_pnl)}`, F.follow && `${F.follow.pending ?? 0} buys at the next open`, A.follow.as_of && `as of ${dayName(A.follow.as_of)}`])} />}
     </Cards>
+    <OvernightPanel />
     {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
       <div title={cardTip([`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`, `${it.trades || 0} trades`, F.intraday && `loss limit ${inr(F.intraday.loss_used)} / ${inr(F.intraday.loss_limit)}`])}><span className="l">Intraday · open · risk</span><b className={cls(it.day_pnl)}>{sgn(it.day_pnl)}<span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {it.open || 0} open · {inr(it.at_risk)}</span></b></div>
       <div><span className="l">Win streak</span><b className={S.win_streak ? 'up' : ''}>{S.win_streak || 0} day{S.win_streak === 1 ? '' : 's'}</b></div>
