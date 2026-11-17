@@ -170,6 +170,7 @@ export const getAiJobs = (limit = 50) => req('GET', `/api/ai/jobs?limit=${limit}
 export const getAiNotes = (params = {}) => { const q = Object.entries(params).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'); return req('GET', `/api/ai/notes${q ? `?${q}` : ''}`); };
 export const getAiNote = (id) => req('GET', `/api/ai/notes/${id}`);
 export const aiNotesRun = () => req('POST', '/api/ai/notes/run');
+export const aiRerun = () => req('POST', '/api/ai/rerun');
 export const aiTestsetRun = () => req('POST', '/api/ai/testset/run');
 // 🤖 PR 3: suggestions (Home panel + scorecard), the trade "why" lines, ask the app
 const qs = (params = {}) => { const q = Object.entries(params).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&'); return q ? `?${q}` : ''; };

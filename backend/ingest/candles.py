@@ -77,6 +77,13 @@ def sync_symbol(client, cfg: IngestConfig, token: int, symbol: str, end: date,
                 if o["date"] in fresh_by_date
                 and _closes_differ(fresh_by_date[o["date"]]["close"], o["close"], cfg.adjust_tolerance)]
 
+    newest = {o["date"] for o in overlap[-2:]}
+    if mismatch and set(mismatch) <= newest:
+        # only the latest bar(s) moved: the exchange's final close replacing the provisional one Kite served the same
+        # evening — not a split or bonus. The overlap upsert below takes the revised bars; no full refetch (which,
+        # across every stock, once took the evening job 15 minutes and starved the night's AI work).
+        logger.info("%s: close revised by Kite on %s; overlap refreshed", symbol, mismatch)
+        mismatch = []
     if mismatch:
         logger.warning("%s: stored closes differ from Kite on %s (corporate action?); full refetch",
                        symbol, mismatch)

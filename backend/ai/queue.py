@@ -93,6 +93,28 @@ def _loop() -> None:
             _items.task_done()
 
 
+_timers: list = []
+RETRY_KINDS = ("night", "brief")                 # batch work waits for its moment; an ask or a test answers at once
+RETRY_S = 60.0                                      # a transient guard refusal is looked at again after this
+STALE_H = 24                                        # a job queued longer than this is skipped as stale
+PERMANENT = ("AI switched off", "full stop", "night batch off", "day answers off", "ask off", "morning brief off", "model", "models", "service unreachable")
+
+
+def transient(why: str) -> bool:
+    """A guard refusal that can clear on its own (busy app, low RAM, breaker, a window not open yet)."""
+    return not any(why.startswith(p) or p in why for p in PERMANENT)
+
+
+def stale(row: dict, now: datetime) -> bool:
+    try:
+        created = datetime.fromisoformat(row["created"])
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=IST)
+    except Exception:
+        return False
+    return (now - created).total_seconds() > STALE_H * 3600
+
+
 # --- one job -------------------------------------------------------------------------------------------------------------
 
 def _run(job_id: int, config: AppConfig, fn: Callable[[], Optional[dict]]) -> None:
@@ -104,7 +126,16 @@ def _run(job_id: int, config: AppConfig, fn: Callable[[], Optional[dict]]) -> No
     now = datetime.now(IST)
     ok, why = guard.allowed(row["kind"], now, config)
     if not ok:
-        _set(job_id, status="skipped", finished=now_ist(), error=why)
+        if row["kind"] in RETRY_KINDS and transient(why) and not stale(row, now):
+            # the server is busy, the breaker is open or the window is shut for now: keep the job queued and look
+            # again in RETRY_S (the evening job's long tick, a RAM dip or an early enqueue must not cost the night)
+            _set(job_id, note=f"waiting · {why}"[:300])
+            t = threading.Timer(RETRY_S, lambda: _items.put((job_id, config, fn)))
+            t.daemon = True
+            _timers.append(t)
+            t.start()
+            return
+        _set(job_id, status="skipped", finished=now_ist(), error=("stale · " + why) if stale(row, now) else why)
         return
     _set(job_id, status="running", started=now_ist())
     _running = {**row, "status": "running", "since": time.monotonic()}
@@ -143,6 +174,9 @@ def wait(job_id: int, timeout_s: float = 120) -> Optional[dict]:
 
 def clear(reason: str = "full stop") -> int:
     """Mark every queued job skipped with `reason` and drop them from the worker's line; how many."""
+    for t in _timers:
+        t.cancel()
+    _timers.clear()
     with _lock:
         with get_db() as conn:
             n = conn.execute("UPDATE ai_jobs SET status = 'skipped', finished = ?, error = ? WHERE status = 'queued'",

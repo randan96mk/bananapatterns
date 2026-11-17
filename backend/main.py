@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
     state.tips_tracker = tips_track.Tracker(state)
     if os.getenv("BP_NO_SCHEDULER") != "1":
         state.scheduler.start()           # evening job, reminders, login links, intraday heads-up, weekly refresh
+        try:                              # 🤖 a deploy at night: the skipped night jobs are queued again
+            state.scheduler.rerun_if_skipped()
+        except Exception:
+            logger.exception("AI rerun after start failed")
         bot.start()                       # Telegram /login and /status
         state.tips_tracker.start()        # 💡 Tips: quotes every 5 s while a hint is open or waiting
         try:                              # 💡 Tips: the reader starts only when tips.enabled and a session exist

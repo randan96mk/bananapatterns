@@ -6,6 +6,7 @@ tick calls `record_tick(ms)` every time it runs; the full stop lives in app_sett
 import json
 import threading
 from datetime import datetime, time, timedelta
+import time as _time
 from typing import Optional
 
 from backend.ai import client
@@ -25,10 +26,21 @@ _cpu_prev: Optional[tuple] = None                      # (busy, total) jiffies f
 
 # --- the scheduler's tick -------------------------------------------------------------------------------------------
 
+TICK_FRESH_S = 120.0                      # a slow tick counts against the AI only this long (then the server is idle again)
+_tick_at: Optional[float] = None
+
+
 def record_tick(ms: float) -> None:
     """Called by jobs.Scheduler.tick with how long the tick took."""
-    global _tick_ms
+    global _tick_ms, _tick_at
     _tick_ms = round(float(ms), 1)
+    _tick_at = _time.monotonic()
+
+
+def tick_fresh() -> bool:
+    """True while the last recorded tick ended under TICK_FRESH_S ago: the evening job's long tick must not block
+    the whole night once it is over."""
+    return _tick_at is not None and (_time.monotonic() - _tick_at) < TICK_FRESH_S
 
 
 def tick_ms() -> Optional[float]:
@@ -201,7 +213,7 @@ def allowed(kind: str, now: Optional[datetime] = None, config: Optional[AppConfi
     srv = srv or server()
     if srv.get("ram_free_gb") is not None and srv["ram_free_gb"] < float(c.min_free_ram_gb):
         return False, f"free RAM {srv['ram_free_gb']:.1f} GB under {c.min_free_ram_gb:g} GB"
-    if srv.get("app_tick_ms") is not None and srv["app_tick_ms"] > float(c.slow_tick_s) * 1000:
+    if srv.get("app_tick_ms") is not None and srv["app_tick_ms"] > float(c.slow_tick_s) * 1000 and tick_fresh():
         return False, f"app tick {srv['app_tick_ms'] / 1000:.1f} s over {c.slow_tick_s:g} s"
     if kind == "night" and (not c.night_batch or not night_window(now, config)):
         return False, "night batch off" if not c.night_batch else f"outside the night window (evening job's end to {ampm(c.night_end)})"

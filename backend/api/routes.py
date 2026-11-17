@@ -1495,6 +1495,18 @@ def ai_note(note_id: int):
     return n
 
 
+@router.post("/ai/rerun")
+def ai_rerun():
+    """🤖 Queue tonight's whole batch again (after a fix or a deploy): what is already done is not repeated; the guard
+    decides at run time. 409 while the AI is switched off."""
+    if not S().config.ai.enabled:
+        raise HTTPException(409, "AI is switched off")
+    sch = S().scheduler
+    if sch is None:
+        raise HTTPException(409, "no scheduler")
+    return sch.rerun_night(datetime.now(IST))
+
+
 @router.post("/ai/notes/run")
 def ai_notes_run():
     """🤖 Queue tonight's notes now (the guard decides whether they run); 409 while note jobs are queued or running."""

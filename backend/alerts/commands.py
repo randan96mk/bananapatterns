@@ -42,7 +42,7 @@ logger = setup_logger("bot")
 STALE_SEC = 120
 MORNING_WORDS = ("skip", "unskip", "hold", "full")         # full SYM: 🤖 the rule size restored this morning (AI view)
 OPTIONS_WORDS = ("close", "hold")
-AI_WORDS = ("stop", "start")
+AI_WORDS = ("stop", "start", "rerun")
 SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
 TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume")   # 💡 with a hint number: "take 12 2", "skip 12"
 
@@ -265,6 +265,13 @@ class BotCommands:
         cfg, now = self.state.config, self.clock()
         if command == "/aistop":
             return msg.ai_stopped(control.full_stop())
+        if command == "/airerun":
+            sch = getattr(self.state, "scheduler", None)
+            if not cfg.ai.enabled or sch is None:
+                return "🤖 AI is off: nothing to re-run."
+            out = sch.rerun_night(now)
+            n = sum(int((v or {}).get("queued", 0) or 0) for v in out.values() if isinstance(v, dict))
+            return f"🔁 Night batch queued again · {n} job(s) · the guard decides when they run.\n" + msg.ai_status(control.summary(cfg, now))
         if command == "/aistart":
             control.start()
             return "▶️ AI full stop cleared.\n" + msg.ai_status(control.summary(cfg, now))
@@ -363,7 +370,7 @@ class BotCommands:
 
     def handle(self, command: str, notifier: Notifier, arg: str = "") -> bool:
         st, now = self.state, self.clock()
-        if command in ("/ai", "/aistop", "/aistart"):
+        if command in ("/ai", "/aistop", "/aistart", "/airerun"):
             return self._say(notifier, self.ai(command))
         if command.startswith("/sugg"):                                               # 🤖 suggestions
             return self._say(notifier, self.suggestions(command, arg))
@@ -406,5 +413,5 @@ class BotCommands:
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
                                        "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
-                                       "book) · ai / ai stop / ai start (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False
