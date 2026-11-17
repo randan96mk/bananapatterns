@@ -10,29 +10,46 @@ import { useIsPhone } from './useMedia';
 import Loading from './components/Loading';
 
 // Pages load on first visit (code splitting): the top bar, nav, status bar and ⌘K stay in the main bundle.
-const UniverseTable = lazy(() => import('./components/UniverseTable'));
-const ScreensHome = lazy(() => import('./components/ScreensHome'));
-const FollowPage = lazy(() => import('./components/FollowPage'));
-const StockChart = lazy(() => import('./components/StockChart'));
-const DataPanel = lazy(() => import('./components/DataPanel'));
-const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
-const LogsPanel = lazy(() => import('./components/LogsPanel'));
-const SentAlerts = lazy(() => import('./components/SentAlerts'));
-const AlertsPanel = lazy(() => import('./components/AlertsPanel'));
-const BreakoutPage = lazy(() => import('./components/BreakoutPage'));
-const PaperPage = lazy(() => import('./components/PaperPage'));
-const RealPage = lazy(() => import('./components/RealPage'));
-const FuturesPage = lazy(() => import('./components/FuturesPage'));
-const OptionsPage = lazy(() => import('./components/OptionsPage'));
-const AiPage = lazy(() => import('./components/AiPage'));
-const TodayPage = lazy(() => import('./components/TodayPage'));
-const FlowPage = lazy(() => import('./components/FlowPage'));
-const HomePage = lazy(() => import('./components/HomePage'));
-const PortfolioPage = lazy(() => import('./components/PortfolioPage'));
-const WeekPage = lazy(() => import('./components/WeekPage'));
-const StrategiesPage = lazy(() => import('./components/StrategiesPage'));
-const SystemHome = lazy(() => import('./components/SystemHome'));
-const TipsPage = lazy(() => import('./components/TipsPage'));
+// After a deploy the chunk file names change; a tab still holding the old index would ask for files that no longer
+// exist and sit on "Loading…" for ever. `lazyPage` retries the import once, then reloads the page one time (a flag in
+// sessionStorage stops a loop); if the reload does not help it renders a short message instead of a blank page.
+const RELOAD_KEY = 'bp.chunk.reloaded';
+function lazyPage(load) {
+  return lazy(() => load().catch(() => new Promise((r) => setTimeout(r, 800)).then(load)).catch((err) => {
+    let done = false;
+    try { done = sessionStorage.getItem(RELOAD_KEY) === String(window.location.hash); } catch { /* no storage */ }
+    if (!done) {
+      try { sessionStorage.setItem(RELOAD_KEY, String(window.location.hash)); } catch { /* no storage */ }
+      window.location.reload();
+      return new Promise(() => {});                                   // the reload takes over
+    }
+    console.error('page chunk failed to load', err);
+    return { default: () => <div className="rd"><div className="rbanner bad">This page did not load (a new version may have just been deployed). Refresh the page; if it keeps failing, check the server log.</div></div> };
+  }).then((m) => { try { sessionStorage.removeItem(RELOAD_KEY); } catch { /* no storage */ } return m; }));
+}
+const UniverseTable = lazyPage(() => import('./components/UniverseTable'));
+const ScreensHome = lazyPage(() => import('./components/ScreensHome'));
+const FollowPage = lazyPage(() => import('./components/FollowPage'));
+const StockChart = lazyPage(() => import('./components/StockChart'));
+const DataPanel = lazyPage(() => import('./components/DataPanel'));
+const SettingsPanel = lazyPage(() => import('./components/SettingsPanel'));
+const LogsPanel = lazyPage(() => import('./components/LogsPanel'));
+const SentAlerts = lazyPage(() => import('./components/SentAlerts'));
+const AlertsPanel = lazyPage(() => import('./components/AlertsPanel'));
+const BreakoutPage = lazyPage(() => import('./components/BreakoutPage'));
+const PaperPage = lazyPage(() => import('./components/PaperPage'));
+const RealPage = lazyPage(() => import('./components/RealPage'));
+const FuturesPage = lazyPage(() => import('./components/FuturesPage'));
+const OptionsPage = lazyPage(() => import('./components/OptionsPage'));
+const AiPage = lazyPage(() => import('./components/AiPage'));
+const TodayPage = lazyPage(() => import('./components/TodayPage'));
+const FlowPage = lazyPage(() => import('./components/FlowPage'));
+const HomePage = lazyPage(() => import('./components/HomePage'));
+const PortfolioPage = lazyPage(() => import('./components/PortfolioPage'));
+const WeekPage = lazyPage(() => import('./components/WeekPage'));
+const StrategiesPage = lazyPage(() => import('./components/StrategiesPage'));
+const SystemHome = lazyPage(() => import('./components/SystemHome'));
+const TipsPage = lazyPage(() => import('./components/TipsPage'));
 
 // v2 layout: five sections (sidebar on a computer, bottom bar on a phone), each with its pages. The page is kept in the
 // address (#/section/page), so links and the back button work.
