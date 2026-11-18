@@ -70,6 +70,8 @@ async def lifespan(app: FastAPI):
     from backend.tips import reader as tips_reader
     from backend.tips import track as tips_track
     state.tips_tracker = tips_track.Tracker(state)
+    from backend.tips import kite_orders as tips_kite
+    state.tips_kite = tips_kite.Syncer(state)
     if os.getenv("BP_NO_SCHEDULER") != "1":
         state.scheduler.start()           # evening job, reminders, login links, intraday heads-up, weekly refresh
         try:                              # 🤖 a deploy at night: the skipped night jobs are queued again
@@ -78,6 +80,7 @@ async def lifespan(app: FastAPI):
             logger.exception("AI rerun after start failed")
         bot.start()                       # Telegram /login and /status
         state.tips_tracker.start()        # 💡 Tips: quotes every 5 s while a hint is open or waiting
+        state.tips_kite.start()           # ⚡ Tips → Kite orders: the order sync every 10 s while an order of ours works
         try:                              # 💡 Tips: the reader starts only when tips.enabled and a session exist
             tips_reader.ensure(state)
         except Exception:
@@ -89,6 +92,7 @@ async def lifespan(app: FastAPI):
     state.scheduler.stop()
     bot.stop()
     state.tips_tracker.stop()
+    state.tips_kite.stop()
     if tips_reader.READER is not None:
         tips_reader.READER.stop()
     logger.info("Banana Patterns backend stopped")

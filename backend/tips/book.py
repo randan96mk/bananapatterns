@@ -18,10 +18,12 @@ from backend.tips import plan as pl
 
 logger = setup_logger("tips")
 
-JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score")
+JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite")
 SAVE_COLS = ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "tradingsymbol", "exchange",
              "lot_size", "entry", "stop", "targets", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
              "lots", "entry_px", "exit_px", "pnl", "events", "tracked", "untracked_why", "run", "pos", "score")
+# `kite` (the hint's Kite legs) is loaded with the hint but written only by backend/tips/kite_orders.py (its own UPDATE), so
+# the quotes poll saving a hint never overwrites a leg the order sync just wrote.
 OPEN_STATUSES = ("new", "waiting", "active", "paused")
 
 

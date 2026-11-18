@@ -5,7 +5,9 @@ Nothing here swallows errors:
   - PermissionException -> KitePermissionError (fatal: e.g. no historical-data plan)
   - network / 429 / 5xx -> retried with exponential backoff + jitter, then KiteRequestError
   - input / other       -> KiteRequestError (caller decides; ingest marks the symbol failed)
-Historical calls share a token bucket (3 req/s default). No order/GTT code in phases 1-4.
+Historical calls share a token bucket (3 req/s default). No GTT code. Orders: only ⚡ Tips → Kite orders
+(backend/tips/kite_orders.py) places, modifies and cancels, each tagged "bptips"; an order call is sent ONCE (never
+retried: a retried order could be placed twice) and orders() is read-only (callers keep only their own order ids).
 """
 
 import random
@@ -192,10 +194,45 @@ class KiteClient:
                               self.kite.historical_data, token, f"{c_start} 09:00:00", f"{c_end} 15:35:00", "minute")
         return out
 
+    # --- orders (⚡ Tips → Kite orders only) ---
+
+    ORDER_TAG = "bptips"
+
+    def place_order(self, exchange: str, tradingsymbol: str, transaction_type: str, quantity: int, product: str,
+                    order_type: str, price: Optional[float] = None, trigger_price: Optional[float] = None,
+                    validity: str = "DAY", tag: str = ORDER_TAG) -> str:
+        """One regular order; returns Kite's order_id. Sent once (an error is raised, never retried)."""
+        kw = {"variety": "regular", "exchange": exchange, "tradingsymbol": tradingsymbol, "transaction_type": transaction_type,
+              "quantity": int(quantity), "product": product, "order_type": order_type, "validity": validity, "tag": tag}
+        if price is not None:
+            kw["price"] = price
+        if trigger_price is not None:
+            kw["trigger_price"] = trigger_price
+        out = self._call(self.api_bucket, f"place_order({tradingsymbol} {transaction_type} {quantity} {order_type})",
+                         self.kite.place_order, _once=True, **kw)
+        return str(out.get("order_id") if isinstance(out, dict) else out)
+
+    def modify_order(self, order_id: str, **kw) -> str:
+        """Change a pending order (quantity / price / trigger_price / order_type). Sent once."""
+        kw = {k: v for k, v in kw.items() if v is not None}
+        out = self._call(self.api_bucket, f"modify_order({order_id})", self.kite.modify_order, _once=True,
+                         variety="regular", order_id=order_id, **kw)
+        return str(out.get("order_id") if isinstance(out, dict) else (out or order_id))
+
+    def cancel_order(self, order_id: str) -> str:
+        """Cancel a pending order. Sent once."""
+        out = self._call(self.api_bucket, f"cancel_order({order_id})", self.kite.cancel_order, _once=True,
+                         variety="regular", order_id=order_id)
+        return str(out.get("order_id") if isinstance(out, dict) else (out or order_id))
+
+    def orders(self) -> list[dict]:
+        """Today's order book (read-only; the caller keeps only its own order ids)."""
+        return self._call(self.api_bucket, "orders", self.kite.orders) or []
+
     # --- core ---
 
-    def _call(self, bucket: Optional[TokenBucket], what: str, fn, *args, **kwargs):
-        attempts = max(1, self.ingest.max_retries + 1)
+    def _call(self, bucket: Optional[TokenBucket], what: str, fn, *args, _once: bool = False, **kwargs):
+        attempts = 1 if _once else max(1, self.ingest.max_retries + 1)
         for attempt in range(attempts):
             if bucket is not None:
                 bucket.acquire()

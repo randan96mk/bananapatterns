@@ -2175,7 +2175,50 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
   channel's own exit / SL hit / SL change / trail / partial booking (`auto_follow_channel_exit`; you get one Telegram
   line each, "auto, as you set"). Once you override a position (your trail / exit) the channel is no longer followed
   for it.
-- Never automatic: taking a hint (Take / `take N`), real orders (a later PR, behind enable, confirm and a kill switch).
+- Never automatic: taking a hint (Take / `take N`). Real orders only by your click (below, **Tips → Kite orders**).
+
+**⚡ Tips → Kite orders** (`backend/tips/kite_orders.py`; `tips.kite_mode`, default `off`)
+
+The paper book stays exactly as it is. On top, with `kite_mode = click`, a hint's legs can be sent to Kite (the app's
+own Kite Connect session; real money) **by your click**, each button through a confirm that names the contract, the
+quantity, the order type, the premium, the caps after it and the warning *"Real money on your Kite account. The app
+never averages, never re-enters after a stop, and stops for the day at the loss cap."*
+- **Legs**: entry `MARKET` (the hint's side) · stop `SL-M` at the plan's premium stop for the open quantity · T1 `LIMIT`
+  at target 1 (half, in whole lots, when the plan books half at T1 and the size is 2+ lots; else all) · T2 `LIMIT` at
+  target 2 for the rest, placed only after T1 has filled (a sell for more than you hold is refused) — or by your
+  "Place now" once T1 is done. **Targets past the second stay in the paper record only.** A spot-based stop cannot go
+  on Kite: "spot stop: watched by the app, exit by hand".
+- **Place all** = the entry now; the moment it fills the app places the stop and T1; when T1 fills it moves the stop to
+  cost (and to the remaining quantity) and places T2; when the stop or the last target fills it cancels the leftovers.
+  These are the consequences of your click (the confirm says so) and the only automatic steps. **Place rest** places
+  whatever of stop / T1 (/ T2 after T1) is missing, then follows the same way. Each leg also has its own button
+  (Place entry… / Place SL… / Place T1… / Place now… / Modify → cost / Cancel), plus **Exit on Kite now…** (cancels the
+  working stop / targets, then a `MARKET` exit) and **Re-sync with Kite**.
+- **Guards** (each blocks with its text, HTTP 409): Kite logged in · market hours · entries only `kite_entry_from` –
+  `kite_entry_until` · mode not off · kill switch off · entries today under `kite_max_entries_day` · lots ≤
+  `kite_max_lots` · today's realised loss short of `kite_loss_cap` · a complete plan (stop + target), a contract and a
+  lot size · one Kite position per hint (never averaged, never re-entered after a fill) · the hint still open. Exits and
+  cancels need only the login (getting out is never blocked by a cap).
+- **Kill switch** (the red toggle; `app_settings` `tips.kite.kill`): on = every working Tips order on Kite cancelled and
+  every open quantity exited at market, no new order until it is off.
+- **Only ours**: every order carries the tag `bptips`; the sync reads the order book once and keeps the app's own order
+  ids. Holdings and other positions are never read; nothing on the broker side is deleted. Order calls are sent once
+  (never retried).
+- **Sync**: its own thread, every 10 s while the market is open and an order of ours is working (else a cheap check
+  every 30 s); never on the request path. Telegram (kind `tips`): "⚡ Kite · #41 entry filled 462.10 ×40 · SL 410 + T1
+  520 ×20 placed", "⚡ Kite · #41 T1 filled 520 ×20 · stop → cost 462.10 · T2 550 ×20 placed", "⚡ Kite · #41 stop filled
+  410 ×40 · −₹2,084 · targets cancelled", "⚠️ Kite · #41 entry REJECTED · <Kite's message>". Realised P&L per hint from
+  the fills (the loss cap reads it).
+- **Mode `auto`** can be chosen now but arrives in the next update: until then it behaves exactly as `click`.
+- **Page**: the Kite bar under the title (Off / By my click / Auto, the kill switch, today's caps, "Orders today"),
+  the legs on each open card, the **Guards** panel (right column; stacked on a phone) and **Kite orders today** (time,
+  hint, leg, side, qty, type, price, status, order id, by; a phone keeps time / hint / leg / side / qty / status).
+- **API**: `GET /api/tips/kite` (`mode, kill, caps {entries, max_entries, max_lots, loss_cap, used_loss}, orders,
+  guards, open, net, last_sync, window, warning`) · `POST /api/tips/kite/kill {on}` · `POST /api/tips/kite/resync` ·
+  `POST /api/tips/hints/{id}/kite/{entry|all|rest|stop|targets|exit|cancel|modify_stop}` (`{lots?}`, `{leg}`,
+  `{to: price | "cost"}`). `GET /api/tips` adds `kite` (mode, kill, caps, open) and each hint view its `kite` (state,
+  legs, actions, log). Health row `tips_kite` (mode, open orders, last sync, kill switch). Table `tips_orders` (one row
+  per order, never deleted) and the hint's `kite` JSON.
 
 **The record** (`GET /api/tips/record`): every hint with quotes, taken or not: entry reached, the first of T1 / stop /
 time / expiry, minutes to it, best / worst move, P&L per lot at the plan, R (risk = entry to the premium stop); per
@@ -2217,13 +2260,19 @@ stays the morning dry-run skip.
 | `trail_to_cost_after_t1` | on | After target 1 the stop moves to the entry price. |
 | `model_classify` | on | The local 3B model sorts the posts code could not place (hint / follow-up / chatter); it never sets a number. |
 | `preview_fallback` | on | While the reader is down, the channel's public page is read every 30 s (no login). |
+| `kite_mode` | off | ⚡ `off` (paper only) · `click` (each Kite leg by your click, through a confirm) · `auto` (next update; works as click for now). Real money. |
+| `kite_product` | NRML | The Kite product of these orders: `NRML` or `MIS`. |
+| `kite_max_entries_day` | 4 | Kite entry orders a day at most (a rejected one does not count). |
+| `kite_max_lots` | 2 | Lots per Kite entry order at most. |
+| `kite_loss_cap` | 6,000 | Realised ₹ loss a day from these orders; at or past it no new entry that day. |
+| `kite_entry_from` / `kite_entry_until` | 09:20 / 14:30 | Kite entries only in this window (HH:MM; shown 12-hour). Exits are never blocked. |
 
-**Tables** (never deleted): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`.
+**Tables** (never deleted): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`, `tips_orders`.
 
 **Tests**: `tests/test_tips_decode.py` (32: the 15 real calls of `tests/fixtures/tips_posts.json`, aliases, shapes),
 `test_tips_filter.py` (14), `test_tips_plan.py` (12), `test_tips_book.py` (8), `test_tips_track.py` (6),
 `test_tips_reader.py` (9: fake Telethon client, preview, import, login), `test_tips_api.py` (5),
-`test_tips_telegram.py` (12). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
+`test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
 
 ## REST API
 

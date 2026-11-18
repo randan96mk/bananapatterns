@@ -214,6 +214,11 @@ export const tipsResume = (id) => req('POST', `/api/tips/hints/${encodeURICompon
 export const getTipsFeed = (params = {}) => req('GET', `/api/tips/feed${qs(params)}`);
 export const getTipsRecord = (params = {}) => req('GET', `/api/tips/record${qs(params)}`);
 export const putTipsSettings = (values) => req('PUT', '/api/tips/settings', values);
+// ⚡ Tips → Kite orders (real money; every action is the owner's click through a confirm)
+export const getTipsKite = () => req('GET', '/api/tips/kite');
+export const tipsKite = (id, action, body = {}) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/kite/${encodeURIComponent(action)}`, body);
+export const tipsKiteKill = (on) => req('POST', '/api/tips/kite/kill', { on: !!on });
+export const tipsKiteResync = () => req('POST', '/api/tips/kite/resync', {});
 export const tipsTestPost = (text) => req('POST', '/api/tips/test-post', { text });
 export const tipsLogin = (phone) => req('POST', '/api/tips/login', { phone });
 export const tipsLoginCode = (code, password) => req('POST', '/api/tips/login/code', password ? { code, password } : { code });

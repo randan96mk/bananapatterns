@@ -9,7 +9,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -50,6 +50,7 @@ class AppState:
         self._ticker = None
         self._live = None
         self.tips_tracker = None              # 💡 backend.tips.track.Tracker, set at startup
+        self.tips_kite = None                 # ⚡ backend.tips.kite_orders.Syncer, set at startup
 
     @property
     def ticker(self):
@@ -2559,7 +2560,7 @@ def tips_hint(hid: int):
     h = tb.load(hid)
     if not h:
         raise HTTPException(404, f"no hint #{hid}")
-    v = tt.hint_view(h)
+    v = tt.hint_view(h, config=S().config)
     with get_db() as conn:
         v["quotes"] = [dict(r) for r in conn.execute("SELECT t, ltp, spot FROM tips_quotes WHERE hint_id = ? ORDER BY t", (hid,))]
         v["posts"] = [dict(r) for r in conn.execute("SELECT post_id, posted_at, kind, text FROM tips_posts WHERE hint_id = ? ORDER BY posted_at", (hid,))]
@@ -2570,7 +2571,7 @@ def _tips_act(fn, hid: int, *a, **kw):
     from backend.tips import book as tb
     from backend.tips import track as tt
     try:
-        return tt.hint_view(fn(S().config, hid, *a, **kw))
+        return tt.hint_view(fn(S().config, hid, *a, **kw), config=S().config)
     except tb.TipsError as exc:
         _tips_err(exc)
 
@@ -2612,6 +2613,85 @@ def tips_pause(hid: int):
 def tips_resume(hid: int):
     from backend.tips import book as tb
     return _tips_act(tb.pause, hid, False, who="page")
+
+
+# --- ⚡ Tips → Kite orders (by your click, each through a confirm; backend/tips/kite_orders.py) ---
+
+class TipsKiteKill(BaseModel):
+    on: bool
+
+
+class TipsKiteAct(BaseModel):
+    lots: Optional[int] = None
+    leg: Optional[str] = None
+    to: Optional[Union[float, str]] = None
+
+
+KITE_ACTIONS = ("entry", "stop", "targets", "all", "rest", "exit", "cancel", "modify_stop")
+
+
+@router.get("/tips/kite")
+def tips_kite():
+    """Today's Kite orders of the Tips (ours only), the caps, the guards, the mode and the kill switch."""
+    from backend.tips import kite_orders as ko
+    st = S()
+    return ko.today(st.config, st.client)
+
+
+@router.post("/tips/kite/kill")
+def tips_kite_kill(req: TipsKiteKill):
+    """The kill switch: on = every working order of ours cancelled and every open quantity exited at market."""
+    from backend.tips import kite_orders as ko
+    st = S()
+    return {**ko.set_kill(st.config, st.client, req.on), **ko.today(st.config, st.client)}
+
+
+@router.post("/tips/kite/resync")
+def tips_kite_resync():
+    """Read the Kite order book now (ours only) and apply what changed."""
+    from backend.tips import kite_orders as ko
+    st = S()
+    try:
+        r = ko.sync(st.config, st.client)
+    except Exception as exc:
+        raise HTTPException(502, f"Kite order book: {str(exc)[:160]}")
+    return {**r, **ko.today(st.config, st.client)}
+
+
+@router.post("/tips/hints/{hid}/kite/{action}")
+def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
+    """entry {lots?} · all {lots?} (entry now, the stop + T1 on the fill) · rest · stop · targets · exit · cancel {leg} ·
+    modify_stop {to: price | "cost"}. 404 no hint · 409 a guard (its text) or Kite's refusal · 400 bad input."""
+    from backend.tips import book as tb
+    from backend.tips import kite_orders as ko
+    from backend.tips import track as tt
+    if action not in KITE_ACTIONS:
+        raise HTTPException(404, f"no Kite action {action}")
+    req = req or TipsKiteAct()
+    st = S()
+    c, cl = st.config, st.client
+    try:
+        if action == "entry":
+            h = ko.place_entry(c, cl, hid, req.lots)
+        elif action == "all":
+            h = ko.place_all(c, cl, hid, req.lots)
+        elif action == "rest":
+            h = ko.place_rest(c, cl, hid)
+        elif action == "stop":
+            h = ko.place_stop(c, cl, hid)
+        elif action == "targets":
+            h = ko.place_targets(c, cl, hid)
+        elif action == "exit":
+            h = ko.exit_now(c, cl, hid)
+        elif action == "cancel":
+            h = ko.cancel(c, cl, hid, req.leg or "")
+        else:
+            if req.to is None:
+                raise HTTPException(400, 'modify_stop needs {to: price | "cost"}')
+            h = ko.modify_stop(c, cl, hid, req.to)
+    except tb.TipsError as exc:
+        _tips_err(exc)
+    return tt.hint_view(h, config=c)
 
 
 @router.get("/tips/feed")
