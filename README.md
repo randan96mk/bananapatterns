@@ -1131,17 +1131,23 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
 **Why**: the app books a position as soon as the webhook is accepted (HTTP 200), but an accepted webhook is not a
 fill. Twice (GLENMARK 3 Nov, HEGAM 6 Nov) the webhook side accepted a BUY and never placed it, so the app held phantom
 positions. On 18 Nov the phantom HEGAM's stop fired, the app sent `EXIT HEGAM`, and the Tradetron strategy (its exit
-rule does not check the symbol) sold MOTILALOFS instead. **Rule since then: nothing in the app ever sends an EXIT for
-a position whose fill was not confirmed.**
+rule does not check the symbol) sold MOTILALOFS instead. **Rule since then: every BUY is confirmed by hand** (a check
+for the owner's eyes). The EXIT gate itself is a switch, `real.exit_needs_confirm`, **off by default**: exits go out as
+they always did, and the confirmation is information (the row's ⏳, Home's "Needs a look", the 9:16 AM "ORDERS SENT"
+message ends with "Once you see the fill, reply `filled SYMBOL`", and at `confirm_time` without an API key a nudge
+"⏳ REAL · 2 fills not confirmed yet · reply filled S1 · filled S2 · a check only: exits go out as usual" lists what is
+still open, once a day). With the switch **on**, nothing in the app ever sends an EXIT for a position whose fill was
+not confirmed: the paragraph below.
 
 - **Confirmation state**: every Real position has `confirmed` (+ `confirmed_at`, `confirmed_by` manual | api | owner |
   migration) and `unconfirmed_since`. A BUY booked from a webhook starts **unconfirmed**; the evening est-fill correction
   (to the day's open) does not confirm it; "+ Add a position" is confirmed (by "owner"). A position with no flag counts
   as unconfirmed (the gate fails closed). Migration (`_migrate_real_confirm`, once, key `real.confirm.migrated`): the
   positions open before the update were reconciled by hand that day and are marked confirmed, by "migration".
-- **The EXIT gate**: the stop watch (and the E+ trail's raised stop), the morning plan's EXITs, Send now and ↻ Retry
-  never send an EXIT for an unconfirmed position (`real._assert_exit_ok` raises `UnconfirmedExit` right before every
-  EXIT webhook, and the tests check no sender call happens). Instead: one Telegram alert a day per stock (kind `real`,
+- **The EXIT gate** (`real.exit_needs_confirm` = true): the stop watch (and the E+ trail's raised stop), the morning
+  plan's EXITs, Send now and ↻ Retry never send an EXIT for an unconfirmed position (`real._assert_exit_ok` raises
+  `UnconfirmedExit` right before every EXIT webhook, and the tests check no sender call happens; with no config given
+  it fails closed). Instead: one Telegram alert a day per stock (kind `real`,
   never held) "⚠️ REAL · SYMBOL stop hit but the buy was never confirmed · no EXIT sent · confirm it (reply `filled
   SYMBOL`) or remove it (`unfilled SYMBOL`)", a red item on Home "Needs a look" and the Real tab, and the row shows
   "stop held". Nothing is written to the order log for a held EXIT (it was never sent), so once confirmed the next

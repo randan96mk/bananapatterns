@@ -358,6 +358,7 @@ class RealConfig:
     tt_sid: int = 0                        # the webhook side's deployment id for the read-only fill check (0 = not set)
     confirm_time: str = "10:00"            # the fill check on trading days (24-hour HH:MM, IST; "" = off); again in the evening
     confirm_alert: bool = True             # Telegram: the fill check's confirmations and the evening "Real vs webhook side"
+    exit_needs_confirm: bool = False       # the EXIT gate: on = an unconfirmed buy never gets an EXIT (alert instead); off = exits go out as always
                                            # line (the "stop hit but never confirmed" alert always goes)
 
 

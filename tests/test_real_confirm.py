@@ -1,8 +1,9 @@
 """💰 Real · fill confirmation (after the 18 Nov 2026 incident) and the hand tools.
 
-An accepted webhook is not a fill: every BUY is booked unconfirmed, and nothing ever sends an EXIT for an unconfirmed
-position (the stop watch, the morning plan's EXITs, a retry): the stop hit is held, alerted once a day, shown on Home
-and the page. Confirmation by you (page, API, Telegram `filled` / `unfilled` + `yes`) or by the read-only fill check
+An accepted webhook is not a fill: every BUY is booked unconfirmed and the owner confirms it by hand (a check: by
+default, real.exit_needs_confirm off, exits go out as they always did, and the 9:16 message and the 10 AM nudge ask
+for the `filled` reply). With the gate ON nothing ever sends an EXIT for an unconfirmed position (the stop watch, the
+morning plan's EXITs, a retry): the stop hit is held, alerted once a day, shown on Home and the page. Confirmation by you (page, API, Telegram `filled` / `unfilled` + `yes`) or by the read-only fill check
 (a fake client here); the migration; sold outside the app, a closed trade added, a trade marked as never filled; the
 evening "Real vs webhook side" line; the health row; no broker names; 12-hour times."""
 
@@ -45,9 +46,15 @@ def seed(cash=200_000.0, buys=("S1", "S2"), exit_s0=False, s0_confirmed=True):
     return st
 
 
+def gated_config() -> AppConfig:
+    c = AppConfig()
+    c.real.exit_needs_confirm = True
+    return c
+
+
 def booked(c=None):
-    """seed + today's BUYs sent and booked (unconfirmed)."""
-    c = c or AppConfig()
+    """seed + today's BUYs sent and booked (unconfirmed). The gate is ON here (the default is off: see section 2b)."""
+    c = c or gated_config()
     seed()
     s = Sender()
     real.send_orders(c, None, TODAY, s)
@@ -116,16 +123,19 @@ def test_stop_hit_on_an_unconfirmed_buy_sends_nothing():
 
 
 def test_the_assert_before_every_exit_sender_call():
-    booked()
+    c, _ = booked()
     with pytest.raises(real.UnconfirmedExit):
-        real._assert_exit_ok(real._state(), "S1")
+        real._assert_exit_ok(real._state(), "S1", c)
     with pytest.raises(real.UnconfirmedExit):
-        real._assert_exit_ok(real._state(), "NOPE")
-    real._assert_exit_ok(real._state(), "S0")                          # confirmed: allowed
+        real._assert_exit_ok(real._state(), "NOPE", c)
+    with pytest.raises(real.UnconfirmedExit):
+        real._assert_exit_ok(real._state(), "S1")                      # no config given: fails closed
+    real._assert_exit_ok(real._state(), "S0", c)                       # confirmed: allowed
+    real._assert_exit_ok(real._state(), "S1", AppConfig())             # gate off (the default): allowed
 
 
 def test_the_morning_plans_exit_is_held_for_an_unconfirmed_position():
-    c = AppConfig()
+    c = gated_config()
     seed(exit_s0=True, s0_confirmed=False)
     s = Sender()
     out = real.send_orders(c, None, TODAY, s)
@@ -158,6 +168,7 @@ def test_retry_never_sends_an_exit_for_an_unconfirmed_position(monkeypatch):
 
 def test_the_gate_alert_goes_once_a_day_never_held_and_home_shows_it_red(monkeypatch):
     fake, st = FakeTG(), LoginState()
+    st.config.real.exit_needs_confirm = True
     seed()
     real.send_orders(st.config, None, TODAY, Sender())
     monkeypatch.setattr(real, "_quotes", lambda *a, **k: {"S1": (1.0, 1.0)})
@@ -175,6 +186,80 @@ def test_the_gate_alert_goes_once_a_day_never_held_and_home_shows_it_red(monkeyp
                     "(✗ never filled)") in items
     row = next(r for r in real.summary(st.config)["positions"] if r["symbol"] == "S1")
     assert row["gate"]["why"] == "stop hit" and row["confirmed"] is False
+
+
+# --- 2b. the default: the gate is OFF, confirmation is a check, exits go out as always -------------------------------
+
+def test_the_gate_is_off_by_default():
+    c = AppConfig()
+    assert c.real.exit_needs_confirm is False and real.gate_on(c) is False and real.gate_on(gated_config()) is True
+
+
+def test_gate_off_a_stop_hit_on_an_unconfirmed_buy_sends_the_exit_as_always():
+    c, _ = booked(AppConfig())
+    s = Sender()
+    out = real.watch_stops(c, Kite({"S1": pos("S1")["stop"] - 1, "S2": pos("S2")["stop"] * 1.1, "S0": 1050.0}), TODAY, s)
+    assert s.calls == [("S1", "EXIT", None)] and out["hits"][0]["symbol"] == "S1" and out["gated"] == []
+    assert "S1" not in real._state()["positions"] and pos("S2")["confirmed"] is False
+    assert any(r["action"] == "EXIT" and r["symbol"] == "S1" and r["status"] == "sent" for r in log_rows())
+
+
+def test_gate_off_the_morning_plans_exit_and_a_retry_go_out():
+    c = AppConfig()
+    seed(exit_s0=True, s0_confirmed=False)
+    s = Sender()
+    out = real.send_orders(c, None, TODAY, s)
+    assert [x[1] for x in s.calls] == ["EXIT", "BUY", "BUY"] and out["gated"] == [] and "S0" not in real._state()["positions"]
+    st = real._state()
+    st["orders"].append({"action": "EXIT", "symbol": "S1", "ts": "S1", "qty": 20, "why": "close under SMA50", "sent": "failed"})
+    real._save(st)
+    with get_db() as conn:
+        conn.execute("INSERT INTO real_orders (key, day, created_at, symbol, action, qty, reason, status, reply, payload) "
+                     "VALUES (?, ?, ?, 'S1', 'EXIT', 20, 'x', 'failed', 'timeout', '{}')", (f"{TODAY}|S1|EXIT", TODAY, TODAY))
+    s = Sender()
+    r = real.retry_order(c, None, TODAY, "S1", "EXIT", datetime.combine(date.today(), datetime.min.time(), tzinfo=IST).replace(hour=10), s)
+    assert r["status"] != "error" and s.calls == [("S1", "EXIT", None)]
+
+
+def test_gate_off_the_page_and_home_say_it_is_a_check():
+    c, _ = booked(AppConfig())
+    assert real.fills_state(c)["gate"] is False and real.fills_state(gated_config())["gate"] is True
+    items = attention._real(c, True)
+    assert ("info", "Real · fill not confirmed yet: S1, S2 · confirm by hand (✓ filled) · exits go out as usual") in items
+    assert ("info", "Real · fill not confirmed yet: S1, S2 · no EXIT goes out until it is") in attention._real(gated_config(), True)
+    src = open("frontend/src/components/RealPage.jsx", encoding="utf-8").read()
+    assert "exits go out as usual" in src and "fills.gate" in src
+
+
+def test_the_orders_sent_message_asks_for_the_filled_reply():
+    res = {"sent": [{"action": "BUY", "symbol": "S1", "qty": 20, "stop": 470.0, "price": 500.0},
+                    {"action": "EXIT", "symbol": "S0", "qty": 10, "price": 1050.0}], "failed": []}
+    t = msg.real_sent(res, "9:16 AM")
+    assert t.endswith("Once you see the fill, reply <b>filled S1</b> (a check: exits go out as usual)")
+    assert msg.real_sent(res, "9:16 AM", gate=True).endswith("reply <b>filled S1</b> · no EXIT goes out until you do")
+    only_exit = {"sent": [{"action": "EXIT", "symbol": "S0", "qty": 10, "price": 1050.0}], "failed": []}
+    assert "filled" not in msg.real_sent(only_exit, "9:16 AM")
+
+
+def test_the_ten_am_nudge_without_a_key_lists_the_unconfirmed_buys(monkeypatch):
+    monkeypatch.delenv("TRADETRON_API_KEY", raising=False)
+    fake, st = FakeTG(), LoginState()
+    seed()
+    real.send_orders(st.config, None, TODAY, Sender())
+    sch = scheduler(st, fake)
+    sch.hold = "2026-11-18"
+    now = datetime.now(IST).replace(hour=10, minute=0)
+    r = sch.run_real_confirm(now)
+    assert r == {"status": "no key", "still": ["S1", "S2"]}
+    texts = [h for _, h in fake.sent]
+    assert texts == ["⏳ <b>REAL</b> · 2 fills not confirmed yet · reply <b>filled S1</b> · <b>filled S2</b> · a check only: exits go out as usual"]
+    sch.run_real_confirm(now + timedelta(minutes=5))                 # once a day
+    assert len(fake.sent) == 1 and not BROKER.search(texts[0]) and not H24.search(texts[0])
+    real.confirm_position(st.config, "S1")
+    real.confirm_position(st.config, "S2")
+    fake.sent.clear()
+    sch.run_real_confirm(now + timedelta(days=1))
+    assert fake.sent == []                                           # nothing left to confirm: quiet
 
 
 # --- 3a. manual confirmation: page / API and Telegram ------------------------------------------------------------
@@ -537,7 +622,7 @@ def test_twelve_hour_times():
 
 def test_the_settings_keys(monkeypatch):
     c = AppConfig()
-    assert (c.real.tt_sid, c.real.confirm_time, c.real.confirm_alert) == (0, "10:00", True)
+    assert (c.real.tt_sid, c.real.confirm_time, c.real.confirm_alert, c.real.exit_needs_confirm) == (0, "10:00", True, False)
     with pytest.raises(ValueError):
         c.update_section("real", {"confirm_time": "25:00"})
     assert c.real.confirm_time == "10:00"

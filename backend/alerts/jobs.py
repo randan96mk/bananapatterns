@@ -1139,7 +1139,14 @@ class Scheduler:
     def run_real_confirm(self, now: datetime) -> dict:
         """real.confirm_time on trading days: the read-only fill check (no order of any kind)."""
         from backend.engine import real
+        from backend.broker import tradetron_api as tta
         today, started = now.date(), now_ist()
+        if not tta.key():                                  # no API key: the nudge instead (nothing is read or sent)
+            still = sorted(real.unconfirmed())
+            if still and self.state.config.real.confirm_alert:
+                self.notifier().send(f"{today}|real-nudge", "real", msg.real_confirm_nudge(still, real.gate_on(self.state.config)))
+            self.record("real_confirm", today, "ok", f"no key: {len(still)} unconfirmed", started)
+            return {"status": "no key", "still": still}
         self._real_fills(today.isoformat())
         last = real._saved_check()
         self.record("real_confirm", today, "ok", f"{last.get('status')}: {len(last.get('confirmed') or [])} confirmed, "
@@ -1175,7 +1182,7 @@ class Scheduler:
         self.record("real_send", today, "ok", f"{res['status']}: sent {len(res['sent'])}, failed {len(res['failed'])}, "
                     f"skipped {len(res.get('skipped') or [])}", started)
         if res["sent"] or res["failed"]:
-            self.notifier().send(f"{today}|real-sent", "real", msg.real_sent(res, ampm(now.strftime('%H:%M'))))
+            self.notifier().send(f"{today}|real-sent", "real", msg.real_sent(res, ampm(now.strftime('%H:%M')), gate=real.gate_on(self.state.config)))
         self._gate_alerts(today.isoformat(), res.get("gated"))
         return res
 

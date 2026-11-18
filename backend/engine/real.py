@@ -482,7 +482,7 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 continue
             if o["action"] == "EXIT" and o["symbol"] not in st["positions"]:
                 continue
-            if o["action"] == "EXIT" and not confirmed(st["positions"][o["symbol"]]):   # the EXIT gate: never for an
+            if o["action"] == "EXIT" and not confirmed(st["positions"][o["symbol"]]) and gate_on(config):   # the gate (off by default)
                 gated.append(_gate(st["positions"][o["symbol"]], o["symbol"], today, o.get("why") or "exit due",   # unconfirmed buy
                                    st["positions"][o["symbol"]]["last"]))
                 continue
@@ -504,7 +504,7 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 failed.append({**o, "error": "not enough cash"})
                 continue
             if o["action"] == "EXIT":
-                _assert_exit_ok(st, o["symbol"])
+                _assert_exit_ok(st, o["symbol"], config)
             try:
                 if o["action"] == "BUY" and config.real.send_stop:
                     reply = sender(o["ts"], "BUY", o["qty"], stop=o["stop"])
@@ -525,7 +525,7 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
 
 def _book(st: dict, o: dict, price: float, today: str) -> None:
     """An order Tradetron accepted, booked in the account at the price seen when sending (corrected in the evening).
-    A BUY is booked UNCONFIRMED: an accepted webhook is not a fill (the 18 Nov incident), so no EXIT is ever sent for it
+    A BUY is booked UNCONFIRMED: an accepted webhook is not a fill (the 18 Nov incident); with the EXIT gate on (real.exit_needs_confirm) no EXIT is ever sent for it
     until the fill is confirmed (confirm_position by you, confirm_from_api by the fill check)."""
     o["sent"] = "sent"
     if o["action"] == "EXIT":
@@ -566,7 +566,7 @@ def retry_order(config: AppConfig, client, today: str, symbol: str, action: str,
             return {"status": "error", "error": "the order is no longer in today's plan"}
         if action == "EXIT" and symbol not in st["positions"]:
             return {"status": "error", "error": "no open position to exit"}
-        if action == "EXIT" and not confirmed(st["positions"][symbol]):
+        if action == "EXIT" and gate_on(config) and not confirmed(st["positions"][symbol]):
             return {"status": "error", "error": f"the buy of {symbol} was never confirmed: no EXIT is sent · confirm it "
                                                 f"(filled) or remove it (never filled) first"}
         price = _quotes(client, [o["ts"]]).get(o["ts"]) if client is not None else None
@@ -574,7 +574,7 @@ def retry_order(config: AppConfig, client, today: str, symbol: str, action: str,
         if action == "BUY" and o["qty"] * price * 1.0012 > st["cash"]:
             return {"status": "error", "error": "not enough cash"}
         if action == "EXIT":
-            _assert_exit_ok(st, symbol)
+            _assert_exit_ok(st, symbol, config)
         try:
             if action == "BUY" and config.real.send_stop:
                 reply = sender(o["ts"], "BUY", o["qty"], stop=o["stop"])
@@ -622,10 +622,10 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
                 continue
             o = {"action": "EXIT", "symbol": sym, "ts": pos.get("ts", sym), "qty": pos["qty"],
                  "why": f"stop {pos['stop']:.2f} hit" + ("" if ltp <= pos["stop"] else f" (day low {low:.2f})")}
-            if not confirmed(pos):                         # the EXIT gate: an unconfirmed buy never gets an EXIT
+            if not confirmed(pos) and gate_on(config):     # the EXIT gate (a switch, off by default): an unconfirmed buy never gets an EXIT
                 gated.append(_gate(pos, sym, today, "stop hit", ltp))
                 continue
-            _assert_exit_ok(st, sym)
+            _assert_exit_ok(st, sym, config)
             try:
                 reply = sender(o["ts"], "EXIT")
             except Exception as exc:
@@ -1097,8 +1097,16 @@ def confirmed(pos: dict) -> bool:
     return pos.get("confirmed") is True
 
 
-def _assert_exit_ok(st: dict, symbol: str) -> None:
-    """The last line before any EXIT webhook: raises when the position is not confirmed."""
+def gate_on(config) -> bool:
+    """The EXIT gate is a switch (real.exit_needs_confirm), OFF by default: the owner confirms fills by hand as a check,
+    and exits go out as they always did. On, an unconfirmed buy never gets an EXIT (an alert instead)."""
+    return bool(getattr(getattr(config, "real", None), "exit_needs_confirm", False))
+
+
+def _assert_exit_ok(st: dict, symbol: str, config=None) -> None:
+    """The last line before any EXIT webhook: with the gate on, raises when the position is not confirmed."""
+    if config is not None and not gate_on(config):
+        return
     pos = st["positions"].get(symbol)
     if pos is None or not confirmed(pos):
         raise UnconfirmedExit(f"EXIT {symbol} refused: the buy was never confirmed")
@@ -1402,7 +1410,7 @@ def fills_state(config: AppConfig) -> dict:
     sid = int(getattr(config.real, "tt_sid", 0) or 0)
     mode = "manual (no API key)" if not has else "manual (set real.tt_sid)" if not sid else "fill check + manual"
     return {"key": has, "sid_set": bool(sid), "mode": mode, "confirm_time": getattr(config.real, "confirm_time", ""),
-            "last": _saved_check() or None}
+            "gate": gate_on(config), "last": _saved_check() or None}
 
 
 def summary(config: AppConfig) -> dict:
