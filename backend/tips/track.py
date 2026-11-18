@@ -422,7 +422,7 @@ def record(days: int = 30, channel: Optional[str] = None, now: Optional[datetime
     """The channel's record over `days`: {by_instrument, by_hour, totals, untracked, you_vs_all, days, channel}."""
     now = now or datetime.now(IST)
     since = (now - timedelta(days=days)).isoformat(timespec="seconds")
-    hs = bk.rows("posted_at >= ?" + (" AND channel = ?" if channel else ""), (since, channel) if channel else (since,), order="id")
+    hs = bk.rows("posted_at >= ? AND channel != 'rehearsal'" + (" AND channel = ?" if channel else ""), (since, channel) if channel else (since,), order="id")
     with get_db() as conn:
         quoted = {r[0] for r in conn.execute("SELECT DISTINCT hint_id FROM tips_quotes q JOIN tips_hints h ON h.id = q.hint_id "
                                              "WHERE h.posted_at >= ?", (since,))}
@@ -572,7 +572,7 @@ def summary(config, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(IST)
     today = now.date().isoformat()
     open_h = bk.rows("status IN ('new', 'waiting', 'active', 'paused') OR (taken = 1 AND json_extract(pos, '$.state') IN ('armed', 'open'))")
-    today_h = bk.rows("posted_at >= ?", (today,))
+    today_h = bk.rows("posted_at >= ? AND channel != 'rehearsal'", (today,))
     last = bk.rows(limit=20)
     seen, hs = set(), []
     for h in open_h + today_h + last:

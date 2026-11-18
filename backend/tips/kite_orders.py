@@ -1220,16 +1220,35 @@ def _nifty_spot(client) -> Optional[float]:
         return None
 
 
-def test_contract(client, now: datetime) -> Optional[dict]:
-    """A far OTM NIFTY PE (nearest listed expiry, the strike ~8 % under the spot; with no spot the lowest strike, the
-    lowest premium) from tips_instruments. {tradingsymbol, exchange, lot_size, strike, expiry, spot}."""
+def _nifty_rows(now: datetime) -> list[dict]:
     with get_db() as conn:
         as_of = conn.execute("SELECT MAX(as_of) FROM tips_instruments WHERE exchange = 'NFO' AND name = 'NIFTY' AND type = 'PE'").fetchone()[0]
         if not as_of:
-            return None
-        rows = [dict(r) for r in conn.execute("SELECT tradingsymbol, expiry, strike, lot_size FROM tips_instruments WHERE as_of = ? AND "
-                                              "exchange = 'NFO' AND name = 'NIFTY' AND type = 'PE' AND expiry >= ? ORDER BY expiry, strike",
+            return []
+        return [dict(r) for r in conn.execute("SELECT tradingsymbol, expiry, strike, lot_size, type FROM tips_instruments WHERE as_of = ? AND "
+                                              "exchange = 'NFO' AND name = 'NIFTY' AND expiry >= ? ORDER BY expiry, strike",
                                               (as_of, now.date().isoformat()))]
+
+
+def nifty_contracts(client, now: datetime) -> list[dict]:
+    """Today's NIFTY option rows; the NFO list is loaded once a day when nothing has needed it yet (no hint today)."""
+    rows = _nifty_rows(now)
+    if rows or client is None or is_dry(client):
+        return rows
+    try:
+        from backend.tips import track as tr
+        tr.refresh_instruments(client, "NFO", {"NIFTY"}, now.date())
+    except Exception as exc:
+        logger.warning("Kite test: NFO list not loaded: %s", str(exc)[:120])
+        return []
+    return _nifty_rows(now)
+
+
+def test_contract(client, now: datetime) -> Optional[dict]:
+    """A far OTM NIFTY PE (nearest listed expiry, the strike ~8 % under the spot; with no spot the lowest strike, the
+    lowest premium) from tips_instruments, loading the list when it is not there yet. {tradingsymbol, exchange, lot_size,
+    strike, expiry, spot}."""
+    rows = [r for r in nifty_contracts(client, now) if r["type"] == "PE"]
     if not rows:
         return None
     pool = [r for r in rows if r["expiry"] == rows[0]["expiry"]]
@@ -1237,6 +1256,45 @@ def test_contract(client, now: datetime) -> Optional[dict]:
     pick = min(pool, key=lambda r: abs(float(r["strike"]) - spot * 0.92)) if spot else pool[0]
     return {"tradingsymbol": pick["tradingsymbol"], "exchange": "NFO", "lot_size": int(pick["lot_size"] or 1),
             "strike": pick["strike"], "expiry": pick["expiry"], "spot": spot}
+
+
+REHEARSAL_CHANNEL = "rehearsal"
+
+
+def rehearsal_hint(config, client, state=None, now: Optional[datetime] = None) -> dict:
+    """Dry run only: a made-up call on the nearest NIFTY CE close to the money, at its last price, SL 20 % under,
+    targets 20 % / 40 % over, 1 lot, in channel "rehearsal" (never pushed, never in the channel's record). The owner
+    then presses Place all and watches the DRY legs. {hint_id, text}."""
+    from backend.tips import reader as rd
+    now = now or _now()
+    if mode(config) != "dry":
+        raise TipsError(409, "a rehearsal hint is for the dry run: switch the segment to Dry run first")
+    real = getattr(state, "client", None) if state is not None else None
+    rows = [r for r in nifty_contracts(real, now) if r["type"] == "CE"]
+    spot = _nifty_spot(real) if real is not None else None
+    if rows and spot:
+        pool = [r for r in rows if r["expiry"] == rows[0]["expiry"]]
+        pick = min(pool, key=lambda r: abs(float(r["strike"]) - spot))
+        strike = int(float(pick["strike"]))
+        ltp = None
+        try:
+            q = real.quote([f"NFO:{pick['tradingsymbol']}"]) or {}
+            v = (q.get(f"NFO:{pick['tradingsymbol']}") or {}).get("last_price")
+            ltp = float(v) if v else None
+        except Exception:
+            ltp = None
+        px = ltp or 100.0
+    else:
+        strike, px = 25000, 100.0
+    sl, t1, t2 = round(px * 0.8), round(px * 1.2), round(px * 1.4)
+    text = f"REHEARSAL · BUY NIFTY {strike} CE at {round(px)}\nSL {sl}\nTGT {t1}/{t2}\n1 lot · dry run only"
+    pid = int(now.timestamp())
+    r = rd.ingest(config, REHEARSAL_CHANNEL, pid, now, text, False, source="live", push=False, model=False, client=real)
+    hid = r.get("hint_id")
+    if not hid:
+        raise TipsError(409, "the rehearsal post did not decode (kind %s)" % r.get("kind"))
+    _push(config, f"tips|kite|rehearsal|{hid}", f"🧪 Kite DRY · rehearsal hint #{hid} added · press Place all on the Tips page")
+    return {"hint_id": hid, "text": text}
 
 
 def connection_test(config, client, now: Optional[datetime] = None, sleep=None) -> dict:
@@ -1250,7 +1308,8 @@ def connection_test(config, client, now: Optional[datetime] = None, sleep=None) 
     if client is None or is_dry(client) or not getattr(client, "has_token", False):
         raise TipsError(409, "log in to Kite first: the test uses the app's own Kite session")
     last = last_test()
-    if last and last.get("at"):
+    placed = any(s.get("key") == "place" and s.get("ok") for s in (last or {}).get("steps") or [])
+    if last and last.get("at") and placed:                 # the gap counts only when an order really went out
         try:
             nxt = datetime.fromisoformat(last["at"]) + timedelta(seconds=TEST_GAP_S)
         except ValueError:
@@ -1291,7 +1350,7 @@ def _run_test(config, client, now: datetime, sleep) -> dict:
     # 2 · the contract
     c = test_contract(client, now)
     if not c:
-        step("contract", False, "no NIFTY option in the instrument list yet: open a NIFTY hint (the list loads with it) and try again")
+        step("contract", False, "no NIFTY option list: Kite's instrument download failed · try again in a minute")
         return finish("failed", "no contract to test with")
     ts, lot = c["tradingsymbol"], c["lot_size"]
     where = f"~8 % under NIFTY {pl.fmt(round(c['spot']))}" if c.get("spot") else "the lowest strike listed (no NIFTY quote)"

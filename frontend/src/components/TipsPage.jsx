@@ -155,6 +155,10 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
     if (!window.confirm(`Clear the dry run?\n\nToday's dry orders are voided (kept in the record, never deleted), the simulator's book is emptied and the dry hints' legs are reset, so you can rehearse again. A hint traded dry today still is not traded real today.\n\n${DRY_WARN}`)) return;
     api.tipsKiteDryClear().then((r) => { setMsg(`dry run cleared · ${px(r?.voided ?? 0)} orders voided`); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
   };
+  const rehearse = () => {
+    if (!window.confirm('Add a rehearsal hint?\n\nA made-up BUY NIFTY CE call near the money at its last price (SL 20 % under, targets 20 % and 40 % over, 1 lot) appears as a hint in channel "rehearsal". Press Place all on it and watch the DRY legs. It is never pushed to Telegram as a call and never counts in the channel\'s record. Nothing reaches Kite.')) return;
+    api.tipsKiteRehearse().then((r) => { setMsg(`rehearsal hint #${r?.hint_id} added`); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
+  };
   const test = () => {
     if (!window.confirm('Test the Kite connection?\n\nOne LIMIT buy of a far out-of-the-money NIFTY put (1 lot) at half its last price goes to your REAL Kite account: it cannot fill at that price. It is cancelled 5 s later and read back from the order book. This proves the session, the static IP and the order permission on the app key.\n\nAt most one test per 5 minutes. Outside 9:15 AM – 3:30 PM Kite refuses it (market closed).')) return;
     onTest && onTest();
@@ -170,6 +174,7 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
       : <><span className="cap" title={kiteCaps(k)}>{dry ? 'dry · ' : ''}{kiteCaps(k)}{k?.window ? ` · entries ${k.window}` : ''}</span>
         <span className={`cap note ${dry ? 'dry' : ''}`} title={dry ? DRY_NOTE : undefined}>{note}</span></>}
     {mode !== 'off' && <button type="button" className="btn ghost small" disabled={testing} title="one LIMIT buy at half the price on your real Kite account, cancelled 5 s later" onClick={test}>{testing ? 'Testing… ~6 s' : 'Test connection…'}</button>}
+    {dry && <button type="button" className="btn small" onClick={rehearse} title="a made-up NIFTY CE hint to press Place all on · nothing reaches Kite">+ Rehearsal hint…</button>}
     {dry && <button type="button" className="btn ghost small" onClick={clearDry} title="void today's dry orders and rehearse again">Clear dry run…</button>}
     {(mode !== 'off' || Number(k?.open) > 0 || arr(k?.orders).length > 0) && <button type="button" className="btn ghost small" onClick={toOrders}>Orders today</button>}
   </div>;

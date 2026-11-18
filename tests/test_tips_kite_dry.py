@@ -1,3 +1,4 @@
+import json
 """⚡ Tips → Kite orders PR B: the dry run (the simulator's fills, a whole Place all with DRY in every line, dry caps
 apart from real ones, never mixed, "Clear dry run" voids and never deletes), the connection test (happy path, the IP
 whitelist refusal, market closed, the 5-minute guard), the public IP (cached, failing gracefully), the routes, the
@@ -8,6 +9,9 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from datetime import datetime, timedelta
+
+from backend.config import IST
 
 from backend.database.models import get_db, init_db
 from backend.tips import book as bk
@@ -393,3 +397,79 @@ def test_no_broker_name_past_kite_and_the_page_carries_dry_and_the_test():
     for s in ("Dry run", "DRY · ", "DRY RUN · nothing reaches Kite", "Clear dry run", "Test connection…", "Kite connection test",
               "server public IP", "whitelist this one in Kite Connect", "nothing reaches Kite"):
         assert s in src, s
+
+
+def test_the_connection_test_loads_the_nifty_list_itself(monkeypatch):
+    """19 Nov: 'no NIFTY option in the instrument list yet' — the test must load the NFO dump on its own."""
+    from datetime import date
+    from backend.tips import kite_orders as ko
+    from backend.tips import track as tr
+    now = datetime.now(IST).replace(hour=10, minute=0)
+    exp = (date.today() + timedelta(days=5)).isoformat()
+    loaded = []
+
+    class K:
+        has_token = True
+
+        def instruments(self, exchange):
+            loaded.append(exchange)
+            return [{"exchange": "NFO", "tradingsymbol": "NIFTY25NOV24000PE", "name": "NIFTY", "expiry": date.fromisoformat(exp), "strike": 24000.0,
+                     "instrument_type": "PE", "instrument_token": 1, "lot_size": 75, "segment": "NFO-OPT"},
+                    {"exchange": "NFO", "tradingsymbol": "NIFTY25NOV25000CE", "name": "NIFTY", "expiry": date.fromisoformat(exp), "strike": 25000.0,
+                     "instrument_type": "CE", "instrument_token": 2, "lot_size": 75, "segment": "NFO-OPT"}]
+
+        def quote(self, keys):
+            return {k: {"last_price": 25100.0 if "NIFTY 50" in k else 120.0} for k in keys}
+    monkeypatch.setattr(tr, "_asked_today", lambda *a, **k: set(), raising=False)
+    assert ko._nifty_rows(now) == []
+    c = ko.test_contract(K(), now)
+    assert loaded == ["NFO"] and c and c["tradingsymbol"] == "NIFTY25NOV24000PE" and c["lot_size"] == 75
+
+
+def test_a_rehearsal_hint_appears_only_in_the_dry_run_and_never_in_the_record(monkeypatch):
+    from backend.tips import kite_orders as ko
+    from backend.tips import track as tr
+    c = cfg()
+    c.tips.kite_mode = "click"
+    with pytest.raises(TipsError):
+        ko.rehearsal_hint(c, None, None)
+    c.tips.kite_mode = "dry"
+    r = ko.rehearsal_hint(c, None, None)
+    h = bk.load(r["hint_id"])
+    assert h["channel"] == "rehearsal" and h["symbol"] == "NIFTY" and h["opt_type"] == "CE" and h["side"] == "BUY"
+    assert h["stop"]["value"] == 80 and h["targets"] == [120, 140] and h["plan"]["ok"] is True
+    assert "REHEARSAL" in r["text"] and "dry run only" in r["text"]
+    rec = tr.record(30)
+    assert all(x.get("channel") != "rehearsal" for grp in rec.get("by_instrument", []) for x in grp.get("items", []))
+    assert "rehearsal" not in json.dumps(rec)
+
+
+def test_the_five_minute_gap_counts_only_tests_that_placed_an_order(monkeypatch):
+    from backend.database.models import set_setting
+    from backend.tips import kite_orders as ko
+    c = cfg()
+    c.tips.kite_mode = "click"
+    now = datetime.now(IST).replace(hour=10, minute=0)
+    with get_db() as conn:                                            # a test that failed before placing, a minute ago
+        set_setting(conn, ko.TEST_KEY, json.dumps({"at": (now - timedelta(minutes=1)).isoformat(timespec="seconds"), "outcome": "failed",
+                                                   "steps": [{"key": "session", "ok": True}, {"key": "contract", "ok": False}]}))
+
+    class K:
+        has_token = True
+
+        def profile(self):
+            return {}
+
+        def instruments(self, exchange):
+            return []
+
+        def quote(self, keys):
+            return {}
+    r = ko.connection_test(c, K(), now, sleep=lambda s: None)        # allowed: nothing was placed last time
+    assert r["outcome"] == "failed" and "no NIFTY option list" in r["steps"][-1]["text"]
+    with get_db() as conn:                                            # a test that placed, a minute ago → the gap holds
+        set_setting(conn, ko.TEST_KEY, json.dumps({"at": (now - timedelta(minutes=1)).isoformat(timespec="seconds"), "outcome": "passed",
+                                                   "steps": [{"key": "place", "ok": True}]}))
+    with pytest.raises(TipsError) as e:
+        ko.connection_test(c, K(), now, sleep=lambda s: None)
+    assert "one connection test per 5 minutes" in str(e.value)

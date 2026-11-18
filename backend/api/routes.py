@@ -2666,6 +2666,14 @@ def tips_kite_dry_clear():
     return {**ko.clear_dry(st.config), **ko.today(st.config, st.client)}
 
 
+@router.post("/tips/kite/dry/rehearse")
+def tips_kite_dry_rehearse():
+    """Dry run only: a made-up NIFTY CE hint in channel "rehearsal" to press Place all on. Nothing reaches Kite."""
+    from backend.tips import kite_orders as ko
+    st = S()
+    return ko.rehearsal_hint(st.config, st.client, st)
+
+
 @router.post("/tips/kite/test")
 def tips_kite_test():
     """The connection test on the real Kite account: one LIMIT buy of a far OTM NIFTY PE at half its price, cancelled
