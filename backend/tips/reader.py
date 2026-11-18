@@ -254,7 +254,7 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
         if h:
             act = pl.followup_action(text)
             now = posted                                     # the post's own time (Telegram's clock, ~1 s behind)
-            done = complete_plan(config, h, text, posted)    # "SL 410 / TGT 520/550/600+" posted after the call
+            done = complete_plan(config, h, text, posted, act)   # "SL 410 / TGT 520/550/600+" posted after the call
             if source == "import":
                 bk.event(h, posted, f'channel: "{text[:80]}"', "channel")
                 line = "follow-up"
@@ -271,12 +271,21 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     return out
 
 
-def complete_plan(config, h: dict, text: str, posted: datetime) -> Optional[str]:
+PLAN_SKIP_ACTIONS = ("targets", "sl_hit", "exit", "partial", "trail")     # "tgt 1 done" states a result, not a plan
+
+
+def complete_plan(config, h: dict, text: str, posted: datetime, act: Optional[dict] = None) -> Optional[str]:
     """A follow-up that carries the stop and / or targets the call itself lacked (this channel posts "BUY SENSEX 82000
     CE NEAR 460" first and "SL 410 / TGT 520/550/600+" as a reply): fill them in, rebuild the plan and restart the
-    record run when nothing has filled yet. Returns the line, or None when the follow-up adds nothing."""
+    record run when nothing has filled yet. Returns the line, or None when the follow-up adds nothing. A post that
+    reports a result ("tgt 1 done", "SL hit") never sets a level."""
+    if (act or {}).get("action") in PLAN_SKIP_ACTIONS:
+        return None
     d = dc.decode(text, posted)
     st, tg = d.get("stop") or {}, [t for t in (d.get("targets") or []) if t is not None]
+    ref = (h.get("entry") or {}).get("lo") or (h.get("entry") or {}).get("hi")
+    if ref and tg and any(t < 0.2 * ref for t in tg):                 # a target far under the entry is a count, not a price
+        tg = []
     had_stop = ((h.get("stop") or {}).get("kind") or "none") != "none"
     had_tg = bool(h.get("targets"))
     bits = []

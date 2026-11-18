@@ -26,6 +26,7 @@ PROMO = re.compile(r"guidelines|disclaimer|not a recommendation|sebi|join (my|ou
                    r"registration|register|limited seats|dm me|contact", re.I)
 FOLLOW_CODE = re.compile(r"\b(sl|stop\s*loss)\b.*\b(hit|modif|chang|trail)|\b(target|tgt)s?\s*\d?\s*(done|hit)|\b\d\s*targets?\s*done|"
                          r"\bexit|\bbook|\bcost\b|\bactiv(e|ated)\b|\btriggered\b|\bentry done\b|\btsl\b|\bnpnl\b|\bcmp\b|\btrail|\bavoid\b|"
+                         r"\b(sl|stop\s*loss|stoploss)\s*[:\-]?\s*\d|\b(tgt|target|tg)s?\s*[:\-]?\s*\d{2,}|\badd more\b|\bcentury\b|\bdone\b|"
                          r"\b\d+(\.\d+)?\s*(\+|to\b)|^\s*\d+(\.\d+)?\s*\W*$|"
                          r"\bwait\b|\bpart(ly)?\b", re.I | re.S)
 SYSTEM = ("You sort posts from a Telegram trading channel. Reply with JSON only: {\"kind\": \"hint\" | \"follow_up\" | "
