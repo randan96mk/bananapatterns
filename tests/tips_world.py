@@ -62,6 +62,7 @@ def world(**prices) -> FakeClient:
 def cfg() -> AppConfig:
     c = AppConfig()
     c.ai.enabled = False
+    c.tips.channels = "aakankshatrading"            # the public channel the fixtures were built from
     return c
 
 

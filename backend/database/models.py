@@ -693,6 +693,7 @@ def _migrate_ai_notes(conn) -> None:
     """🤖 PR 2: `source_key` (the filing's seq_id / the deal group's symbol|date) and the guard that notes a source once
     per prompt version. Added with ALTER TABLE behind a PRAGMA check; nothing is dropped."""
     _add_column(conn, "ai_notes", "source_key", "TEXT")
+    _add_column(conn, "tips_posts", "reply_to", "INTEGER")        # 💡 the post a reply quotes (Telegram's reply-to id)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
                  "WHERE source_key IS NOT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_notes_symbol ON ai_notes(symbol, created)")

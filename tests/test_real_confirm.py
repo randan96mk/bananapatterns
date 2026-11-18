@@ -221,22 +221,20 @@ def test_gate_off_the_morning_plans_exit_and_a_retry_go_out():
     assert r["status"] != "error" and s.calls == [("S1", "EXIT", None)]
 
 
-def test_gate_off_the_page_and_home_say_it_is_a_check():
+def test_gate_off_nothing_is_asked_on_the_page_or_home():
     c, _ = booked(AppConfig())
     assert real.fills_state(c)["gate"] is False and real.fills_state(gated_config())["gate"] is True
-    items = attention._real(c, True)
-    assert ("info", "Real · fill not confirmed yet: S1, S2 · confirm by hand (✓ filled) · exits go out as usual") in items
+    assert not any("confirm" in t for _, t in attention._real(c, True))
     assert ("info", "Real · fill not confirmed yet: S1, S2 · no EXIT goes out until it is") in attention._real(gated_config(), True)
     src = open("frontend/src/components/RealPage.jsx", encoding="utf-8").read()
-    assert "exits go out as usual" in src and "fills.gate" in src
+    assert "!x.confirmed && fills.gate" in src and "{fills.gate && <div" in src
 
 
 def test_the_orders_sent_message_asks_for_the_filled_reply():
     res = {"sent": [{"action": "BUY", "symbol": "S1", "qty": 20, "stop": 470.0, "price": 500.0},
                     {"action": "EXIT", "symbol": "S0", "qty": 10, "price": 1050.0}], "failed": []}
-    t = msg.real_sent(res, "9:16 AM")
-    assert t.endswith("Once you see the fill, reply <b>filled S1</b> (a check: exits go out as usual)")
-    assert msg.real_sent(res, "9:16 AM", gate=True).endswith("reply <b>filled S1</b> · no EXIT goes out until you do")
+    assert "filled" not in msg.real_sent(res, "9:16 AM")                   # gate off (the default): nothing is asked
+    assert msg.real_sent(res, "9:16 AM", gate=True).endswith("Once you see the fill, reply <b>filled S1</b> · no EXIT goes out until you do")
     only_exit = {"sent": [{"action": "EXIT", "symbol": "S0", "qty": 10, "price": 1050.0}], "failed": []}
     assert "filled" not in msg.real_sent(only_exit, "9:16 AM")
 
@@ -249,10 +247,12 @@ def test_the_ten_am_nudge_without_a_key_lists_the_unconfirmed_buys(monkeypatch):
     sch = scheduler(st, fake)
     sch.hold = "2026-11-18"
     now = datetime.now(IST).replace(hour=10, minute=0)
+    assert sch.run_real_confirm(now) == {"status": "no key", "still": []} and fake.sent == []   # gate off: quiet
+    st.config.real.exit_needs_confirm = True
     r = sch.run_real_confirm(now)
     assert r == {"status": "no key", "still": ["S1", "S2"]}
     texts = [h for _, h in fake.sent]
-    assert texts == ["⏳ <b>REAL</b> · 2 fills not confirmed yet · reply <b>filled S1</b> · <b>filled S2</b> · a check only: exits go out as usual"]
+    assert texts == ["⏳ <b>REAL</b> · 2 fills not confirmed yet · reply <b>filled S1</b> · <b>filled S2</b> · no EXIT goes out until you do"]
     sch.run_real_confirm(now + timedelta(minutes=5))                 # once a day
     assert len(fake.sent) == 1 and not BROKER.search(texts[0]) and not H24.search(texts[0])
     real.confirm_position(st.config, "S1")
