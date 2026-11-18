@@ -550,8 +550,9 @@ class TipsConfig:
     trail_to_cost_after_t1: bool = True    # after target 1 the stop moves to the entry price
     model_classify: bool = True            # the local 3B model sorts the posts code could not place (hint / follow-up / chatter)
     preview_fallback: bool = True          # the public preview page every 30 s while the reader is down
-    # ⚡ Tips → Kite orders (real money, Kite Connect): off | click (every leg by your click, each through a confirm;
-    # Place all = entry now, the stop + T1 the moment it fills) | auto (the next update; for now it behaves as click)
+    # ⚡ Tips → Kite orders (real money, Kite Connect): off | dry (a rehearsal: the same buttons and legs, a simulator
+    # fills from live quotes, nothing reaches Kite) | click (every leg by your click, each through a confirm; Place all =
+    # entry now, the stop + T1 the moment it fills) | auto (the next update; for now it behaves as click)
     kite_mode: str = "off"
     kite_product: str = "NRML"             # NRML | MIS
     kite_market_protection: float = 5.0    # % market protection on MARKET / SL-M orders (the exchange rule for API orders: never 0)
@@ -562,7 +563,7 @@ class TipsConfig:
     kite_entry_until: str = "14:30"        # ... until here
 
 
-TIPS_KITE_MODES = ("off", "click", "auto")
+TIPS_KITE_MODES = ("off", "dry", "click", "auto")
 TIPS_KITE_PRODUCTS = ("NRML", "MIS")
 
 
@@ -581,7 +582,7 @@ def check_tips(sec: "TipsConfig") -> None:
     if int(sec.lots) < 1 or float(sec.capital) <= 0 or float(sec.rupees) <= 0:
         raise ValueError("lots, capital and rupees must be positive")
     if sec.kite_mode not in TIPS_KITE_MODES:
-        raise ValueError("kite_mode must be off, click or auto")
+        raise ValueError("kite_mode must be off, dry, click or auto")
     if sec.kite_product not in TIPS_KITE_PRODUCTS:
         raise ValueError("kite_product must be NRML or MIS")
     if not (0.5 <= float(sec.kite_market_protection) <= 20):

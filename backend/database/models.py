@@ -415,14 +415,15 @@ CREATE TABLE IF NOT EXISTS tips_instruments (
     strike REAL, type TEXT, token INTEGER, lot_size INTEGER, PRIMARY KEY (as_of, exchange, tradingsymbol));
 CREATE INDEX IF NOT EXISTS idx_tips_instr_name ON tips_instruments(name, as_of);
 -- ⚡ Tips → Kite orders (backend/tips/kite_orders.py): every order the app sent to Kite for a hint (only ours: tag
--- bptips), its leg, its status from the last sync and its fill. Never deleted.
+-- bptips), its leg, its status from the last sync and its fill. Never deleted. A dry run's rows (by 'dry' / order ids
+-- DRY-n, the simulator) end 'voided' when the owner clears the dry run; the connection test's row is hint 0, leg 'test'.
 CREATE TABLE IF NOT EXISTS tips_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NOT NULL,
-    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 'exit')), side TEXT, qty INTEGER, order_type TEXT,
+    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 'exit', 'test')), side TEXT, qty INTEGER, order_type TEXT,
     price REAL, "trigger" REAL, status TEXT NOT NULL DEFAULT 'placed'
-        CHECK(status IN ('placed', 'open', 'complete', 'rejected', 'cancelled', 'failed')),
+        CHECK(status IN ('placed', 'open', 'complete', 'rejected', 'cancelled', 'failed', 'voided')),
     order_id TEXT, filled_px REAL, filled_qty INTEGER, placed_at TEXT, updated_at TEXT,
-    "by" TEXT CHECK("by" IN ('click', 'app', 'auto')), note TEXT, day TEXT);
+    "by" TEXT CHECK("by" IN ('click', 'app', 'auto', 'dry', 'test')), note TEXT, day TEXT);
 CREATE INDEX IF NOT EXISTS idx_tips_orders_day ON tips_orders(day);
 CREATE INDEX IF NOT EXISTS idx_tips_orders_hint ON tips_orders(hint_id);
 
@@ -485,7 +486,10 @@ def init_db(path: Optional[str] = None) -> None:
         _migrate_scan_tables(conn)
         dropped = _migrate_orb(conn)
         _migrate_paper(conn)
+        tips_orders_old = _migrate_tips_orders(conn)
         conn.executescript(SCHEMA)
+        if tips_orders_old:
+            _copy_tips_orders(conn)
         _migrate_drop_paper_a(conn)
         _migrate_capital_300k(conn)
         _migrate_real_confirm(conn)
@@ -693,6 +697,28 @@ def _drop_track_record(conn) -> None:
     conn.execute("DROP TABLE IF EXISTS track_intraday")
     conn.execute("DELETE FROM app_settings WHERE key LIKE 'track.%' OR key LIKE 'track\\_intraday.%' ESCAPE '\\' "
                  "OR key IN ('config.track', 'config.intraday')")
+
+
+TIPS_ORDER_COLS = ('id, hint_id, leg, side, qty, order_type, price, "trigger", status, order_id, filled_px, filled_qty, '
+                   'placed_at, updated_at, "by", note, day')
+
+
+def _migrate_tips_orders(conn) -> bool:
+    """⚡ PR B (dry run + connection test): tips_orders' CHECKs gain leg 'test', status 'voided' and by 'dry' / 'test'.
+    SQLite cannot change a CHECK in place: the old table is renamed here (its indexes dropped), the schema creates the new
+    one and _copy_tips_orders moves every row across. Nothing is lost; runs once."""
+    r = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tips_orders'").fetchone()
+    if not r or "'voided'" in (r[0] or ""):
+        return False
+    conn.execute("DROP INDEX IF EXISTS idx_tips_orders_day")
+    conn.execute("DROP INDEX IF EXISTS idx_tips_orders_hint")
+    conn.execute("ALTER TABLE tips_orders RENAME TO tips_orders_pr_a")
+    return True
+
+
+def _copy_tips_orders(conn) -> None:
+    conn.execute(f"INSERT INTO tips_orders ({TIPS_ORDER_COLS}) SELECT {TIPS_ORDER_COLS} FROM tips_orders_pr_a")
+    conn.execute("DROP TABLE tips_orders_pr_a")
 
 
 def _add_column(conn, table: str, column: str, decl: str) -> None:

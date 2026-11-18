@@ -6,7 +6,7 @@ Nothing here swallows errors:
   - network / 429 / 5xx -> retried with exponential backoff + jitter, then KiteRequestError
   - input / other       -> KiteRequestError (caller decides; ingest marks the symbol failed)
 Historical calls share a token bucket (3 req/s default). No GTT code. Orders: only ⚡ Tips → Kite orders
-(backend/tips/kite_orders.py) places, modifies and cancels, each tagged "bptips"; an order call is sent ONCE (never
+(backend/tips/kite_orders.py) places, modifies and cancels, each tagged "bptips" (its connection test: "bptest"); an order call is sent ONCE (never
 retried: a retried order could be placed twice) and orders() is read-only (callers keep only their own order ids).
 """
 

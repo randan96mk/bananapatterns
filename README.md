@@ -2210,7 +2210,8 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   410 ×40 · −₹2,084 · targets cancelled", "⚠️ Kite · #41 entry REJECTED · <Kite's message>". Realised P&L per hint from
   the fills (the loss cap reads it).
 - **Mode `auto`** can be chosen now but arrives in the next update: until then it behaves exactly as `click`.
-- **Page**: the Kite bar under the title (Off / By my click / Auto, the kill switch, today's caps, "Orders today"),
+- **Page**: the Kite bar under the title (Off / Dry run / By my click / Auto, the kill switch, today's caps, "Test
+  connection…", "Clear dry run…" in a dry run, "Orders today"),
   the legs on each open card, the **Guards** panel (right column; stacked on a phone) and **Kite orders today** (time,
   hint, leg, side, qty, type, price, status, order id, by; a phone keeps time / hint / leg / side / qty / status).
 - **API**: `GET /api/tips/kite` (`mode, kill, caps {entries, max_entries, max_lots, loss_cap, used_loss}, orders,
@@ -2219,6 +2220,33 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   `{to: price | "cost"}`). `GET /api/tips` adds `kite` (mode, kill, caps, open) and each hint view its `kite` (state,
   legs, actions, log). Health row `tips_kite` (mode, open orders, last sync, kill switch). Table `tips_orders` (one row
   per order, never deleted) and the hint's `kite` JSON.
+- **Dry run** (`kite_mode = dry`, the second choice on the bar): a rehearsal with the same buttons, the same legs and
+  the same follow-on orders, through a simulator (`backend/tips/kite_sim.py`) that fills from live quotes: a `MARKET`
+  order at once at the hint's last price (also outside market hours, so you can rehearse in the evening — the bar says
+  so), a `LIMIT` sell when the price reaches it (a buy when it falls to it), an `SL-M` sell at its trigger when the
+  price falls to it (a buy when it rises to it). Nothing reaches Kite and no login is needed ("dry run · no login
+  needed"); the market-hours and entry-window guards do not block, the caps do. The simulator's book lives in
+  `app_settings` `tips.kite.sim` (it survives a restart); order ids are `DRY-n`, entry rows carry `by = dry` and the
+  hint's `kite` `dry: true`. Every leg badge and order status says **DRY**, the confirms say "DRY RUN · nothing
+  reaches Kite" in place of the real-money warning, and the Telegram lines read "⚡ Kite DRY · #41 entry filled 462.10
+  ×40". The caps count the dry rows only while the mode is dry; switching to By my click resets the view (real caps,
+  real rows). Never mixed: a hint traded dry is not traded real the same day ("already traded on Kite (dry)"; use a
+  fresh hint), and a real position keeps going to Kite (exit / cancel) even in a dry run. **Clear dry run…** voids
+  today's dry rows (status `voided`, never deleted), empties the simulator and resets the dry hints' legs.
+- **Test connection…** (on the bar, any mode but off; `POST /api/tips/kite/test`): on the real account, the session
+  (`profile`), a far out-of-the-money NIFTY put (nearest expiry, the strike ~8 % under the spot; with no spot the lowest
+  strike), one `LIMIT` buy of 1 lot at half its last price (at least 0.05: it cannot fill), tag `bptest`, cancelled 5 s
+  later and read back from the order book (it must be cancelled or rejected with nothing filled; a fill is reported
+  loudly: exit it by hand). Kite's refusal is put plainly: "static IP not whitelisted" (IP / whitelist wording), "order
+  permission missing on the app key" (permission wording), otherwise Kite's own words; "market closed: run the test
+  between 9:15 AM and 3:30 PM" is a neutral outcome, not a failure. The result (passed / failed / market closed, each
+  step) shows in a panel under the bar, goes to Telegram and is kept in `app_settings` `tips.kite.test`; its order is a
+  row in `tips_orders` (hint 0, leg `test`, by `test`). At most one test per 5 minutes; never in mode off; needs a
+  login. Market protection is not probed with a second order: the step says it is sent with real orders (5 %).
+- **Public IP**: the Guards panel shows "server public IP: … · whitelist this one in Kite Connect" (or "unknown"),
+  looked up by the sync thread every 10 minutes (api.ipify.org, then ifconfig.me, 3 s each; `app_settings`
+  `tips.kite.ip`), never on a request; also `public_ip` in `GET /api/tips/kite`, with `dry`, `market_open` and `test`
+  (the last connection test). `POST /api/tips/kite/dry/clear` clears the dry run.
 
 **The record** (`GET /api/tips/record`): every hint with quotes, taken or not: entry reached, the first of T1 / stop /
 time / expiry, minutes to it, best / worst move, P&L per lot at the plan, R (risk = entry to the premium stop); per
@@ -2260,7 +2288,7 @@ stays the morning dry-run skip.
 | `trail_to_cost_after_t1` | on | After target 1 the stop moves to the entry price. |
 | `model_classify` | on | The local 3B model sorts the posts code could not place (hint / follow-up / chatter); it never sets a number. |
 | `preview_fallback` | on | While the reader is down, the channel's public page is read every 30 s (no login). |
-| `kite_mode` | off | ⚡ `off` (paper only) · `click` (each Kite leg by your click, through a confirm) · `auto` (next update; works as click for now). Real money. |
+| `kite_mode` | off | ⚡ `off` (paper only) · `dry` (a rehearsal: same buttons, a simulator fills from live quotes, nothing reaches Kite) · `click` (each Kite leg by your click, through a confirm) · `auto` (next update; works as click for now). Real money except `dry`. |
 | `kite_product` | NRML | The Kite product of these orders: `NRML` or `MIS`. |
 | `kite_market_protection` | 5 | Market protection in % on MARKET and SL-M orders (0.5 … 20). API orders at market must carry one; the exchange rejects 0. |
 | `kite_max_entries_day` | 4 | Kite entry orders a day at most (a rejected one does not count). |
