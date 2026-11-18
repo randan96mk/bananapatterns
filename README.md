@@ -2130,10 +2130,11 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
    (`data/.tips_session` when `.env` is not writable) and never shown or logged. API: `POST /api/tips/login {phone}` →
    `POST /api/tips/login/code {code, password?}`.
 3. Settings › tips: `enabled` on (the reader starts only when it is on **and** a session exists). Channels: the
-   **Channels…** dialog or `tips.channels` (comma list; default `Index Options Buying with Aakanksha`). An entry is a
-   public channel's username, or for a private channel (no `t.me/` link) its title (whole or the start, any case) or
-   numeric id: the reader finds it among the chats your account is in. A private channel has no public preview page,
-   so the preview fallback skips it.
+   **Channels…** dialog (one per line) or `tips.channels` (entries separated by `;` or new lines; a comma separates
+   too but only between plain usernames, so a title keeps its commas; default `Index Options, Buying with Aakanksha`).
+   An entry is a public channel's username, or for a private channel (no `t.me/` link) its title (whole, the start, or
+   a part of it, any case) or numeric id: the reader finds it among the chats your account is in. A private channel
+   has no public preview page, so the preview fallback skips it.
 
 **How a post flows**
 - **Catch** (`reader.py`): Telethon on your own account in its own thread and asyncio loop; new posts in ~1 s, edits and
@@ -2203,7 +2204,7 @@ stays the morning dry-run skip.
 | Key | Default | What it does |
 |---|---|---|
 | `enabled` | off | The reader runs (it starts only when this is on and you have logged the reader in). |
-| `channels` | Index Options Buying with Aakanksha | Comma list: a channel username, or a private channel's title / id your account is in. |
+| `channels` | Index Options, Buying with Aakanksha | One per line / `;`: a channel username, or a private channel's title / id your account is in. |
 | `capital` | 1,00,000 | The Tips paper book's own capital (separate from every other book). |
 | `lots` | 1 | Lots per taken hint when neither the post nor you name a size (`take N 2` overrides). |
 | `size_mode` | lots | `lots` = `lots` per take · `rupees` = as many lots as `rupees` buys at the fill (1 at least). |

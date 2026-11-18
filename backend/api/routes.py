@@ -2633,10 +2633,10 @@ def tips_settings(values: dict):
     st = S()
     before = asdict(st.config.tips)
     if "channels" in values:
-        chans = [c.strip().lstrip("@") for c in str(values["channels"]).split(",") if c.strip()]
-        if not chans or any(not re.fullmatch(r"[A-Za-z0-9_]{3,64}", c) for c in chans):
-            raise HTTPException(422, "channels: comma-separated channel usernames (letters, digits, _)")
-        values["channels"] = ",".join(chans)
+        chans = rd.split_channels(values["channels"])
+        if not chans or any(not re.fullmatch(r"[A-Za-z0-9_ ,.&'()+-]{3,80}", c) for c in chans):
+            raise HTTPException(422, "channels: one per line · a channel's username, or a private channel's title or numeric id")
+        values["channels"] = ";".join(chans)
     try:
         out = st.config.update_section("tips", values)
     except (ValueError, TypeError) as exc:
