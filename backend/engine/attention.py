@@ -217,9 +217,8 @@ def _real(config, kite: bool) -> list:
         out.append(("warn", f"Real · {', '.join(held)}: stop hit but the buy was never confirmed · no EXIT sent · "
                             "confirm (✓ filled) or remove (✗ never filled)"))
     waiting = [p["symbol"] for p in s.get("positions") or [] if not p.get("confirmed") and p["symbol"] not in held]
-    if waiting:
-        tail = "no EXIT goes out until it is" if real.gate_on(config) else "confirm by hand (✓ filled) · exits go out as usual"
-        out.append(("info", f"Real · fill not confirmed yet: {', '.join(waiting)} · {tail}"))
+    if waiting and real.gate_on(config):                  # the gate off (the default): confirmation is not asked for
+        out.append(("info", f"Real · fill not confirmed yet: {', '.join(waiting)} · no EXIT goes out until it is"))
     with get_db() as conn:
         bad = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status != 'sent' AND action IN ('BUY', 'EXIT')", (today,))]
         stops = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status = 'sent' AND "

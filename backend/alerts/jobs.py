@@ -1141,10 +1141,10 @@ class Scheduler:
         from backend.engine import real
         from backend.broker import tradetron_api as tta
         today, started = now.date(), now_ist()
-        if not tta.key():                                  # no API key: the nudge instead (nothing is read or sent)
-            still = sorted(real.unconfirmed())
+        if not tta.key():                                  # no API key: with the gate on, the nudge instead (nothing read or sent)
+            still = sorted(real.unconfirmed()) if real.gate_on(self.state.config) else []
             if still and self.state.config.real.confirm_alert:
-                self.notifier().send(f"{today}|real-nudge", "real", msg.real_confirm_nudge(still, real.gate_on(self.state.config)))
+                self.notifier().send(f"{today}|real-nudge", "real", msg.real_confirm_nudge(still))
             self.record("real_confirm", today, "ok", f"no key: {len(still)} unconfirmed", started)
             return {"status": "no key", "still": still}
         self._real_fills(today.isoformat())

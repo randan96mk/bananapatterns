@@ -1131,13 +1131,13 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
 **Why**: the app books a position as soon as the webhook is accepted (HTTP 200), but an accepted webhook is not a
 fill. Twice (GLENMARK 3 Nov, HEGAM 6 Nov) the webhook side accepted a BUY and never placed it, so the app held phantom
 positions. On 18 Nov the phantom HEGAM's stop fired, the app sent `EXIT HEGAM`, and the Tradetron strategy (its exit
-rule does not check the symbol) sold MOTILALOFS instead. **Rule since then: every BUY is confirmed by hand** (a check
-for the owner's eyes). The EXIT gate itself is a switch, `real.exit_needs_confirm`, **off by default**: exits go out as
-they always did, and the confirmation is information (the row's ⏳, Home's "Needs a look", the 9:16 AM "ORDERS SENT"
-message ends with "Once you see the fill, reply `filled SYMBOL`", and at `confirm_time` without an API key a nudge
-"⏳ REAL · 2 fills not confirmed yet · reply filled S1 · filled S2 · a check only: exits go out as usual" lists what is
-still open, once a day). With the switch **on**, nothing in the app ever sends an EXIT for a position whose fill was
-not confirmed: the paragraph below.
+rule does not check the symbol) sold MOTILALOFS instead. The answer is a switch, `real.exit_needs_confirm`, **off by
+default**: buys and exits run on their own as they always did and nothing is asked of the owner (no ⏳ rows, no Home
+item, no Telegram line). With the switch **on**, every BUY must be confirmed by hand and nothing in the app ever sends
+an EXIT for a position whose fill was not confirmed: the 9:16 AM "ORDERS SENT" message ends with "Once you see the fill,
+reply `filled SYMBOL`", at `confirm_time` without an API key a once-a-day nudge "⏳ REAL · 2 fills not confirmed yet ·
+reply filled S1 · filled S2 · no EXIT goes out until you do" lists what is still open, and the rest of this section
+applies.
 
 - **Confirmation state**: every Real position has `confirmed` (+ `confirmed_at`, `confirmed_by` manual | api | owner |
   migration) and `unconfirmed_since`. A BUY booked from a webhook starts **unconfirmed**; the evening est-fill correction
