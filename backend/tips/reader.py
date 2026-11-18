@@ -35,7 +35,7 @@ ENV_FILE = BASE_DIR / ".env"
 SESSION_FILE = DATA_DIR / ".tips_session"
 PREVIEW_URL = "https://t.me/s/{channel}"
 PREVIEW_EVERY_S = 30
-RETRY_READER_S = 300
+RETRY_READER_S = 60
 CATCH_UP = 20                       # posts read back per channel when the reader (re)connects
 PUSH_MAX_AGE_S = 15 * 60            # a caught-up post older than this is stored, not pushed
 STATES = ("live", "preview", "down", "logged_out")
@@ -161,12 +161,14 @@ async def find_channel(client, ch: str):
     if is_username(want):
         return await client.get_entity(want)
     digits = want.lstrip("-")
+    plain = lambda s: re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()      # noqa: E731  punctuation and extra spaces never matter
+    want_p = plain(want)
     async for d in client.iter_dialogs():
         ent = getattr(d, "entity", None)
-        title = (getattr(d, "title", None) or getattr(ent, "title", None) or "").strip().lower()
+        title = plain(getattr(d, "title", None) or getattr(ent, "title", None) or "")
         if digits.isdigit() and str(abs(int(getattr(ent, "id", 0) or 0))) == digits:
             return ent
-        if title and (title == want or title.startswith(want) or want in title):
+        if title and want_p and (title == want_p or title.startswith(want_p) or want_p in title):
             return ent
     raise LookupError(f"no chat titled {ch!r} among the account's chats")
 
@@ -592,7 +594,11 @@ class Reader:
                        reason=None if not session_string() else "Tips switched off", via=None)
             return False
         if self.running:
-            return True
+            if not self._stop.is_set():
+                return True
+            self._thread.join(timeout=15)                  # a stop is in progress: let the old thread finish first
+            if self._thread.is_alive():
+                logger.warning("Tips reader: the old thread has not stopped yet; starting a new one anyway")
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="tips-reader", daemon=True)
         self._thread.start()
@@ -607,11 +613,21 @@ class Reader:
             except Exception:
                 pass
 
+    def restart(self) -> bool:
+        """Stop (the channels changed), wait for the thread, start again. The page says "restarting" meanwhile."""
+        set_status(state="down", reason="restarting (channels changed)", via=None)
+        self.stop()
+        if self._thread is not None:
+            self._thread.join(timeout=15)
+        return self.start()
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
                 self.run_once()
             except Exception as exc:                          # never out of the thread
+                if self._stop.is_set():                       # a stop / restart asked for: the disconnect is expected
+                    break
                 reason = _reason(exc)
                 logger.warning("Tips reader down: %s", reason)
                 set_status(state="down", reason=reason, via=None)
@@ -740,9 +756,35 @@ def _reason(exc: Exception) -> str:
 READER: Optional[Reader] = None
 
 
+OLD_CHANNEL_VALUES = ("aakankshatrading",)      # the old default, moved to the new one once
+
+
+def migrate_channels(config) -> bool:
+    """A saved channels value that is the old default, or the new title broken into words (the dialog once split on
+    spaces), becomes the current default. Returns True when it changed."""
+    from backend.config import TipsConfig
+    default = TipsConfig().channels
+    raw = str(config.tips.channels or "")
+    pieces = [p.lower() for p in split_channels(raw)]
+    words = sorted(default.lower().split())
+    if raw == default:
+        return False
+    if not pieces or pieces == list(OLD_CHANNEL_VALUES) or sorted(w for p in pieces for w in p.replace(",", " ").split()) == words:
+        config.tips.channels = default
+        return True
+    return False
+
+
 def ensure(state, client_factory=None, fetch=None) -> dict:
     """Start the reader when tips.enabled and a session exist, stop it otherwise. The reader status."""
     global READER
+    try:
+        if migrate_channels(state.config):
+            from backend.config import save_config
+            save_config(state.config)
+            logger.info("Tips channels moved to the default %r", state.config.tips.channels)
+    except Exception:
+        logger.exception("Tips channels migration failed")
     if READER is None:
         READER = Reader(state, client_factory, fetch)
     if state.config.tips.enabled and session_string():

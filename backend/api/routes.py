@@ -2650,9 +2650,10 @@ def tips_settings(values: dict):
             set_setting(conn, "config.changes", json.dumps(log[:100]))
     if before["enabled"] != out["enabled"] or before["channels"] != out["channels"]:
         try:
-            if rd.READER is not None and rd.READER.running and before["channels"] != out["channels"]:
-                rd.READER.stop()
-            rd.ensure(st)
+            if rd.READER is not None and rd.READER.running and before["channels"] != out["channels"] and out["enabled"]:
+                rd.READER.restart()
+            else:
+                rd.ensure(st)
         except Exception:
             logger.exception("Tips reader restart failed")
     return out

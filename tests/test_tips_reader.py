@@ -100,6 +100,57 @@ def test_reader_failure_is_down_with_the_reason_never_a_crash(session, monkeypat
     assert rd.status()["reason"] == "the session is not authorised · log in again"
 
 
+class BlockingTele(FakeTele):
+    """A client that stays connected until disconnect() is called (like Telethon's run_until_disconnected)."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.gone = None
+        self.disconnects = 0
+
+    async def run_until_disconnected(self):
+        import asyncio
+        self.gone = asyncio.Event()
+        await self.gone.wait()
+        raise ConnectionError("Cannot send requests while disconnected")   # what Telethon raised on the server
+
+    async def disconnect(self):
+        self.disconnects += 1
+        if self.gone is not None:
+            self.gone.set()
+
+
+def test_restart_after_a_channels_change_brings_a_new_thread_up(session, monkeypatch):
+    """19 Nov: saving channels called stop() then start(); start() saw the old thread alive and did nothing, the old
+    thread died on the disconnect with 'Cannot send requests while disconnected' and the reader stayed down."""
+    import time
+    st = St()
+    clients = []
+
+    def factory():
+        c = BlockingTele()
+        clients.append(c)
+        return c
+    r = rd.Reader(st, client_factory=factory)
+    assert r.start() is True
+    for _ in range(100):
+        if rd.status()["state"] == "live":
+            break
+        time.sleep(0.05)
+    assert rd.status()["state"] == "live" and len(clients) == 1
+    assert r.restart() is True                                       # the channels changed
+    for _ in range(100):
+        if rd.status()["state"] == "live" and len(clients) == 2:
+            break
+        time.sleep(0.05)
+    s = rd.status()
+    assert s["state"] == "live" and len(clients) == 2 and clients[0].disconnects == 1
+    assert "disconnected" not in (s.get("reason") or "")               # the expected disconnect is not a failure
+    r.stop()
+    r._thread.join(timeout=5)
+    assert not r.running
+
+
 def test_reader_starts_only_when_enabled_with_a_session(monkeypatch):
     monkeypatch.setenv("TIPS_TG_SESSION", "")
     monkeypatch.setattr(rd, "SESSION_FILE", rd.SESSION_FILE.parent / "nope" / ".tips_session")
@@ -253,7 +304,8 @@ def test_a_private_channel_is_found_by_title_or_id():
     assert asyncio.run(rd.find_channel(fake, "aakankshatrading")).username == "aakankshatrading"
     with pytest.raises(LookupError):
         asyncio.run(rd.find_channel(fake, "No Such Channel"))
-    assert AppConfig().tips.channels == "Index Options, Buying with Aakanksha"
+    assert AppConfig().tips.channels == "Index Options Buying with Aakanksha"
+    assert asyncio.run(rd.find_channel(FakeTele(), "Index Options Buying with Aakanksha")).id == -1002233445566   # comma or not
     assert rd.split_channels("aakankshatrading, other_channel") == ["aakankshatrading", "other_channel"]
     assert rd.split_channels("Index Options, Buying with Aakanksha; @other\n1002233445566") == ["Index Options, Buying with Aakanksha", "other", "1002233445566"]
     c0 = cfg()
@@ -310,3 +362,15 @@ def test_the_sensex_sequence_posted_as_replies(monkeypatch):
     assert sum(1 for k, _ in pushed if k.startswith("tips|hint|")) == 2
     first = next(html for k, _html in pushed if k == f"tips|hint|{hid}" for html in [_html])
     assert first.startswith(f"💡 <b>Tip #{hid} · index options buying with aakanksha · ") and "10:06 AM</b>" in first and "SENSEX" in first
+
+
+def test_old_or_broken_channel_values_move_to_the_default():
+    for old in ("aakankshatrading", "Index, Options, Buying, with, Aakanksha", "index;options;buying;with;aakanksha", ""):
+        c = cfg()
+        c.tips.channels = old
+        assert rd.migrate_channels(c) is True and c.tips.channels == "Index Options Buying with Aakanksha"
+    c = cfg()
+    c.tips.channels = "some_other_channel"
+    assert rd.migrate_channels(c) is False and c.tips.channels == "some_other_channel"
+    c.tips.channels = "Index Options Buying with Aakanksha"
+    assert rd.migrate_channels(c) is False

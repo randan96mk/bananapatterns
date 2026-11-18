@@ -537,7 +537,7 @@ class TipsConfig:
     or rule. Nothing is automatic except the Tips paper book following the plan and the channel's own exits (and
     telling you). The reader logs in with your own Telegram account (TIPS_TG_* in .env, never here)."""
     enabled: bool = False                  # the reader runs (stays off until the reader is logged in)
-    channels: str = "Index Options, Buying with Aakanksha"  # one per line / semicolon: a username, or a private channel's title / id (commas split usernames only)
+    channels: str = "Index Options Buying with Aakanksha"   # one per line / semicolon: a username, or a private channel's title / id (commas split usernames only)
     capital: float = 100000.0              # the Tips paper book's own capital
     lots: int = 1                          # lots per taken hint (a size in the post wins; `take N 2` overrides)
     size_mode: str = "lots"                # lots | rupees (rupees: as many lots as `rupees` buys at the fill, 1 at least)
