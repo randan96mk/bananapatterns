@@ -72,6 +72,10 @@ def test_settings(api):
     assert api.put("/api/tips/settings", json={"size_mode": "shares"}).status_code == 422
     assert api.put("/api/tips/settings", json={"intraday_time_stop": "25:00"}).status_code == 422
     assert api.put("/api/tips/settings", json={"channels": "bad channel!"}).status_code == 422
+    r = api.put("/api/tips/settings", json={"channels": "Index Options Buying with Aakanksha, 1002233445566"})   # a title, an id
+    assert r.status_code == 200 and r.json()["channels"] == "Index Options Buying with Aakanksha,1002233445566"
+    src = open("frontend/src/components/TipsPage.jsx", encoding="utf-8").read()
+    assert "v.split(/[,\\n]+/)" in src                                   # the dialog splits on commas only (a title has spaces)
 
 
 def test_import_test_post_and_login_refusals(api, monkeypatch):

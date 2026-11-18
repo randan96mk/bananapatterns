@@ -256,13 +256,13 @@ function ChannelsDialog({ current, onClose, onSaved }) {
   const [v, setV] = useState(current || '');
   const [msg, setMsg] = useState('');
   const save = () => {
-    const list = v.split(/[\s,]+/).map((x) => x.replace(/^@|^https?:\/\/t\.me\/(s\/)?/i, '').trim()).filter(Boolean);
+    const list = v.split(/[,\n]+/).map((x) => x.replace(/^@|^https?:\/\/t\.me\/(s\/)?/i, '').trim()).filter(Boolean);
     if (!list.length) { setMsg('⚠ at least one channel'); return; }
     if (!window.confirm(`Read these channels?\n\n${list.join('\n')}\n\nThe reader follows them from the next post. Nothing is traded.`)) return;
     api.putTipsSettings({ channels: list.join(',') }).then(() => { onSaved && onSaved(); onClose(); }).catch((e) => setMsg(`⚠ ${e.message}`));
   };
   return <Dialog title="Channels" onClose={onClose}>
-    <p className="small muted" style={{ marginTop: 0 }}>Comma-separated channel names (any channel your account is a member of; public ones also work through the preview).</p>
+    <p className="small muted" style={{ marginTop: 0 }}>Comma-separated: a channel's @username, or for a private channel its full title (spaces are fine) or numeric id. Any channel your account is a member of; public ones also work through the preview.</p>
     <input className="tp-in mono" value={v} onChange={(e) => setV(e.target.value)} placeholder="Index Options Buying with Aakanksha, a_public_username" autoFocus />
     <div className="tp-row"><span className={msg.startsWith('⚠') ? 'down small' : 'small'}>{msg}</span><button type="button" className="btn small" onClick={save}>Save…</button></div>
   </Dialog>;
@@ -402,7 +402,7 @@ export default function TipsPage() {
       <button type="button" className="btn ghost small" onClick={() => setTryOpen(!tryOpen)}>Try a post</button>
       <button type="button" className="btn ghost small" onClick={() => setDlg('channels')}>Channels…</button>
       <button type="button" className="btn ghost small" onClick={() => setDlg('import')}>Import export</button></>}>
-      <Chip dot={st[0]} title={reader.account_masked ? `account ${reader.account_masked}` : undefined}>{st[1]}{reader.last_post_at ? <> · last post {when(reader.last_post_at)}</> : ''}</Chip>
+      <Chip dot={st[0]} title={[reader.account_masked ? `account ${reader.account_masked}` : '', reader.reason ? `why: ${reader.reason}` : ''].filter(Boolean).join(' · ') || undefined}>{st[1]}{reader.state !== 'live' && reader.reason ? <> · <span className="down">{String(reader.reason).slice(0, 90)}</span></> : ''}{reader.last_post_at ? <> · last post {when(reader.last_post_at)}</> : ''}</Chip>
       {isNum(capital) && <Chip>paper book <b>{inr(Number(capital))}</b> · separate</Chip>}
       <Chip>not linked to any strategy · you decide every take</Chip>
     </Head>
