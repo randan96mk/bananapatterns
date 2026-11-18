@@ -2130,7 +2130,10 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
    (`data/.tips_session` when `.env` is not writable) and never shown or logged. API: `POST /api/tips/login {phone}` →
    `POST /api/tips/login/code {code, password?}`.
 3. Settings › tips: `enabled` on (the reader starts only when it is on **and** a session exists). Channels: the
-   **Channels…** dialog or `tips.channels` (comma list of usernames your account can read; default `aakankshatrading`).
+   **Channels…** dialog or `tips.channels` (comma list; default `Index Options Buying with Aakanksha`). An entry is a
+   public channel's username, or for a private channel (no `t.me/` link) its title (whole or the start, any case) or
+   numeric id: the reader finds it among the chats your account is in. A private channel has no public preview page,
+   so the preview fallback skips it.
 
 **How a post flows**
 - **Catch** (`reader.py`): Telethon on your own account in its own thread and asyncio loop; new posts in ~1 s, edits and
@@ -2144,6 +2147,10 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
   rest goes to the local 3B model (`model_classify`, when the AI is on) which only says hint / follow_up / chatter and
   picks one of the open hints' ids; code checks the symbol / strike. Without the model: follow-up words + an open hint
   → follow_up (linked by symbol / strike, the figures near a hint's levels, or the trade in progress), else chatter.
+  A **reply** (Telegram's quote, `tips_posts.reply_to`) to a hint's post is that hint's follow-up straight away, unless
+  it is a new call itself. A follow-up carrying the stop / targets the call lacked ("BUY SENSEX 82000 CE NEAR 460" then
+  "SL 410 / TGT 520/550/600+" as a reply) completes the hint: the plan is rebuilt and the record run restarts (`complete_plan`),
+  the line says "plan completed: stop 410 · targets 520/550/600+".
 - **Decode** (`decode.py`): side, symbol (BNF / BN / bank nifty → BANKNIFTY, FN → FINNIFTY, MIDCP → MIDCPNIFTY, SENSEX,
   NIFTY, CRUDE → MCX CRUDEOIL, stocks), strike + CE/PE, entry (at / zone "250-270" / "near 267 and 263" / above / below /
   cmp, "when comes"), stop (premium, or a spot level on 15-minute closes: "stop: spot 43,450 (15-min close)"; none = "no
@@ -2196,7 +2203,7 @@ stays the morning dry-run skip.
 | Key | Default | What it does |
 |---|---|---|
 | `enabled` | off | The reader runs (it starts only when this is on and you have logged the reader in). |
-| `channels` | aakankshatrading | Comma list of channel usernames your Telegram account can read. |
+| `channels` | Index Options Buying with Aakanksha | Comma list: a channel username, or a private channel's title / id your account is in. |
 | `capital` | 1,00,000 | The Tips paper book's own capital (separate from every other book). |
 | `lots` | 1 | Lots per taken hint when neither the post nor you name a size (`take N 2` overrides). |
 | `size_mode` | lots | `lots` = `lots` per take · `rupees` = as many lots as `rupees` buys at the fill (1 at least). |

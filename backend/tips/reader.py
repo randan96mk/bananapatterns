@@ -131,6 +131,31 @@ def channels_of(config) -> list[str]:
     return list(_channels_cfg)
 
 
+USERNAME_RE = re.compile(r"^[a-z][a-z0-9_]{3,31}$")
+
+
+def is_username(ch: str) -> bool:
+    """A public channel's @username (letters, digits, _), as against a private channel's title or numeric id."""
+    return bool(USERNAME_RE.match((ch or "").strip().lstrip("@").lower()))
+
+
+async def find_channel(client, ch: str):
+    """The Telethon entity of a channels entry: a username straight away; a title (case-insensitive, whole or the start)
+    or a numeric id among the chats the account is in (a private channel has no username)."""
+    want = (ch or "").strip().lstrip("@").lower()
+    if is_username(want):
+        return await client.get_entity(want)
+    digits = want.lstrip("-")
+    async for d in client.iter_dialogs():
+        ent = getattr(d, "entity", None)
+        title = (getattr(d, "title", None) or getattr(ent, "title", None) or "").strip().lower()
+        if digits.isdigit() and str(abs(int(getattr(ent, "id", 0) or 0))) == digits:
+            return ent
+        if title and (title == want or title.startswith(want)):
+            return ent
+    raise LookupError(f"no chat titled {ch!r} among the account's chats")
+
+
 # --- ingest --------------------------------------------------------------------------------------------------------------
 
 def _iso(dt: datetime) -> str:
@@ -140,12 +165,13 @@ def _iso(dt: datetime) -> str:
 
 
 def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: bool = False, source: str = "live",
-           push: bool = True, model: bool = True, client=None, conn=None) -> dict:
-    """Store one post (once per channel + id), sort it, make the hint or link the follow-up. Returns
-    {post_id, kind, hint_id, new, line}."""
+           push: bool = True, model: bool = True, client=None, conn=None, reply_to: Optional[int] = None) -> dict:
+    """Store one post (once per channel + id), sort it, make the hint or link the follow-up. `reply_to` is the post this
+    one replies to (Telegram's quote): a reply to a hint's post is that hint's follow-up unless it is a new call itself.
+    Returns {post_id, kind, hint_id, new, line}."""
     if conn is None:
         with get_db() as c:
-            out = ingest(config, channel, post_id, posted_at, text, has_media, source, push, model, client, c)
+            out = ingest(config, channel, post_id, posted_at, text, has_media, source, push, model, client, c, reply_to)
         if out.get("push"):
             bk.push(config, out["push"][0], out["push"][1])
         return out
@@ -165,6 +191,20 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     kind = flt.code_kind(text, has_media, flt.open_levels(hints))
     by, mdl, ms, hint_id = "code", None, None, None
     d = None
+    quoted = None                                       # the hint this post replies to, when it replies to a hint's post
+    if reply_to:
+        q = conn.execute("SELECT hint_id FROM tips_posts WHERE channel = ? AND post_id = ? AND hint_id IS NOT NULL",
+                         (channel, int(reply_to))).fetchone()
+        quoted = bk.load(q["hint_id"], conn) if q else None
+    if quoted is not None and kind in (None, "chatter", "image"):
+        d = dc.decode(text, posted)
+        same = (d.get("symbol") in (None, quoted.get("symbol"))
+                and (d.get("strike") in (None, quoted.get("strike")))
+                and (d.get("opt_type") in (None, quoted.get("opt_type"))))
+        if dc.looks_like_hint(d, text) and not same:
+            kind = "hint"                               # a new call posted as a reply
+        else:
+            kind, hint_id, by = "follow_up", quoted["id"], "reply"
     if kind is None:
         d = dc.decode(text, posted)
         if dc.looks_like_hint(d, text):
@@ -180,9 +220,9 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
                         kind = "chatter"
             else:
                 kind, hint_id = flt.code_classify(text, hints)
-    cur = conn.execute("INSERT INTO tips_posts (channel, post_id, posted_at, text, has_media, kind, hint_id, classified_by, model, ms, source, created) "
-                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (channel, int(post_id), posted.isoformat(timespec="seconds"), text, int(bool(has_media)),
-                                                            kind, hint_id, by, mdl, ms, source, now_ist()))
+    cur = conn.execute("INSERT INTO tips_posts (channel, post_id, posted_at, text, has_media, kind, hint_id, classified_by, model, ms, source, created, reply_to) "
+                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (channel, int(post_id), posted.isoformat(timespec="seconds"), text, int(bool(has_media)),
+                                                              kind, hint_id, by, mdl, ms, source, now_ist(), reply_to))
     out = {"post_id": post_id, "kind": kind, "hint_id": hint_id, "new": True, "row": cur.lastrowid}
     if kind == "hint":
         h = new_hint(config, conn, channel, int(post_id), posted, text, d, source, client)
@@ -197,9 +237,13 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
         if h:
             act = pl.followup_action(text)
             now = posted                                     # the post's own time (Telegram's clock, ~1 s behind)
+            done = complete_plan(config, h, text, posted)    # "SL 410 / TGT 520/550/600+" posted after the call
             if source == "import":
                 bk.event(h, posted, f'channel: "{text[:80]}"', "channel")
                 line = "follow-up"
+            elif done:
+                bk.event(h, posted, f'channel: "{text[:80]}" · {done}', "channel")
+                line = done
             else:
                 line = bk.channel_action(config, h, act, text, now, conn=conn)
             bk.save(h, conn)
@@ -208,6 +252,32 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
                 from backend.alerts import messages as msg
                 out["push"] = (f"tips|fu|{channel}|{post_id}", msg.tips_followup(h, text, line, now, act))
     return out
+
+
+def complete_plan(config, h: dict, text: str, posted: datetime) -> Optional[str]:
+    """A follow-up that carries the stop and / or targets the call itself lacked (this channel posts "BUY SENSEX 82000
+    CE NEAR 460" first and "SL 410 / TGT 520/550/600+" as a reply): fill them in, rebuild the plan and restart the
+    record run when nothing has filled yet. Returns the line, or None when the follow-up adds nothing."""
+    d = dc.decode(text, posted)
+    st, tg = d.get("stop") or {}, [t for t in (d.get("targets") or []) if t is not None]
+    had_stop = ((h.get("stop") or {}).get("kind") or "none") != "none"
+    had_tg = bool(h.get("targets"))
+    bits = []
+    if st.get("kind", "none") != "none" and st.get("value") is not None and not had_stop:
+        h["stop"] = st
+        bits.append(f"stop {pl.fmt(st['value'])}")
+    if tg and not had_tg:
+        h["targets"], h["open_ended"] = tg, bool(d.get("open_ended"))
+        bits.append("targets " + "/".join(pl.fmt(t) for t in tg) + ("+" if d.get("open_ended") else ""))
+    if not bits:
+        return None
+    h["plan"] = pl.build(h, config.tips, posted)
+    run = h.get("run") or {}
+    if not h.get("taken") and run.get("state") in (None, "waiting"):
+        h["run"] = pl.new_run(h["plan"])
+        if run.get("allowed"):
+            h["run"]["allowed"] = True
+    return "plan completed: " + " · ".join(bits) + ("" if h["plan"]["ok"] else f" · still no plan: {h['plan']['why']}")
 
 
 def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: str, d: Optional[dict], source: str, client=None) -> dict:
@@ -230,7 +300,7 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
     cur = conn.execute("INSERT INTO tips_hints (channel, post_id, created, posted_at, raw, source, status, events) VALUES (?,?,?,?,?,?,?,?)",
                        (channel, post_id, now_ist(), posted.isoformat(timespec="seconds"), text, source, h["status"], "[]"))
     h["id"] = cur.lastrowid
-    h["events"] = []
+    h.update(events=[], channel=channel, post_id=post_id, posted_at=posted.isoformat(timespec="seconds"), raw=text, source=source)
     how = "decoded by code" if all(v == "code" for v in (d.get("decoded") or {}).values()) else "decoded by code + AI"
     exp = {"post": "expiry from the post", "listed": "expiry from the nearest listed", "computed": "expiry computed"}.get(h.get("expiry_src"), "")
     bk.event(h, posted, "💡 hint posted · " + how + (f" · {exp}" if exp else "") + ("" if h["plan"]["ok"] else f" · no plan: {h['plan']['why']}"), "code")
@@ -450,6 +520,8 @@ def preview_once(config, fetch: Optional[Callable[[str], str]] = None, client=No
     seen = new = 0
     last = None
     for ch in channels_of(config):
+        if not is_username(ch):                        # a private channel has no public page
+            continue
         try:
             html_text = fetch(PREVIEW_URL.format(channel=ch))
         except Exception as exc:
@@ -585,7 +657,7 @@ class Reader:
         entities = []
         for ch in chans:
             try:
-                entities.append((ch, await client.get_entity(ch)))
+                entities.append((ch, await find_channel(client, ch)))
             except Exception as exc:
                 logger.warning("Tips channel %s not readable: %s", ch, _reason(exc))
         if not entities:
@@ -624,8 +696,9 @@ class Reader:
         try:
             when = getattr(m, "date", None) or datetime.now(timezone.utc)
             text = getattr(m, "message", None) or ""
+            rt = getattr(getattr(m, "reply_to", None), "reply_to_msg_id", None)      # the quoted post (a reply)
             r = ingest(self.state.config, channel, int(m.id), _iso(when), text, getattr(m, "media", None) is not None,
-                       source="live", client=self.state.client)
+                       source="live", client=self.state.client, reply_to=int(rt) if rt else None)
             lag = int((datetime.now(timezone.utc) - (when if when.tzinfo else when.replace(tzinfo=timezone.utc))).total_seconds() * 1000)
             if r.get("new"):
                 set_status(last_post_at=_iso(when), lag_ms=max(0, lag))

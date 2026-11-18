@@ -18,14 +18,15 @@ from backend.tips import decode as dc
 
 logger = setup_logger("tips")
 
-TRADE_WORDS = re.compile(r"\b(buy|sell|ce|pe|sl|target|targets|tgt|tg|exit|book|booked|booking|short|long|cmp|active|hit|done|"
+TRADE_WORDS = re.compile(r"\b(buy|sell|ce|pe|sl|target|targets|tgt|tg|exit|book|booked|booking|short|long|cmp|active|activated|triggered|tsl|npnl|hit|done|"
                          r"trail|trailing|avoid|entry|stop\s*loss|stoploss|cost)\b", re.I)
 LINK = re.compile(r"https?://\S+|t\.me/\S+|www\.\S+|bit\.ly/\S+", re.I)
 PROMO = re.compile(r"guidelines|disclaimer|not a recommendation|sebi|join (my|our|the)|subscribe|mentorship|course|webinar|"
                    r"enrol|enroll|premium (group|members|channel)|whatsapp|instagram|youtube|josh talks|feedbacks?\b|"
                    r"registration|register|limited seats|dm me|contact", re.I)
 FOLLOW_CODE = re.compile(r"\b(sl|stop\s*loss)\b.*\b(hit|modif|chang|trail)|\b(target|tgt)s?\s*\d?\s*(done|hit)|\b\d\s*targets?\s*done|"
-                         r"\bexit|\bbook|\bcost\b|\bactive\b|\bcmp\b|\btrail|\bavoid\b|\b\d+(\.\d+)?\s*(\+|to\b)|^\s*\d+(\.\d+)?\s*\W*$|"
+                         r"\bexit|\bbook|\bcost\b|\bactiv(e|ated)\b|\btriggered\b|\bentry done\b|\btsl\b|\bnpnl\b|\bcmp\b|\btrail|\bavoid\b|"
+                         r"\b\d+(\.\d+)?\s*(\+|to\b)|^\s*\d+(\.\d+)?\s*\W*$|"
                          r"\bwait\b|\bpart(ly)?\b", re.I | re.S)
 SYSTEM = ("You sort posts from a Telegram trading channel. Reply with JSON only: {\"kind\": \"hint\" | \"follow_up\" | "
           "\"chatter\", \"hint_id\": <one of the open hint ids or null>}. hint = a NEW trade call (buy/sell an option, future "

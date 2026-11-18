@@ -263,7 +263,7 @@ function ChannelsDialog({ current, onClose, onSaved }) {
   };
   return <Dialog title="Channels" onClose={onClose}>
     <p className="small muted" style={{ marginTop: 0 }}>Comma-separated channel names (any channel your account is a member of; public ones also work through the preview).</p>
-    <input className="tp-in mono" value={v} onChange={(e) => setV(e.target.value)} placeholder="aakankshatrading, another_channel" autoFocus />
+    <input className="tp-in mono" value={v} onChange={(e) => setV(e.target.value)} placeholder="Index Options Buying with Aakanksha, a_public_username" autoFocus />
     <div className="tp-row"><span className={msg.startsWith('⚠') ? 'down small' : 'small'}>{msg}</span><button type="button" className="btn small" onClick={save}>Save…</button></div>
   </Dialog>;
 }

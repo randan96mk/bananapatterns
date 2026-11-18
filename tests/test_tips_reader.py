@@ -11,6 +11,7 @@ import pytest
 from backend.database.models import get_db
 from backend.tips import book as bk
 from backend.tips import reader as rd
+from backend.config import AppConfig
 from tests.tips_world import BN12, BN13, at, cfg, posts, seed, world
 
 
@@ -40,6 +41,11 @@ class FakeTele:
 
     async def get_entity(self, name):
         return SimpleNamespace(id=1001, username=name)
+
+    async def iter_dialogs(self):
+        for d in (SimpleNamespace(title="Family", entity=SimpleNamespace(id=55, title="Family")),
+                  SimpleNamespace(title="Index Options Buying with Aakanksha", entity=SimpleNamespace(id=-1002233445566, title="Index Options Buying with Aakanksha"))):
+            yield d
 
     async def get_messages(self, ent, limit=20):
         return list(reversed(self.msgs))
@@ -233,3 +239,68 @@ def test_login_flow_writes_the_session_to_env_only(tmp_path, monkeypatch, caplog
 
 def test_status_mask():
     assert rd.mask("+919876543210") == "+91••••••3210" and rd.mask("someone") == "som•••" and rd.mask(None) is None
+
+
+# --- a private channel by title / id, replies and the plan completed from a follow-up ---------------------------------
+
+def test_a_private_channel_is_found_by_title_or_id():
+    import asyncio
+    fake = FakeTele()
+    assert rd.is_username("aakankshatrading") and not rd.is_username("Index Options Buying with Aakanksha") and not rd.is_username("1002233445566")
+    assert asyncio.run(rd.find_channel(fake, "index options buying with aakanksha")).id == -1002233445566
+    assert asyncio.run(rd.find_channel(fake, "Index Options Buying")).id == -1002233445566     # the start of the title
+    assert asyncio.run(rd.find_channel(fake, "1002233445566")).id == -1002233445566
+    assert asyncio.run(rd.find_channel(fake, "aakankshatrading")).username == "aakankshatrading"
+    with pytest.raises(LookupError):
+        asyncio.run(rd.find_channel(fake, "No Such Channel"))
+    assert AppConfig().tips.channels == "Index Options Buying with Aakanksha"
+    fetched = []
+    rd.preview_once(cfg(), fetch=lambda u: fetched.append(u) or "<html></html>")   # the public one only
+    c = cfg()
+    c.tips.channels = "Index Options Buying with Aakanksha"
+    rd.preview_once(c, fetch=lambda u: fetched.append(u) or "<html></html>")
+    assert fetched == ["https://t.me/s/aakankshatrading"]
+
+
+def test_the_sensex_sequence_posted_as_replies(monkeypatch):
+    """19 Nov: the call first, then the SL / targets, ACTIVATED and the booking advice as replies quoting it."""
+    c, w = cfg(), world()
+    ch = "index options buying with aakanksha"
+    pushed = []
+    monkeypatch.setattr(bk, "push", lambda config, key, html: pushed.append((key, html)) or True)
+    monkeypatch.setattr(rd, "PUSH_MAX_AGE_S", 10 ** 9)
+    t = at("10:06")
+    r1 = rd.ingest(c, ch, 1, t, "", True, push=True, model=False, client=w)
+    r2 = rd.ingest(c, ch, 2, t, "BUY SENSEX 82000 CE NEAR 460\n\n2 LOTS", False, push=True, model=False, client=w)
+    assert r1["kind"] == "image" and r2["kind"] == "hint"
+    hid = r2["hint_id"]
+    h = bk.load(hid)
+    assert (h["symbol"], h["strike"], h["opt_type"], h["side"], h["size_hint"]) == ("SENSEX", 82000, "CE", "BUY", {"lots": 2})
+    assert h["plan"]["ok"] is False and "stop missing" in h["plan"]["why"]
+    r3 = rd.ingest(c, ch, 3, t, "", True, push=True, model=False, client=w, reply_to=2)          # the screenshot
+    r4 = rd.ingest(c, ch, 4, t, "CMP 460", False, push=True, model=False, client=w, reply_to=2)
+    r5 = rd.ingest(c, ch, 5, at("10:07"), "SL 410\nTGT 520/550/600+", False, push=True, model=False, client=w, reply_to=2)
+    r6 = rd.ingest(c, ch, 6, at("10:07"), "ACTIVATED", False, push=True, model=False, client=w, reply_to=2)
+    r7 = rd.ingest(c, ch, 7, at("10:07"), "460 TO NOW 505\nDEFENSIVE TRADERS: book part qty and keep TSL at cost for rest qty",
+                   False, push=True, model=False, client=w, reply_to=2)
+    assert [r["kind"] for r in (r3, r4, r5, r6, r7)] == ["follow_up"] * 5
+    assert all(r["hint_id"] == hid for r in (r3, r4, r5, r6, r7))
+    assert r5["line"] == "plan completed: stop 410 · targets 520/550/600+"
+    h = bk.load(hid)
+    assert h["stop"] == {"kind": "premium", "value": 410} and h["targets"] == [520, 550, 600] and h["open_ended"] is True
+    assert h["plan"]["ok"] is True and h["plan"]["stop"]["value"] == 410 and h["plan"]["targets"][:3] == [520, 550, 600]
+    assert h["run"]["state"] == "waiting" and h["run"]["stop"] == 410 and h["run"].get("allowed") is True   # CMP 460 allowed it
+    assert any("plan completed" in e["text"] for e in h["events"])
+    assert r6["line"] == "entry allowed at the market" or r6["line"] == "noted"
+    with get_db() as conn:
+        rows = conn.execute("SELECT post_id, kind, classified_by, reply_to FROM tips_posts WHERE channel = ? ORDER BY post_id", (ch,)).fetchall()
+    assert [tuple(r) for r in rows][4] == (5, "follow_up", "reply", 2)
+    # ACTIVATED without the reply link still reads as a follow-up by its word
+    r8 = rd.ingest(c, ch, 8, at("10:08"), "ACTIVATED", False, push=True, model=False, client=w)
+    assert r8["kind"] == "follow_up" and r8["hint_id"] == hid
+    # a new call posted as a reply to the old one is a new hint, not a follow-up
+    r9 = rd.ingest(c, ch, 9, at("10:30"), "BUY SENSEX 82800 PE NEAR 660\nSL 600\nTGT 720/780", False, push=True, model=False, client=w, reply_to=2)
+    assert r9["kind"] == "hint" and r9["hint_id"] != hid
+    assert sum(1 for k, _ in pushed if k.startswith("tips|hint|")) == 2
+    first = next(html for k, _html in pushed if k == f"tips|hint|{hid}" for html in [_html])
+    assert first.startswith(f"💡 <b>Tip #{hid} · index options buying with aakanksha · ") and "10:06 AM</b>" in first and "SENSEX" in first
