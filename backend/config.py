@@ -550,6 +550,25 @@ class TipsConfig:
     trail_to_cost_after_t1: bool = True    # after target 1 the stop moves to the entry price
     model_classify: bool = True            # the local 3B model sorts the posts code could not place (hint / follow-up / chatter)
     preview_fallback: bool = True          # the public preview page every 30 s while the reader is down
+    # ⚡ Tips → Kite orders (real money, Kite Connect): off | click (every leg by your click, each through a confirm;
+    # Place all = entry now, the stop + T1 the moment it fills) | auto (the next update; for now it behaves as click)
+    kite_mode: str = "off"
+    kite_product: str = "NRML"             # NRML | MIS
+    kite_market_protection: float = 5.0    # % market protection on MARKET / SL-M orders (the exchange rule for API orders: never 0)
+    kite_max_entries_day: int = 4          # entry orders a day at most
+    kite_max_lots: int = 2                 # lots per entry order at most
+    kite_loss_cap: float = 6000.0          # ₹ realised loss a day from these orders; at or past it no new entry
+    kite_entry_from: str = "09:20"         # entries only from here (HH:MM; shown 12-hour)
+    kite_entry_until: str = "14:30"        # ... until here
+
+
+TIPS_KITE_MODES = ("off", "click", "auto")
+TIPS_KITE_PRODUCTS = ("NRML", "MIS")
+
+
+def _hhmm_ok(v) -> bool:
+    h, _, m = str(v).partition(":")
+    return h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60
 
 
 def check_tips(sec: "TipsConfig") -> None:
@@ -561,6 +580,19 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError(f"intraday_time_stop {sec.intraday_time_stop!r} must be HH:MM")
     if int(sec.lots) < 1 or float(sec.capital) <= 0 or float(sec.rupees) <= 0:
         raise ValueError("lots, capital and rupees must be positive")
+    if sec.kite_mode not in TIPS_KITE_MODES:
+        raise ValueError("kite_mode must be off, click or auto")
+    if sec.kite_product not in TIPS_KITE_PRODUCTS:
+        raise ValueError("kite_product must be NRML or MIS")
+    if not (0.5 <= float(sec.kite_market_protection) <= 20):
+        raise ValueError("kite_market_protection must be 0.5 … 20 (%), never 0 for API orders")
+    for k in ("kite_entry_from", "kite_entry_until"):
+        if not _hhmm_ok(getattr(sec, k)):
+            raise ValueError(f"{k} {getattr(sec, k)!r} must be HH:MM")
+    if str(sec.kite_entry_from).zfill(5) >= str(sec.kite_entry_until).zfill(5):
+        raise ValueError("kite_entry_from must be before kite_entry_until")
+    if int(sec.kite_max_entries_day) < 1 or int(sec.kite_max_lots) < 1 or float(sec.kite_loss_cap) <= 0:
+        raise ValueError("kite_max_entries_day, kite_max_lots and kite_loss_cap must be positive")
 
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")

@@ -465,9 +465,22 @@ ACTIONS = {"new": ["take", "take_half", "skip", "pause"], "waiting": ["take", "t
            "paused": ["take", "skip", "resume"], "active": ["take", "take_half", "skip"]}
 
 
-def hint_view(h: dict, now: Optional[datetime] = None) -> dict:
-    """One hint for the page (the keys the frontend reads)."""
+def _app_config():
+    """The running app's config (the page's views), else the defaults (Kite orders off)."""
+    try:
+        from backend.api import routes
+        if routes._state is not None:
+            return routes._state.config
+    except Exception:
+        pass
+    from backend.config import AppConfig
+    return AppConfig()
+
+
+def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
+    """One hint for the page (the keys the frontend reads). `kite`: the hint's Kite legs (⚡ Tips → Kite orders)."""
     from backend.timefmt import ampm
+    from backend.tips import kite_orders as ko
     now = now or datetime.now(IST)
     run, pos = h.get("run") or {}, h.get("pos") if h.get("taken") else None
     posted = datetime.fromisoformat(h["posted_at"])
@@ -500,7 +513,8 @@ def hint_view(h: dict, now: Optional[datetime] = None) -> dict:
                           "spot_stop": pos["run"].get("spot_stop"), "trail": pos["run"].get("trail"), "realised": pos.get("realised"),
                           "charges": pos.get("charges"), "ended": pos.get("ended"), "override": pos.get("override"),
                           "booked": pos.get("booked") or [], "who": pos.get("who"), "size_src": pos.get("size_src")} if pos else None),
-            "actions": acts, "telegram": f"take {h['id']} · take {h['id']} 2 · skip {h['id']}", "source": h.get("source")}
+            "actions": acts, "telegram": f"take {h['id']} · take {h['id']} 2 · skip {h['id']}", "source": h.get("source"),
+            "kite": ko.hint_kite(config or _app_config(), h)}
 
 
 def feed_rows(kind: Optional[str] = None, limit: int = 50, channel: Optional[str] = None) -> list[dict]:
@@ -552,7 +566,8 @@ def hints_list(status: Optional[str] = None, days: Optional[int] = None, channel
 
 def summary(config, now: Optional[datetime] = None) -> dict:
     """GET /api/tips: {enabled, reader, channels, cards {open, book, channel30, you_vs_all}, hints, feed, record, book,
-    settings, quotes_at, any_open, at}."""
+    settings, quotes_at, any_open, at, kite (⚡ Tips → Kite orders: mode, kill, caps, open)}."""
+    from backend.tips import kite_orders as ko
     from backend.tips import reader as rd
     now = now or datetime.now(IST)
     today = now.date().isoformat()
@@ -564,7 +579,7 @@ def summary(config, now: Optional[datetime] = None) -> dict:
         if h["id"] not in seen:
             seen.add(h["id"])
             hs.append(h)
-    views = [hint_view(h, now) for h in hs]
+    views = [hint_view(h, now, config) for h in hs]
     rec = record(30, None, now)
     book = bk.view(config, now)
     with get_db() as conn:
@@ -590,7 +605,7 @@ def summary(config, now: Optional[datetime] = None) -> dict:
     reader["channels"] = rd.channels_of(config)
     return {"enabled": bool(config.tips.enabled), "reader": reader, "channels": rd.channels_of(config), "cards": cards, "hints": views,
             "feed": feed_rows(limit=50), "record": rec, "book": book, "settings": asdict(config.tips),
-            "quotes_at": quotes_at, "any_open": bool(open_h), "at": now.isoformat(timespec="seconds")}
+            "quotes_at": quotes_at, "any_open": bool(open_h), "at": now.isoformat(timespec="seconds"), "kite": ko.lite(config, now)}
 
 
 def health_rows(config) -> list[dict]:
@@ -618,4 +633,6 @@ def health_rows(config) -> list[dict]:
     rows.append({"key": "tips_quotes", "name": "Tips quotes", "ok": True, "warn": stale,
                  "state": f"{n_open} open · last quote {round(age)} s ago" if age is not None and n_open else (f"{n_open} open · no quote yet" if n_open else "nothing open"),
                  "detail": "every 5 s while a hint is open or waiting · needs the market-data login", "at": qat})
+    from backend.tips import kite_orders as ko
+    rows.append(ko.health_row(config))                         # ⚡ tips_kite: mode, open orders, last sync, kill switch
     return rows

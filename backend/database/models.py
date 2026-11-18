@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS tips_hints (
         CHECK(status IN ('new', 'waiting', 'active', 'paused', 'closed', 'skipped', 'expired')),
     ended TEXT, taken INTEGER NOT NULL DEFAULT 0, lots REAL, entry_px REAL, exit_px REAL, pnl REAL,
     events TEXT NOT NULL DEFAULT '[]', tracked INTEGER NOT NULL DEFAULT 0, untracked_why TEXT,
-    run TEXT, pos TEXT, score TEXT, updated TEXT, UNIQUE (channel, post_id));
+    run TEXT, pos TEXT, score TEXT, updated TEXT, kite TEXT, UNIQUE (channel, post_id));
 CREATE INDEX IF NOT EXISTS idx_tips_hints_status ON tips_hints(status);
 CREATE TABLE IF NOT EXISTS tips_quotes (hint_id INTEGER NOT NULL, t TEXT NOT NULL, ltp REAL, spot REAL, PRIMARY KEY (hint_id, t));
 CREATE TABLE IF NOT EXISTS tips_trades (
@@ -414,6 +414,17 @@ CREATE TABLE IF NOT EXISTS tips_instruments (
     as_of TEXT NOT NULL, exchange TEXT NOT NULL, tradingsymbol TEXT NOT NULL, name TEXT NOT NULL, expiry TEXT,
     strike REAL, type TEXT, token INTEGER, lot_size INTEGER, PRIMARY KEY (as_of, exchange, tradingsymbol));
 CREATE INDEX IF NOT EXISTS idx_tips_instr_name ON tips_instruments(name, as_of);
+-- ⚡ Tips → Kite orders (backend/tips/kite_orders.py): every order the app sent to Kite for a hint (only ours: tag
+-- bptips), its leg, its status from the last sync and its fill. Never deleted.
+CREATE TABLE IF NOT EXISTS tips_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NOT NULL,
+    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 'exit')), side TEXT, qty INTEGER, order_type TEXT,
+    price REAL, "trigger" REAL, status TEXT NOT NULL DEFAULT 'placed'
+        CHECK(status IN ('placed', 'open', 'complete', 'rejected', 'cancelled', 'failed')),
+    order_id TEXT, filled_px REAL, filled_qty INTEGER, placed_at TEXT, updated_at TEXT,
+    "by" TEXT CHECK("by" IN ('click', 'app', 'auto')), note TEXT, day TEXT);
+CREATE INDEX IF NOT EXISTS idx_tips_orders_day ON tips_orders(day);
+CREATE INDEX IF NOT EXISTS idx_tips_orders_hint ON tips_orders(hint_id);
 
 -- 🤖 Local AI (backend/ai): every job the queue ran (queued / running / done / failed / skipped) and the notes the
 -- model wrote (filled from PR 2). Nothing here is ever deleted.
@@ -694,6 +705,7 @@ def _migrate_ai_notes(conn) -> None:
     per prompt version. Added with ALTER TABLE behind a PRAGMA check; nothing is dropped."""
     _add_column(conn, "ai_notes", "source_key", "TEXT")
     _add_column(conn, "tips_posts", "reply_to", "INTEGER")        # 💡 the post a reply quotes (Telegram's reply-to id)
+    _add_column(conn, "tips_hints", "kite", "TEXT")               # ⚡ the hint's Kite legs (JSON; Tips → Kite orders)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
                  "WHERE source_key IS NOT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_notes_symbol ON ai_notes(symbol, created)")

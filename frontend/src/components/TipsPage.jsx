@@ -4,10 +4,12 @@ import { useLiveOr } from '../services/live';
 import { clock, ampm } from '../timefmt';
 import { inr } from '../fmt';
 import { useIsPhone } from '../useMedia';
-import { Card, Cards, Panel, FixedTable, Tag, AiTag, Chip, Head } from './ui2';
+import { Card, Cards, Panel, FixedTable, Tag, AiTag, Chip, Head, Seg, Switch } from './ui2';
 
 // 💡 Research › Tips: a Telegram channel's calls caught, filtered, decoded and scored. NOT linked to any strategy:
 // every take is the owner's, each through a confirm, into a separate Tips PAPER book (nothing is sent to the broker).
+// ⚡ Tips → Kite orders (tips.kite_mode click): on top of the paper book, a hint's legs go to Kite by the owner's click,
+// each through a confirm; "Place all" = the entry now, the stop + T1 the moment it fills (GET /api/tips/kite behind it).
 // Data: the stream topic `tips` (5 s while a hint is open or waiting, else 60 s), GET /api/tips behind it.
 // Every field the local model filled (decoded[field] === 'ai', a post classified_by 'ai') carries the AI tag.
 
@@ -64,7 +66,7 @@ function statusTag(h) {
   if (s === 'closed') return <Tag c={tone(h.pnl) === 'down' ? 'bad' : tone(h.pnl) === 'up' ? 'ok' : ''}>closed{h.ended ? ` · ${String(h.ended).replace('_', ' ')}` : ''}</Tag>;
   return s ? <Tag>{s}</Tag> : null;
 }
-const SRC = { channel: '📣', owner: '👤', code: '⚙', ai: '🤖' };
+const SRC = { channel: '📣', owner: '👤', code: '⚙', ai: '🤖', kite: '⚡' };
 
 // The decoded grid: six fixed cells (3 columns on a phone); each value ellipsizes, never wraps.
 export function Decoded({ h }) {
@@ -104,8 +106,157 @@ function Timeline({ events }) {
     <span className="tx">{e?.text || ''}</span>{e?.src === 'ai' && <AiTag of={e} />}</div>)}</div>;
 }
 
+// ⚡ Tips → Kite orders ----------------------------------------------------------------------------------------------
+const KITE_WARN = 'Real money on your Kite account. The app never averages, never re-enters after a stop, and stops for the day at the loss cap.';
+const KMODES = [['off', 'Off', 'paper book only · nothing reaches Kite'], ['click', 'By my click', 'you press every button · each one confirms first'], ['auto', 'Auto', 'auto arrives in the next update · works as By my click for now']];
+const kmodeNote = (m) => (KMODES.find((x) => x[0] === m) || KMODES[0])[2];
+const LEG_IC = { entry: '🟢', stop: '🛑', t1: '🎯', t2: '🎯', exit: '⏏' };
+const LIVE_ST = ['placed', 'open'];
+const legTag = (lg) => {
+  const s = lg?.status;
+  const c = s === 'complete' ? 'ok' : s === 'open' || s === 'placed' ? 'a' : s === 'rejected' || s === 'failed' ? 'bad' : lg?.after_t1 && s === 'none' ? 'w' : '';
+  const text = s === 'none' && lg?.after_t1 ? 'placed after T1' : s === 'placed' ? 'placed' : lg?.status_text || 'not placed';
+  return <Tag c={c} title={lg?.note || undefined}>{text}</Tag>;
+};
+const legLine = (lg) => (lg ? `${lg.type_text} ×${px(lg.qty)}` : '');
+export const kiteCaps = (k) => {
+  const c = k?.caps || {};
+  return `today ${px(c.entries ?? 0)} of ${px(c.max_entries ?? 0)} entries · lots cap ${px(c.max_lots ?? 0)} · loss cap ${isNum(c.loss_cap) ? inr(Number(c.loss_cap)) : '—'} · used ${isNum(c.used_loss) ? (Number(c.used_loss) < 0 ? `−${inr(Math.abs(Number(c.used_loss)))}` : `−${inr(0)}`) : '—'}`;
+};
+
+// The bar under the Head: the mode (Off / By my click / Auto), the kill switch, the caps, "Orders today".
+function KiteBar({ k, onDone, toOrders }) {
+  const [msg, setMsg] = useState('');
+  const mode = k?.mode || 'off';
+  const kill = !!k?.kill;
+  const setMode = (m) => {
+    if (m === mode) return;
+    const label = (KMODES.find((x) => x[0] === m) || [])[1] || m;
+    const why = m === 'off' ? 'Nothing more is sent to Kite from the Tips. Orders already on Kite stay there: exit or cancel them from the cards.'
+      : m === 'auto' ? 'Auto arrives in the next update: for now it works exactly as By my click (every order is your click, each through a confirm).'
+        : 'The cards get Kite legs: every order is your click, each through a confirm. Place all = entry now, the stop and T1 the moment it fills.';
+    if (!window.confirm(`Kite orders: ${label}?\n\n${why}\n\n${KITE_WARN}`)) return;
+    api.putTipsSettings({ kite_mode: m }).then(() => { setMsg(''); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
+  };
+  const setKill = (on) => {
+    const t = on ? 'Turn the Kite kill switch ON?\n\nEvery working Tips order on Kite is cancelled and every open quantity is exited at market now. No new order until you turn it off.'
+      : 'Turn the Kite kill switch off?\n\nNew Tips orders are allowed again (each still your click). Nothing is placed by turning it off.';
+    if (!window.confirm(t)) return;
+    api.tipsKiteKill(on).then((r) => { setMsg(on ? `kill switch on · ${px(r?.cancelled ?? 0)} cancelled · ${px(r?.exits ?? 0)} exits` : ''); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
+  };
+  return <div className={`tp-kbar ${mode === 'off' ? 'off' : ''} ${kill ? 'killed' : ''}`}>
+    <b className="ttl">⚡ Kite orders</b>
+    <Seg small opts={KMODES.map(([v, l, t]) => [v, l, t])} v={mode} set={setMode} />
+    {mode !== 'off' && <Switch red on={kill} onChange={setKill} label="kill switch" title="cancels every working Tips order on Kite and exits at market" />}
+    <span className="sp" />
+    {mode === 'off' ? <span className="cap">paper book only · nothing reaches Kite</span>
+      : <><span className="cap" title={kiteCaps(k)}>{kiteCaps(k)}{k?.window ? ` · entries ${k.window}` : ''}</span>
+        <span className="cap note">{msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span> : kmodeNote(mode)}</span></>}
+    {(mode !== 'off' || Number(k?.open) > 0 || arr(k?.orders).length > 0) && <button type="button" className="btn ghost small" onClick={toOrders}>Orders today</button>}
+  </div>;
+}
+
+// The legs of one hint on Kite (entry / stop / target 1 / target 2), each with its status and its buttons; the row of
+// whole-hint actions under them. Every button confirms first; the numbers come from the server (GET /api/tips).
+function KiteLegs({ h, kinfo, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const k = h?.kite || {};
+  const acts = arr(k.actions);
+  const legs = arr(k.legs);
+  const L = Object.fromEntries(legs.map((x) => [x.leg, x]));
+  const id = h?.id;
+  const name = hintName(h);
+  const caps = kinfo?.caps || {};
+  const contract = `${h?.tradingsymbol || '—'} · ${h?.exchange || ''} · ${plural(px(k.lots), 'lot')} = ${px(k.qty)} · ${kinfo?.product || 'NRML'}${isNum(h?.ltp) ? ` · last ${px(h.ltp)}` : ''}`;
+  const capsAfter = `${px((caps.entries ?? 0) + 1)} of ${px(caps.max_entries ?? 0)} entries · ${px(k.lots)} of ${px(caps.max_lots ?? 0)} lots · loss cap ${isNum(caps.loss_cap) ? inr(Number(caps.loss_cap)) : '—'}${isNum(L.stop?.max_loss) ? ` · this trade's max loss ${money(L.stop.max_loss)}` : ''}`;
+  const stopTxt = L.stop ? (L.stop.placeable === false ? 'spot stop: watched by the app, exit by hand' : `${legLine(L.stop)}${isNum(L.stop.max_loss) ? ` (${money(L.stop.max_loss)})` : ''}`) : '—';
+  const run = (action, body, text, okText) => {
+    if (!window.confirm(text)) return;
+    setBusy(true); setMsg('');
+    api.tipsKite(id, action, body).then(() => { setMsg(okText); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false));
+  };
+  const head = (t) => `⚡ ${t} · #${id} ${name}\n\ncontract   ${contract}\n`;
+  const all = () => run('all', {}, `${head('Place all on Kite')}premium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\n1 · entry now   ${L.entry?.side} ${px(L.entry?.qty)} MARKET\n2 · the moment it fills   ${stopTxt}${L.t1 ? ` · T1 ${legLine(L.t1)}` : ''}\n${L.t2 ? `3 · after T1 fills   T2 ${legLine(L.t2)} · SL moved to cost\n` : ''}caps after this   ${capsAfter}\n\nSteps 2${L.t2 ? ' and 3' : ''} are the app's, as the consequence of this click; the leftovers are cancelled when the position closes.${k.beyond_t2 ? ` Targets past the second stay in the paper record only.` : ''}\n\n${KITE_WARN}`, 'entry sent to Kite · SL + T1 on the fill');
+  const entry = () => run('entry', {}, `${head('Place the entry on Kite')}premium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\norder   ${L.entry?.side} ${px(L.entry?.qty)} MARKET\ncaps after this   ${capsAfter}\n\nOnly the entry: the stop and the targets are yours to place once it fills.\n\n${KITE_WARN}`, 'entry sent to Kite');
+  const rest = () => run('rest', {}, `${head('Place the rest on Kite')}now   ${L.stop?.status && LIVE_ST.includes(L.stop.status) ? '' : `SL ${stopTxt}`}${L.t1 && !['placed', 'open', 'complete'].includes(L.t1.status) ? ` · T1 ${legLine(L.t1)}` : ''}${L.t1?.status === 'complete' && L.t2 ? ` · T2 ${legLine(L.t2)}` : ''}\n${L.t2 && L.t1?.status !== 'complete' ? `after T1 fills   T2 ${legLine(L.t2)} · SL moved to cost\n` : ''}\nWhat follows a fill is the app's, as the consequence of this click.\n\n${KITE_WARN}`, 'the rest sent to Kite');
+  const stop = () => run('stop', {}, `${head('Place the stop on Kite')}order   ${L.stop?.side} ${stopTxt}\n\n${KITE_WARN}`, 'stop sent to Kite');
+  const tgts = (which) => run('targets', {}, `${head(`Place ${which === 't2' ? 'target 2' : 'target 1'} on Kite`)}order   ${L[which]?.side} ${legLine(L[which])}${which === 't1' && isNum(L.t1?.if_filled) ? ` (${money(L.t1.if_filled)} if filled)` : ''}\n\n${KITE_WARN}`, `${which === 't2' ? 'T2' : 'T1'} sent to Kite`);
+  const exit = () => run('exit', {}, `⚡ Exit #${id} ${name} on Kite now?\n\n${k.state === 'armed' ? 'The entry has not filled: it is cancelled.' : `The working stop and targets are cancelled, then ${L.stop?.side || 'SELL'} ${px(k.qty_open)} MARKET.`}\n\n${KITE_WARN}`, 'exit sent to Kite');
+  const cancel = (leg) => run('cancel', { leg }, `Cancel the ${L[leg]?.name || leg} of #${id} on Kite?\n\norder ${L[leg]?.order_id || '—'} · ${legLine(L[leg])}\n\nNothing else changes.`, `${L[leg]?.name || leg} cancelled`);
+  const toCost = () => run('modify_stop', { to: 'cost' }, `Move the Kite stop of #${id} to cost?\n\nSL-M ${px(L.stop?.trigger)} → ${px(k.entry_px)} (the entry fill) ×${px(L.stop?.qty)}\n\n${KITE_WARN}`, 'stop moved to cost');
+  const resync = () => { if (window.confirm('Re-sync with Kite?\n\nReads the Kite order book once (only the app\'s own Tips orders) and applies what changed.')) { setBusy(true); api.tipsKiteResync().then(() => { setMsg('re-synced'); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false)); } };
+  const live = (leg) => LIVE_ST.includes(L[leg]?.status);
+  const btn = (label, fn, extra = {}) => <button type="button" className={`btn ghost small ${extra.cls || ''}`} disabled={busy || extra.off} title={extra.title} onClick={fn}>{label}</button>;
+  const legBtns = (lg) => {
+    const out = [];
+    if (lg.leg === 'entry') {
+      if (acts.includes('entry')) out.push(btn('Place entry…', entry, { key: 'e' }));
+      if (acts.includes('cancel:entry')) out.push(btn('Cancel', () => cancel('entry')));
+      if (lg.status === 'complete') out.push(<span key="d" className="dim small">done · by {lg.by === 'click' ? 'your click' : lg.by}</span>);
+    } else if (lg.leg === 'stop') {
+      if (live('stop') && isNum(k.entry_px) && Number(lg.trigger) !== Number(k.entry_px) && acts.includes('modify_stop')) out.push(btn(`Modify → cost ${px(k.entry_px)}`, toCost));
+      if (acts.includes('cancel:stop')) out.push(btn('Cancel', () => cancel('stop')));
+      if (!live('stop') && lg.status !== 'complete' && lg.placeable !== false) out.push(btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }));
+    } else if (lg.leg === 't1') {
+      if (acts.includes('cancel:t1')) out.push(btn('Cancel', () => cancel('t1')));
+      if (!live('t1') && lg.status !== 'complete') out.push(btn('Place T1…', () => tgts('t1'), { off: !acts.includes('targets'), title: acts.includes('targets') ? undefined : 'after the entry fills on Kite' }));
+    } else if (lg.leg === 't2') {
+      if (acts.includes('cancel:t2')) out.push(btn('Cancel', () => cancel('t2')));
+      if (!live('t2') && lg.status !== 'complete') out.push(btn('Place now…', () => tgts('t2'), { off: !(acts.includes('targets') && L.t1?.status === 'complete'), title: 'after target 1 fills (a sell for more than you hold is refused)' }));
+    }
+    return out.map((x, i) => <React.Fragment key={i}>{x}</React.Fragment>);
+  };
+  const note = msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>
+    : k.state === 'closed' ? `closed on Kite${k.reason ? ` · ${k.reason}` : ''} · ${money(k.realised)}`
+      : acts.includes('all') ? 'Place all = entry now, SL and targets the moment it fills · or each leg on its own'
+        : k.state === 'armed' ? `entry on Kite · waiting for the fill${k.auto_rest ? ' · then SL + T1 by the app' : ''}`
+          : k.state === 'entered' ? `${px(k.qty_open)} open on Kite${k.beyond_t2 ? ' · targets past T2: paper record only' : ''}` : 'every button opens a confirm · the paper book stays as it is';
+  return <div className="tp-kite">
+    <div className="tp-legs">{legs.map((lg) => <div key={lg.leg} className={`tp-leg ${lg.status}`}>
+      <div className="t"><span className="ic">{LEG_IC[lg.leg]}</span><b>{lg.name}</b><span className="ln">· {lg.side} {px(lg.qty)} · {lg.type_text}</span>{legTag(lg)}</div>
+      <div className="d" title={lg.note || undefined}>{[lg.at, lg.order_id ? `order ${lg.order_id}` : '', lg.detail].filter(Boolean).join(' · ')}</div>
+      <div className="a">{legBtns(lg)}</div></div>)}</div>
+    <div className="acts tp-kacts">
+      {acts.includes('all') && <button type="button" className="btn small" disabled={busy} onClick={all}>⚡ Place all on Kite · entry + SL + targets…</button>}
+      {acts.includes('rest') && <button type="button" className="btn small" disabled={busy} onClick={rest}>⚡ Place rest…</button>}
+      {acts.includes('exit') && <button type="button" className="btn ghost small tp-danger" disabled={busy} onClick={exit}>Exit on Kite now…</button>}
+      <button type="button" className="btn ghost small" disabled={busy} onClick={resync}>Re-sync with Kite</button>
+      <span className="note">{note}</span>
+    </div></div>;
+}
+
+// The guards every Kite entry passes (GET /api/tips/kite), ✅ / ⛔.
+function KiteGuards({ kd }) {
+  const gs = arr(kd?.guards);
+  return <Panel title="Guards" right={<span>Settings › tips › kite</span>} className="tp-guards">
+    <div className="rbody">
+      {!gs.length && <p className="muted small" style={{ margin: 0 }}>Loading…</p>}
+      {gs.map((g) => <div key={g.key} className={`g ${g.ok ? '' : 'no'}`}><span className="gi">{g.ok ? '✅' : '⛔'}</span><span>{g.text}</span></div>)}
+      <div className="g dim"><span className="gi">·</span><span>each hint also needs a complete plan (stop + target), a contract and a lot size · one Kite position per hint · never averaged · never re-entered after a stop</span></div>
+      <div className="g dim"><span className="gi">·</span><span>the kill switch cancels every working order and exits at market · targets past the second stay in the paper record</span></div>
+    </div></Panel>;
+}
+
+// Today's Kite orders of the Tips (ours only). Phones keep Time / Hint / Leg / Side / Qty / Status.
+function KiteOrders({ kd, onDone }) {
+  const [msg, setMsg] = useState('');
+  const rows = arr(kd?.orders).map((o) => ({ key: `k${o.id}`, title: o.note || undefined, cells: [o.label, o.time, `#${o.hint_id}`,
+    <span className={o.side === 'BUY' ? 'up' : 'down'}>{o.side}</span>, px(o.qty), o.type_text, px(o.price),
+    <Tag c={o.status === 'complete' ? 'ok' : o.status === 'rejected' || o.status === 'failed' ? 'bad' : o.status === 'cancelled' ? '' : 'a'} title={o.note || undefined}>{o.status_text}</Tag>,
+    o.order_id || '—', o.by || '—'] }));
+  const resync = () => { if (window.confirm('Re-sync with Kite?\n\nReads the Kite order book once (only the app\'s own Tips orders) and applies what changed.')) api.tipsKiteResync().then(() => { setMsg(''); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)); };
+  return <Panel id="tp-kite-orders" title="Kite orders today" meta={String(rows.length)} className="tp-korders"
+    right={<>{msg ? <span className="down">{msg}</span> : <span>net <b className={tone(kd?.net)}>{money(kd?.net ?? 0)}</b> realised{kd?.last_sync_label ? ` · synced ${kd.last_sync_label}` : ''}</span>}
+      <button type="button" className="btn ghost small" onClick={resync}>Re-sync</button></>}>
+    <FixedTable cols={[{ h: 'Leg', ell: true }, { h: 'Time', w: 88 }, { h: 'Hint', w: 54 }, { h: 'Side', w: 50 }, { h: 'Qty', w: 54, n: true },
+      { h: 'Type', w: 100, lo: true }, { h: 'Price', w: 80, n: true, lo: true }, { h: 'Status', w: 128, ell: true }, { h: 'Order id', w: 136, lo: true }, { h: 'By', w: 52, lo: true }]}
+      rows={rows} empty="No Kite orders today. Every one starts from a card's button, through a confirm; only the app's own Tips orders are shown." />
+  </Panel>;
+}
+
 // One hint: the raw post (kept as written), the decoded grid, the target bar, the timeline, the actions (each confirms).
-function HintCard({ h, defLots, onDone }) {
+function HintCard({ h, defLots, onDone, kinfo }) {
   const [lots, setLots] = useState('');
   const [trail, setTrail] = useState(null);           // null = closed, else the field's text
   const [busy, setBusy] = useState(false);
@@ -156,7 +307,8 @@ function HintCard({ h, defLots, onDone }) {
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
     <Decoded h={h} />
     <TargetBar h={h} />
-    <Timeline events={h?.events} />
+    <Timeline events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
+    {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) && <KiteLegs h={h} kinfo={kinfo} onDone={onDone} />}
     <div className="acts">
       {offer && <>
         <span className="lotf"><input inputMode="numeric" aria-label="lots" placeholder={String(n)} value={lots} onChange={(e) => setLots(e.target.value.replace(/[^\d]/g, '').slice(0, 3))} />lots</span>
@@ -361,7 +513,8 @@ const channelsOf = (d) => {
 };
 
 export default function TipsPage() {
-  const [d, reload, err] = useLiveOr('tips', api.getTips, 5000);
+  const [d, reload0, err] = useLiveOr('tips', api.getTips, 5000);
+  const [kd, setKd] = useState(null);                    // ⚡ GET /api/tips/kite: today's orders, the guards, the caps
   const phone = useIsPhone();
   const [dlg, setDlg] = useState(null);
   const [tryOpen, setTryOpen] = useState(false);
@@ -369,6 +522,9 @@ export default function TipsPage() {
   const [msg, setMsg] = useState('');
   const topRef = useRef(null);
   const data = d && typeof d === 'object' && !d.error ? d : null;
+  const loadKite = () => { api.getTipsKite().then((r) => setKd(r && typeof r === 'object' ? r : null)).catch(() => {}); };
+  const reload = () => { reload0(); loadKite(); };
+  useEffect(() => { loadKite(); }, [data?.at]);          // again whenever the summary changes (5 s while a hint is open)
   const hints = useMemo(() => {
     const h = arr(data?.hints).filter(Boolean);
     const rank = (x) => (x.status === 'active' ? 0 : OPEN.includes(x.status) ? 1 : 2);
@@ -406,6 +562,7 @@ export default function TipsPage() {
       {isNum(capital) && <Chip>paper book <b>{inr(Number(capital))}</b> · separate</Chip>}
       <Chip>not linked to any strategy · you decide every take</Chip>
     </Head>
+    <KiteBar k={{ ...(data.kite || {}), ...(kd || {}) }} onDone={reload} toOrders={() => document.getElementById('tp-kite-orders')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
     {data.enabled === false && <div className="rbanner warn tp-banner"><span>💡 Tips is <b>off</b>: nothing is read or pushed. {reader.state === 'logged_out' ? 'Log the reader in below first, then turn it on.' : ''}</span>
       <button type="button" className="btn small" onClick={enable}>Turn on…</button></div>}
     <Cards n={4}>
@@ -425,15 +582,17 @@ export default function TipsPage() {
         {reader.state === 'logged_out' && <LoginPanel reader={reader} onDone={reload} />}
         {tryOpen && <TryPost onClose={() => setTryOpen(false)} />}
         {!hints.length && <Panel title="Hints"><p className="muted small rempty">No hints yet. A call in the channel becomes a card here with its decoded plan; nothing is taken without you.</p></Panel>}
-        {shownHints.map((h) => <HintCard key={h.id} h={h} defLots={defLots} onDone={reload} />)}
+        {shownHints.map((h) => <HintCard key={h.id} h={h} defLots={defLots} onDone={reload} kinfo={data.kite ? { ...data.kite, ...(kd || {}) } : null} />)}
         {hints.length > shownHints.length && <button type="button" className="btn ghost small tp-more" onClick={() => setOlder(true)}>show {hints.length - shownHints.length} older</button>}
       </div>
       <div className="tp-col">
+        {(data.kite?.mode || 'off') !== 'off' && <KiteGuards kd={kd} />}
         <Feed feed={data.feed} reader={reader} />
         <Record record={data.record} channel={chans.split(' · ')[0]} />
         <Book book={book} />
       </div>
     </div>
+    {((data.kite?.mode || 'off') !== 'off' || arr(kd?.orders).length > 0) && <KiteOrders kd={kd} onDone={reload} />}
     {dlg === 'channels' && <ChannelsDialog current={chans} onClose={() => setDlg(null)} onSaved={() => { setMsg('channels saved'); reload(); }} />}
     {dlg === 'import' && <ImportDialog onClose={() => setDlg(null)} onDone={reload} />}
     {phone && <span className="tp-phone-pad" />}
