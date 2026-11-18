@@ -1126,6 +1126,70 @@ read for prices. Whether Tradetron routes them to the broker or keeps them in it
   order log ("edited X: entry 2,435.10 → 2,441.50 · by you") and in the row's "edited" tag; nothing is sent to the
   broker and the switches are untouched. Paper has no edits.
 
+#### Real · fill confirmation (after the 18 Nov incident)
+
+**Why**: the app books a position as soon as the webhook is accepted (HTTP 200), but an accepted webhook is not a
+fill. Twice (GLENMARK 3 Nov, HEGAM 6 Nov) the webhook side accepted a BUY and never placed it, so the app held phantom
+positions. On 18 Nov the phantom HEGAM's stop fired, the app sent `EXIT HEGAM`, and the Tradetron strategy (its exit
+rule does not check the symbol) sold MOTILALOFS instead. **Rule since then: every BUY is confirmed by hand** (a check
+for the owner's eyes). The EXIT gate itself is a switch, `real.exit_needs_confirm`, **off by default**: exits go out as
+they always did, and the confirmation is information (the row's ⏳, Home's "Needs a look", the 9:16 AM "ORDERS SENT"
+message ends with "Once you see the fill, reply `filled SYMBOL`", and at `confirm_time` without an API key a nudge
+"⏳ REAL · 2 fills not confirmed yet · reply filled S1 · filled S2 · a check only: exits go out as usual" lists what is
+still open, once a day). With the switch **on**, nothing in the app ever sends an EXIT for a position whose fill was
+not confirmed: the paragraph below.
+
+- **Confirmation state**: every Real position has `confirmed` (+ `confirmed_at`, `confirmed_by` manual | api | owner |
+  migration) and `unconfirmed_since`. A BUY booked from a webhook starts **unconfirmed**; the evening est-fill correction
+  (to the day's open) does not confirm it; "+ Add a position" is confirmed (by "owner"). A position with no flag counts
+  as unconfirmed (the gate fails closed). Migration (`_migrate_real_confirm`, once, key `real.confirm.migrated`): the
+  positions open before the update were reconciled by hand that day and are marked confirmed, by "migration".
+- **The EXIT gate** (`real.exit_needs_confirm` = true): the stop watch (and the E+ trail's raised stop), the morning
+  plan's EXITs, Send now and ↻ Retry never send an EXIT for an unconfirmed position (`real._assert_exit_ok` raises
+  `UnconfirmedExit` right before every EXIT webhook, and the tests check no sender call happens; with no config given
+  it fails closed). Instead: one Telegram alert a day per stock (kind `real`,
+  never held) "⚠️ REAL · SYMBOL stop hit but the buy was never confirmed · no EXIT sent · confirm it (reply `filled
+  SYMBOL`) or remove it (`unfilled SYMBOL`)", a red item on Home "Needs a look" and the Real tab, and the row shows
+  "stop held". Nothing is written to the order log for a held EXIT (it was never sent), so once confirmed the next
+  stop check sends it normally.
+- **Confirming by hand**: the Real page's row line "⏳ fill not confirmed" with **✓ filled** (confirm: "You saw this
+  BUY filled on the broker's side? The app then watches its stop and may send an EXIT.") → `POST
+  /api/real/position/{symbol}/confirm` `{note}`, and **✗ never filled** → the existing remove-from-tracking. Telegram:
+  `filled SYMBOL` confirms at once; `unfilled SYMBOL` asks first and removes it on `yes` within 10 minutes (a bare
+  `yes`; `yes N` stays the AI suggestions' reply).
+- **The fill check (read-only API)**: `backend/broker/tradetron_api.py` reads the webhook side's Developer API with
+  `TRADETRON_API_KEY` (`.env` only, never logged; `Authorization: Bearer <key>`) at `TRADETRON_API_URL` (default
+  `https://api.tradetron.tech/api/v1`), at most 12 calls a minute (one call per check). `confirm_from_api` reads the
+  open positions of deployment `real.tt_sid`; an unconfirmed position held there with at least its quantity is
+  confirmed (by "api"), one not there stays unconfirmed. It runs at `real.confirm_time` (10:00 AM) on trading days,
+  in the evening job, and from the Real page's **Check fills now** (`POST /api/real/confirm`). No key: skipped
+  quietly (status "no key"), the page says "fill checks: manual (no API key)". **It never sends an order of any
+  kind.** The endpoint paths are not confirmed yet: `DEPLOYMENTS_PATH = "/deployments"` and `POSITIONS_PATH =
+  "/deployments/{sid}/positions"` at the top of the file; the parser is tolerant (any object with a symbol-like key
+  instrument | symbol | tradingsymbol | underlying and a quantity key quantity | qty | net_qty | open_qty; a symbol
+  seen twice keeps its largest quantity, never a sum).
+- **Evening line** (Telegram, when the key is set): "🔎 Real vs webhook side: 11 of 11 positions confirmed · extra on
+  the webhook side: none" — a symbol open there but not in the app is listed. A flag only: never an order.
+- **Health row** `real_fills`: ok when no unconfirmed position is older than one session, warn otherwise.
+- **Hand tools** (✎ menus on the Real page; none sends anything; each is a line in the order log "… · by you ·
+  <note>" and a Telegram activity line):
+  - **Sold outside the app** (✎ on a position): `POST /api/real/position/{symbol}/close` `{price, qty?, at?, note}`
+    closes it (or `qty` of it; the rest stays) at that price with the usual charges; trade `why` "hand", `by_hand: true`.
+  - **Add a closed trade** ("+ Add a closed trade" on the Trade log): `POST /api/real/trade` `{symbol, qty, entry,
+    entry_day, exit, exit_day, note}`: a trade the app never saw, costs computed, `by_hand: true`; cash and realised move
+    by its net.
+  - **Mark as never filled** (✎ on a trade): `POST /api/real/trade/{id}/void` `{note}`: the row stays (never deleted),
+    tagged `void: true` ("never filled"), and is left out of the P&L, the win rate, the curves (the stored curve from
+    its exit day loses its net) and the day summary; cash and realised are reversed.
+
+**Settings** (`real.*`):
+
+| key | default | what |
+|---|---|---|
+| `tt_sid` | 0 | the webhook side's deployment id for the fill check (0 = not set: fills confirmed by hand only) |
+| `confirm_time` | 10:00 | the fill check on trading days (24-hour in Settings, shown 10:00 AM; "" = off); again in the evening |
+| `confirm_alert` | true | Telegram: the buys the fill check confirmed and the evening "Real vs webhook side" line (the gate's alert always goes) |
+
 ### Stock futures — data layer
 
 The first step of the stock futures module (`backend/futures/`): the data every later step (backtest, book, sender)
@@ -3345,3 +3409,22 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   the login flow, `/api/tips/*`, stream topic `tips`, Telegram 💡 lines and commands, health rows `tips_reader` /
   `tips_quotes`, kind `tips` in `NEVER_HELD`, `telethon==1.45.0`.
 - Tests: `tests/test_tips_*.py` (98) with `tests/fixtures/tips_posts.json` (30 real posts).
+
+### 2026-11-18: 💰 Real · fill confirmation (after the 18 Nov incident) and the hand tools
+- `real.py`: positions carry `confirmed` / `confirmed_at` / `confirmed_by` / `unconfirmed_since`; `_book` books a BUY
+  unconfirmed, `add_position` confirmed by "owner"; the EXIT gate in `watch_stops`, `send_orders` and `retry_order`
+  (`_gate`, `_assert_exit_ok` / `UnconfirmedExit`); `confirm_position`, `confirm_from_api`, `fills_line`,
+  `fills_health`, `fills_state`; the hand tools `close_position`, `add_trade`, `void_trade` (`counted()` leaves voided
+  trades out of the summary, Home, the timeline, the week, the "why" lines and ask). `real_confirm` job at
+  `real.confirm_time`, the fill check + "Real vs webhook side" line in the evening; the once-a-day gate alert.
+- New `backend/broker/tradetron_api.py` (read-only, tolerant parser, 12 calls/min, key never logged); `.env.example`
+  gains `TRADETRON_API_KEY` / `TRADETRON_API_URL`. Migration `_migrate_real_confirm`. `RealConfig.tt_sid`,
+  `confirm_time`, `confirm_alert` (+ `check_real`). Telegram `filled SYM` / `unfilled SYM` + `yes`. Routes `POST
+  /api/real/position/{symbol}/confirm`, `/close`, `POST /api/real/confirm`, `POST /api/real/trade`, `POST
+  /api/real/trade/{id}/void`. Health row `real_fills`; attention: red "stop hit but the buy was never confirmed".
+- Real page: the "⏳ fill not confirmed · ✓ filled / ✗ never filled" line under an unconfirmed row, "stop held" /
+  "unconfirmed" tags, the fill-check line with Check fills now, "Sold outside the app" in ✎, "Mark as never filled…"
+  on a trade, "+ Add a closed trade"; Settings help for the three keys. The attention line about a missing token no
+  longer names the broker.
+- Tests: `tests/test_real_confirm.py` (35); adapted: the stop / edit tests confirm their fills first (`confirm_all`),
+  the hand-built states carry `confirmed`, the init flags list.

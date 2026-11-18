@@ -1988,6 +1988,11 @@ def real_send_now():
             st.scheduler.notifier().send(f"{now.date()}|real-sent", "real", msg.real_sent(res, ampm(now.strftime("%H:%M"))))
         except Exception:
             pass
+    if res.get("gated") and st.scheduler:                 # the EXIT gate held an EXIT: the once-a-day alert
+        try:
+            st.scheduler._gate_alerts(now.date().isoformat(), res["gated"])
+        except Exception:
+            pass
     return {**res, "morning": real.morning(st.config)}
 
 
@@ -2074,6 +2079,96 @@ def real_trade_edit(trade_id: int, req: TradeEdit, dry: bool = False):
         return real.edit_trade(S().config, trade_id, req.exit, req.qty, req.note, dry=dry)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+# 💰 Fill confirmation (after the 18 Nov incident) and the hand tools: none of these ever sends an order.
+
+def _real_activity(text: str) -> None:
+    """The Telegram activity line of a hand correction (never held; a failure never fails the request)."""
+    st = S()
+    if not st.scheduler:
+        return
+    try:
+        from backend.alerts import messages as msg
+        st.scheduler.notifier().send(f"real-hand|{now_ist()}|{text[:40]}", "real", msg.real_hand(text))
+    except Exception:
+        pass
+
+
+class FillNote(BaseModel):
+    note: str = ""
+
+
+class PositionClose(BaseModel):
+    price: float
+    qty: Optional[float] = None
+    at: Optional[str] = None
+    note: str = ""
+
+
+class TradeAdd(BaseModel):
+    symbol: str
+    qty: float
+    entry: float
+    entry_day: str
+    exit: float
+    exit_day: str
+    note: str = ""
+
+
+@router.post("/real/position/{symbol}/confirm")
+def real_position_confirm(symbol: str, req: Optional[FillNote] = None):
+    """✓ filled: you saw this BUY filled on the broker's side; the app then watches its stop and may send an EXIT."""
+    from backend.engine import real
+    try:
+        res = real.confirm_position(S().config, symbol.upper(), "manual", req.note if req else "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _real_activity(f"{symbol.upper()} confirmed filled by you")
+    return res
+
+
+@router.post("/real/confirm")
+def real_confirm_now():
+    """Check fills now: the read-only fill check (one call; skipped quietly without a key). Never sends an order."""
+    from backend.engine import real
+    return real.confirm_from_api(S().config)
+
+
+@router.post("/real/position/{symbol}/close")
+def real_position_close(symbol: str, req: PositionClose):
+    """Sold outside the app: the position (or `qty` of it) closed at `price` with the usual charges, by hand."""
+    from backend.engine import real
+    try:
+        res = real.close_position(S().config, symbol.upper(), req.price, req.qty, req.at, req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _real_activity(res["text"])
+    return res
+
+
+@router.post("/real/trade")
+def real_trade_add(req: TradeAdd):
+    """A closed trade the app never saw (costs computed, by hand); the cash and the realised follow."""
+    from backend.engine import real
+    try:
+        res = real.add_trade(S().config, req.symbol, req.qty, req.entry, req.entry_day, req.exit, req.exit_day, req.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _real_activity(res["text"])
+    return res
+
+
+@router.post("/real/trade/{trade_id}/void")
+def real_trade_void(trade_id: int, req: Optional[FillNote] = None):
+    """Mark a trade as never filled: kept, tagged void, out of the P&L, the win rate, the curves and the day summary."""
+    from backend.engine import real
+    try:
+        res = real.void_trade(S().config, trade_id, req.note if req else "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _real_activity(res["text"])
+    return res
 
 
 # --- Paper trading (simulated: never orders) ---

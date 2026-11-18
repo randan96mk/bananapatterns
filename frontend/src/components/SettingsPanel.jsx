@@ -79,7 +79,12 @@ const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading',
 // Set on their own pages (switches, confirms, deposits): not editable here.
 const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'], ai: ['enabled'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
-  max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this' };
+  max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this',
+  // 💰 fill confirmation (after the 18 Nov incident): no EXIT is ever sent for a BUY whose fill is not confirmed
+  tt_sid: 'The webhook side\'s deployment id for the read-only fill check (0 = not set: fills are confirmed by hand only; the API key lives in .env)',
+  confirm_time: 'The read-only fill check on trading days (24-hour HH:MM, IST; "" = off); it runs again in the evening job · never sends an order',
+  confirm_alert: 'Telegram: the buys the fill check confirmed, and the evening "Real vs webhook side" line (true/false)',
+  exit_needs_confirm: 'The EXIT gate (true/false, default false): true = a buy you have not confirmed (✓ filled) never gets an EXIT, you are alerted instead; false = exits go out as always and the confirmation is a check for your eyes' };
 // 🧩 the options book (paper only; paper / enabled / capital are set on its own page)
 const HELP_OPT = { window_start: 'The bias is looked for on 5-minute closes from here (24-hour HH:MM, IST)', window_end: '… to here; no break by then = no trade today',
   hedge_points: 'The bought leg this many points further out than the sold one (200 when its premium is under Rs 2)', stop_pct: 'Stop when the sold premium rises this % over its entry (100 = 2×: sold at ₹60, stop at ₹120; 50 = 1.5×) · compare on Options → Report as if',

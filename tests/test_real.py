@@ -51,6 +51,14 @@ class Kite:
                 for k in keys if (s := k.split(":")[1]) in self.prices}
 
 
+def confirm_all():
+    """Every booked BUY confirmed as filled (by you): from then on its stop may send an EXIT."""
+    st = real._state()
+    for p in st["positions"].values():
+        p.update(confirmed=True, confirmed_by="manual")
+    real._save(st)
+
+
 def setup(monkeypatch, **real_cfg):
     store(monkeypatch)
     monkeypatch.setenv("TRADETRON_TOKEN", TOKEN)
@@ -130,6 +138,7 @@ def test_stop_watch_sends_exit_once(monkeypatch):
     real.evening(c, cut)
     day = data["cal"][end + 1]
     real.send_orders(c, None, day, Sender())
+    confirm_all()
     pos = real.summary(c)["positions"][0]
     s = Sender()
     above = {p["symbol"]: p["stop"] * 1.05 for p in real.summary(c)["positions"]}
@@ -242,6 +251,7 @@ def test_a_stop_touched_while_unwatched_exits_at_the_next_check(monkeypatch):
     nxt = {**data, "cal": data["cal"][:end + 2], "index_close": data["index_close"][:end + 2],
            "index_ok": data["index_ok"][:end + 2], "filters": {k: v[:end + 2] for k, v in data["filters"].items()}}
     real.evening(c, nxt)                                                    # the next day: positions are not "today's"
+    confirm_all()
     day = "2099-01-02"
     pos = real.summary(c)["positions"][0]
     above = {p["symbol"]: p["stop"] * 1.05 for p in real.summary(c)["positions"]}

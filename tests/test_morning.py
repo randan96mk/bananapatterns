@@ -29,7 +29,8 @@ def seed(decided="2026-11-10", buys=("S1", "S2", "S3", "S4")):
                        "risk": 1.0, "rank": k + 1, "variant": "E", "top": 300, "turnover_rank": k + 1,
                        "why": f"breakout #{k + 1} · E · top 300 · turnover rank {k + 1}"})
     st = {"started": "2026-10-01", "capital": 300_000.0, "cash": 103_699.0, "charges": 0.0, "as_of": decided,
-          "positions": {"S0": {"qty": 16, "px": 1100.0, "last": 1151.0, "d": "2026-10-20", "stop": 1000.0, "charges": 0.0, "ts": "S0", "days": 15}},
+          "positions": {"S0": {"qty": 16, "px": 1100.0, "last": 1151.0, "d": "2026-10-20", "stop": 1000.0, "charges": 0.0, "ts": "S0", "days": 15,
+                                 "confirmed": True, "confirmed_by": "manual"}},
           "orders": orders, "decided": decided, "cap": 10, "allowed": True, "waiting": 2,
           "filter": {"name": "E+ · half filter, top 300, late trail", "state": "FULL", "slots": 10}}
     real._save(st)

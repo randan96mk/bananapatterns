@@ -158,7 +158,8 @@ def trades(config: AppConfig, book: str, days: int) -> dict:
             "day", "bias", "pnl", "credit", "exit_why", "opened_at", "closed_at")
     if book == "real":
         with get_db() as conn:
-            rows = [json.loads(r[0]) for r in conn.execute("SELECT payload FROM real_trades ORDER BY id DESC LIMIT 200")]
+            rows = [t for t in (json.loads(r[0]) for r in conn.execute("SELECT payload FROM real_trades ORDER BY id DESC LIMIT 200"))
+                    if not t.get("void")]                 # a trade marked as never filled is not counted
     elif book == "paper":
         from backend.engine import paper
         s = paper.summary(config)

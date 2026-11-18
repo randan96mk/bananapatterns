@@ -474,13 +474,17 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
             return {"status": "off", "sent": [], "failed": []}
         orders = sorted(st["orders"], key=lambda o: o["action"] != "EXIT")
         px = _quotes(client, [o["ts"] for o in orders])
-        sent, failed, skipped = [], [], []
+        sent, failed, skipped, gated = [], [], [], []
         skips = _skips(st, today)
         for o in orders:
             key = f"{today}|{o['symbol']}|{o['action']}"
             if o.get("sent") or _sent(key):
                 continue
             if o["action"] == "EXIT" and o["symbol"] not in st["positions"]:
+                continue
+            if o["action"] == "EXIT" and not confirmed(st["positions"][o["symbol"]]) and gate_on(config):   # the gate (off by default)
+                gated.append(_gate(st["positions"][o["symbol"]], o["symbol"], today, o.get("why") or "exit due",   # unconfirmed buy
+                                   st["positions"][o["symbol"]]["last"]))
                 continue
             if o["action"] == "BUY" and o["symbol"] in skips:  # skipped for today: logged, never sent, not retried
                 sk = skips[o["symbol"]]
@@ -499,6 +503,8 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
                 _log(key, today, o, "skipped", "not enough cash")
                 failed.append({**o, "error": "not enough cash"})
                 continue
+            if o["action"] == "EXIT":
+                _assert_exit_ok(st, o["symbol"], config)
             try:
                 if o["action"] == "BUY" and config.real.send_stop:
                     reply = sender(o["ts"], "BUY", o["qty"], stop=o["stop"])
@@ -514,11 +520,13 @@ def send_orders(config: AppConfig, client, today: str, sender: Optional[Callable
             sent.append({**o, "price": price, "reply": reply[:120], "retries": getattr(tradetron, "last_retries", 0)
                          if sender is tradetron.send else 0})
         _save(st)
-        return {"status": "ok", "sent": sent, "failed": failed, "skipped": skipped}
+        return {"status": "ok", "sent": sent, "failed": failed, "skipped": skipped, "gated": gated}
 
 
 def _book(st: dict, o: dict, price: float, today: str) -> None:
-    """An order Tradetron accepted, booked in the account at the price seen when sending (corrected in the evening)."""
+    """An order Tradetron accepted, booked in the account at the price seen when sending (corrected in the evening).
+    A BUY is booked UNCONFIRMED: an accepted webhook is not a fill (the 18 Nov incident); with the EXIT gate on (real.exit_needs_confirm) no EXIT is ever sent for it
+    until the fill is confirmed (confirm_position by you, confirm_from_api by the fill check)."""
     o["sent"] = "sent"
     if o["action"] == "EXIT":
         _close(st, o["symbol"], price, today, "exit", est=True)
@@ -527,7 +535,10 @@ def _book(st: dict, o: dict, price: float, today: str) -> None:
     st["cash"] -= o["qty"] * price + ch
     st["charges"] += ch
     st["positions"][o["symbol"]] = {"qty": o["qty"], "px": price, "d": today, "stop": o["stop"], "last": price,
-                                    "charges": ch, "days": 0, "ts": o["ts"], "variant": st.get("variant"), "est": True}
+                                    "charges": ch, "days": 0, "ts": o["ts"], "variant": st.get("variant"), "est": True,
+                                    # an accepted webhook is not a fill: unconfirmed until you (or the fill check) say so
+                                    "confirmed": False, "confirmed_at": None, "confirmed_by": None,
+                                    "unconfirmed_since": now_ist()}
 
 
 def retry_order(config: AppConfig, client, today: str, symbol: str, action: str, now: Optional[datetime] = None,
@@ -555,10 +566,15 @@ def retry_order(config: AppConfig, client, today: str, symbol: str, action: str,
             return {"status": "error", "error": "the order is no longer in today's plan"}
         if action == "EXIT" and symbol not in st["positions"]:
             return {"status": "error", "error": "no open position to exit"}
+        if action == "EXIT" and gate_on(config) and not confirmed(st["positions"][symbol]):
+            return {"status": "error", "error": f"the buy of {symbol} was never confirmed: no EXIT is sent · confirm it "
+                                                f"(filled) or remove it (never filled) first"}
         price = _quotes(client, [o["ts"]]).get(o["ts"]) if client is not None else None
         price = price or (st["positions"][symbol]["last"] if action == "EXIT" else o["close"])
         if action == "BUY" and o["qty"] * price * 1.0012 > st["cash"]:
             return {"status": "error", "error": "not enough cash"}
+        if action == "EXIT":
+            _assert_exit_ok(st, symbol, config)
         try:
             if action == "BUY" and config.real.send_stop:
                 reply = sender(o["ts"], "BUY", o["qty"], stop=o["stop"])
@@ -591,7 +607,7 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
         if client is None or not getattr(client, "has_token", False):
             return {"status": "no_login", "hits": []}
         px = _quotes(client, [p.get("ts", s) for s, p in st["positions"].items()], with_low=True)
-        hits = []
+        hits, gated = [], []
         for sym, pos in list(st["positions"].items()):
             if pos.get("ts", sym) not in px:
                 continue
@@ -606,6 +622,10 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
                 continue
             o = {"action": "EXIT", "symbol": sym, "ts": pos.get("ts", sym), "qty": pos["qty"],
                  "why": f"stop {pos['stop']:.2f} hit" + ("" if ltp <= pos["stop"] else f" (day low {low:.2f})")}
+            if not confirmed(pos) and gate_on(config):     # the EXIT gate (a switch, off by default): an unconfirmed buy never gets an EXIT
+                gated.append(_gate(pos, sym, today, "stop hit", ltp))
+                continue
+            _assert_exit_ok(st, sym, config)
             try:
                 reply = sender(o["ts"], "EXIT")
             except Exception as exc:
@@ -616,7 +636,7 @@ def watch_stops(config: AppConfig, client, today: str, sender: Optional[Callable
             t = _close(st, sym, ltp, today, "trail" if pos.get("trailed") else "stop", est=False)
             hits.append({**o, "price": ltp, "net": t["net"]})
         _save(st)
-        return {"status": "ok", "hits": hits}
+        return {"status": "ok", "hits": hits, "gated": gated}
 
 
 # --- the morning dry run: today's plan with a per-order skip -----------------------------------------------
@@ -842,7 +862,8 @@ def send_now(config: AppConfig, client, now: Optional[datetime] = None, sender: 
 
 # --- corrections by hand (nothing is sent) --------------------------------------------------------------
 
-HAND = {"EDIT": "edited", "ADD": "added", "REMOVE": "removed"}            # the order log's hand-made lines
+HAND = {"EDIT": "edited", "ADD": "added", "REMOVE": "removed",            # the order log's hand-made lines
+        "CONFIRM": "confirmed", "CLOSE": "closed", "TRADE": "added", "VOID": "voided"}
 _ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -1003,7 +1024,8 @@ def add_position(config: AppConfig, symbol: str, qty, entry, day: str, stop=None
         st["positions"][symbol] = {"qty": qty, "px": entry, "d": day, "stop": stop, "last": last, "charges": ch,
                                    "days": sum(r["date"] > day for r in rows), "ts": data.get("tradingsymbol", {}).get(symbol, symbol),
                                    "variant": config.real.variant, "est": False, "best": best, "manual": True,
-                                   "manual_stop": given,
+                                   "manual_stop": given, "confirmed": True, "confirmed_at": now_ist(), "confirmed_by": "owner",
+                                   "unconfirmed_since": None,
                                    "edits": [{"at": now_ist(), "field": "added", "from": None, "to": f"{qty} @ {entry:,.2f}", "note": note}]}
         _save(st)
         _note(symbol, "ADD", f"added {symbol}: {qty} @ {entry:,.2f} bought {day} · stop {stop:,.2f}"
@@ -1024,6 +1046,8 @@ def edit_trade(config: AppConfig, trade_id, exit=None, qty=None, note: str = "",
         if not st or not r:
             raise ValueError(f"no closed trade #{trade_id}")
         t = json.loads(r[1])
+        if t.get("void"):
+            raise ValueError(f"trade #{trade_id} is marked as never filled: it cannot be edited")
         before = dict(t)
         new_q, new_sell = qty if qty is not None else t["qty"], exit if exit is not None else t["sell"]
         costs = tb.delivery_charges(new_q * t["buy"], False) + tb.delivery_charges(new_q * new_sell, True)
@@ -1051,6 +1075,307 @@ def edit_trade(config: AppConfig, trade_id, exit=None, qty=None, note: str = "",
         return {"status": "ok", "dry": dry, "trade": {**t, "id": r[0]}, "effects": effects, "edits": edits}
 
 
+# --- fill confirmation (after the 18 Nov incident) -------------------------------------------------
+#
+# An accepted webhook (HTTP 200) is not a fill: twice the webhook side accepted a BUY and never placed it, and the
+# EXIT later sent for that phantom position sold a different stock there. So every BUY is booked UNCONFIRMED, and
+# nothing in the app ever sends an EXIT for an unconfirmed position (the stop watch, the trail, the morning plan's
+# EXITs, a retry): the stop hit is held, alerted once a day and shown, never sent. A fill is confirmed by you (the
+# Real page's "✓ filled" or Telegram `filled SYMBOL`) or by the read-only fill check (confirm_from_api). The
+# confirmation logic never sends an order of any kind.
+
+UNFILLED_TTL_S = 600                     # Telegram `unfilled SYMBOL` waits this long for its `yes`
+
+
+class UnconfirmedExit(AssertionError):
+    """An EXIT about to be sent for a position whose fill was never confirmed (must never happen)."""
+
+
+def confirmed(pos: dict) -> bool:
+    """True only when the fill was confirmed (by you, the fill check, a hand add, or the migration). A position with no
+    flag at all counts as unconfirmed: the gate fails closed."""
+    return pos.get("confirmed") is True
+
+
+def gate_on(config) -> bool:
+    """The EXIT gate is a switch (real.exit_needs_confirm), OFF by default: the owner confirms fills by hand as a check,
+    and exits go out as they always did. On, an unconfirmed buy never gets an EXIT (an alert instead)."""
+    return bool(getattr(getattr(config, "real", None), "exit_needs_confirm", False))
+
+
+def _assert_exit_ok(st: dict, symbol: str, config=None) -> None:
+    """The last line before any EXIT webhook: with the gate on, raises when the position is not confirmed."""
+    if config is not None and not gate_on(config):
+        return
+    pos = st["positions"].get(symbol)
+    if pos is None or not confirmed(pos):
+        raise UnconfirmedExit(f"EXIT {symbol} refused: the buy was never confirmed")
+
+
+def _gate(pos: dict, sym: str, day: str, why: str, price) -> dict:
+    """An EXIT the gate held (a stop hit, a planned EXIT): kept on the position for the page and Home (pos["gate"]),
+    returned for the once-a-day Telegram alert. Nothing is sent and nothing is logged as an order."""
+    g = pos.get("gate") or {}
+    if g.get("day") != day:
+        g = {"day": day, "at": now_ist()}
+    g.update(why=why, price=round(float(price), 2) if price else None, last_at=now_ist())
+    pos["gate"] = g
+    return {"symbol": sym, "qty": pos["qty"], "why": why, "price": g["price"], "day": day}
+
+
+def _set_confirmed(pos: dict, by: str) -> None:
+    pos.update(confirmed=True, confirmed_at=now_ist(), confirmed_by=by, gate=None)
+
+
+def confirm_position(config: AppConfig, symbol: str, by: str = "manual", note: str = "") -> dict:
+    """✓ filled: you saw the BUY filled on the broker's side; from now on the app watches its stop and may send an
+    EXIT. by is "manual" (you, the page or Telegram) or "api" (the fill check). Nothing is sent. Logged."""
+    symbol = (symbol or "").strip().upper()
+    with _lock:
+        st = _state()
+        if not st or symbol not in st["positions"]:
+            raise ValueError(f"no open position in {symbol}")
+        pos = st["positions"][symbol]
+        if confirmed(pos):
+            raise ValueError(f"{symbol} is already confirmed ({pos.get('confirmed_by') or 'earlier'})")
+        _set_confirmed(pos, by)
+        _save(st)
+    who = "by you" if by == "manual" else "by the fill check"
+    _note(symbol, "CONFIRM", f"confirmed {symbol} filled · {pos['qty']} @ {pos['px']:,.2f} · {who}" + (f" · {note}" if note else ""),
+          qty=pos["qty"], price=pos["px"])
+    return {"status": "ok", "symbol": symbol, "position": _row(config, st, symbol)}
+
+
+def unconfirmed(st: Optional[dict] = None) -> dict:
+    """{symbol: position} of the positions whose fill is not confirmed."""
+    st = st if st is not None else (_state() or {})
+    return {s: p for s, p in (st.get("positions") or {}).items() if not confirmed(p)}
+
+
+def _saved_check() -> dict:
+    with get_db() as conn:
+        raw = get_setting(conn, "real.fills_check")
+    try:
+        return json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def confirm_from_api(config: AppConfig, client=None) -> dict:
+    """The read-only fill check: ONE call to the webhook side's Developer API (its open positions of the deployment
+    real.tt_sid); each unconfirmed position held there with at least its quantity is confirmed (by "api"); one not
+    there stays unconfirmed. Symbols open there but not in the app are listed (`extra`): a flag only. Never sends an
+    order, never changes a quantity. Without a key: skipped quietly (status "no key"). Saved for the page."""
+    from backend.broker import tradetron_api as tta
+    st = _state() or {}
+    total = len(st.get("positions") or {})
+    out = {"at": now_ist(), "status": "ok", "confirmed": [], "still": sorted(unconfirmed(st)), "extra": [], "total": total,
+           "n_confirmed": total - len(unconfirmed(st)), "error": None}
+    if not tta.key():
+        out["status"] = "no key"
+    elif not int(getattr(config.real, "tt_sid", 0) or 0):
+        out["status"] = "no deployment id"
+    elif not st:
+        out["status"] = "not started"
+    if out["status"] != "ok":
+        _store_check(out)
+        return out
+    try:
+        held = (client or tta.Client()).positions(int(config.real.tt_sid))
+    except Exception as exc:                              # rate limit, network, a shape we cannot read: nothing changes
+        out.update(status="error", error=tta.scrub(str(exc))[:160])
+        _store_check(out)
+        return out
+    held = {tta.norm(k): v for k, v in held.items() if v and v > 0}
+    done = []
+    with _lock:
+        st = _state() or {}
+        for sym, pos in sorted(st.get("positions", {}).items()):
+            if confirmed(pos):
+                continue
+            q = max(held.get(sym, 0), held.get(tta.norm(pos.get("ts") or sym), 0))
+            if q >= pos["qty"]:
+                _set_confirmed(pos, "api")
+                done.append(sym)
+        if done:
+            _save(st)
+    for sym in done:
+        p = st["positions"][sym]
+        _note(sym, "CONFIRM", f"confirmed {sym} filled · {p['qty']} @ {p['px']:,.2f} · by the fill check", qty=p["qty"], price=p["px"])
+    names = set(st.get("positions") or {}) | {tta.norm(p.get("ts") or s) for s, p in (st.get("positions") or {}).items()}
+    left = unconfirmed(st)
+    out.update(confirmed=done, still=sorted(left), extra=sorted(s for s in held if s not in names),
+               total=len(st.get("positions") or {}), n_confirmed=len(st.get("positions") or {}) - len(left))
+    _store_check(out)
+    return out
+
+
+def _store_check(out: dict) -> None:
+    with get_db() as conn:
+        set_setting(conn, "real.fills_check", json.dumps(out))
+
+
+def sessions_since(day: str, today: str) -> int:
+    """Trading sessions after `day` up to and including `today` (bought today: 0)."""
+    from backend.ingest.holidays import is_trading_day
+    try:
+        d, end = date.fromisoformat(day[:10]), date.fromisoformat(today[:10])
+    except (TypeError, ValueError):
+        return 0
+    n = 0
+    while d < end and n < 400:
+        d += timedelta(days=1)
+        n += is_trading_day(d)
+    return n
+
+
+def fills_health(config: AppConfig, today: Optional[str] = None) -> dict:
+    """The health row `real_fills`: ok when no unconfirmed position is older than one session, warn otherwise."""
+    from backend.broker import tradetron_api as tta
+    from backend.config import IST
+    today = today or datetime.now(IST).date().isoformat()
+    left = unconfirmed()
+    old = sorted(s for s, p in left.items() if sessions_since(p.get("d") or today, today) > 1)
+    mode = "fill check + manual" if tta.key() else "manual (no API key)"
+    state = (f"{len(left)} unconfirmed" + (f" · {len(old)} older than 1 session" if old else "")) if left else "all confirmed"
+    return {"key": "real_fills", "name": "Real fills", "ok": not old, "warn": bool(old), "state": state,
+            "detail": f"fill checks: {mode}" + (f" · not confirmed: {', '.join(old)}" if old else ""), "at": _saved_check().get("at")}
+
+
+def fills_line(res: dict) -> Optional[str]:
+    """The evening line (a flag only, never an order) once the fill check ran: "🔎 Real vs webhook side: 11 of 11
+    positions confirmed · extra on the webhook side: none"."""
+    if res.get("status") != "ok":
+        return None
+    extra = ", ".join(res.get("extra") or []) or "none"
+    return (f"🔎 Real vs webhook side: {res['n_confirmed']} of {res['total']} positions confirmed · extra on the webhook "
+            f"side: {extra}")
+
+
+# --- hand tools: what happened outside the app (nothing is ever sent) -------------------------------------
+
+def _iso_day(x, name: str, default: Optional[str] = None) -> str:
+    v = str(x or default or "")[:10]
+    if not _ISO_DAY.match(v):
+        raise ValueError(f"{name} must be YYYY-MM-DD")
+    return v
+
+
+def _today() -> str:
+    from backend.config import IST
+    return datetime.now(IST).date().isoformat()
+
+
+def close_position(config: AppConfig, symbol: str, price, qty=None, at=None, note: str = "") -> dict:
+    """Sold outside the app: the position (or `qty` of it; the rest stays) closed at `price` on `at` (default today)
+    with the usual charges; the trade row has why "hand" and by_hand: true. Nothing is sent. Logged."""
+    symbol = (symbol or "").strip().upper()
+    px, q = _num(price, "price"), _num(qty, "qty", whole=True)
+    if px is None:
+        raise ValueError("the price is needed")
+    with _lock:
+        st = _state()
+        if not st or symbol not in st["positions"]:
+            raise ValueError(f"no open position in {symbol}")
+        pos = st["positions"][symbol]
+        q = q or pos["qty"]
+        if q > pos["qty"]:
+            raise ValueError(f"qty {q} is more than the {pos['qty']} held")
+        day = _iso_day(at, "the day", _today())
+        if day < pos["d"]:
+            raise ValueError(f"the day is before the buy ({pos['d']})")
+        part = pos["charges"] * q / pos["qty"]
+        ch = tb.delivery_charges(q * px, True)
+        st["cash"] += q * px - ch
+        st["charges"] += ch
+        gross = (px - pos["px"]) * q
+        t = {"symbol": symbol, "qty": q, "in": pos["d"], "out": day, "buy": round(pos["px"], 2), "sell": round(px, 2),
+             "stop": round(pos["stop"], 2), "days": pos.get("days", 0), "variant": pos.get("variant"), "gross": round(gross, 2),
+             "best": round(pos["best"], 2) if pos.get("best") else None, "costs": round(part + ch, 2),
+             "net": round(gross - part - ch, 2), "why": "hand", "est": False, "by_hand": True, "note": (note or "")[:200],
+             "confirmed": confirmed(pos)}
+        if q == pos["qty"]:
+            st["positions"].pop(symbol)
+            st["orders"] = [o for o in st.get("orders", []) if not (o["symbol"] == symbol and o["action"] == "EXIT" and not o.get("sent"))]
+        else:
+            pos["qty"] -= q
+            pos["charges"] -= part
+            pos.setdefault("edits", []).append({"at": now_ist(), "field": "qty", "from": pos["qty"] + q, "to": pos["qty"],
+                                                "note": f"sold {q} outside the app" + (f" · {note}" if note else "")})
+            for o in st.get("orders", []):
+                if o["symbol"] == symbol and o["action"] == "EXIT" and not o.get("sent"):
+                    o["qty"] = pos["qty"]
+        _save(st)
+        with get_db() as conn:
+            tid = conn.execute("INSERT INTO real_trades (payload) VALUES (?)", (json.dumps(t),)).lastrowid
+    text = (f"closed {symbol} by hand: {q} @ {px:,.2f} sold outside the app" + (f" · {pos['qty']} still held" if symbol in st["positions"] else "")
+            + " · by you" + (f" · {note}" if note else ""))
+    _note(symbol, "CLOSE", text, qty=q, price=px)
+    return {"status": "ok", "trade": {**t, "id": tid}, "cash": round(st["cash"], 2), "left": st["positions"].get(symbol, {}).get("qty", 0),
+            "text": text}
+
+
+def add_trade(config: AppConfig, symbol: str, qty, entry, entry_day, exit, exit_day, note: str = "") -> dict:
+    """A closed trade the app never saw: the row with its costs computed, by_hand: true; the cash moves by its net
+    (realised follows from the rows). Nothing is sent. Logged."""
+    symbol = (symbol or "").strip().upper()
+    q, buy, sell = _num(qty, "qty", whole=True), _num(entry, "entry"), _num(exit, "exit")
+    if not symbol or q is None or buy is None or sell is None:
+        raise ValueError("symbol, qty, entry and exit are needed")
+    d_in, d_out = _iso_day(entry_day, "the entry day"), _iso_day(exit_day, "the exit day")
+    if d_out < d_in:
+        raise ValueError("the exit day is before the entry day")
+    if d_out > _today():
+        raise ValueError("the exit day is in the future")
+    costs = tb.delivery_charges(q * buy, False) + tb.delivery_charges(q * sell, True)
+    gross = (sell - buy) * q
+    t = {"symbol": symbol, "qty": q, "in": d_in, "out": d_out, "buy": round(buy, 2), "sell": round(sell, 2), "stop": None,
+         "days": sessions_since(d_in, d_out), "variant": None, "gross": round(gross, 2), "best": None, "costs": round(costs, 2),
+         "net": round(gross - costs, 2), "why": "hand", "est": False, "by_hand": True, "note": (note or "")[:200]}
+    with _lock:
+        st = _state()
+        if not st:
+            raise ValueError("real tracking has not started yet")
+        st["cash"] += t["net"]
+        st["charges"] += costs
+        _save(st)
+        with get_db() as conn:
+            tid = conn.execute("INSERT INTO real_trades (payload) VALUES (?)", (json.dumps(t),)).lastrowid
+    text = f"added a closed trade {symbol}: {q} @ {buy:,.2f} → {sell:,.2f} ({d_in} → {d_out}) · by you" + (f" · {note}" if note else "")
+    _note(symbol, "TRADE", text, qty=q, price=sell)
+    return {"status": "ok", "trade": {**t, "id": tid}, "cash": round(st["cash"], 2), "text": text}
+
+
+def void_trade(config: AppConfig, trade_id, note: str = "") -> dict:
+    """Mark a trade as never filled: the row stays (never deleted), tagged void: true, and is left out of the P&L, the
+    win rate, the curves and the day summary; the cash and the realised are reversed (the stored curve from its exit
+    day on loses its net). Nothing is sent. Logged."""
+    with _lock:
+        st = _state()
+        with get_db() as conn:
+            r = conn.execute("SELECT id, payload FROM real_trades WHERE id = ?", (int(trade_id),)).fetchone()
+        if not st or not r:
+            raise ValueError(f"no closed trade #{trade_id}")
+        t = json.loads(r[1])
+        if t.get("void"):
+            raise ValueError(f"trade #{trade_id} is already marked as never filled")
+        t.update(void=True, void_at=now_ist(), void_note=(note or "")[:200])
+        st["cash"] -= t["net"]
+        st["charges"] -= t["costs"]
+        _save(st)
+        with get_db() as conn:
+            conn.execute("UPDATE real_trades SET payload = ? WHERE id = ?", (json.dumps(t), r[0]))
+            conn.execute("UPDATE real_equity SET equity = equity - ?, gross = gross - ? WHERE day >= ?", (t["net"], t["gross"], t["out"]))
+    text = f"marked the {t['symbol']} trade ({t['in']} → {t['out']}) as never filled · net {t['net']:+,.2f} reversed · by you" + (f" · {note}" if note else "")
+    _note(t["symbol"], "VOID", text, qty=t["qty"], price=t["sell"])
+    return {"status": "ok", "trade": {**t, "id": r[0]}, "cash": round(st["cash"], 2), "text": text}
+
+
+def counted(trades: list) -> list:
+    """The trades that count for the P&L, the win rate, the curves and the day summary (not the voided ones)."""
+    return [t for t in trades if not t.get("void")]
+
+
 # --- reading -------------------------------------------------------------------------------------
 
 def reset() -> None:
@@ -1073,7 +1398,19 @@ def _pos_row(sym: str, x: dict, pe) -> tuple:
              "net": round(gross - x["charges"] - exit_ch, 2), "est": x.get("est", False),
              "best": round(x["best"], 2) if x.get("best") else None, "trailed": bool(x.get("trailed")),
              "trail_active": active, "edits": x.get("edits", []), "manual_stop": bool(x.get("manual_stop")),
-             "manual": bool(x.get("manual")), "px_orig": x.get("px_orig")}, check)
+             "manual": bool(x.get("manual")), "px_orig": x.get("px_orig"),
+             "confirmed": confirmed(x), "confirmed_at": x.get("confirmed_at"), "confirmed_by": x.get("confirmed_by"),
+             "unconfirmed_since": None if confirmed(x) else x.get("unconfirmed_since"), "gate": x.get("gate")}, check)
+
+
+def fills_state(config: AppConfig) -> dict:
+    """How fills are confirmed, for the page: the mode, the deployment id set or not, the last fill check."""
+    from backend.broker import tradetron_api as tta
+    has = bool(tta.key())
+    sid = int(getattr(config.real, "tt_sid", 0) or 0)
+    mode = "manual (no API key)" if not has else "manual (set real.tt_sid)" if not sid else "fill check + manual"
+    return {"key": has, "sid_set": bool(sid), "mode": mode, "confirm_time": getattr(config.real, "confirm_time", ""),
+            "gate": gate_on(config), "last": _saved_check() or None}
 
 
 def summary(config: AppConfig) -> dict:
@@ -1084,7 +1421,7 @@ def summary(config: AppConfig) -> dict:
                                                                "nologin_alarm_min", "results_guard_sessions")},
             "max_pos": config.breakout.max_pos, "token_set": bool(tradetron.token()),
             "stop_rule": {"stop_pct": config.breakout.stop_pct, "atr_mult": config.breakout.atr_mult},
-            "tops": {k: tb.rules(config, k).top for k in tb.MODES}}
+            "tops": {k: tb.rules(config, k).top for k in tb.MODES}, "fills": fills_state(config)}
     with get_db() as conn:
         log = [dict(r) for r in conn.execute("SELECT created_at, day, symbol, action, qty, reason, status, reply, price "
                                              "FROM real_orders ORDER BY id DESC LIMIT 200")]
@@ -1102,7 +1439,8 @@ def summary(config: AppConfig) -> dict:
     first_cap = cap - sum(x["amount"] for x in deposits)
     for e in eq:                                          # the curve without the money added / withdrawn
         e["equity"] -= sum(x["amount"] for x in deposits if x["at"][:10] <= e["day"])
-    realised = sum(t["net"] for t in trades)
+    live_trades = counted(trades)                         # a voided trade (never filled) stays listed, never counted
+    realised = sum(t["net"] for t in live_trades)
     peak, dd = first_cap, 0.0
     for e in eq:
         peak = max(peak, e["equity"])
@@ -1114,8 +1452,8 @@ def summary(config: AppConfig) -> dict:
         positions.append(row)
         if check:
             checks.append(check)
-    won = [t for t in trades if t["net"] > 0]
-    loss = -sum(t["net"] for t in trades if t["net"] <= 0)
+    won = [t for t in live_trades if t["net"] > 0]
+    loss = -sum(t["net"] for t in live_trades if t["net"] <= 0)
     nifty = round((eq[-1]["nifty"] / eq[0]["nifty"] - 1) * 100, 2) if len(eq) > 1 and eq[0]["nifty"] else 0.0
     return {"started": True, **base, "log": log, "start_date": st["started"], "as_of": st.get("as_of"),
             "updated_at": st.get("updated_at"), "orders": st.get("orders", []), "decided": st.get("decided"),
@@ -1127,7 +1465,7 @@ def summary(config: AppConfig) -> dict:
                         "net": round(value - cap, 2), "return": round((value - cap) / cap * 100, 2),
                         "realised": round(realised, 2), "unrealised": round(value - cap - realised, 2), "nifty": nifty},
             "positions": _ai_notes(positions), "checks": checks, "notes": st.get("notes", []), "trades": _ai_why(trades), "won": len(won),
-            "closed": len(trades),
+            "closed": len(live_trades), "voided": len(trades) - len(live_trades),
             "profit_factor": round(sum(t["net"] for t in won) / loss, 2) if loss else None, "drawdown": round(dd, 2),
             "curve": {"dates": [e["day"] for e in eq], "net": [e["equity"] for e in eq],
                       "nifty": [round(e["nifty"] / eq[0]["nifty"] * first_cap, 2) if eq and eq[0]["nifty"] else None for e in eq]}}
@@ -1143,6 +1481,9 @@ def due(now: datetime, config: AppConfig, done: set, trading: bool, last_stop: O
         jobs.append("real_preview")                        # the morning reminder: what goes out at send_time
     if "real_send" not in done and hm(rc.send_time) <= t < hm(rc.send_until):
         jobs.append("real_send")
+    ct = getattr(rc, "confirm_time", "")
+    if ct and "real_confirm" not in done and hm(ct) <= t < MARKET_CLOSE:
+        jobs.append("real_confirm")                        # the read-only fill check (skipped quietly without a key)
     if hm(rc.send_time) <= t < MARKET_CLOSE and (last_stop is None or (now - last_stop).total_seconds() >= rc.stop_check_min * 60):
         jobs.append("real_stops")
     return jobs

@@ -115,6 +115,12 @@ export const realReplan = (maxPos) => req('POST', '/api/real/replan', maxPos ? {
 export const realEditPosition = (symbol, body, dry = false) => req('POST', `/api/real/position/${encodeURIComponent(symbol)}${dry ? '?dry=1' : ''}`, body);
 export const realRemovePosition = (symbol, note) => req('DELETE', `/api/real/position/${encodeURIComponent(symbol)}`, { note });
 export const realAddPosition = (body) => req('POST', '/api/real/position', body);
+// 💰 fill confirmation and the hand tools (nothing is ever sent)
+export const realConfirmPosition = (symbol, note = '') => req('POST', `/api/real/position/${encodeURIComponent(symbol)}/confirm`, { note });
+export const realCheckFills = () => req('POST', '/api/real/confirm');
+export const realClosePosition = (symbol, body) => req('POST', `/api/real/position/${encodeURIComponent(symbol)}/close`, body);
+export const realAddTrade = (body) => req('POST', '/api/real/trade', body);
+export const realVoidTrade = (id, note = '') => req('POST', `/api/real/trade/${id}/void`, { note });
 // ☀️ the morning dry run: today's plan with a per-order skip (for today only); send-now runs the send at once
 export const realMorning = () => req('GET', '/api/real/morning');
 export const realSkip = (symbol, on, note = '') => req('POST', '/api/real/skip', { symbol, on, note });

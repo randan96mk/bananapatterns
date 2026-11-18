@@ -355,6 +355,11 @@ class RealConfig:
     max_order_pct: float = 15.0            # a BUY above this % of the account value is cut to fit (15% of Rs 3L = 45,000)
     results_guard_sessions: int = 3        # a planned BUY whose results date is within N sessions is pre-skipped for the
                                            # morning (switch it back on from the Real page or Telegram); 0 = off
+    tt_sid: int = 0                        # the webhook side's deployment id for the read-only fill check (0 = not set)
+    confirm_time: str = "10:00"            # the fill check on trading days (24-hour HH:MM, IST; "" = off); again in the evening
+    confirm_alert: bool = True             # Telegram: the fill check's confirmations and the evening "Real vs webhook side"
+    exit_needs_confirm: bool = False       # the EXIT gate: on = an unconfirmed buy never gets an EXIT (alert instead); off = exits go out as always
+                                           # line (the "stop hit but never confirmed" alert always goes)
 
 
 @dataclass
@@ -584,6 +589,17 @@ def check_maintenance(sec: "MaintenanceConfig") -> None:
         raise ValueError("archive_days must be at least 30")
 
 
+def check_real(sec: "RealConfig") -> None:
+    """💰 confirm_time is HH:MM or "" (off); tt_sid is a deployment id, 0 = not set."""
+    v = str(sec.confirm_time or "")
+    if v:
+        h, _, m = v.partition(":")
+        if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+            raise ValueError(f"confirm_time {v!r} must be HH:MM (or empty: off)")
+    if int(sec.tt_sid) < 0:
+        raise ValueError("tt_sid must be 0 (not set) or the deployment id")
+
+
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
 
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
@@ -651,10 +667,10 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name in ("alerts", "ai", "options", "tips", "maintenance"):
+        if name in ("alerts", "ai", "options", "tips", "maintenance", "real"):
             try:
                 {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times, "tips": check_tips,
-                 "maintenance": check_maintenance}[name](sec)
+                 "maintenance": check_maintenance, "real": check_real}[name](sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))

@@ -734,7 +734,7 @@ def real_preview(orders: list, variant: str, send_at: str, on: bool, killed: boo
     return "\n".join(lines)
 
 
-def real_sent(res: dict, at: str) -> str:
+def real_sent(res: dict, at: str, gate: bool = False) -> str:
     lines = [f"{REAL} · ORDERS SENT · {at}"]
     for o in res["sent"]:
         lines.append(f"{'🔴 EXIT' if o['action'] == 'EXIT' else '🟢 BUY'} <b>{escape(o['symbol'])}</b>"
@@ -746,6 +746,10 @@ def real_sent(res: dict, at: str) -> str:
         why = "still too many requests after 3 retries" if "429" in str(o["error"]) else "not retried"
         lines.append(f"⚠️ FAILED {o['action']} <b>{escape(o['symbol'])}</b>: {escape(o['error'])} ({why})")
     lines.append(f"Tradetron: {len(res['sent'])} of {len(res['sent']) + len(res['failed'])} accepted")
+    buys = [o["symbol"] for o in res["sent"] if o["action"] == "BUY"]
+    if buys:                                               # accepted ≠ filled: ask for the owner's eyes (a check, not a hold)
+        lines.append("Once you see the fill, reply " + " · ".join(f"<b>filled {escape(s)}</b>" for s in buys)
+                     + (" · no EXIT goes out until you do" if gate else " (a check: exits go out as usual)"))
     return "\n".join(lines)
 
 
@@ -755,6 +759,35 @@ def real_stop(h: dict, at: str) -> str:
                 f"{escape(h['error'])}. Exit it yourself.")
     return (f"{REAL} · STOP HIT · EXIT SENT · {at}\n🛑 <b>{escape(h['symbol'])}</b> {h['qty']} · traded {_rup(h['price'])} "
             f"≤ {escape(h['why'])} · net {_signed(h['net'])}")
+
+
+def real_unconfirmed(h: dict) -> str:
+    """The EXIT gate held an EXIT: the buy was never confirmed, so nothing was sent (once a day per stock)."""
+    sym = escape(h["symbol"])
+    what = "stop hit" if str(h.get("why") or "").startswith("stop") else f"EXIT due ({escape(h.get('why') or 'exit')})"
+    return (f"⚠️ <b>REAL</b> · <b>{sym}</b> {what} but the buy was never confirmed · no EXIT sent · confirm it "
+            f"(reply <b>filled {sym}</b>) or remove it (<b>unfilled {sym}</b>)")
+
+
+def real_confirm_nudge(still: list, gate: bool = False) -> str:
+    """real.confirm_time without an API key: the buys still not confirmed by hand (no call made, nothing sent)."""
+    names = " · ".join(f"<b>filled {escape(s)}</b>" for s in still)
+    tail = " · no EXIT goes out until you do" if gate else " · a check only: exits go out as usual"
+    return f"⏳ <b>REAL</b> · {len(still)} fill{'s' if len(still) > 1 else ''} not confirmed yet · reply {names}{tail}"
+
+
+def real_fills_checked(res: dict) -> str:
+    """The fill check confirmed one or more buys (read-only; nothing was sent)."""
+    names = ", ".join(f"<b>{escape(s)}</b>" for s in res.get("confirmed") or [])
+    left = res.get("still") or []
+    return (f"✅ <b>REAL</b> · fill check: {names} confirmed filled · {res['n_confirmed']} of {res['total']} confirmed"
+            + (f" · still unconfirmed: {', '.join(escape(s) for s in left)}" if left else ""))
+
+
+def real_hand(text: str) -> str:
+    """A hand correction (sold outside the app, a closed trade added, a trade marked as never filled, a fill confirmed or
+    removed): the activity line. Nothing was sent."""
+    return f"{REAL} · ✎ {escape(text)} · nothing sent"
 
 
 def real_nologin(at: str) -> str:
