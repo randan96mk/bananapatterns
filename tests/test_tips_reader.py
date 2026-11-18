@@ -374,3 +374,29 @@ def test_old_or_broken_channel_values_move_to_the_default():
     assert rd.migrate_channels(c) is False and c.tips.channels == "some_other_channel"
     c.tips.channels = "Index Options Buying with Aakanksha"
     assert rd.migrate_channels(c) is False
+
+
+def test_the_sensex_pe_sequence_with_the_plan_in_a_second_post(monkeypatch):
+    """18 Nov 1:05 PM: the call, then a second post with the add-on, SL and five targets, then the running commentary."""
+    c, w = cfg(), world()
+    ch = "index options buying with aakanksha"
+    monkeypatch.setattr(bk, "push", lambda *a, **k: True)
+    seq = [(1, "13:05", "buy sensex 82400 pe above 685++\n\n2 lots"),
+           (2, "13:05", "we will add more near 635-600 after breakout activation \n3-3 lots\nSL 550\ntgt 745/770/800/850/900"),
+           (3, "13:07", "active"), (4, "13:07", "tgt 1 done ✅✅✅"), (5, "13:07", "defensive tradersensive traders can book full or trail"),
+           (6, "13:07", "hows the josh"), (7, "13:07", "one sided fataaa kya"),
+           (8, "13:08", "tgt 2 done \n\ndefensive tradersensive traders can book full at 735 & 770"), (9, "13:08", "795++"), (10, "13:09", "century done ✅✅✅")]
+    out = {pid: rd.ingest(c, ch, pid, at(hhmm), text, False, push=False, model=False, client=w) for pid, hhmm, text in seq}
+    assert out[1]["kind"] == "hint"
+    hid = out[1]["hint_id"]
+    assert out[2]["kind"] == "follow_up" and out[2]["hint_id"] == hid
+    assert out[2]["line"] == "plan completed: stop 550 · targets 745/770/800/850/900"
+    h = bk.load(hid)
+    assert (h["symbol"], h["strike"], h["opt_type"], h["side"]) == ("SENSEX", 82400, "PE", "BUY")
+    assert h["entry"] == {"mode": "above", "lo": 685, "hi": 685, "when_comes": False} and h["size_hint"] == {"lots": 2}
+    assert h["stop"] == {"kind": "premium", "value": 550} and h["targets"] == [745, 770, 800, 850, 900] and h["plan"]["ok"] is True
+    assert [out[i]["kind"] for i in (3, 4, 5, 8, 9, 10)] == ["follow_up"] * 6 and all(out[i]["hint_id"] == hid for i in (3, 4, 5, 8, 9, 10))
+    assert [out[i]["kind"] for i in (6, 7)] == ["chatter", "chatter"]
+    h = bk.load(hid)
+    assert h["targets"] == [745, 770, 800, 850, 900] and h["stop"]["value"] == 550      # "tgt 1 done" changed no level
+    assert out[3]["line"] == "entry allowed at the market"
