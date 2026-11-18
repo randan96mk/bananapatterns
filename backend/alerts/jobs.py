@@ -1112,9 +1112,44 @@ class Scheduler:
         from backend.engine import real
         res = real.evening(self.state.config)
         self._trail_alerts(msg.REAL, "real", res.get("raised") or [])
+        sent = 0
+        try:                                               # the read-only fill check, then the "Real vs webhook side" line
+            sent += self._real_fills(res.get("as_of") or now_ist()[:10], evening=True)
+        except Exception:
+            logger.exception("Real fill check (evening) failed")
         if res["status"] != "ok" or not (res["orders"] or res["missed"]):
-            return 0
-        return int(self.notifier().send(f"{res['as_of']}|real-plan", "real", msg.real_plan(res, self.state.config.real.variant)))
+            return sent
+        return sent + int(self.notifier().send(f"{res['as_of']}|real-plan", "real", msg.real_plan(res, self.state.config.real.variant)))
+
+    def _real_fills(self, day: str, evening: bool = False) -> int:
+        """confirm_from_api (one read-only call; nothing is ever sent from it) and its Telegram lines: the buys it
+        confirmed, and in the evening the "Real vs webhook side" line (a flag only). Silent without a key."""
+        from backend.engine import real
+        cfg = self.state.config
+        res = real.confirm_from_api(cfg)
+        n, sent = self.notifier(), 0
+        if res["status"] == "ok" and cfg.real.confirm_alert:
+            if res["confirmed"]:
+                sent += int(n.send(f"{day}|real-fills|{'|'.join(res['confirmed'])}", "real", msg.real_fills_checked(res)))
+            line = real.fills_line(res) if evening else None
+            if line:
+                sent += int(n.send(f"{day}|real-fills-line", "real", line))
+        return sent
+
+    def run_real_confirm(self, now: datetime) -> dict:
+        """real.confirm_time on trading days: the read-only fill check (no order of any kind)."""
+        from backend.engine import real
+        today, started = now.date(), now_ist()
+        self._real_fills(today.isoformat())
+        last = real._saved_check()
+        self.record("real_confirm", today, "ok", f"{last.get('status')}: {len(last.get('confirmed') or [])} confirmed, "
+                    f"{len(last.get('still') or [])} unconfirmed", started)
+        return last
+
+    def _gate_alerts(self, day: str, gated: list) -> int:
+        """The EXIT gate held an EXIT (the buy was never confirmed): one alert a day per stock, never held."""
+        n = self.notifier()
+        return sum(int(n.send(f"{day}|real-unconfirmed|{g['symbol']}", "real", msg.real_unconfirmed(g))) for g in gated or [])
 
     def run_real_preview(self, now: datetime) -> dict:
         """The morning reminder (real.preview_time): today's orders as they go out at send_time, with the skips (the
@@ -1141,6 +1176,7 @@ class Scheduler:
                     f"skipped {len(res.get('skipped') or [])}", started)
         if res["sent"] or res["failed"]:
             self.notifier().send(f"{today}|real-sent", "real", msg.real_sent(res, ampm(now.strftime('%H:%M'))))
+        self._gate_alerts(today.isoformat(), res.get("gated"))
         return res
 
     def run_real_stops(self, now: datetime) -> dict:
@@ -1151,6 +1187,7 @@ class Scheduler:
         n = self.notifier()
         for h in res["hits"]:
             n.send(f"{now.date()}|real-stop|{h['symbol']}", "real", msg.real_stop(h, ampm(now.strftime('%H:%M'))))
+        self._gate_alerts(now.date().isoformat(), res.get("gated"))
         if res["status"] == "no_login":                   # loud, again every nologin_alarm_min until the login
             slot = (now.hour * 60 + now.minute) // max(1, self.state.config.real.nologin_alarm_min)
             n.send(f"{now.date()}|real-nologin|{slot}", "real", msg.real_nologin(now.strftime('%H:%M')))

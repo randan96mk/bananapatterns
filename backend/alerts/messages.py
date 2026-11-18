@@ -757,6 +757,28 @@ def real_stop(h: dict, at: str) -> str:
             f"≤ {escape(h['why'])} · net {_signed(h['net'])}")
 
 
+def real_unconfirmed(h: dict) -> str:
+    """The EXIT gate held an EXIT: the buy was never confirmed, so nothing was sent (once a day per stock)."""
+    sym = escape(h["symbol"])
+    what = "stop hit" if str(h.get("why") or "").startswith("stop") else f"EXIT due ({escape(h.get('why') or 'exit')})"
+    return (f"⚠️ <b>REAL</b> · <b>{sym}</b> {what} but the buy was never confirmed · no EXIT sent · confirm it "
+            f"(reply <b>filled {sym}</b>) or remove it (<b>unfilled {sym}</b>)")
+
+
+def real_fills_checked(res: dict) -> str:
+    """The fill check confirmed one or more buys (read-only; nothing was sent)."""
+    names = ", ".join(f"<b>{escape(s)}</b>" for s in res.get("confirmed") or [])
+    left = res.get("still") or []
+    return (f"✅ <b>REAL</b> · fill check: {names} confirmed filled · {res['n_confirmed']} of {res['total']} confirmed"
+            + (f" · still unconfirmed: {', '.join(escape(s) for s in left)}" if left else ""))
+
+
+def real_hand(text: str) -> str:
+    """A hand correction (sold outside the app, a closed trade added, a trade marked as never filled, a fill confirmed or
+    removed): the activity line. Nothing was sent."""
+    return f"{REAL} · ✎ {escape(text)} · nothing sent"
+
+
 def real_nologin(at: str) -> str:
     return (f"{REAL} · 🚨 STOPS NOT WATCHED · {ampm(at)}\nKite is not logged in and real positions are open. "
             "Log in to Kite now: the first check after the login exits any position whose stop was touched meanwhile.")

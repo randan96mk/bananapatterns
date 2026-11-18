@@ -64,7 +64,7 @@ def trades(frm: str, to: str) -> list[dict]:
     from backend.ai import why
     out = []
     for t in why._rows("real_trades"):
-        if frm <= str(t.get("out") or "") <= to:
+        if frm <= str(t.get("out") or "") <= to and not t.get("void"):
             out.append(why._cash(t, "real"))
     for t in why._rows("paper_trades", " WHERE account = ?", (PAPER_ACCOUNT,)):
         if frm <= str(t.get("out") or "") <= to:

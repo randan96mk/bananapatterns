@@ -330,7 +330,7 @@ def trades(config: AppConfig, days: int = 365) -> list:
     with get_db() as conn:
         for (p,) in conn.execute("SELECT payload FROM real_trades"):
             t = json.loads(p)
-            if t["out"] >= since:
+            if t["out"] >= since and not t.get("void"):              # a trade marked as never filled is not counted
                 out.append({"book": "real", "account": NAMES["real"], "strategy": STRATEGY.get(t.get("variant"), t.get("variant") or ""),
                             "symbol": t["symbol"], "side": "long", "qty": t["qty"], "opened": t["in"], "closed": t["out"],
                             "entry": t["buy"], "exit": t["sell"], "gross": t["gross"], "costs": t["costs"], "net": t["net"],
@@ -489,6 +489,8 @@ def timeline(today: str, config: Optional[AppConfig] = None) -> list:
             ev.append({"t": x.get("exit_t"), "kind": "exit", "text": f"{x['symbol']} out · {x.get('reason')} · {signed_rs(x.get('net'))}"})
         for (p,) in conn.execute("SELECT payload FROM real_trades WHERE json_extract(payload, '$.out') = ?", (today,)):
             x = json.loads(p)
+            if x.get("void"):
+                continue
             ev.append({"t": "09:16", "kind": "exit", "text": f"Real · {x['symbol']} sold · {x.get('why') or ''} · {signed_rs(x.get('net'))}"})
     return sorted([e for e in ev if e.get("t")], key=lambda e: e["t"])
 

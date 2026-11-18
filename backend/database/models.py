@@ -477,6 +477,7 @@ def init_db(path: Optional[str] = None) -> None:
         conn.executescript(SCHEMA)
         _migrate_drop_paper_a(conn)
         _migrate_capital_300k(conn)
+        _migrate_real_confirm(conn)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _migrate_ai_notes(conn)
         _drop_track_record(conn)
@@ -614,6 +615,32 @@ def _migrate_capital_300k(conn) -> list[str]:
     if changed:
         print("Capital is Rs 3,00,000 everywhere now: " + "; ".join(changed))
     return changed
+
+
+REAL_CONFIRM_DONE_KEY = "real.confirm.migrated"
+
+
+def _migrate_real_confirm(conn) -> list[str]:
+    """💰 Fill confirmation (after the 18 Nov 2026 incident): every Real position booked from now on starts unconfirmed
+    and gets no EXIT until its fill is confirmed. Once, guarded by `real.confirm.migrated`: the positions open before
+    this update (reconciled by hand by the owner that day) are marked confirmed, by "migration". A position that
+    already carries the flag is left alone. Returns the symbols marked."""
+    if get_setting(conn, REAL_CONFIRM_DONE_KEY):
+        return []
+    marked = []
+    r = conn.execute("SELECT payload FROM real_state WHERE id = 1").fetchone()
+    if r:
+        st = json.loads(r[0])
+        for sym, pos in (st.get("positions") or {}).items():
+            if "confirmed" not in pos:
+                pos.update(confirmed=True, confirmed_at=now_ist(), confirmed_by="migration", unconfirmed_since=None)
+                marked.append(sym)
+        if marked:
+            conn.execute("UPDATE real_state SET payload = ? WHERE id = 1", (json.dumps(st),))
+    set_setting(conn, REAL_CONFIRM_DONE_KEY, now_ist())
+    if marked:
+        print(f"Real fill confirmation: {len(marked)} open position(s) marked confirmed (by migration): {', '.join(sorted(marked))}")
+    return marked
 
 
 def _config_from(conn):

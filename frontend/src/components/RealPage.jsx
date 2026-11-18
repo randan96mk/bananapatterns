@@ -12,8 +12,8 @@ import { useAiViews, viewOf, AiView, AiLine, aiChanged, qtyCell } from './AiView
 import { useNarrow, useIsPhone } from '../useMedia';
 import AiDot, { AiWhy } from './AiDot';
 
-const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit' };
-const STATUS = { sent: 'ok', failed: 'bad', skipped: 'w', added: 'a', removed: 'w', edited: '' };
+const EXIT = { stop: '🛑 stop', trail: '🪜 late trail', exit: '📉 trend exit', hand: '✋ by hand' };
+const STATUS = { sent: 'ok', failed: 'bad', skipped: 'w', added: 'a', removed: 'w', edited: '', confirmed: 'ok', closed: 'a', voided: 'w' };
 const SIDE = { BUY: 'up', EXIT: 'down' };                 // the order log's colour per action (hand corrections: muted)
 const n2 = (v) => (v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const FIELD = { qty: 'qty', entry: 'entry', stop: 'stop', exit: 'exit', added: 'added' };
@@ -92,7 +92,8 @@ function PositionEditor({ x, onDone, onErr }) {
       <button type="button" className="btn ghost" style={B} disabled={busy} onClick={() => onDone(false)}>Cancel</button>
       <button type="button" className="btn ghost" style={{ ...B, color: 'var(--bad)', borderColor: 'var(--bad)', marginLeft: 'auto' }} disabled={busy} onClick={remove}>Remove from tracking…</button></div>
     <div style={EFF}>{eff?.error ? <span className="down">{eff.error}</span> : e ? <>Effects: {lines.map((l, i) => <span key={i}>{i ? ' · ' : ''}{l}</span>)}</>
-      : changed ? 'Checking…' : x.est ? 'Estimated entry: the webhook\'s fill is not visible, so the entry is what the app saw when sending (corrected to the open in the evening unless you set it here).' : 'Change a value to see the effects before saving.'}</div></div>;
+      : changed ? 'Checking…' : x.est ? 'Estimated entry: the webhook\'s fill is not visible, so the entry is what the app saw when sending (corrected to the open in the evening unless you set it here).' : 'Change a value to see the effects before saving.'}</div>
+    <CloseByHand x={x} onDone={onDone} onErr={onErr} /></div>;
 }
 
 // ✎ Correct a closed trade's exit price / quantity (net and cash follow; est. cleared).
@@ -116,13 +117,91 @@ function TradeEditor({ t, onDone, onErr }) {
     setBusy(true);
     api.realEditTrade(t.id, body).then(() => onDone(true)).catch((err) => onErr(err.message)).finally(() => setBusy(false));
   };
+  const voidIt = () => {
+    if (!window.confirm(`Mark the ${t.symbol} trade (${day(t.in)} → ${day(t.out)}) as never filled?\n\nThe row stays, tagged "never filled", and is left out of the P&L, the win rate, the curves and the day summary; the cash and the realised P&L are reversed (${signed(-t.net)}). Nothing is sent to the broker.`)) return;
+    setBusy(true);
+    api.realVoidTrade(t.id, 'never filled').then(() => onDone(true)).catch((err) => onErr(err.message)).finally(() => setBusy(false));
+  };
+  if (t.void) return <div style={EFF}>Marked as never filled{t.void_at ? ` · ${stamp(t.void_at)}` : ''}{t.void_note ? ` · ${t.void_note}` : ''} · not counted anywhere · the row is kept.</div>;
   return <div>
     <div style={F}><b style={{ color: 'var(--text)' }}>Edit the exit · {t.symbol}</b>
       <Lbl>Exit ₹ <input className="input" type="number" min="0" step="0.05" value={f.exit} onChange={(ev) => setF({ ...f, exit: ev.target.value })} style={{ ...IN, width: 96 }} /></Lbl>
       <Lbl>Qty <input className="input" type="number" min="1" step="1" value={f.qty} onChange={(ev) => setF({ ...f, qty: ev.target.value })} style={{ ...IN, width: 64 }} /></Lbl>
       <button type="button" className="btn primary" style={B} disabled={busy || !changed || !e} onClick={save}>Save…</button>
-      <button type="button" className="btn ghost" style={B} disabled={busy} onClick={() => onDone(false)}>Cancel</button></div>
+      <button type="button" className="btn ghost" style={B} disabled={busy} onClick={() => onDone(false)}>Cancel</button>
+      <button type="button" className="btn ghost" style={{ ...B, color: 'var(--bad)', borderColor: 'var(--bad)', marginLeft: 'auto' }} disabled={busy} onClick={voidIt}>Mark as never filled…</button></div>
     <div style={EFF}>{eff?.error ? <span className="down">{eff.error}</span> : e ? `Effects: ${text}` : changed ? 'Checking…' : t.est ? 'Estimated exit: the price the app saw when sending (corrected to the open in the evening unless you set it here).' : 'Change a value to see the effects before saving.'}</div></div>;
+}
+
+// ✓ filled: an accepted webhook is not a fill (the 18 Nov incident). Until a BUY is confirmed the app never sends its
+// EXIT: a stop hit is held, alerted and shown here. The owner confirms it (✓ filled) or drops it (✗ never filled).
+const FILL_BY = { manual: 'by you', api: 'by the fill check', owner: 'added by hand', migration: 'by the update (reconciled by hand)' };
+function FillLine({ x, onDone, onErr }) {
+  const [busy, setBusy] = useState(false);
+  const g = x.gate && x.gate.day === todayIso() ? x.gate : null;
+  const filled = () => {
+    if (!window.confirm(`You saw this BUY filled on the broker's side? The app then watches its stop and may send an EXIT.\n\n${x.symbol} · ${x.qty} @ ${n2(x.buy)} · stop ${n2(x.stop)}${g ? `\n\nIts stop was hit today (${n2(g.price)}): the next check may send the EXIT at once.` : ''}`)) return;
+    setBusy(true);
+    api.realConfirmPosition(x.symbol).then(() => onDone(true)).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+  };
+  const never = () => {
+    if (!window.confirm(`${x.symbol} never filled on the broker's side?\n\nIt is removed from tracking: the cash gets the cost (${inr(x.qty * x.buy)}) back and the charges are reversed, as if never bought. No order is sent.`)) return;
+    setBusy(true);
+    api.realRemovePosition(x.symbol, 'never filled').then(() => onDone(true)).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+  };
+  return <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
+    <span className={g ? 'down' : 'warn'} style={{ flex: '1 1 260px', minWidth: 0, overflowWrap: 'anywhere' }}>{g
+      ? <><b>⚠ stop hit {n2(g.price)} · no EXIT sent</b> · the buy was never confirmed{g.at ? ` · ${clock(g.at, true)}` : ''}</>
+      : <>⏳ fill not confirmed{x.unconfirmed_since ? ` since ${stamp(x.unconfirmed_since)}` : ''} · no EXIT goes out until it is</>}</span>
+    <button type="button" className="btn primary" style={B} disabled={busy} onClick={filled} title="you saw it filled on the broker's side">✓ filled</button>
+    <button type="button" className="btn ghost" style={{ ...B, color: 'var(--bad)', borderColor: 'var(--bad)' }} disabled={busy} onClick={never} title="remove from tracking · no order is sent">✗ never filled</button></div>;
+}
+
+// Sold outside the app: the position (or part of it) closed at your price, with the usual charges. Nothing is sent.
+function CloseByHand({ x, onDone, onErr }) {
+  const [f, setF] = useState({ price: n2(x.last).replace(/,/g, ''), qty: String(x.qty), day: todayIso(), note: '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (ev) => setF({ ...f, [k]: ev.target.value });
+  const q = Number(f.qty), px = Number(f.price);
+  const ok = px > 0 && q >= 1 && q <= x.qty && Number.isInteger(q) && /^\d{4}-\d{2}-\d{2}$/.test(f.day);
+  const go = () => {
+    if (!ok || !window.confirm(`Close ${q === x.qty ? '' : `${q} of `}${x.symbol} as sold outside the app?\n\n${q} @ ${n2(px)} on ${day(f.day)} · before costs ${signed((px - x.buy) * q)}${q < x.qty ? ` · ${x.qty - q} stay open` : ''}\nThe usual charges apply; the trade is tagged "by hand". Nothing is sent to the broker.`)) return;
+    setBusy(true);
+    api.realClosePosition(x.symbol, { price: px, qty: q, at: f.day, note: f.note }).then(() => onDone(true)).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+  };
+  return <div style={{ ...F, marginTop: 8 }}><b style={{ color: 'var(--text)' }}>Sold outside the app</b>
+    <Lbl>Price ₹ <input className="input" type="number" min="0" step="0.05" value={f.price} onChange={set('price')} style={{ ...IN, width: 96 }} /></Lbl>
+    <Lbl>Qty <input className="input" type="number" min="1" max={x.qty} step="1" value={f.qty} onChange={set('qty')} style={{ ...IN, width: 64 }} /></Lbl>
+    <Lbl>On <input className="input" type="date" value={f.day} max={todayIso()} onChange={set('day')} style={{ ...IN, textAlign: 'left', width: 136 }} /></Lbl>
+    <Lbl>Note <input className="input" type="text" value={f.note} onChange={set('note')} placeholder="sold on the broker's app" style={{ ...IN, textAlign: 'left', width: 170 }} /></Lbl>
+    <button type="button" className="btn" style={B} disabled={busy || !ok} onClick={go}>Close…</button></div>;
+}
+
+// + Add a closed trade the app never saw (costs computed); cash and realised follow. Nothing is sent.
+function AddTrade({ onDone, onErr }) {
+  const [f, setF] = useState({ symbol: '', qty: '', entry: '', entry_day: '', exit: '', exit_day: todayIso(), note: '' });
+  const [busy, setBusy] = useState(false);
+  const set = (k) => (ev) => setF({ ...f, [k]: k === 'symbol' ? ev.target.value.toUpperCase() : ev.target.value });
+  const iso = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const ok = f.symbol.trim() && Number(f.qty) >= 1 && Number(f.entry) > 0 && Number(f.exit) > 0 && iso(f.entry_day) && iso(f.exit_day) && f.exit_day >= f.entry_day;
+  const go = () => {
+    if (!ok || !window.confirm(`Add a closed trade the app never saw?\n\n${f.symbol} · ${f.qty} · ${n2(Number(f.entry))} (${day(f.entry_day)}) → ${n2(Number(f.exit))} (${day(f.exit_day)}) · before costs ${signed((Number(f.exit) - Number(f.entry)) * Number(f.qty))}\nCosts are computed; the cash and the realised P&L move by its net. Nothing is sent to the broker.`)) return;
+    setBusy(true);
+    api.realAddTrade({ ...f, symbol: f.symbol.trim(), qty: Number(f.qty), entry: Number(f.entry), exit: Number(f.exit) })
+      .then(() => onDone(true)).catch((e) => onErr(e.message)).finally(() => setBusy(false));
+  };
+  return <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--rowline)' }}>
+    <div style={F}><b style={{ color: 'var(--text)' }}>Add a closed trade</b>
+      <Lbl>Symbol <input className="input" type="text" value={f.symbol} onChange={set('symbol')} placeholder="GLENMARK" style={{ ...IN, textAlign: 'left', width: 110 }} /></Lbl>
+      <Lbl>Qty <input className="input" type="number" min="1" step="1" value={f.qty} onChange={set('qty')} style={{ ...IN, width: 64 }} /></Lbl>
+      <Lbl>Entry ₹ <input className="input" type="number" min="0" step="0.05" value={f.entry} onChange={set('entry')} style={{ ...IN, width: 90 }} /></Lbl>
+      <Lbl>Bought <input className="input" type="date" value={f.entry_day} max={todayIso()} onChange={set('entry_day')} style={{ ...IN, textAlign: 'left', width: 136 }} /></Lbl>
+      <Lbl>Exit ₹ <input className="input" type="number" min="0" step="0.05" value={f.exit} onChange={set('exit')} style={{ ...IN, width: 90 }} /></Lbl>
+      <Lbl>Sold <input className="input" type="date" value={f.exit_day} max={todayIso()} onChange={set('exit_day')} style={{ ...IN, textAlign: 'left', width: 136 }} /></Lbl>
+      <Lbl>Note <input className="input" type="text" value={f.note} onChange={set('note')} style={{ ...IN, textAlign: 'left', width: 150 }} /></Lbl>
+      <button type="button" className="btn primary" style={B} disabled={busy || !ok} onClick={go}>Add…</button>
+      <button type="button" className="btn ghost" style={B} disabled={busy} onClick={() => onDone(false)}>Cancel</button></div>
+    <div style={EFF}>A trade done outside the app, never seen here · tagged "by hand" · costs computed (delivery charges both ways) · nothing is sent to the broker.</div></div>;
 }
 
 // + Add a position: a trade placed by hand that the app should track and exit by its rules. Nothing is sent.
@@ -238,6 +317,8 @@ export default function RealPage() {
   const [edit, setEdit] = useState(() => { try { const s = sessionStorage.getItem('bp.real.edit'); sessionStorage.removeItem('bp.real.edit'); return s || null; } catch { return null; } });
   const [tedit, setTedit] = useState(null);                // the trade (id) whose exit is being edited
   const [adding, setAdding] = useState(false);
+  const [addingTrade, setAddingTrade] = useState(false);
+  const [checking, setChecking] = useState(false);
   const narrow = useNarrow();
   const [err, setErr] = useState('');
   const [tick, setTick] = useState(0);
@@ -303,19 +384,24 @@ export default function RealPage() {
   const orderRows = (d.orders || []).map((o) => ({ key: o.action + o.symbol, cells: [<b>{o.symbol}</b>, <Tag c={o.action === 'BUY' ? 'ok' : 'bad'}>{o.action}</Tag>, o.qty, o.stop ? rs(o.stop) : '—',
     o.close ? inr(o.qty * o.close) : '—', o.risk ? inr(o.risk) : '—', <span className="muted">{o.why}</span>,
     <Tag c={o.sent === 'sent' ? 'ok' : o.sent === 'failed' ? 'bad' : o.sent === 'skipped' ? 'w' : live ? 'a' : 'w'}>{o.sent || (live ? `queued · ${ampm(s.send_time)}` : 'not sending')}</Tag>] }));
-  const done = (changed) => { setEdit(null); setTedit(null); setAdding(false); if (changed) reload(); };
+  const done = (changed) => { setEdit(null); setTedit(null); setAdding(false); setAddingTrade(false); if (changed) reload(); };
+  const fills = d.fills || {};
+  const unconf = (d.positions || []).filter((x) => !x.confirmed);
+  const checkFills = () => { setChecking(true); api.realCheckFills().then((r) => { if (r.status === 'error') setErr(`Fill check: ${r.error}`); reload(); }).catch((e) => setErr(e.message)).finally(() => setChecking(false)); };
+  const lastCheck = fills.last ? `last check ${stamp(fills.last.at)} · ${fills.last.status === 'ok' ? `${fills.last.n_confirmed} of ${fills.last.total} confirmed${fills.last.extra?.length ? ` · extra on the webhook side: ${fills.last.extra.join(', ')}` : ''}` : fills.last.status}` : 'not checked yet';
   // Strategy is the short tag at 60 px; under 1440 px % and Days are dropped (nw: the row title keeps them) so Stock keeps 140 px+
   const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 160 : 196, ell: true }, { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag only; the stop and the trail stay as the rules set them' }, { h: '', w: 50, key: 'edit' }];
   const posRows = (d.positions || []).flatMap((x) => [{ key: x.symbol, title: `${pct(x.buy ? (x.last / x.buy - 1) * 100 : null)} · ${x.days ?? '—'} days · bought ${day(x.in)} · before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.px_orig != null && x.px_orig !== x.buy ? ` · first entry ${rs(x.px_orig)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}`,
-    cells: [<><b>{x.symbol}</b><AiDot note={x.ai_note} />{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. entry</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a" title="placed by hand, tracked and exited by the app's rules">by hand</Tag>}{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>,
+    cells: [<>{!x.confirmed && <span className={x.gate?.day === todayIst ? 'down' : 'warn'} style={{ marginRight: 4 }} title={x.gate?.day === todayIst ? 'stop held: the buy was never confirmed, no EXIT sent' : 'fill not confirmed: no EXIT goes out until it is'}>{x.gate?.day === todayIst ? '⚠' : '⏳'}</span>}<b>{x.symbol}</b><AiDot note={x.ai_note} />{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. entry</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a" title="placed by hand, tracked and exited by the app's rules">by hand</Tag>}{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>,
       <span className={`v${x.variant}`}>{x.variant === 'E' ? 'E+' : x.variant}</span>, x.qty, rs(x.buy), rs(x.last), <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
       <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, <>{x.days ?? '—'} · {day(x.in)}</>,
       <AiView compact v={viewOf(x, views)} note={aiChanged(viewOf(x, views))} />,
       <button type="button" className={`btn ${edit === x.symbol ? 'primary' : 'ghost'}`} style={PEN} title="correct qty / entry / stop · remove from tracking" onClick={() => { setEdit(edit === x.symbol ? null : x.symbol); setAdding(false); }}>✎</button>] },
+  ...(!x.confirmed ? [{ key: `${x.symbol}-fill`, span: <FillLine x={x} onDone={done} onErr={setErr} /> }] : []),     // ✓ filled / ✗ never filled
   ...(edit === x.symbol ? [{ key: `${x.symbol}-edit`, span: <PositionEditor x={x} onDone={done} onErr={setErr} /> }] : [])]);
   const tradeCols = [{ h: 'Stock', ell: true }, { h: 'Bought · sold', w: 150, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Exit ₹', w: 90, n: true, lo: true }, { h: 'Before', w: 100, n: true, lo: true, nw: true }, { h: 'Costs', w: 80, n: true, lo: true, nw: true }, { h: 'After', w: 104, n: true }, { h: 'Exit', w: 110 }, { h: '', w: 50, key: 'edit' }];
-  const tradeRows = (d.trades || []).flatMap((t) => [{ key: t.id ?? t.symbol + t.in, cells: [<><b>{t.symbol}</b>{t.est && <Tag c="w" title="estimated exit: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. exit</Tag>}<Edited edits={t.edits} /></>, `${day(t.in)} · ${day(t.out)}`, t.qty, rs(t.sell), <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why,
-    t.id != null ? <button type="button" className={`btn ${tedit === t.id ? 'primary' : 'ghost'}`} style={PEN} title="correct the exit price / quantity" onClick={() => setTedit(tedit === t.id ? null : t.id)}>✎</button> : ''] },
+  const tradeRows = (d.trades || []).flatMap((t) => [{ key: t.id ?? t.symbol + t.in, cls: t.void ? 'muted' : '', cells: [<><b style={t.void ? { textDecoration: 'line-through' } : undefined}>{t.symbol}</b>{t.void && <Tag c="w" title={`never filled · left out of the P&L, the win rate, the curves and the day summary${t.void_note ? ` · ${t.void_note}` : ''}`}>never filled</Tag>}{t.by_hand && <Tag c="a" title={`entered by you${t.note ? ` · ${t.note}` : ''}`}>by hand</Tag>}{t.est && <Tag c="w" title="estimated exit: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. exit</Tag>}<Edited edits={t.edits} /></>, `${day(t.in)} · ${day(t.out)}`, t.qty, rs(t.sell), <span className={cls(t.gross)}>{signed(t.gross)}</span>, <span className="muted">{inr(t.costs)}</span>, <b className={t.void ? 'muted' : cls(t.net)}>{signed(t.net)}</b>, EXIT[t.why] || t.why,
+    t.id != null ? <button type="button" className={`btn ${tedit === t.id ? 'primary' : 'ghost'}`} style={PEN} title="correct the exit price / quantity · mark as never filled" onClick={() => setTedit(tedit === t.id ? null : t.id)}>✎</button> : ''] },
   ...(t.ai_why ? [{ key: `${t.id ?? t.symbol + t.in}-why`, span: <AiWhy why={t.ai_why} /> }] : []),          // 🤖 the AI's likely cause, one small line
   ...(tedit === t.id && t.id != null ? [{ key: `${t.id}-edit`, span: <TradeEditor t={t} onDone={done} onErr={setErr} /> }] : [])]);
   const capRow = <div className="rform"><div className="fr"><span>Capital<small>size {inr(d.limits?.size)} a stock (÷ {d.max_pos}) · largest order {inr(d.limits?.max_order)} ({s.max_order_pct}%) · whole shares, within the cash left</small></span>
@@ -396,12 +482,19 @@ export default function RealPage() {
           <button type="button" className={`btn small ${adding ? 'primary' : ''}`} title="track a trade placed by hand · nothing is sent" onClick={() => { setAdding(!adding); setEdit(null); }}>+ Add a position</button></>}>
           {adding && <AddPosition d={d} onDone={done} onErr={setErr} />}
           <FixedTable cols={posCols} rows={posRows} empty="None." />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 14px', fontSize: 12, borderTop: '1px solid var(--rowline)' }}>
+            <span style={{ flex: '1 1 240px', minWidth: 0, overflowWrap: 'anywhere' }}><b className={unconf.length ? 'warn' : 'up'}>{unconf.length ? `${unconf.length} fill${unconf.length > 1 ? 's' : ''} not confirmed` : 'every fill confirmed'}</b>
+              <span className="muted"> · fill checks: {fills.key && fills.sid_set ? <>at {fills.confirm_time ? ampm(d.fills.confirm_time) : 'off'} + the evening · {lastCheck}</> : fills.mode || 'manual (no API key)'}</span></span>
+            <button type="button" className="btn small" disabled={checking || !fills.key || !fills.sid_set} title={fills.key ? (fills.sid_set ? 'one read-only call · never sends an order' : 'set real.tt_sid in Settings first') : 'no API key in .env: confirm fills by hand'} onClick={checkFills}>{checking ? 'Checking…' : 'Check fills now'}</button></div>
           {d.checks?.length > 0 && <div className="rbanner warn" style={{ margin: '8px 14px' }}>⚠️ Position checks (warnings only, nothing is traded): {d.checks.join(' · ')}</div>}
           {d.notes?.length > 0 && <div className="rnote">{d.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</div>}
           <div className="rnote">E+ positions: once the best close is +100% over the entry, the stop is raised to 25% under it after the close (never lowered) and watched from the next session like any stop; a stop sent with the BUY is not moved.
             {' '}No stop-loss orders: the app checks live prices every {s.stop_check_min} min and sends EXIT when a stop is reached (needs the daily Kite login). Prices are what the app saw when sending (est.), corrected to the day's open in the evening; your broker's fills may differ: ✎ sets the real fill, quantity or stop (every rule then follows the new values), "Remove from tracking…" drops an order that never filled, "+ Add a position" tracks a trade placed by hand. Nothing here sends an order.</div>
         </Panel>
-        <Panel id="tradelog" title="Trade log" meta={(d.trades || []).length}><FixedTable cols={tradeCols} rows={tradeRows} empty="None yet." /></Panel>
+        <Panel id="tradelog" title="Trade log" meta={(d.trades || []).length} right={<><Meta>{d.voided ? `${d.voided} never filled · not counted` : ''}</Meta>
+          <button type="button" className={`btn small ${addingTrade ? 'primary' : ''}`} title="a closed trade the app never saw · nothing is sent" onClick={() => { setAddingTrade(!addingTrade); setTedit(null); }}>+ Add a closed trade</button></>}>
+          {addingTrade && <AddTrade onDone={done} onErr={setErr} />}
+          <FixedTable cols={tradeCols} rows={tradeRows} empty="None yet." /></Panel>
       </div>
       <div className="rd" style={COL}>
         <PaperVsReal />

@@ -127,6 +127,13 @@ def checks(config: AppConfig, has_token: bool, follow_as_of=None) -> list[dict]:
     except Exception as exc:
         out.append({"key": "archive", "name": "Archive", "ok": True, "warn": True, "state": "unknown",
                     "detail": str(exc)[:80], "at": None})
+    try:                                                    # 💰 Real: no unconfirmed buy older than one session
+        from backend.engine import real
+        if real.has_account():
+            out.append(real.fills_health(config, today))
+    except Exception as exc:
+        out.append({"key": "real_fills", "name": "Real fills", "ok": True, "warn": True, "state": "unknown",
+                    "detail": str(exc)[:80], "at": None})
     out.append({"key": "follow", "name": "Follow book", "ok": True, "warn": bool(follow_as_of and day and follow_as_of < day),
                 "state": f"as of {follow_as_of}" if follow_as_of else "not built", "detail": "steps after the evening scan", "at": None})
     return out

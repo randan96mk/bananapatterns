@@ -66,7 +66,7 @@ def closed_today(day: str) -> list[dict]:
     label, in, out, days, stop, extra}."""
     out = []
     for t in _rows("real_trades"):
-        if t.get("out") == day:
+        if t.get("out") == day and not t.get("void"):
             out.append(_cash(t, "real"))
     for t in _rows("paper_trades"):
         if t.get("out") == day:

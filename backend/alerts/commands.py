@@ -5,6 +5,9 @@
   skip SYM / unskip SYM / hold   the morning dry run: skip one planned real BUY for today, send it after all,
                                  or hold every BUY (EXITs always go out); also with a slash; refused after send_until
   full SYM                       🤖 AI view: the rule size restored for one BUY this morning (size-by-score, locked)
+  filled SYM / unfilled SYM / yes   💰 Real fill confirmation: filled confirms a booked BUY (its stop is then watched
+                                 and may send an EXIT); unfilled asks first and removes it from tracking on `yes`
+                                 within 10 min (nothing is ever sent by either)
   fut skip SYM / fut unskip SYM / fut hold   the same for the futures book's plan (paper fill and real send)
   opt / opt close / opt hold   the options book: today's status and the open spread; close the spread now; no new
                                entries today
@@ -43,6 +46,7 @@ STALE_SEC = 120
 MORNING_WORDS = ("skip", "unskip", "hold", "full")         # full SYM: 🤖 the rule size restored this morning (AI view)
 OPTIONS_WORDS = ("close", "hold")
 AI_WORDS = ("stop", "start", "rerun")
+FILL_WORDS = ("filled", "unfilled")                         # 💰 Real: confirm a booked BUY's fill / remove one never filled
 SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
 TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume")   # 💡 with a hint number: "take 12 2", "skip 12"
 
@@ -91,6 +95,10 @@ class BotCommands:
             if w0 == "tips" or (w0 in TIPS_WORDS and len(parts) > 1 and parts[1].isdigit()):   # 💡 "skip 12" (a number) is Tips
                 if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
                     handled += int(self._say(notifier, self.tips(w0, parts[1:])))
+                continue
+            if w0 in FILL_WORDS or (w0 == "yes" and len(parts) == 1):                             # 💰 filled SYM / unfilled SYM / yes
+                if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
+                    handled += int(self._say(notifier, self.fills(w0, parts[1].upper() if len(parts) > 1 else "")))
                 continue
             if parts[0].lower() == "fut" and len(parts) > 1 and parts[1].lower() in MORNING_WORDS:   # "fut skip NRL" / "fut hold"
                 parts = ["/fut" + parts[1].lower()] + parts[2:]
@@ -220,6 +228,46 @@ class BotCommands:
                 "/hold": "⏸ Every BUY held today; the EXITs still go out.",
                 "/full": f"↩️ {msg.escape(arg)} goes out at the rule size today."}[command]
         return head + "\n" + msg.real_preview(orders, cfg.real.variant, cfg.real.send_time, bool(cfg.real.enabled), real.killed(), m)
+
+    def fills(self, word: str, arg: str) -> str:
+        """💰 filled SYM: the booked BUY confirmed (by you) · unfilled SYM: asks first, `yes` within 10 min removes it
+        from tracking (cash back, charges reversed) · a bare `yes` with nothing waiting says so. The same functions as
+        the Real page's buttons; nothing is ever sent."""
+        import json
+        from backend.database.models import get_setting, set_setting
+        from backend.engine import real
+        cfg, now = self.state.config, self.clock()
+        if word in ("filled", "unfilled") and not arg:
+            return f"Which stock? {word} SYMBOL"
+        if word == "filled":
+            try:
+                real.confirm_position(cfg, arg, "manual", "Telegram")
+            except ValueError as exc:
+                return f"Not changed: {msg.escape(str(exc))}"
+            return (f"✓ <b>{msg.escape(arg)}</b> confirmed filled · its stop is watched from now on and may send an EXIT · "
+                    "nothing was sent")
+        if word == "unfilled":
+            pos = (real._state() or {}).get("positions", {}).get(arg)
+            if not pos:
+                return f"Not changed: no open position in {msg.escape(arg)}"
+            with get_db() as conn:
+                set_setting(conn, "real.unfilled_ask", json.dumps({"symbol": arg, "at": now.timestamp()}))
+            return (f"Remove <b>{msg.escape(arg)}</b> from tracking as never filled? {pos['qty']} @ {msg.rs(pos['px'])} · the cash "
+                    f"gets the cost back and the charges are reversed · no order is sent.\nReply <b>yes</b> within 10 min.")
+        with get_db() as conn:
+            raw = get_setting(conn, "real.unfilled_ask")
+            set_setting(conn, "real.unfilled_ask", "")
+        ask = json.loads(raw) if raw else None
+        if not ask:
+            return "Nothing is waiting for a yes."
+        if now.timestamp() - float(ask["at"]) > real.UNFILLED_TTL_S:
+            return f"Too late: the question about {msg.escape(ask['symbol'])} expired after 10 min · send unfilled {msg.escape(ask['symbol'])} again."
+        try:
+            res = real.remove_position(cfg, ask["symbol"], "never filled (Telegram)")
+        except ValueError as exc:
+            return f"Not changed: {msg.escape(str(exc))}"
+        return (f"✗ <b>{msg.escape(ask['symbol'])}</b> removed from tracking · never filled · cash {msg.rs(res['cash'])} · "
+                "nothing was sent")
 
     def futures(self, command: str, arg: str) -> str:
         """fut skip SYM / fut unskip SYM / fut hold: the futures plan changed for this morning only (the paper fill
@@ -412,6 +460,6 @@ class BotCommands:
         if command in ("/start", "/help"):
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
-                                       "BUYs, before the send) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
+                                       "BUYs, before the send) · filled SYM / unfilled SYM (a real BUY's fill: confirm it, or remove it with yes) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
                                        "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

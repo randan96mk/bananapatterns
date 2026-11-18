@@ -206,12 +206,19 @@ def _real(config, kite: bool) -> list:
     if s["killed"]:
         out.append(("warn", "Kill switch ON: nothing is sent"))
     if s["enabled"] and not s["token_set"]:
-        out.append(("warn", "TRADETRON_TOKEN missing in .env: orders can't be sent"))
+        out.append(("warn", "webhook token missing in .env: orders can't be sent"))
     if not s["enabled"]:
         return out
     if s.get("positions") and not kite:
         out.append(("warn", "Kite not logged in: stops are NOT watched"))
     today = date.today().isoformat()
+    held = [p["symbol"] for p in s.get("positions") or [] if not p.get("confirmed") and (p.get("gate") or {}).get("day") == today]
+    if held:                                              # the EXIT gate held an EXIT: red, until confirmed or removed
+        out.append(("warn", f"Real · {', '.join(held)}: stop hit but the buy was never confirmed · no EXIT sent · "
+                            "confirm (✓ filled) or remove (✗ never filled)"))
+    waiting = [p["symbol"] for p in s.get("positions") or [] if not p.get("confirmed") and p["symbol"] not in held]
+    if waiting:
+        out.append(("info", f"Real · fill not confirmed yet: {', '.join(waiting)} · no EXIT goes out until it is"))
     with get_db() as conn:
         bad = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status != 'sent' AND action IN ('BUY', 'EXIT')", (today,))]
         stops = [r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status = 'sent' AND "

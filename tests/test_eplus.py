@@ -181,7 +181,7 @@ def test_real_trail_for_every_position_and_never_lowered(monkeypatch):
 def test_real_raised_stop_sends_nothing_while_off_or_killed(monkeypatch):
     c = cfg()
     st = {"positions": {"X": {"qty": 1, "px": 100.0, "d": "2026-11-02", "stop": 157.5, "last": 160, "variant": "E",
-                              "best": 210.0, "trailed": True, "ts": "X", "charges": 0.0}}, "cash": 0, "charges": 0, "capital": 1e5}
+                              "best": 210.0, "trailed": True, "ts": "X", "charges": 0.0, "confirmed": True}}, "cash": 0, "charges": 0, "capital": 1e5}
     real._save(copy.deepcopy(st))
     sent = []
     client = type("K", (), {"has_token": True})()

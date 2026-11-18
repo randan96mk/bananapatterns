@@ -10,7 +10,7 @@ import pytest
 from backend.database.models import get_db
 from backend.engine import real
 from backend.engine import trend_breakout as tb
-from tests.test_real import Kite, Sender, first_day_with_buys, setup
+from tests.test_real import Kite, Sender, confirm_all, first_day_with_buys, setup
 
 
 def opened(monkeypatch, **kw):
@@ -20,6 +20,7 @@ def opened(monkeypatch, **kw):
     real.evening(c, cut)
     today = data["cal"][end + 1]
     real.send_orders(c, None, today, Sender())
+    confirm_all()                                                          # the fills seen on the broker's side
     sym = real.summary(c)["positions"][0]["symbol"]
     return c, data, today, sym
 
