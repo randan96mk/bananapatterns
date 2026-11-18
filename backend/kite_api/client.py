@@ -200,7 +200,7 @@ class KiteClient:
 
     def place_order(self, exchange: str, tradingsymbol: str, transaction_type: str, quantity: int, product: str,
                     order_type: str, price: Optional[float] = None, trigger_price: Optional[float] = None,
-                    validity: str = "DAY", tag: str = ORDER_TAG) -> str:
+                    validity: str = "DAY", tag: str = ORDER_TAG, market_protection: Optional[float] = None) -> str:
         """One regular order; returns Kite's order_id. Sent once (an error is raised, never retried)."""
         kw = {"variety": "regular", "exchange": exchange, "tradingsymbol": tradingsymbol, "transaction_type": transaction_type,
               "quantity": int(quantity), "product": product, "order_type": order_type, "validity": validity, "tag": tag}
@@ -208,6 +208,8 @@ class KiteClient:
             kw["price"] = price
         if trigger_price is not None:
             kw["trigger_price"] = trigger_price
+        if market_protection is not None:                 # API orders at market need a non-zero protection (exchange rule)
+            kw["market_protection"] = market_protection
         out = self._call(self.api_bucket, f"place_order({tradingsymbol} {transaction_type} {quantity} {order_type})",
                          self.kite.place_order, _once=True, **kw)
         return str(out.get("order_id") if isinstance(out, dict) else out)

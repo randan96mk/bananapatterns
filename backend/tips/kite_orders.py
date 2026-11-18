@@ -342,7 +342,8 @@ def _place(config, client, h: dict, leg: str, side: str, qty: int, order_type: s
            "by": by, "note": None, "day": now.date().isoformat()}
     try:
         oid = client.place_order(exchange=h["exchange"], tradingsymbol=h["tradingsymbol"], transaction_type=side, quantity=int(qty),
-                                 product=config.tips.kite_product, order_type=order_type, price=price, trigger_price=trigger, tag=TAG)
+                                 product=config.tips.kite_product, order_type=order_type, price=price, trigger_price=trigger, tag=TAG,
+                                 market_protection=float(config.tips.kite_market_protection) if order_type in ("MARKET", "SL-M") else None)
     except Exception as exc:
         row.update(status="failed", note=str(exc)[:200])
         row["id"] = _insert(row, conn)

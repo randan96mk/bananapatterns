@@ -350,3 +350,20 @@ def test_no_broker_name_past_kite_and_phone_safe_markup():
         assert re.search(r"\{ h: " + col + r"[^}]*lo: true", table), col          # phones keep Time / Hint / Leg / Side / Qty / Status
     css = (ROOT / "frontend/src/redesign.css").read_text(encoding="utf-8")
     assert ".rd .tp-legs" in css and re.search(r"@media \(max-width: 700px\)[^@]*\.rd \.tp-legs \{ grid-template-columns: minmax\(0, 1fr\)", css)
+
+
+def test_market_orders_carry_market_protection_and_limits_do_not():
+    from backend.config import AppConfig
+    from backend.kite_api.client import KiteClient
+    sent = []
+
+    class K:
+        def place_order(self, **kw):
+            sent.append(kw)
+            return {"order_id": "1"}
+    c = AppConfig()
+    kc = KiteClient(c.kite, c.ingest, kite=K(), sleep=lambda s: None)
+    kc.place_order(exchange="BFO", tradingsymbol="X", transaction_type="BUY", quantity=20, product="NRML", order_type="MARKET", market_protection=5.0)
+    kc.place_order(exchange="BFO", tradingsymbol="X", transaction_type="SELL", quantity=20, product="NRML", order_type="LIMIT", price=520.0)
+    assert sent[0]["market_protection"] == 5.0 and "market_protection" not in sent[1] and sent[0]["tag"] == "bptips"
+    assert c.tips.kite_market_protection == 5.0

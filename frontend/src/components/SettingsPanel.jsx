@@ -154,6 +154,7 @@ const HELP_TIPS = {
   preview_fallback: 'When the account reader is down, read the channel\'s public preview page every 30 s (true/false)',
   kite_mode: '⚡ Tips → Kite orders: "off" (paper book only), "click" (each leg by your click, each through a confirm), "auto" (arrives in the next update; works as click for now). Real money',
   kite_product: 'The Kite product of these orders: "NRML" (carry forward) or "MIS" (intraday)',
+  kite_market_protection: 'Market protection in % on MARKET and SL-M orders (0.5 … 20, default 5): API orders at market must carry one, the exchange rejects 0',
   kite_max_entries_day: 'Kite entry orders a day at most (a rejected one does not count)',
   kite_max_lots: 'Lots per Kite entry order at most',
   kite_loss_cap: 'Realised loss a day from these Kite orders (rupees); at or past it no new entry that day',

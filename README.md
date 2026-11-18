@@ -2262,6 +2262,7 @@ stays the morning dry-run skip.
 | `preview_fallback` | on | While the reader is down, the channel's public page is read every 30 s (no login). |
 | `kite_mode` | off | ⚡ `off` (paper only) · `click` (each Kite leg by your click, through a confirm) · `auto` (next update; works as click for now). Real money. |
 | `kite_product` | NRML | The Kite product of these orders: `NRML` or `MIS`. |
+| `kite_market_protection` | 5 | Market protection in % on MARKET and SL-M orders (0.5 … 20). API orders at market must carry one; the exchange rejects 0. |
 | `kite_max_entries_day` | 4 | Kite entry orders a day at most (a rejected one does not count). |
 | `kite_max_lots` | 2 | Lots per Kite entry order at most. |
 | `kite_loss_cap` | 6,000 | Realised ₹ loss a day from these orders; at or past it no new entry that day. |
