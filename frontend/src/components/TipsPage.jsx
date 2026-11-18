@@ -193,7 +193,7 @@ function Feed({ feed, reader }) {
   const quiet = posts.filter((p) => QUIET.includes(p?.kind)).length;
   const shown = all ? posts : posts.filter((p) => !QUIET.includes(p?.kind));
   const src = reader?.state === 'live' ? 'your account' : reader?.state === 'preview' ? 'public preview' : reader?.state === 'down' ? 'reader down' : 'not logged in';
-  const lag = isNum(reader?.lag_ms) ? ` · ${Number(reader.lag_ms) < 1000 ? `${Math.round(reader.lag_ms)} ms` : `${Math.round(reader.lag_ms / 1000)} s`}` : '';
+  const lag = reader?.state === 'live' && isNum(reader?.lag_ms) && reader.lag_ms < 3600000 ? ` · ${Number(reader.lag_ms) < 1000 ? `${Math.round(reader.lag_ms)} ms` : `${Math.round(reader.lag_ms / 1000)} s`}` : '';
   return <Panel title="Channel feed" meta={reader?.state ? String(reader.state).replace('_', ' ') : null} right={<span>{src}{lag}</span>}>
     {!shown.length && <p className="muted small rempty">{posts.length ? 'Only chatter so far.' : 'No posts yet: they appear here about a second after the channel posts.'}</p>}
     <div className="tp-feed">{shown.map((p, i) => {
@@ -263,7 +263,7 @@ function ChannelsDialog({ current, onClose, onSaved }) {
   };
   return <Dialog title="Channels" onClose={onClose}>
     <p className="small muted" style={{ marginTop: 0 }}>One channel per line: a channel's @username, or for a private channel its full title exactly as Telegram shows it (spaces and commas included) or its numeric id. Any channel your account is a member of; public ones also work through the preview.</p>
-    <textarea className="tp-in mono" rows={3} value={v} onChange={(e) => setV(e.target.value)} placeholder={'Index Options, Buying with Aakanksha\na_public_username'} autoFocus style={{ resize: 'vertical', width: '100%' }} />
+    <textarea className="tp-in mono" rows={3} value={v} onChange={(e) => setV(e.target.value)} placeholder={'Index Options Buying with Aakanksha\na_public_username'} autoFocus style={{ resize: 'vertical', width: '100%' }} />
     <div className="tp-row"><span className={msg.startsWith('⚠') ? 'down small' : 'small'}>{msg}</span><button type="button" className="btn small" onClick={save}>Save…</button></div>
   </Dialog>;
 }
