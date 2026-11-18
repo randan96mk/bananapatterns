@@ -66,16 +66,16 @@ def test_actions_and_refusals(api):
 
 def test_settings(api):
     r = api.put("/api/tips/settings", json={"channels": "@aakankshatrading, other_channel", "lots": 2, "size_mode": "rupees"})
-    assert r.status_code == 200 and r.json()["channels"] == "aakankshatrading,other_channel" and r.json()["lots"] == 2
+    assert r.status_code == 200 and r.json()["channels"] == "aakankshatrading;other_channel" and r.json()["lots"] == 2
     assert api.get("/api/config/tips").json()["size_mode"] == "rupees"
     assert api.put("/api/tips/settings", json={"nope": 1}).status_code == 422
     assert api.put("/api/tips/settings", json={"size_mode": "shares"}).status_code == 422
     assert api.put("/api/tips/settings", json={"intraday_time_stop": "25:00"}).status_code == 422
     assert api.put("/api/tips/settings", json={"channels": "bad channel!"}).status_code == 422
-    r = api.put("/api/tips/settings", json={"channels": "Index Options Buying with Aakanksha, 1002233445566"})   # a title, an id
-    assert r.status_code == 200 and r.json()["channels"] == "Index Options Buying with Aakanksha,1002233445566"
+    r = api.put("/api/tips/settings", json={"channels": "Index Options, Buying with Aakanksha\n1002233445566"})   # a title with a comma, an id
+    assert r.status_code == 200 and r.json()["channels"] == "Index Options, Buying with Aakanksha;1002233445566"
     src = open("frontend/src/components/TipsPage.jsx", encoding="utf-8").read()
-    assert "v.split(/[,\\n]+/)" in src                                   # the dialog splits on commas only (a title has spaces)
+    assert "v.split(/[;\\n]+/)" in src and "<textarea" in src           # the dialog: one channel per line (a title keeps its commas)
 
 
 def test_import_test_post_and_login_refusals(api, monkeypatch):

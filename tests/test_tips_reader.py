@@ -44,7 +44,7 @@ class FakeTele:
 
     async def iter_dialogs(self):
         for d in (SimpleNamespace(title="Family", entity=SimpleNamespace(id=55, title="Family")),
-                  SimpleNamespace(title="Index Options Buying with Aakanksha", entity=SimpleNamespace(id=-1002233445566, title="Index Options Buying with Aakanksha"))):
+                  SimpleNamespace(title="Index Options, Buying with Aakanksha", entity=SimpleNamespace(id=-1002233445566, title="Index Options, Buying with Aakanksha"))):
             yield d
 
     async def get_messages(self, ent, limit=20):
@@ -247,17 +247,23 @@ def test_a_private_channel_is_found_by_title_or_id():
     import asyncio
     fake = FakeTele()
     assert rd.is_username("aakankshatrading") and not rd.is_username("Index Options Buying with Aakanksha") and not rd.is_username("1002233445566")
-    assert asyncio.run(rd.find_channel(fake, "index options buying with aakanksha")).id == -1002233445566
-    assert asyncio.run(rd.find_channel(fake, "Index Options Buying")).id == -1002233445566     # the start of the title
+    assert asyncio.run(rd.find_channel(fake, "buying with aakanksha")).id == -1002233445566            # part of the title
+    assert asyncio.run(rd.find_channel(fake, "Index Options, Buying")).id == -1002233445566    # the start of the title
     assert asyncio.run(rd.find_channel(fake, "1002233445566")).id == -1002233445566
     assert asyncio.run(rd.find_channel(fake, "aakankshatrading")).username == "aakankshatrading"
     with pytest.raises(LookupError):
         asyncio.run(rd.find_channel(fake, "No Such Channel"))
-    assert AppConfig().tips.channels == "Index Options Buying with Aakanksha"
+    assert AppConfig().tips.channels == "Index Options, Buying with Aakanksha"
+    assert rd.split_channels("aakankshatrading, other_channel") == ["aakankshatrading", "other_channel"]
+    assert rd.split_channels("Index Options, Buying with Aakanksha; @other\n1002233445566") == ["Index Options, Buying with Aakanksha", "other", "1002233445566"]
+    c0 = cfg()
+    c0.tips.channels = "Index Options, Buying with Aakanksha"
+    assert rd.channels_of(c0) == ["index options, buying with aakanksha"]
+    assert asyncio.run(rd.find_channel(FakeTele(), "index options, buying with aakanksha")).id == -1002233445566
     fetched = []
     rd.preview_once(cfg(), fetch=lambda u: fetched.append(u) or "<html></html>")   # the public one only
     c = cfg()
-    c.tips.channels = "Index Options Buying with Aakanksha"
+    c.tips.channels = "Index Options, Buying with Aakanksha"
     rd.preview_once(c, fetch=lambda u: fetched.append(u) or "<html></html>")
     assert fetched == ["https://t.me/s/aakankshatrading"]
 

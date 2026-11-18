@@ -124,10 +124,25 @@ def set_status(**kw) -> dict:
 _channels_cfg: list = []
 
 
+def split_channels(raw: str) -> list[str]:
+    """tips.channels → entries. New lines and semicolons separate; a comma separates too, but only between plain
+    usernames: a private channel's title keeps its commas ("Index Options, Buying with Aakanksha")."""
+    out = []
+    for part in re.split(r"[;\n]+", str(raw or "")):
+        part = part.strip()
+        if not part:
+            continue
+        pieces = part.split(",")                       # usernames only: every piece a plain @name
+        if not all(re.fullmatch(r"\s*@?[A-Za-z0-9_]+\s*", p) for p in pieces if p.strip()):
+            pieces = [part]                            # a title: its commas stay
+        out.extend(p.strip().lstrip("@") for p in pieces if p.strip())
+    return out
+
+
 def channels_of(config) -> list[str]:
     global _channels_cfg
     if config is not None:
-        _channels_cfg = [c.strip().lstrip("@").lower() for c in str(config.tips.channels or "").split(",") if c.strip()]
+        _channels_cfg = [c.lower() for c in split_channels(config.tips.channels)]
     return list(_channels_cfg)
 
 
@@ -151,7 +166,7 @@ async def find_channel(client, ch: str):
         title = (getattr(d, "title", None) or getattr(ent, "title", None) or "").strip().lower()
         if digits.isdigit() and str(abs(int(getattr(ent, "id", 0) or 0))) == digits:
             return ent
-        if title and (title == want or title.startswith(want)):
+        if title and (title == want or title.startswith(want) or want in title):
             return ent
     raise LookupError(f"no chat titled {ch!r} among the account's chats")
 
