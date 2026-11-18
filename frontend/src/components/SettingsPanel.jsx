@@ -152,7 +152,7 @@ const HELP_TIPS = {
   trail_to_cost_after_t1: 'After target 1, move the stop to the entry price (true/false)',
   model_classify: 'Let the local model sort the posts code could not (hint / follow-up / chatter) and link follow-ups (true/false)',
   preview_fallback: 'When the account reader is down, read the channel\'s public preview page every 30 s (true/false)',
-  kite_mode: '⚡ Tips → Kite orders: "off" (paper book only), "click" (each leg by your click, each through a confirm), "auto" (arrives in the next update; works as click for now). Real money',
+  kite_mode: '⚡ Tips → Kite orders: "off" (paper book only), "dry" (a rehearsal: same buttons, a simulator fills from live quotes, nothing reaches Kite), "click" (each leg by your click, each through a confirm), "auto" (arrives in the next update; works as click for now). Real money',
   kite_product: 'The Kite product of these orders: "NRML" (carry forward) or "MIS" (intraday)',
   kite_market_protection: 'Market protection in % on MARKET and SL-M orders (0.5 … 20, default 5): API orders at market must carry one, the exchange rejects 0',
   kite_max_entries_day: 'Kite entry orders a day at most (a rejected one does not count)',

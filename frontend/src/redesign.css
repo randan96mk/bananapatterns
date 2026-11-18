@@ -418,9 +418,26 @@
 .rd .tp-guards .g.no { color: var(--bad); }
 .rd .tp-guards .g.dim { color: var(--muted); font-size: 12px; }
 .rd .tp-guards .gi { flex: none; width: 18px; }
+.rd .tp-guards .g.info { color: var(--muted); font-size: 12px; border-top: 1px dashed var(--border); padding-top: 5px; }
+.rd .tp-kbar.dry { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.rd .tp-kbar .cap.note.dry { flex: 0 1 auto; }
+.rd .tp-ktest .ph > b { display: flex; align-items: center; gap: 8px; flex: none; }
+.rd .tp-ktest .ph .r .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd .tp-ktest .ph .r .btn { flex: none; }
+.rd .tp-ktest .rbody { display: grid; gap: 8px; font-size: 12.5px; }
+.rd .tp-ktest .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 6px 14px; min-width: 0; }
+.rd .tp-ktest .st { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.rd .tp-ktest .st > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.rd .tp-ktest .st.no { color: var(--bad); } .rd .tp-ktest .st.mid { color: var(--warn); }
+.rd .tp-ktest .st .gi { flex: none; width: 18px; }
+.rd .tp-ktest .kw { color: var(--muted); }
+.rd .tp-ktest .sum { font-size: 12px; }
 @media (max-width: 700px) {
   .rd .tp-legs { grid-template-columns: minmax(0, 1fr); }
   .rd .tp-kbar { padding: 8px 12px; gap: 8px; }
   .rd .tp-kbar .sp { display: none; }
   .rd .tp-kbar .cap { flex-basis: 100%; white-space: normal; }
+  .rd .tp-ktest .ph { flex-wrap: nowrap; }
+  .rd .tp-ktest .ph .r { flex-basis: auto; margin-left: auto; flex-wrap: nowrap; }
+  .rd .tp-ktest .ph .r .ell { display: none; }
 }

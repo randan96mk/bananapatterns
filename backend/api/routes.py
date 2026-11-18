@@ -2652,10 +2652,32 @@ def tips_kite_resync():
     from backend.tips import kite_orders as ko
     st = S()
     try:
-        r = ko.sync(st.config, st.client)
+        r = ko.sync_all(st.config, st)
     except Exception as exc:
         raise HTTPException(502, f"Kite order book: {str(exc)[:160]}")
     return {**r, **ko.today(st.config, st.client)}
+
+
+@router.post("/tips/kite/dry/clear")
+def tips_kite_dry_clear():
+    """"Clear dry run": today's dry rows voided (never deleted), the simulator's book emptied, the dry hints' legs reset."""
+    from backend.tips import kite_orders as ko
+    st = S()
+    return {**ko.clear_dry(st.config), **ko.today(st.config, st.client)}
+
+
+@router.post("/tips/kite/test")
+def tips_kite_test():
+    """The connection test on the real Kite account: one LIMIT buy of a far OTM NIFTY PE at half its price, cancelled
+    5 s later (session, static IP, order permission). 409: mode off, no login, or a test in the last 5 minutes."""
+    from backend.tips import book as tb
+    from backend.tips import kite_orders as ko
+    st = S()
+    try:
+        res = ko.connection_test(st.config, st.client)
+    except tb.TipsError as exc:
+        _tips_err(exc)
+    return {"result": res, **ko.today(st.config, st.client)}
 
 
 @router.post("/tips/hints/{hid}/kite/{action}")
@@ -2669,7 +2691,8 @@ def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
         raise HTTPException(404, f"no Kite action {action}")
     req = req or TipsKiteAct()
     st = S()
-    c, cl = st.config, st.client
+    c = st.config
+    cl = ko.client_for(c, st, tb.load(hid))          # the simulator in a dry run (or for a dry position), else Kite
     try:
         if action == "entry":
             h = ko.place_entry(c, cl, hid, req.lots)
@@ -2689,6 +2712,9 @@ def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
             if req.to is None:
                 raise HTTPException(400, 'modify_stop needs {to: price | "cost"}')
             h = ko.modify_stop(c, cl, hid, req.to)
+        if ko.is_dry(cl):                            # a rehearsal fills at once from the last quote: show it now
+            ko.sync(c, cl)
+            h = tb.load(hid) or h
     except tb.TipsError as exc:
         _tips_err(exc)
     return tt.hint_view(h, config=c)
