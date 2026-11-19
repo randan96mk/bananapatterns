@@ -339,7 +339,7 @@ def test_client_order_calls_are_sent_once():
 
 
 def test_no_broker_name_past_kite_and_phone_safe_markup():
-    src = (ROOT / "frontend/src/components/TipsPage.jsx").read_text(encoding="utf-8")
+    src = "\n".join((ROOT / f"frontend/src/components/{f}").read_text(encoding="utf-8") for f in ("TipsPage.jsx", "tipsKite.js"))   # the confirms' words are shared with Home
     eng = (ROOT / "backend/tips/kite_orders.py").read_text(encoding="utf-8")
     for s in (src, eng):
         assert not re.search(r"zerodha", s, re.I)

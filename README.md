@@ -2177,6 +2177,20 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
   for it.
 - Never automatic: taking a hint (Take / `take N`). Real orders only by your click (below, **Tips → Kite orders**).
 
+**🏠 Home · Tips · Kite** (`backend/tips/home.py`, `GET /api/home/tips`, stream topic `home_tips`; `HomeTips.jsx`)
+
+Home shows two more cards next to "Tips · paper · separate": **Tips · Kite · today** (today's realised + open Kite P&L,
+"1 open · 1 armed · 1 of 4 entries", DRY in a dry run, "off · paper book only" when off) and **Channel · 30 d** (hints, T1
+first, stop first, average R). Under them, in the left column, the **💡 Tips · Kite** block: the mode (Off / Dry run / By
+my click / Auto), the kill switch, the caps and the window, the reader's state and last post, Open Tips; one row per
+working Kite hint (open: P&L, the stop and target distance, Trail SL… / Exit now…; armed: the distance to the level,
+Send now… / Cancel), today's calls as chips with their outcome (open, armed, closed +₹x · T1, no entry · cancelled 2:30 PM,
+skipped · why, paper only, waiting), the order-check lines (all clear, or each red / amber item with the hint and the
+hand), and the channel's 30-day record with you against all and the day check. Every button asks the Tips page's own
+confirm (`tipsKite.js`) before the same API call. Next up gets the entry window's close, the time stop and the 3:35 PM day
+check on trading days while Kite mode is on. The endpoint reads the stored hints and orders only (no quote, no Kite
+call); Home polls it every 5 s while anything is armed or open, else every 30 s. With mode off only the strip shows.
+
 **⚡ Tips → Kite orders** (`backend/tips/kite_orders.py`; `tips.kite_mode`, default `off`)
 
 The paper book stays exactly as it is. On top, with `kite_mode = click`, a hint's legs can be sent to Kite (the app's

@@ -482,3 +482,41 @@
   .rd .tp-kday .ph .r .ell { display: none; }
 }
 .rd .tp-leg .d.nw { color: var(--text); }
+/* 🏠 Home · 💡 Tips · Kite: the strip, one row per working Kite hint (text · detail | buttons), today's calls, checks, record */
+.rd .hk.killed { border-color: color-mix(in srgb, var(--bad) 55%, var(--border)); }
+.rd .hk.dry { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.rd .hk-strip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 14px; border-bottom: 1px solid var(--border); min-width: 0; }
+.rd .hk.off .hk-strip { border-bottom: 0; }
+.rd .hk-strip .ttl { font-size: 13.5px; white-space: nowrap; flex: none; }
+.rd .hk-strip .sp { flex: 1 1 10px; }
+.rd .hk-strip .cap { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.rd .hk-strip .cap b { color: var(--text); } .rd .hk-strip .cap b.up { color: var(--ok); } .rd .hk-strip .cap b.warn { color: var(--warn); } .rd .hk-strip .cap b.down { color: var(--bad); }
+.rd .hk-strip .rsw { font-size: 12px; flex: none; } .rd .hk-strip .btn, .rd .hk-strip .seg { flex: none; }
+.rd .hk-msg { padding: 6px 14px; font-size: 12px; border-bottom: 1px solid var(--rowline, var(--border)); }
+.rd .hk-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 8px 14px; border-bottom: 1px solid var(--rowline, var(--border)); align-items: center; min-width: 0; }
+.rd .hk-row .l { grid-column: 1; grid-row: 1; min-width: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd .hk-row .l b { margin-right: 2px; } .rd .hk-row .l .rtag { margin-left: 8px; } .rd .hk-row .l .pnl { margin-left: 8px; font-family: var(--num-font, ui-monospace), ui-monospace, monospace; }
+.rd .hk-row .id, .rd .hk-call .id { color: var(--purple); font-family: ui-monospace, Menlo, monospace; font-weight: 700; margin-right: 6px; }
+.rd .hk-row .m { grid-column: 1; grid-row: 2; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rd .hk-row .m .rtag { margin-left: 0; }
+.rd .hk-row .a { grid-column: 2; grid-row: 1 / 3; display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+.rd .hk-today { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--rowline, var(--border)); min-width: 0; }
+.rd .hk-today > .dim { font-size: 11px; color: var(--muted); }
+.rd .hk-call { display: inline-flex; align-items: center; gap: 0; max-width: 100%; min-width: 0; background: var(--hover); border: 1px solid var(--border); border-radius: 8px; padding: 2px 8px; font-size: 11.5px; white-space: nowrap; }
+.rd .hk-call .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; } .rd .hk-call .rtag { margin-left: 6px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.rd .hk-checks { display: grid; gap: 3px; padding: 7px 14px; font-size: 12px; border-bottom: 1px solid var(--rowline, var(--border)); min-width: 0; }
+.rd .hk-checks .ck { display: flex; gap: 6px; align-items: baseline; min-width: 0; } .rd .hk-checks .ck > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.rd .hk-checks .ck.red { color: var(--bad); } .rd .hk-checks .ck.amber { color: var(--warn); } .rd .hk-checks .gi { flex: none; width: 14px; }
+.rd .hk-rec { display: flex; flex-wrap: wrap; gap: 2px 0; padding: 7px 14px; font-size: 11.5px; color: var(--muted); min-width: 0; }
+.rd .hk-rec > span { white-space: nowrap; } .rd .hk-rec > span + span:before { content: "·"; margin: 0 6px; }
+.rd .hk-rec b { color: var(--text); } .rd .hk-rec b.up { color: var(--ok); } .rd .hk-rec b.down { color: var(--bad); }
+.rd .v2list .it.hk-next .nw { white-space: nowrap; margin-left: auto; flex: none; }
+@media (max-width: 700px) {
+  .rd .hk-strip { padding: 8px 12px; gap: 8px; }
+  .rd .hk-strip .sp { display: none; }
+  .rd .hk-strip .cap { white-space: normal; }
+  .rd .hk-row { grid-template-columns: minmax(0, 1fr); padding: 8px 12px; }
+  .rd .hk-row .a { grid-column: 1; grid-row: 3; flex-wrap: wrap; }
+  .rd .hk-today, .rd .hk-checks, .rd .hk-rec { padding-left: 12px; padding-right: 12px; }
+  .rd .hk-rec > span { white-space: normal; }
+}

@@ -13,6 +13,7 @@ import OvernightPanel from './OvernightPanel';
 import PhonePositions from './PhonePositions';
 import AiDot from './AiDot';
 import AiSuggestions from './AiSuggestions';
+import { useHomeTips, TipsKiteCards, TipsKiteBlock } from './HomeTips';
 import { useAiViews, viewOf, AiView, aiChanged } from './AiView';
 import { Card, Cards, Bar, Panel, FixedTable, Seg, Tag, AiTag, Chip } from './ui2';
 
@@ -213,6 +214,7 @@ export default function HomePage({ onGo, onStock }) {
     });
   }, [freshAct, o]);
   const tipsLive = useLive('tips');                            // 💡 Tips: a small card only while a hint is open
+  const [ht, reloadHt] = useHomeTips();                       // 💡 Tips · Kite: two cards, the block, the Tips times in Next up
   const aiLive = useLive('ai');                                // 🤖 the AI view: tonight's count, the record summary
   const [plan, setPlan] = useState(null);
   useEffect(() => { api.getPlan().then(setPlan).catch(() => setPlan(null)); }, []);
@@ -305,11 +307,12 @@ export default function HomePage({ onGo, onStock }) {
         fact={F.follow ? <><b>{F.follow.open}</b> open · <b className={cls(F.follow.open_pnl)}>{sgn(F.follow.open_pnl)}</b> · {F.follow.pending ?? 0} pending</> : <span className="muted">—</span>}
         title={cardTip([`${A.follow.breakouts} breakouts`, `won ${A.follow.win_rate ?? '—'}%`, `${inr(A.follow.per_position)} each`, F.follow && `${F.follow.open} open at ${signed(F.follow.open_pnl)}`, F.follow && `${F.follow.pending ?? 0} buys at the next open`, A.follow.as_of && `as of ${dayName(A.follow.as_of)}`])} />}
     </Cards>
-    {tipsOpen.length > 0 && <Cards n={4}><Card unit="n" label={<>Tips <span className="muted">· paper · separate</span></>} value={`${tipsOpen.length} open`} num={tipsOpen.length} live
+    {(tipsOpen.length > 0 || ht) && <Cards n={4}>{tipsOpen.length > 0 && <Card unit="n" label={<>Tips <span className="muted">· paper · separate</span></>} value={`${tipsOpen.length} open`} num={tipsOpen.length} live
         k={tipsLead?.pnl > 0 ? 'up' : tipsLead?.pnl < 0 ? 'down' : ''}
         sub={tipsLead ? <>#{tipsLead.id} {tipsLead.status === 'new' ? 'waiting' : tipsLead.status}{tipsLead.taken && tipsLead.pnl != null ? <> · <span className={cls(tipsLead.pnl)}>{tipsLead.pnl > 0 ? '+' : ''}{inr(tipsLead.pnl)}</span></> : ''}</> : '—'}
         fact={tipsLead ? tipsLead.title || [tipsLead.side, tipsLead.symbol, tipsLead.strike, tipsLead.opt_type].filter((x) => x != null && x !== '').join(' ') : ''}
-        title="Research › Tips · a channel's calls, decoded and scored · never linked to any strategy" onClick={() => onGo('tips')} /></Cards>}
+        title="Research › Tips · a channel's calls, decoded and scored · never linked to any strategy" onClick={() => onGo('tips')} />}
+      {ht && <TipsKiteCards d={ht} onGo={onGo} />}</Cards>}
     <OvernightPanel />
     {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
       <div title={cardTip([`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`, `${it.trades || 0} trades`, F.intraday && `loss limit ${inr(F.intraday.loss_used)} / ${inr(F.intraday.loss_limit)}`])}><span className="l">Intraday · open · risk</span><b className={cls(it.day_pnl)}>{sgn(it.day_pnl)}<span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {it.open || 0} open · {inr(it.at_risk)}</span></b></div>
@@ -338,6 +341,8 @@ export default function HomePage({ onGo, onStock }) {
     <AiSuggestions onGo={onGo} />
     <AiViewCards plan={plan} positions={positions} views={views} vw={aiLive && !aiLive.error ? aiLive.view : null} onGo={onGo} />
     <div className="two">
+      <div className="rd">
+      {ht && <TipsKiteBlock d={ht} onGo={onGo} reload={reloadHt} />}
       <Panel title="Open positions" meta={positions.length} right={phone ? <>{liveNow && <span className="livedot" />}<select value={view} onChange={(e) => setView(e.target.value)} style={{ fontSize: 11.5, padding: '2px 6px', marginLeft: 'auto' }} title="which books">
           <option value="all">Real + Paper</option><option value="real">Real</option><option value="paper">Paper</option><option value="diff">Differences</option></select></>
         : <>{liveNow && <span className="livedot" />}net <b className={`mono ${cls(net)}`}>{signed(net)}</b>{R.worst_case != null && <> · worst case <b className="mono down">{signed(R.worst_case)}</b></>}{R.near_stop?.length ? <> · <span className="warn">{R.near_stop.length} within 2% of a stop</span></> : null} · <button className="linkbtn" style={{ padding: 0 }} onClick={() => onGo('portfolio')}>Portfolio →</button></>}>
@@ -349,6 +354,7 @@ export default function HomePage({ onGo, onStock }) {
           <div onMouseLeave={() => setHover(null)} onMouseOver={(e) => { const tr = e.target.closest('tr'); const key = tr?.dataset?.key; const p = key && positions.find((x) => x.book + x.symbol === key); if (p) hoverOn(e, p, tr); }}>
             <FixedTable className="hpos" cols={POS_COLS} rows={posRows} empty={positions.length ? 'Nothing matches this filter.' : 'No open positions.'} /></div></>}
       </Panel>
+      </div>
       <div className="rd">
         <Panel title="Needs a look" meta={needIds.length || null} right={freshNeeds.length > 0 ? <span className="warn">● {freshNeeds.length} new</span> : null}>
           {needRows.length ? <div className="rbody"><div className="v2list">{needRows.map((x) => <div key={x.text} className={`it hact ${freshNeeds.includes(x.text) ? 'fresh' : ''}`}>
@@ -362,7 +368,8 @@ export default function HomePage({ onGo, onStock }) {
             <div><span className="l">Biggest position</span><b className="mono">{R.biggest ? `${R.biggest.symbol} ${inr(R.biggest.value)}` : '—'}</b></div>
             <div><span className="l">Real orders today</span><b className={R.orders_today?.failed ? 'down' : 'up'}>{R.orders_today?.sent ?? 0} sent · {R.orders_today?.failed ?? 0} failed</b></div>
             <div><span className="l">Intraday loss limit</span><b className="mono">{inr(R.loss_used)} / {inr(R.loss_limit)}</b></div></div></div></Panel>}
-        <Panel title="Next up"><div className="rbody"><div className="v2list">{jobs.slice(0, 5).map((j) => <div key={j.key} className="it"><span>{j.icon}</span><span className="ell1">{j.name}</span><span className="mono" style={{ marginLeft: 'auto' }}>{left(j.at, now)}</span></div>)}</div></div></Panel>
+        <Panel title="Next up"><div className="rbody"><div className="v2list">{[...jobs.slice(0, 5), ...(ht?.next || []).filter((t) => new Date(t.at).getTime() > now)].sort((a, b) => new Date(a.at) - new Date(b.at)).map((j) => <div key={j.key} className={`it ${j.tips ? 'hk-next' : ''}`}
+          title={j.tips ? `${j.name} · ${j.label} · Research › Tips` : undefined}><span>{j.icon}</span><span className="ell1">{j.name}</span>{j.tips && <span className="muted small nw">{j.label}</span>}<span className="mono" style={{ marginLeft: j.tips ? 8 : 'auto' }}>{left(j.at, now)}</span></div>)}</div></div></Panel>
         {N && <Panel title={`Next open · ${(N.buys || []).length} breakout${(N.buys || []).length === 1 ? '' : 's'}`} right={N.as_of ? `plan of ${dayName(N.as_of)}` : null}>
           <FixedTable cols={[{ h: 'Stock', ell: true }, { h: 'Qty', w: 60, n: true }, { h: 'Capital', w: 100, n: true }, { h: 'Stop', w: 76, n: true, title: 'stop below the entry' }]}
             rows={[...(N.buys || []).slice(0, 5).map((b) => ({ key: b.symbol, onClick: () => onStock(b.symbol), cells: [<b>{b.symbol}</b>, b.qty, inr(b.value), b.stop_pct != null ? `${(+b.stop_pct).toFixed(1)}%` : '—'] })),
