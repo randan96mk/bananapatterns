@@ -170,3 +170,27 @@ def test_strings_are_12_hour_and_json_safe(pushed):
     blob = json.dumps(v["kite"]["legs"]) + json.dumps(kc.day_check(c, t19("15:35"), notify=False))
     import re
     assert not re.search(r"\b(1[3-9]|2[0-3]):\d\d\b", blob.replace("T13:", "T").replace("T15:", "T"))
+
+
+def test_the_ai_read_drops_empty_json_and_marks_the_state():
+    from backend.tips import kite_check as kc
+    assert kc.parse_lines("{}", "post 460") == ([], 0)
+    assert kc.parse_lines("[]\n1. \n- 460", "post 460") == ([], 0)
+    lines, dropped = kc.parse_lines("The app rested a BUY at 460.\n{}\nIt matches the post.", "post 460")
+    assert lines == ["The app rested a BUY at 460.", "It matches the post."] and dropped == 0
+
+
+def test_the_ai_read_asks_for_plain_text_not_json(monkeypatch):
+    from backend.ai import client
+    seen = {}
+
+    def fake_generate(model, prompt, **kw):
+        seen.update(kw)
+        seen["prompt"] = prompt
+        return {"text": "{}", "tokens": 1, "model": model}
+    monkeypatch.setattr(client, "generate", fake_generate)
+    import inspect
+    from backend.tips import kite_check as kc
+    src = inspect.getsource(kc.ai_read)
+    assert "json_mode=False" in src and "plain text" in src
+    assert "no JSON" in kc.SYSTEM
