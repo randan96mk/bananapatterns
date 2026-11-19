@@ -74,7 +74,8 @@ def signals(config, kite: bool) -> dict:
         out["ai"] = _pack([])
     try:                                                   # ⚡ Tips → Kite: a red order check names the hand action
         from backend.tips import kite_check as kc
-        out["tips"] = _pack(kc.attention_items())
+        from backend.tips import vision as vs              # 📷 an open screenshot strike mismatch
+        out["tips"] = _pack(vs.attention_items() + kc.attention_items())
     except Exception:
         out["tips"] = _pack([])
     return out
@@ -202,8 +203,6 @@ def _futures(config, kite: bool) -> list:
 
 
 def _real(config, kite: bool) -> list:
-    from datetime import date
-
     from backend.database.models import get_db
     from backend.engine import real
     out = []
@@ -216,7 +215,10 @@ def _real(config, kite: bool) -> list:
         return out
     if s.get("positions") and not kite:
         out.append(("warn", "Kite not logged in: stops are NOT watched"))
-    today = date.today().isoformat()
+    from datetime import datetime
+
+    from backend.config import IST
+    today = datetime.now(IST).date().isoformat()          # the gate's day is an IST day (the server clock may be UTC)
     held = [p["symbol"] for p in s.get("positions") or [] if not p.get("confirmed") and (p.get("gate") or {}).get("day") == today]
     if held:                                              # the EXIT gate held an EXIT: red, until confirmed or removed
         out.append(("warn", f"Real · {', '.join(held)}: stop hit but the buy was never confirmed · no EXIT sent · "

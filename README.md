@@ -2340,13 +2340,36 @@ stays the morning dry-run skip.
 | `kite_entry_from` / `kite_entry_until` | 09:20 / 14:30 | Kite entries only in this window (HH:MM; shown 12-hour). Exits are never blocked. |
 | `kite_auto_max_open` | 1 | Auto: Kite hints open (armed or entered) at once; a second qualifying hint waits and is armed when the first closes. |
 | `kite_auto_book_part` | channel | Auto, "book part" with ONE lot open: `channel` = book it at market (the channel's "you can book now") · `hold` = keep it for the target, the stop to cost. |
+| `vision` | off | 📷 Read the channel's screenshots on this server with RapidOCR (nothing leaves the server). Off = no download, no read. |
+| `vision_mode` | report | 📷 `report`: a strike mismatch is shown on the card, pushed and on Home · `check`: also, auto does not arm the hint and an armed Kite entry is cancelled until you pick the strike. |
 
-**Tables** (never deleted): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`, `tips_orders`.
+**📷 Screenshots** (`backend/tips/vision.py`, `tips.vision`): a post's photo / image document (jpg, png, webp, 2 MB at
+most) is downloaded by the reader AFTER the post is stored, to `data/tips_media/<channel>/<post_id>.<ext>`
+(`tips_posts.media_path`), and read once by RapidOCR (`rapidocr-onnxruntime`, models inside the wheel; a 5 s budget in a
+worker thread, the engine loaded once and dropped on a timeout). Rules turn the lines into facts (`symbol`, `expiry`,
+`strike`, `opt_type`, `price`, `conf`): "SENSEX 19-Nov-26 82000 CE · BSE FO", "SENSEX 19th NOV 82300 CE BFO", a big
+"₹535.10" (a % change line is never the price); no strike pattern = nothing happens. The read is kept on the post
+(`tips_posts.ocr`, forever). The screenshot is linked like a follow-up (its own post, the quoted post, the open hint of
+the same minute, else the newest open hint); `tips_hints.shot` holds its facts. Agrees → a quiet "✓ screenshot agrees ·
+535.10 shown" and a green tag. Differs (strike / CE-PE / index) → a red line "strike mismatch: text 82300 CE, screenshot
+82200 CE · the channel says the screenshot wins" with **Use screenshot 82200 CE** (`POST /api/tips/hints/{id}/strike`
+`{strike, opt_type?, symbol?}`: re-resolved, plan rebuilt, logged) and **Keep 82300 CE** (`{keep: true}`), one Telegram
+line and a Home "Needs a look" item; in `check` mode auto holds the hint ("strike mismatch: pick the strike") and an armed
+entry is cancelled, re-armed after the choice. A post that named no index takes the screenshot's (`decoded.symbol`
+"shot"). P&L / order-book screenshots are read and stored only (feed: "📷 read: <first line>"). Code decides; the OCR
+only gives text.
+
+**The one deletion of downloaded data (the owner's rule):** screenshot FILES under `data/tips_media` are deleted after
+48 h (the daily `tips_media` job, the weekly archive run and the reader's start); the OCR text stays on the post
+forever. A post older than 2 days is never read (catch-up, the export import: "older than 2 days"). `scripts/backup.sh`
+does not back up the folder (a 2-day scratch).
+
+**Tables** (never deleted; 📷 only the screenshot files under `data/tips_media` go after 2 days): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`, `tips_orders`.
 
 **Tests**: `tests/test_tips_decode.py` (32: the 15 real calls of `tests/fixtures/tips_posts.json`, aliases, shapes),
 `test_tips_filter.py` (14), `test_tips_plan.py` (12), `test_tips_book.py` (8), `test_tips_track.py` (6),
 `test_tips_reader.py` (9: fake Telethon client, preview, import, login), `test_tips_api.py` (5),
-`test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
+`test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes), `test_tips_vision.py` (18: OCR facts on hand-written line sets, a fake engine, mismatch / report vs check / the 2-day rule; one real-engine test when installed). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
 
 ## REST API
 

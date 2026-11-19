@@ -18,12 +18,13 @@ from backend.tips import plan as pl
 
 logger = setup_logger("tips")
 
-JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite")
+JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite", "shot")
 SAVE_COLS = ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "tradingsymbol", "exchange",
              "lot_size", "entry", "stop", "targets", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
              "lots", "entry_px", "exit_px", "pnl", "events", "tracked", "untracked_why", "run", "pos", "score")
 # `kite` (the hint's Kite legs) is loaded with the hint but written only by backend/tips/kite_orders.py (its own UPDATE), so
-# the quotes poll saving a hint never overwrites a leg the order sync just wrote.
+# the quotes poll saving a hint never overwrites a leg the order sync just wrote. `shot` (📷 the screenshot's facts) the same:
+# written only by backend/tips/vision.py's save_shot.
 OPEN_STATUSES = ("new", "waiting", "active", "paused")
 
 
@@ -352,6 +353,80 @@ def set_symbol(config, hid: int, symbol: str, who: str = "page", now: Optional[d
     except Exception:
         logger.exception("Tips Kite auto after the symbol failed")
     return h
+
+
+def _shot_choice(config, hid: int, choice: str, who: str, now: Optional[datetime], strike=None, opt_type: Optional[str] = None,
+                 symbol: Optional[str] = None) -> dict:
+    from backend.tips import vision as vs
+    now = now or _now()
+    h = _get(hid)
+    mm = vs.open_mismatch(h)
+    if not mm:
+        raise TipsError(409, f"#{hid} has no open screenshot mismatch")
+    t = dict(mm.get("text") or {})
+    if choice == "shot":
+        if h.get("taken") or h.get("status") in ("closed", "expired"):
+            raise TipsError(409, f"#{hid} is {'taken' if h.get('taken') else h.get('status')}: the strike cannot change now")
+        s = mm.get("shot") or {}
+        strike = strike if strike is not None else s.get("strike")
+        opt_type = (opt_type or s.get("opt_type") or h.get("opt_type") or "").upper() or None
+        symbol = (symbol or s.get("symbol") or h.get("symbol") or "").upper() or None
+        try:
+            strike = float(strike)
+        except (TypeError, ValueError):
+            raise TipsError(400, "strike must be a number")
+        if strike <= 0 or opt_type not in ("CE", "PE") or (symbol and symbol not in INDEXES):
+            raise TipsError(400, "a positive strike, CE / PE and an index name")
+        try:                                                # an armed entry on the old contract goes first
+            from backend.tips import kite_auto as ka
+            from backend.tips import kite_orders as ko
+            k = ko.kstate(h)
+            if k["state"] == "entered":
+                raise TipsError(409, f"#{hid} has filled on Kite: the strike cannot change now")
+            if k["state"] in ko.ARMED:
+                with ko._LOCK:
+                    ko.disarm(config, ko.sim() if k.get("dry") else ka.app_client(), h, now, "you chose the screenshot's strike")
+                h = _get(hid)
+        except TipsError:
+            raise
+        except Exception:
+            logger.exception("Tips Kite disarm before the strike change failed")
+        vs._retarget(config, h, symbol=symbol if symbol != h.get("symbol") else None, strike=strike, opt_type=opt_type, src="owner")
+        event(h, now, f"you chose the screenshot's strike {vs.contract_text({'strike': strike, 'opt_type': opt_type})} (text said "
+                      f"{vs.contract_text(t)}) ({who}) · " + (f"contract {h['tradingsymbol']}" if h.get("tradingsymbol") else f"no contract: {h.get('untracked_why')}"), "owner")
+    else:
+        event(h, now, f"you kept the text's strike {vs.contract_text(t)} (the screenshot showed {vs.contract_text(mm.get('shot') or {})}) ({who})", "owner")
+    shot = dict(h.get("shot") or {})
+    shot["mismatch"] = {**mm, "resolved": {"choice": choice, "at": now.isoformat(timespec="seconds"), "who": who}}
+    h["shot"] = shot
+    refresh(h)
+    save(h)
+    vs.save_shot(h)
+    try:                                                    # ⚡ auto may arm again now
+        from backend.tips import kite_auto as ka
+        from backend.tips import kite_orders as ko
+        hk = load(hid) or h
+        k = ko.kstate(hk)
+        if k["state"] == "none":
+            k["auto"] = {**(k.get("auto") or {}), "rearm": True, "causes": [c for c in ((k.get("auto") or {}).get("causes") or []) if c != "mismatch"]}
+            ko.save_kite(hk)
+        if ka.on_new(config, ka.app_client(), hid, now):
+            h = load(hid) or h
+    except Exception:
+        logger.exception("Tips Kite auto after the strike choice failed")
+    return load(hid) or h
+
+
+def set_strike(config, hid: int, strike=None, opt_type: Optional[str] = None, symbol: Optional[str] = None, who: str = "page",
+               now: Optional[datetime] = None) -> dict:
+    """📷 "Use screenshot 82200": like set_symbol, the screenshot's contract replaces the text's (re-resolved, the plan
+    rebuilt), the mismatch resolved and logged. Only before the hint is taken or filled."""
+    return _shot_choice(config, hid, "shot", who, now, strike, opt_type, symbol)
+
+
+def keep_strike(config, hid: int, who: str = "page", now: Optional[datetime] = None) -> dict:
+    """📷 "Keep 82300": the text's contract stays, the mismatch is marked resolved (logged)."""
+    return _shot_choice(config, hid, "text", who, now)
 
 
 def take(config, hid: int, lots: Optional[float] = None, rupees: Optional[float] = None, half: bool = False,

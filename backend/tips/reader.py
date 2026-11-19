@@ -243,6 +243,9 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (channel, int(post_id), posted.isoformat(timespec="seconds"), text, int(bool(has_media)),
                                                               kind, hint_id, by, mdl, ms, source, now_ist(), reply_to))
     out = {"post_id": post_id, "kind": kind, "hint_id": hint_id, "new": True, "row": cur.lastrowid, "at": posted.isoformat(timespec="seconds")}
+    if source == "import" and has_media:                 # 📷 the export never downloads: the reason is stored
+        from backend.tips import vision as vs
+        vs.import_note(config, conn, channel, int(post_id), posted, has_media)
     if kind == "hint":
         h = new_hint(config, conn, channel, int(post_id), posted, text, d, source, client)
         conn.execute("UPDATE tips_posts SET hint_id = ? WHERE id = ?", (h["id"], cur.lastrowid))
@@ -622,6 +625,7 @@ class Reader:
         self._thread: Optional[threading.Thread] = None
         self._client = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._tasks: set = set()
 
     @property
     def running(self) -> bool:
@@ -640,6 +644,11 @@ class Reader:
             self._thread.join(timeout=15)                  # a stop is in progress: let the old thread finish first
             if self._thread.is_alive():
                 logger.warning("Tips reader: the old thread has not stopped yet; starting a new one anyway")
+        try:                                               # 📷 screenshots older than 2 days go at every start
+            from backend.tips import vision as vs
+            vs.sweep()
+        except Exception:
+            logger.exception("Tips media sweep at the reader start failed")
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="tips-reader", daemon=True)
         self._thread.start()
@@ -739,11 +748,17 @@ class Reader:
             msgs = await client.get_messages(ent, limit=CATCH_UP)
             for m in reversed(list(msgs or [])):
                 self._on_message(ch, m)
+                await self._capture(ch, m)                         # 📷 after the post is stored; old posts are skipped
         from telethon import events
         ents = [e for _, e in entities]
 
         async def on_new(ev):
-            self._on_message(names.get(getattr(ev, "chat_id", None)) or _chat_name(ev, chans), ev.message)
+            ch = names.get(getattr(ev, "chat_id", None)) or _chat_name(ev, chans)
+            self._on_message(ch, ev.message)
+            if getattr(ev.message, "media", None) is not None and getattr(cfg.tips, "vision", False):
+                t = asyncio.get_running_loop().create_task(self._capture(ch, ev.message))   # never blocks the next post
+                self._tasks.add(t)
+                t.add_done_callback(self._tasks.discard)
 
         async def on_edit(ev):
             ch = names.get(getattr(ev, "chat_id", None)) or _chat_name(ev, chans)
@@ -763,6 +778,16 @@ class Reader:
         await client.run_until_disconnected()
         if not self._stop.is_set():
             raise ReaderError("disconnected")
+
+    async def _capture(self, channel: str, m) -> None:
+        """📷 tips.vision: the post's image downloaded and read (backend/tips/vision.py). Never raises."""
+        if getattr(m, "media", None) is None or not getattr(self.state.config.tips, "vision", False):
+            return
+        try:
+            from backend.tips import vision as vs
+            await vs.capture(self.state.config, self._client, channel, m)
+        except Exception:
+            logger.exception("Tips screenshot %s/%s failed", channel, getattr(m, "id", "?"))
 
     def _on_message(self, channel: str, m) -> None:
         try:

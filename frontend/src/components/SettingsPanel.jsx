@@ -161,6 +161,8 @@ const HELP_TIPS = {
   kite_entry_from: 'Kite entries only from this time (24-hour HH:MM, IST; shown 12-hour)',
   kite_entry_until: 'Kite entries only until this time (24-hour HH:MM, IST; exits are never blocked)',
   kite_auto_max_open: 'Auto: Kite hints open (armed or entered) at once; a second qualifying hint waits and is armed when the first closes',
+  vision: '📷 Read the channel\'s screenshots on this server (RapidOCR; nothing leaves the server): the strike, index, expiry and price shown, checked against the text (true/false; off = no download, no read). Images are deleted after 2 days; the read text stays. Posts older than 2 days are never read',
+  vision_mode: '📷 "report" (a strike mismatch between the text and the screenshot is shown on the card, pushed and on Home) or "check" (also: auto does not arm the hint and an armed Kite entry is cancelled until you pick the strike)',
   kite_auto_book_part: 'Auto, "book part" with ONE lot open: "channel" = book it at market (the channel\'s "you can book now") · "hold" = keep it for the target and move the stop to cost',
 };
 // 🧹 archive and vacuum (section-scoped: enabled / day / time are generic names)

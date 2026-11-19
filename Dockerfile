@@ -18,7 +18,8 @@ RUN npm run build
 FROM ${PYTHON_IMAGE}
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     TZ=Asia/Kolkata BP_HOST=0.0.0.0 MPLCONFIGDIR=/tmp/matplotlib
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+# libgl1 + libglib2.0-0: opencv-python (pulled by rapidocr-onnxruntime, 📷 Tips screenshots) loads them at import
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .

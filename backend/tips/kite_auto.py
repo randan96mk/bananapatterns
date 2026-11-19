@@ -35,7 +35,7 @@ from backend.tips.book import TipsError
 logger = setup_logger("tips")
 
 AUTO = "🤖 Kite AUTO · "
-RETRY_CAUSES = ("market", "window", "max_open", "kill", "login", "entries", "loss")     # these can clear on their own
+RETRY_CAUSES = ("market", "window", "max_open", "kill", "login", "entries", "loss", "mismatch")     # these can clear on their own
 
 
 def _now() -> datetime:
@@ -130,6 +130,11 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
     why = placeable(h)
     if why:
         _note(config, h, "plan", why, now, notify)
+        return None
+    from backend.tips import vision as vs                # 📷 vision_mode "check": an open strike mismatch holds the hint
+    why = vs.blocks_auto(config, h)
+    if why:
+        _note(config, h, "mismatch", why, now, notify)
         return None
     rearm = bool((k.get("auto") or {}).get("rearm"))
     if [r for r in ko.rows_for(h["id"]) if r["leg"] == "entry" and r["status"] != "voided" and not (rearm and r["status"] == "cancelled")]:

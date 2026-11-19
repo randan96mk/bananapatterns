@@ -9,6 +9,7 @@
 #   archive.db.gz          the archive file (rows moved out by the weekly archive job), when it exists
 #   env                    a copy of .env (secrets: the folder is private, chmod 700 / 600)
 #   config.tar.gz          config/
+# Not backed up on purpose: data/tips_media (📷 Tips screenshots, a 2-day scratch folder; the read text is in the DB).
 # The last BP_BACKUP_KEEP (14) days are kept. A failure is written to logs/backup.log and sent to Telegram
 # (the bot and chat from .env or the app's settings); a success is silent.
 #
