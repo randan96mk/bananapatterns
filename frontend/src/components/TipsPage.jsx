@@ -342,12 +342,24 @@ function HintCard({ h, defLots, onDone, kinfo }) {
     run(api.tipsTrail(id, to), `stop trailed to ${to}`); setTrail(null);
   };
   const pause = () => { if (window.confirm(`Pause #${id} · ${name}?\n\nNo entry until you resume it.`)) run(api.tipsPause(id), 'paused'); };
+  const symInferred = h?.decoded?.symbol === 'strike';
+  const canSym = open && !h?.taken && (!h?.symbol || symInferred) && h?.strike && h?.opt_type;
+  const setSym = (e) => {
+    const sym = e.target.value;
+    if (!sym) return;
+    e.target.value = '';
+    if (!window.confirm(`Set #${id} to ${sym} ${px(h.strike)} ${h.opt_type}?\n\nThe post named no index. The contract is resolved, the plan rebuilt and tracking starts. Check the channel's screenshot first.`)) return;
+    run(api.tipsSymbol(id, sym), `symbol set to ${sym}`);
+  };
   const resume = () => { if (window.confirm(`Resume #${id} · ${name}?\n\nThe entry rule is watched again.`)) run(api.tipsResume(id), 'resumed'); };
   const raw = h?.text ?? h?.raw ?? '';
   const live = open && h?.taken && isNum(h?.ltp) ? `live ${px(h.ltp)}${isNum(h?.pnl) ? ` · ${money(h.pnl)}` : ''}` : '';
   return <div className={`tp-hint ${h?.status === 'active' ? 'active' : ''} ${open ? '' : 'closed'}`} data-id={id}>
     <div className="h"><span className="id">#{id ?? '?'}</span><b className="nm" title={name}>{name}</b>{isAi(h, 'symbol', 'strike', 'opt_type') && <AiTag title="filled by the local model from the post's own text" />}
       {statusTag(h)}{h?.tracked === false && <Tag c="bad" title="no quotes for this instrument: it is not scored">{h.untracked_why || 'untracked · log in'}</Tag>}
+      {symInferred && <Tag c="w" title="the post named no index: it was read from the strike level · set it by hand if the screenshot says otherwise">index from strike</Tag>}
+      {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px' }} title="the post named no index: pick it after looking at the channel's screenshot">
+        <option value="">{h?.symbol ? 'change index…' : 'set index…'}</option>{['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].map((x) => <option key={x} value={x}>{x}</option>)}</select>}
       <span className="who">{[h?.channel, when(h?.created ?? h?.posted_at)].filter(Boolean).join(' · ')}</span></div>
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
     <Decoded h={h} />

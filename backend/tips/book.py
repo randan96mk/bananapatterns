@@ -312,6 +312,42 @@ def size_for(h: dict, config, lots: Optional[float] = None, rupees: Optional[flo
     return int(config.tips.lots), "default"
 
 
+INDEXES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
+
+
+def set_symbol(config, hid: int, symbol: str, who: str = "page", now: Optional[datetime] = None) -> dict:
+    """You name the index of a hint whose post did not ("buy 82400 pe near 680"): the contract is resolved, the plan
+    rebuilt and tracking starts. Only before the hint is taken or filled; the choice is logged."""
+    from backend.tips import track as tr
+    now = now or _now()
+    sym = (symbol or "").strip().upper()
+    if sym not in INDEXES:
+        raise TipsError(400, "symbol must be one of " + ", ".join(INDEXES))
+    h = _get(hid)
+    if h.get("taken") or h.get("status") in ("closed", "expired"):
+        raise TipsError(409, f"#{hid} is {'taken' if h.get('taken') else h.get('status')}: the symbol cannot change now")
+    if not h.get("strike") or not h.get("opt_type"):
+        raise TipsError(409, f"#{hid} has no strike / option type to resolve")
+    old = h.get("symbol")
+    h["symbol"], h["instrument"] = sym, "option"
+    dec = dict(h.get("decoded") or {})
+    dec["symbol"] = "owner"
+    h["decoded"] = dec
+    posted = datetime.fromisoformat(h["posted_at"])
+    tr.resolve(h, None, posted.date())
+    h["plan"] = pl.build(h, config.tips, posted)
+    run = h.get("run") or {}
+    h["run"] = pl.new_run(h["plan"])
+    h["run"]["allowed"], h["run"]["paused"] = bool(run.get("allowed")), bool(run.get("paused"))
+    h["tracked"] = bool(h.get("tradingsymbol"))
+    if not h["tracked"]:
+        h["untracked_why"] = h.get("untracked_why") or "no instrument"
+    event(h, now, f"you set the symbol: {old or '?'} → {sym} ({who}) · " + (f"contract {h['tradingsymbol']}" if h.get("tradingsymbol") else f"no contract: {h.get('untracked_why')}"), "owner")
+    refresh(h)
+    save(h)
+    return h
+
+
 def take(config, hid: int, lots: Optional[float] = None, rupees: Optional[float] = None, half: bool = False,
          who: str = "page", now: Optional[datetime] = None, ltp: Optional[float] = None, notify: bool = True) -> dict:
     """Open the paper position of a hint. 404 no hint · 409 already taken / closed / skipped / not trackable · 400 no
