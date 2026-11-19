@@ -2209,7 +2209,50 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   520 ×20 placed", "⚡ Kite · #41 T1 filled 520 ×20 · stop → cost 462.10 · T2 550 ×20 placed", "⚡ Kite · #41 stop filled
   410 ×40 · −₹2,084 · targets cancelled", "⚠️ Kite · #41 entry REJECTED · <Kite's message>". Realised P&L per hint from
   the fills (the loss cap reads it).
-- **Mode `auto`** can be chosen now but arrives in the next update: until then it behaves exactly as `click`.
+- **Entry levels (PR C)**: every entry level is the option's own **premium** or the **index** (`entry.level_kind`): the
+  words spot / index / the index name right before the number ("sensex above 82400", "above 82400 spot", "nifty crosses
+  25300") → index; a level within ±6 % of the strike → index; else premium. A bare range or price right after the
+  strike ("BUY nifty 25400 ce 191-198", "buy 82000 ce 460") is a zone / an at-price entry. The card shows "above 370
+  (premium)" / "SENSEX above 82,400 (index)".
+- **The level is the trigger.** An entry with a level is never sent at market at once: a premium "above X" buy (a
+  "below X" sell) rests on Kite as an `SL-M` with trigger X; "at X" / a zone rests as a `LIMIT` (the zone's top for a
+  buy, its bottom for a sell); an index level cannot rest on Kite, so the app arms it (`armed_watch`) and buys at
+  `MARKET` when the index quote (the tracker's spot) crosses it. A premium level already passed by up to 10 % goes at
+  market; further than that it is not chased. **Activation words never gate an entry that has a level** ("ONLY ABOVE
+  370 … WAIT FOR ACTIVATION" rests an SL-M at 370; the words are logged). Wait words with no level (an at / zone /
+  market entry) arm it (`armed_wait`): nothing is sent until the channel says active / activated / enter now, or you
+  press **Send now…**. "activated" before a resting level order fills cancels it and sends `MARKET`; after the fill it
+  changes nothing.
+- **Unfilled entries** are cancelled at the end of the entry window, at the plan's time stop, the next day, on the
+  channel's avoid / cancel / not now / SL hit (any mode) or by your **Cancel**; the caps count an entry when it fills
+  (a resting one is counted by the guard only, so fills can never pass the cap). An edited post re-checks an armed
+  entry (strike / level changed → cancelled and logged; auto re-arms it). A stop revised before the entry ("210 revise
+  sl 193") updates the plan's stop, and the stop placed on the fill uses it. "add more near 440" / "add 5 lots at 560"
+  is never an order in any mode ("add-on ignored (never averaged)").
+- **Time stop**: a Kite position (click or auto) still open at the plan's time stop (`intraday_time_stop`, 3:20 PM) is
+  exited at market by the sync, its resting stop / targets cancelled first; a hold-to-expiry sell (target 0) is not.
+- **Mode `auto`** (`backend/tips/kite_auto.py`): a hint that becomes placeable (a complete plan, a contract, a lot
+  size; the post's lots else `tips.lots`, capped by `kite_max_lots`) is armed by the app with the same guards, plus
+  `kite_auto_max_open` (Kite hints open at once; a second one waits and is armed when the first closes) and "already
+  traded on Kite" (the same contract the same day). A failing guard is logged on the card ("● auto · not armed: <why>")
+  and pushed once per hint per cause. Telegram: "🤖 Kite AUTO · #6 armed · BUY 20 SENSEX 82300 CE · SL-M trigger 370 ·
+  resting on Kite". On its own open position auto follows the channel: exit / SL hit / book full → resting orders
+  cancelled + `MARKET` exit; trail / TSL at cost → the stop to cost (never lower for a buy); "modify SL to N", "REST
+  STOPLOSS 530", "REVISE SL 298", "sl now 298" → the stop's trigger; book part → half the open lots at market (one lot
+  open: `kite_auto_book_part`). One Telegram line each. In click mode these stay informational. Never averages.
+- **Order check** (`backend/tips/kite_check.py`), after every Kite event: code compares the post and the plan with the
+  order rows (contract, side, qty = lots × lot size, the fill against the level, the stop and target prices, one
+  entry, a stop resting within 60 s of the fill, nothing open after the time stop). A red item: "⚠️ Kite check · #6 ·
+  <text> · your call" once, a red line on the card and a Home "Needs a look" item naming the hand action. The check
+  never places, modifies or cancels anything. Then the day model writes 3 **[AI]** lines (what the app did, does it
+  match the channel, what to look at; prompt `kite-check-v1`, kind `tips_kite`); a line with a figure not in the input
+  is dropped; "AI read pending" while the model is unreachable; kept in `ai_notes`.
+- **Kite day check** at 3:35 PM on trading days: every order of today against the hints (a fill with no hint, a fill
+  with no stop ever resting, an open quantity after the time stop, a resting order still open, the caps) → "🔎 Kite day
+  · 3 orders · 1 position · 0 open · checks: all clear" and the "Kite day check" panel by the orders table (Check now).
+  Health row `tips_kite`: "last check 3:35 PM · n red".
+- **Live price on the legs**: every open card's legs show the option's last quote (the 5 s Tips poll) against the plan:
+  "now 196.1 · in the zone 191–198", "now 337 · level 370 is 9.8 % away", "stop 130 is −33.7 %", "target 230 is +17.3 %".
 - **Page**: the Kite bar under the title (Off / Dry run / By my click / Auto, the kill switch, today's caps, "Test
   connection…", "Clear dry run…" in a dry run, "Orders today"),
   the legs on each open card, the **Guards** panel (right column; stacked on a phone) and **Kite orders today** (time,
@@ -2295,6 +2338,8 @@ stays the morning dry-run skip.
 | `kite_max_lots` | 2 | Lots per Kite entry order at most. |
 | `kite_loss_cap` | 6,000 | Realised ₹ loss a day from these orders; at or past it no new entry that day. |
 | `kite_entry_from` / `kite_entry_until` | 09:20 / 14:30 | Kite entries only in this window (HH:MM; shown 12-hour). Exits are never blocked. |
+| `kite_auto_max_open` | 1 | Auto: Kite hints open (armed or entered) at once; a second qualifying hint waits and is armed when the first closes. |
+| `kite_auto_book_part` | channel | Auto, "book part" with ONE lot open: `channel` = book it at market (the channel's "you can book now") · `hold` = keep it for the target, the stop to cost. |
 
 **Tables** (never deleted): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`, `tips_orders`.
 

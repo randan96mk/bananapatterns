@@ -152,7 +152,7 @@ const HELP_TIPS = {
   trail_to_cost_after_t1: 'After target 1, move the stop to the entry price (true/false)',
   model_classify: 'Let the local model sort the posts code could not (hint / follow-up / chatter) and link follow-ups (true/false)',
   preview_fallback: 'When the account reader is down, read the channel\'s public preview page every 30 s (true/false)',
-  kite_mode: '⚡ Tips → Kite orders: "off" (paper book only), "dry" (a rehearsal: same buttons, a simulator fills from live quotes, nothing reaches Kite), "click" (each leg by your click, each through a confirm), "auto" (arrives in the next update; works as click for now). Real money',
+  kite_mode: '⚡ Tips → Kite orders: "off" (paper book only), "dry" (a rehearsal: same buttons, a simulator fills from live quotes, nothing reaches Kite), "click" (each leg by your click, each through a confirm), "auto" (entries armed on the level / the channel\'s activation, SL + T1 on the fill, the channel\'s exits followed, you are told). Real money',
   kite_product: 'The Kite product of these orders: "NRML" (carry forward) or "MIS" (intraday)',
   kite_market_protection: 'Market protection in % on MARKET and SL-M orders (0.5 … 20, default 5): API orders at market must carry one, the exchange rejects 0',
   kite_max_entries_day: 'Kite entry orders a day at most (a rejected one does not count)',
@@ -160,6 +160,8 @@ const HELP_TIPS = {
   kite_loss_cap: 'Realised loss a day from these Kite orders (rupees); at or past it no new entry that day',
   kite_entry_from: 'Kite entries only from this time (24-hour HH:MM, IST; shown 12-hour)',
   kite_entry_until: 'Kite entries only until this time (24-hour HH:MM, IST; exits are never blocked)',
+  kite_auto_max_open: 'Auto: Kite hints open (armed or entered) at once; a second qualifying hint waits and is armed when the first closes',
+  kite_auto_book_part: 'Auto, "book part" with ONE lot open: "channel" = book it at market (the channel\'s "you can book now") · "hold" = keep it for the target and move the stop to cost',
 };
 // 🧹 archive and vacuum (section-scoped: enabled / day / time are generic names)
 const HELP_MAINT = {

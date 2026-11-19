@@ -28,7 +28,8 @@ FOLLOW_CODE = re.compile(r"\b(sl|stop\s*loss)\b.*\b(hit|modif|chang|trail)|\b(ta
                          r"\bexit|\bbook|\bcost\b|\bactiv(e|ated)\b|\btriggered\b|\bentry done\b|\btsl\b|\bnpnl\b|\bcmp\b|\btrail|\bavoid\b|"
                          r"\b(sl|stop\s*loss|stoploss)\s*[:\-]?\s*\d|\b(tgt|target|tg)s?\s*[:\-]?\s*\d{2,}|\badd more\b|\bcentury\b|\bdone\b|"
                          r"\b\d+(\.\d+)?\s*(\+|to\b)|^\s*\d+(\.\d+)?\s*\W*$|"
-                         r"\bwait\b|\bpart(ly)?\b", re.I | re.S)
+                         r"\bwait\b|\bpart(ly)?\b|"
+                         r"\b(rest|revise|revised)\s*(sl|stop\s*loss|stoploss)\b|\b(t?sl|stop\s*loss|stoploss)\s*(now|gone)\b", re.I | re.S)
 SYSTEM = ("You sort posts from a Telegram trading channel. Reply with JSON only: {\"kind\": \"hint\" | \"follow_up\" | "
           "\"chatter\", \"hint_id\": <one of the open hint ids or null>}. hint = a NEW trade call (buy/sell an option, future "
           "or stock with a price). follow_up = an update about one of the open hints (price now, target done, stop hit, "

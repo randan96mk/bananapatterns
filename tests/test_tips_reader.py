@@ -393,7 +393,8 @@ def test_the_sensex_pe_sequence_with_the_plan_in_a_second_post(monkeypatch):
     assert out[2]["line"] == "plan completed: stop 550 · targets 745/770/800/850/900"
     h = bk.load(hid)
     assert (h["symbol"], h["strike"], h["opt_type"], h["side"]) == ("SENSEX", 82400, "PE", "BUY")
-    assert h["entry"] == {"mode": "above", "lo": 685, "hi": 685, "when_comes": False} and h["size_hint"] == {"lots": 2}
+    assert h["entry"] == {"mode": "above", "lo": 685, "hi": 685, "when_comes": False, "level_kind": "premium", "wait_words": False,
+                          "needs_activation": False} and h["size_hint"] == {"lots": 2}
     assert h["stop"] == {"kind": "premium", "value": 550} and h["targets"] == [745, 770, 800, 850, 900] and h["plan"]["ok"] is True
     assert [out[i]["kind"] for i in (3, 4, 5, 8, 9, 10)] == ["follow_up"] * 6 and all(out[i]["hint_id"] == hid for i in (3, 4, 5, 8, 9, 10))
     assert [out[i]["kind"] for i in (6, 7)] == ["chatter", "chatter"]

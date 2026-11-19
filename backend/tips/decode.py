@@ -46,10 +46,58 @@ SL_RE = re.compile(r"\b(stop\s*loss|stoploss|sl|stop)\b\s*[-:=]?\s*", re.I)
 TGT_RE = re.compile(r"\b(targets?|tgts?|tg)\b\s*[-:=]?\s*", re.I)
 ENTRY_RE = re.compile(r"\b(above|abv|below|near|around|at|cmp|from)\b\s*(?:rs\.?\s*)?" + NUM +
                       r"(?:\s*(?:-|–|to|and|/)\s*" + NUM + r")?|@\s*" + NUM, re.I)
+BARE_RE = re.compile(r"[ \t]*[:\-–]?[ \t]*(\d+(?:\.\d+)?)(?:[ \t]*(?:-|–|to)[ \t]*(\d+(?:\.\d+)?))?(?![\d.])(?![ \t]*(?:lots?|qty|quantity|%|x\b|times))", re.I)
 STRIKE_RE = re.compile(r"(?<![\d.])(\d{3,6}(?:\.\d+)?)\s*(?:([a-z]+)\s+)?(ce|pe|call|put)\b|(?<![\d.])(\d{3,6})(c|p)\b", re.I)
 
 
 STRIKE_BANDS = (("NIFTY", 18000, 32000), ("BANKNIFTY", 44000, 68000), ("SENSEX", 70000, 98000))   # bands, Nov 2026 levels
+INDEX_LEVELS = {"NIFTY": 25900, "BANKNIFTY": 58000, "FINNIFTY": 27500, "MIDCPNIFTY": 13500, "SENSEX": 84500, "BANKEX": 63000}   # ~Nov 2026
+IDX_WORDS = r"(?:spot|index|nifty(?:\s*50)?|bank\s*nifty|banknifty|nifty\s*bank|sensex|bankex|fin\s*nifty|finnifty|midcp\s*nifty|midcpnifty|bnf)"
+SPOT_LEVEL_RE = re.compile(r"\b" + IDX_WORDS + r"\s*(?:is\s*|trades?\s*|sustains?\s*|closes?\s*)?(above|abv|below|crosses|cross|crossing)\s*(?:the\s*)?"
+                           r"(\d{4,6}(?:\.\d+)?)|\b(above|abv|below)\s*(\d{4,6}(?:\.\d+)?)\s*(?:spot|index|level\s*(?:on|in)\s*(?:spot|index))\b", re.I)
+WAIT_RE = re.compile(r"\bwait\s*for\s*(?:the\s*|our\s*)?(?:activation|conditional\s*buy|confirmation|activ)|\bdo\s*n'?o?t\s*enter\s*now|\bdon'?t\s*enter\s*now|"
+                     r"\bdont\s*enter\s*now", re.I)
+ADD_RE = re.compile(r"^\W*add\b|\badd\s+(?:more|\d+\s*(?:-\s*\d+\s*)?lots?)\b", re.I)
+
+
+def level_kind(text: str, lo: float, strike: Optional[float] = None, symbol: Optional[str] = None) -> str:
+    """"premium" (the option's own price) or "spot" (the index / underlying level) for an entry level, in order: the
+    words spot / index / the index name right before the number ("sensex above 82400", "above 82400 spot", "nifty
+    crosses 25300") -> spot; a level within ±6 % of the strike (or of the known index level) -> spot; a level under
+    35 % of the strike -> premium; else premium."""
+    if lo is None:
+        return "premium"
+    v = float(lo)
+    num = re.escape(str(_num(str(lo))))
+    if re.search(r"\b" + IDX_WORDS + r"\s*(?:is\s*|trades?\s*|sustains?\s*|closes?\s*)?(?:above|abv|below|crosses|cross|crossing|near|at)\s*(?:the\s*)?" + num + r"(?![\d.])", text, re.I) \
+            or re.search(r"(?<![\d.])" + num + r"\s*(?:spot|index)\b", text, re.I):
+        return "spot"
+    ref = float(strike) if strike else (INDEX_LEVELS.get(symbol or "") or None)
+    if ref and abs(v - ref) <= 0.06 * ref:
+        return "spot"
+    if not strike and symbol in INDEX_LEVELS and INDEX_LEVELS[symbol] and abs(v - INDEX_LEVELS[symbol]) <= 0.06 * INDEX_LEVELS[symbol]:
+        return "spot"
+    return "premium"
+
+
+def _strip_levels(text: str) -> str:
+    """The text without its SL / target lines (a spot stop "15 mins candle above 43450 spot" is never an entry)."""
+    out = []
+    for ln in (text or "").split("\n"):
+        m = SL_RE.search(ln) or TGT_RE.search(ln)
+        out.append(ln[:m.start()] if m else ln)
+    return "\n".join(out)
+
+
+def spot_entry(text: str) -> Optional[dict]:
+    """An index-level entry the post states in words ("nifty above 25300 buy 25300 ce", "above 82400 spot")."""
+    m = SPOT_LEVEL_RE.search(_strip_levels(text))
+    if not m:
+        return None
+    word = (m.group(1) or m.group(3) or "").lower()
+    lo = _num(m.group(2) or m.group(4))
+    mode = "below" if word == "below" else "above"
+    return {"mode": mode, "lo": lo, "hi": lo, "when_comes": False, "level_kind": "spot"}
 
 
 def index_from_strike(strike: float) -> Optional[str]:
@@ -177,6 +225,16 @@ def _entry(text: str, after: int, strike: Optional[float]) -> dict:
         m = rx.search(body)
         if m:
             body = body[:m.start()] + "\n" + "\n".join(body[m.start():].split("\n")[1:])
+    bare = BARE_RE.match(body)                           # "BUY nifty 25400 ce 191-198": a zone; "buy 82000 ce 460": at 460
+    if bare and not (strike is not None and float(bare.group(1)) == float(strike)):
+        lo = _num(bare.group(1))
+        hi = _num(bare.group(2)) if bare.group(2) else None
+        if hi is not None:
+            hi = _expand(lo, hi)
+            a, b = min(lo, hi), max(lo, hi)
+            if b <= a * 1.6 and b != a:
+                return {"mode": "zone", "lo": a, "hi": b, "when_comes": when}
+        return {"mode": "at", "lo": lo, "hi": lo, "when_comes": when}
     for m in ENTRY_RE.finditer(body):
         word = (m.group(1) or "@").lower()
         lo = _num(m.group(2) or m.group(4))
@@ -271,6 +329,20 @@ def decode(text: str, posted_at, fill: Optional[Callable[[str, list], dict]] = N
         out["targets"], decoded["targets"] = tg, "code"
     out["open_ended"] = open_ended
     entry = _entry(text, m.end() if m else 0, strike)
+    if entry["mode"] == "market":
+        se = spot_entry(text)
+        if se:
+            entry = se
+    elif entry.get("lo") is not None:
+        entry["level_kind"] = level_kind(text, entry["lo"], strike, sym)
+    if entry["mode"] != "market":
+        entry.setdefault("level_kind", "premium")
+        if entry["level_kind"] == "spot":
+            entry["index"] = sym if sym in INDEX_LEVELS else (sym or "spot")
+        decoded["entry_kind"] = "code"
+    wait = bool(WAIT_RE.search(text))
+    entry["wait_words"] = wait
+    entry["needs_activation"] = bool(wait and entry["mode"] in ("at", "zone", "market"))
     out["entry"] = entry
     if entry["mode"] != "market":
         decoded["entry"] = "code"
@@ -362,6 +434,8 @@ def looks_like_hint(d: dict, text: str) -> bool:
     follow-ups)."""
     if DONE_WORDS.search(text or ""):
         return False
+    if d.get("strike") is None and ADD_RE.search(text or ""):
+        return False                                    # "add more near 440" / "add 5 lots at 560": an add-on, never a call
     tradable = (d.get("strike") is not None and d.get("opt_type")) or \
         (d.get("symbol") and d.get("instrument") in ("commodity", "cash", "future", "crypto") and d.get("side"))
     if not tradable:

@@ -59,15 +59,23 @@ def plan_day(posted: datetime, exchange: Optional[str] = None) -> tuple[date, bo
     return d, True
 
 
+def is_spot(e: Optional[dict]) -> bool:
+    """An entry level on the index / underlying (not the option's own price)."""
+    return (e or {}).get("level_kind") == "spot" and (e or {}).get("mode") not in (None, "market")
+
+
 def entry_text(e: dict) -> str:
-    m = (e or {}).get("mode") or "market"
+    """"above 370" (the option's premium) / "SENSEX above 82,400" (the index level) / "near 95–100" / "at market"."""
+    e = e or {}
+    m = e.get("mode") or "market"
     wc = " when comes" if e.get("when_comes") and m in ("at", "zone") else ""
+    pre = f"{e.get('index') or 'spot'} " if is_spot(e) else ""
     if m == "zone":
-        return f"near {fmt(e['lo'])}–{fmt(e['hi'])}{wc}"
+        return f"{pre}near {fmt(e['lo'])}–{fmt(e['hi'])}{wc}"
     if m == "at":
-        return f"at {fmt(e['lo'])}{wc}"
+        return f"{pre}at {fmt(e['lo'])}{wc}"
     if m in ("above", "below"):
-        return f"{m} {fmt(e['lo'])}"
+        return f"{pre}{m} {fmt(e['lo'])}"
     return "at market"
 
 
@@ -98,7 +106,8 @@ def build(h: dict, cfg, posted: datetime) -> dict:
     sell_to_zero = side == "SELL" and tg and tg[-1] == 0
     hold = bool(sell_to_zero)
     ts = None if hold else (MCX_TIME_STOP if exch == "MCX" else cfg.intraday_time_stop)
-    wait = e.get("mode") in ("above", "below") or (e.get("mode") in ("at", "zone") and bool(e.get("when_comes")))
+    wait = e.get("mode") in ("above", "below") or (e.get("mode") in ("at", "zone") and bool(e.get("when_comes"))) or is_spot(e)
+    needs_act = bool(e.get("needs_activation"))
     ok, why = True, None
     if st.get("kind") == "none" or st.get("value") is None:
         ok, why = False, "stop missing"
@@ -108,8 +117,15 @@ def build(h: dict, cfg, posted: datetime) -> dict:
     lines = []
     if queued:
         lines.append(f"for the next open ({day:%a %d %b})")
-    lines.append("wait for the zone" if wait and e.get("mode") in ("at", "zone") else
-                 f"wait for a trade {e['mode']} {fmt(e['lo'])}" if wait else "enter at the market")
+    if needs_act:
+        lines.append("wait for the channel's activation" + (f" · then {entry_text(e)}" if e.get("mode") in ("at", "zone") else ""))
+    elif is_spot(e):
+        lines.append(f"wait for {entry_text(e)} (index)")
+    else:
+        lines.append("wait for the zone" if wait and e.get("mode") in ("at", "zone") else
+                     f"wait for a trade {e['mode']} {fmt(e['lo'])}" if wait else "enter at the market")
+    if e.get("wait_words") and not needs_act:
+        lines.append("activation words · the level decides")
     if hold:
         lines.append("target 0 · hold to expiry unless the stop or an exit comes")
     elif tg:
@@ -128,7 +144,8 @@ def build(h: dict, cfg, posted: datetime) -> dict:
     return {"ok": ok, "why": why, "side": side, "entry": e, "wait": wait, "stop": st, "targets": tg,
             "open_ended": bool(h.get("open_ended")), "partial_at_t1": partial, "trail_to_cost": bool(cfg.trail_to_cost_after_t1),
             "time_stop": ts, "hold_to_expiry": hold, "day": day.isoformat(), "queued": queued, "expiry": h.get("expiry"),
-            "exchange": exch, "entry_text": entry_text(e), "stop_text": stop_text(st), "targets_text": targets_text(tg, bool(h.get("open_ended"))),
+            "exchange": exch, "opt_type": h.get("opt_type"), "needs_activation": needs_act,
+            "level_kind": e.get("level_kind") if e.get("mode") not in (None, "market") else None, "entry_text": entry_text(e), "stop_text": stop_text(st), "targets_text": targets_text(tg, bool(h.get("open_ended"))),
             "text": " · ".join(lines), "lines": lines}
 
 
@@ -147,13 +164,33 @@ def _sign(plan: dict) -> int:
     return 1 if plan.get("side") != "SELL" else -1
 
 
-def entry_hit(plan: dict, run: dict, ltp: float) -> bool:
+def spot_hit(e: dict, side: Optional[str], opt_type: Optional[str], spot: Optional[float]) -> bool:
+    """An index-level entry crossed by the index quote: above / below as written; at / zone in the option's favour (a
+    CE buy / PE sell when the index is at or under the top, a PE buy / CE sell at or over the bottom)."""
+    if spot is None:
+        return False
+    m = e.get("mode")
+    if m == "above":
+        return spot >= e["lo"]
+    if m == "below":
+        return spot <= e["lo"]
+    up = (side != "SELL") == (opt_type != "PE")          # the trade gains when the index rises
+    return spot <= e["hi"] if up else spot >= e["lo"]
+
+
+def entry_hit(plan: dict, run: dict, ltp: float, spot: Optional[float] = None) -> bool:
     """Does this quote fill the entry? (market / not "when comes": the first quote; zone / at when comes: inside or
-    through the zone in the trade's favour; above / below: the trigger.)"""
+    through the zone in the trade's favour; above / below: the trigger; an index level: the index quote `spot`.)
+    Activation words never gate an entry that has a level: only an at / zone / market entry with wait words waits for
+    the channel's "active" (run.allowed)."""
     if run.get("allowed"):
         return True
     e = plan.get("entry") or {}
     m = e.get("mode") or "market"
+    if is_spot(e):
+        return spot_hit(e, plan.get("side"), plan.get("opt_type"), spot)
+    if e.get("needs_activation"):
+        return False
     if m == "market" or (m in ("at", "zone") and not e.get("when_comes")):
         return True
     if m == "above":
@@ -195,9 +232,11 @@ def spot_breached(stop: dict, spot15: Optional[float]) -> bool:
     return spot15 > stop["value"] if stop.get("dir") == "above" else spot15 < stop["value"]
 
 
-def step(run: dict, plan: dict, ltp: Optional[float], now: datetime, spot15: Optional[float] = None) -> list[dict]:
+def step(run: dict, plan: dict, ltp: Optional[float], now: datetime, spot15: Optional[float] = None,
+         spot: Optional[float] = None) -> list[dict]:
     """One quote through the plan. Returns the events: fill, t1, t2, ..., stop, trail, time, expired, no_fill (each
-    {kind, px, frac}); `run` is updated in place."""
+    {kind, px, frac}); `run` is updated in place. `spot` is the index quote (an index-level entry fills on its cross,
+    at the option's LTP at that moment)."""
     ev: list[dict] = []
     if run["state"] == "closed":
         return ev
@@ -217,7 +256,7 @@ def step(run: dict, plan: dict, ltp: Optional[float], now: datetime, spot15: Opt
             return close_all(run, plan, None, now, "no_fill")
         if ltp is None or run.get("paused") or not (session(plan.get("exchange"))[0] <= now.time() < close_t):
             return ev
-        if not entry_hit(plan, run, ltp):
+        if not entry_hit(plan, run, ltp, spot):
             return ev
         run.update(state="active", entry_px=ltp, entry_t=now.isoformat(timespec="seconds"), best=0.0, worst=0.0)
         ev.append({"kind": "fill", "px": ltp, "frac": 0.0})
@@ -305,11 +344,18 @@ def spot_close15(samples: list[tuple[str, Optional[float]]], now: datetime) -> O
 # --- the channel's follow-ups ------------------------------------------------------------------------------------------
 
 def followup_action(text: str) -> dict:
-    """What a follow-up says, by code: {action: exit|sl_hit|stop|trail|partial|active|avoid|targets|price|note, n, value,
-    spot}. Words only: the channel's "target done" never sets a price or a P&L."""
+    """What a follow-up says, by code: {action: exit|sl_hit|stop|trail|partial|add|active|avoid|targets|price|note, n,
+    value, spot, cost}. "add more near 440" is an add-on (never averaged); bare numbers are price notes. Words only: the channel's "target done" never sets a price or a P&L."""
     low = (text or "").lower()
-    if re.search(r"\b(sl|stop\s*loss|stoploss)\s*(hit|triggered|done)\b", low):
+    if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(hit|triggered|done|gone)\b", low):
         return {"action": "sl_hit"}
+    if re.search(r"^\W*add\b|\badd\s+(?:more|\d+\s*(?:-\s*\d+\s*)?lots?)\b", low):
+        return {"action": "add"}                        # "add more near 440" / "add 5 lots at 560": never averaged
+    m = re.search(r"\b(?:rest|revise|revised|new)\s*(?:the\s*)?(?:t?sl|stop\s*loss|stoploss)\s*(?:to|at|now|is)?\s*(\d+(?:\.\d+)?)"
+                  r"|\b(?:t?sl|stop\s*loss|stoploss)\s*(?:now|is\s*now)\s*(?:at|to)?\s*(\d+(?:\.\d+)?)", low)
+    if m:
+        v = float(m.group(1) or m.group(2))
+        return {"action": "stop", "value": int(v) if v.is_integer() else v, "spot": "spot" in low}
     m = re.search(r"\b(?:modify|modified|change|changed|move|moved|revise|revised|trail)\s*(?:the\s*)?(?:sl|stop\s*loss)\s*(?:to|at)?\s*(\d+(?:\.\d+)?)"
                   r"|\b(?:sl|stop\s*loss)\s*(?:modified|changed|moved|revised)\s*(?:to|at)?\s*(\d+(?:\.\d+)?)", low)
     if m:
@@ -322,9 +368,11 @@ def followup_action(text: str) -> dict:
         n = m.group(1) or m.group(2) or m.group(3)
         return {"action": "targets", "n": None if n == "all" else int(n)}
     if re.search(r"\b(trail|trailing)\b", low):
-        return {"action": "trail"}
+        return {"action": "trail", "cost": bool(re.search(r"\bcost\b", low))}
     if re.search(r"\b(part(ly|ial)?\s*book|book\s*(part|partly|partial|half)|half\s*book)", low):
-        return {"action": "partial"}
+        return {"action": "partial", "cost": bool(re.search(r"\bcost\b", low))}
+    if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(?:to|at)\s*cost\b", low):
+        return {"action": "trail", "cost": True}
     if re.search(r"\b(avoid|don'?t (enter|take)|not now|cancel)\b", low) or re.fullmatch(r"\s*wait\W*", low):
         return {"action": "avoid"}
     if re.search(r"\b(active|activated|triggered|start taking|enter now|entry done|take it)\b", low) or re.search(r"\bcmp\b", low):

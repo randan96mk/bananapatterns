@@ -191,6 +191,8 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             out = ingest(config, channel, post_id, posted_at, text, has_media, source, push, model, client, c, reply_to)
         if out.get("push"):
             bk.push(config, out["push"][0], out["push"][1])
+        if out.get("new") and source in ("live", "preview"):
+            kite_after(config, client, out, push)
         return out
     channel = channel.lstrip("@").lower()
     posted = posted_at if isinstance(posted_at, datetime) else datetime.fromisoformat(str(posted_at))
@@ -240,7 +242,7 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     cur = conn.execute("INSERT INTO tips_posts (channel, post_id, posted_at, text, has_media, kind, hint_id, classified_by, model, ms, source, created, reply_to) "
                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (channel, int(post_id), posted.isoformat(timespec="seconds"), text, int(bool(has_media)),
                                                               kind, hint_id, by, mdl, ms, source, now_ist(), reply_to))
-    out = {"post_id": post_id, "kind": kind, "hint_id": hint_id, "new": True, "row": cur.lastrowid}
+    out = {"post_id": post_id, "kind": kind, "hint_id": hint_id, "new": True, "row": cur.lastrowid, "at": posted.isoformat(timespec="seconds")}
     if kind == "hint":
         h = new_hint(config, conn, channel, int(post_id), posted, text, d, source, client)
         conn.execute("UPDATE tips_posts SET hint_id = ? WHERE id = ?", (h["id"], cur.lastrowid))
@@ -265,10 +267,32 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
                 line = bk.channel_action(config, h, act, text, now, conn=conn)
             bk.save(h, conn)
             out["line"] = line
+            out["act"], out["text"], out["at"] = act, text, posted.isoformat(timespec="seconds")
             if push and source in ("live", "preview") and config.tips.push_followups:
                 from backend.alerts import messages as msg
                 out["push"] = (f"tips|fu|{channel}|{post_id}", msg.tips_followup(h, text, line, now, act))
     return out
+
+
+def kite_after(config, client, out: dict, push: bool = True) -> None:
+    """⚡ Tips → Kite (PR C), after the post is stored: a follow-up's Kite consequence (any mode: an add-on is never an
+    order, avoid / SL hit before the fill cancel an unfilled entry, "active" sends an armed one; auto: the channel's exit
+    / trail / SL / part booking on its own position) and, in auto, the hint armed when it is (now) placeable. Never
+    raises: a failure is logged, the post is kept."""
+    try:
+        from backend.tips import kite_auto as ka
+        from backend.tips import kite_orders as ko
+        if ko.mode(config) == "off" and out.get("kind") != "follow_up":
+            return
+        now = datetime.fromisoformat(out["at"]) if out.get("at") else datetime.now(IST)   # the post's own time (~1 s behind)
+        if (datetime.now(IST) - now).total_seconds() > PUSH_MAX_AGE_S:
+            return                                         # a caught-up old post never moves a Kite order
+        if out.get("kind") == "follow_up" and out.get("hint_id") and out.get("act"):
+            ka.on_followup(config, client, out["hint_id"], out["act"], out.get("text") or "", now, notify=push)
+        if out.get("kind") in ("hint", "follow_up") and out.get("hint_id"):
+            ka.on_new(config, client, out["hint_id"], now, notify=push)
+    except Exception:
+        logger.exception("Tips Kite after the post failed")
 
 
 PLAN_SKIP_ACTIONS = ("targets", "sl_hit", "exit", "partial", "trail")     # "tgt 1 done" states a result, not a plan
@@ -337,7 +361,7 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
     return h
 
 
-def edited(config, channel: str, post_id: int, text: str, at: Optional[datetime] = None) -> Optional[dict]:
+def edited(config, channel: str, post_id: int, text: str, at: Optional[datetime] = None, client=None) -> Optional[dict]:
     """An edit: the text is replaced (the old one kept in the hint's events); a hint not yet taken or filled is decoded
     and planned again."""
     at = at or datetime.now(IST)
@@ -348,6 +372,7 @@ def edited(config, channel: str, post_id: int, text: str, at: Optional[datetime]
         conn.execute("UPDATE tips_posts SET text = ?, edited_at = ? WHERE id = ?", (text, at.isoformat(timespec="seconds"), row["id"]))
         if row["hint_id"] and row["kind"] == "hint":
             h = bk.load(row["hint_id"], conn)
+            before = {k: h.get(k) for k in ("symbol", "strike", "opt_type", "entry")}
             bk.event(h, at, f'the channel edited the post (was: "{(row["text"] or "")[:80]}")', "channel")
             if not h.get("taken") and (h.get("run") or {}).get("state", "waiting") == "waiting" and h["status"] in ("new", "waiting", "paused"):
                 d = dc.decode(text, datetime.fromisoformat(h["posted_at"]))
@@ -360,7 +385,13 @@ def edited(config, channel: str, post_id: int, text: str, at: Optional[datetime]
                 h["run"] = pl.new_run(h["plan"])
                 conn.execute("UPDATE tips_hints SET raw = ? WHERE id = ?", (text, h["id"]))
             bk.save(h, conn)
-        return {"post_id": post_id, "hint_id": row["hint_id"]}
+    if row["hint_id"] and row["kind"] == "hint":                  # ⚡ an armed Kite entry is checked against the new text
+        try:
+            from backend.tips import kite_auto as ka
+            ka.on_edited(config, client if client is not None else ka.app_client(), row["hint_id"], before, at)
+        except Exception:
+            logger.exception("Tips Kite edit check failed")
+    return {"post_id": post_id, "hint_id": row["hint_id"]}
 
 
 def deleted(channel: Optional[str], post_ids: list, at: Optional[datetime] = None) -> int:

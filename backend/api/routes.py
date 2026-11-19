@@ -2638,7 +2638,7 @@ class TipsKiteAct(BaseModel):
     to: Optional[Union[float, str]] = None
 
 
-KITE_ACTIONS = ("entry", "stop", "targets", "all", "rest", "exit", "cancel", "modify_stop")
+KITE_ACTIONS = ("entry", "stop", "targets", "all", "rest", "exit", "cancel", "modify_stop", "send_now")
 
 
 @router.get("/tips/kite")
@@ -2685,6 +2685,16 @@ def tips_kite_dry_rehearse():
     return ko.rehearsal_hint(st.config, st.client, st)
 
 
+@router.post("/tips/kite/daycheck")
+def tips_kite_daycheck():
+    """The Kite day check now (it runs by itself at 3:35 PM on trading days): today's orders against the hints."""
+    from backend.tips import kite_check as kc
+    from backend.tips import kite_orders as ko
+    st = S()
+    res = kc.day_check(st.config, client=st.client)
+    return {"result": res, **ko.today(st.config, st.client)}
+
+
 @router.post("/tips/kite/test")
 def tips_kite_test():
     """The connection test on the real Kite account: one LIMIT buy of a far OTM NIFTY PE at half its price, cancelled
@@ -2727,6 +2737,8 @@ def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
             h = ko.exit_now(c, cl, hid)
         elif action == "cancel":
             h = ko.cancel(c, cl, hid, req.leg or "")
+        elif action == "send_now":
+            h = ko.send_now(c, cl, hid)
         else:
             if req.to is None:
                 raise HTTPException(400, 'modify_stop needs {to: price | "cost"}')

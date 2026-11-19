@@ -495,6 +495,7 @@ def init_db(path: Optional[str] = None) -> None:
         _migrate_real_confirm(conn)
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _migrate_ai_notes(conn)
+        _add_column(conn, "tips_orders", "tradingsymbol", "TEXT")    # ⚡ PR C: the contract each order went out on (the order check)
         _drop_track_record(conn)
         n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
         if n:

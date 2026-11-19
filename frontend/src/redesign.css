@@ -331,7 +331,7 @@
   border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
 :root[data-theme="light"] .rd .tp-hint .raw, :root[data-theme="light"] .rd .tp-try .raw { background: color-mix(in srgb, var(--bg) 80%, var(--border)); }
 :root[data-theme="light"] .rd .tp-back { background: color-mix(in srgb, var(--text) 25%, transparent); }
-.rd .tp-dec { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; min-width: 0; }
+.rd .tp-dec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr) minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, .8fr); gap: 6px; min-width: 0; }
 .rd .tp-dec > div { background: var(--hover); border-radius: 8px; padding: 6px 8px; min-width: 0; height: 46px; overflow: hidden; }
 .rd .tp-dec .kk { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rd .tp-dec b { font-size: 13px; display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; font-variant-numeric: tabular-nums; }
@@ -378,6 +378,7 @@
 .rd .tp-dlg.wide { width: min(640px, 100%); }
 @media (max-width: 760px) {
   .rd .tp-dec { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .rd .tp-dec > div:nth-child(2) { grid-column: span 2; }        /* the entry ("SENSEX above 82,400") gets two cells */
   .rd .tp-hint { padding: 10px 12px; }
   .rd .tp-hint .h { flex-wrap: wrap; white-space: normal; row-gap: 4px; }
   .rd .tp-hint .h .who { flex-basis: 100%; margin-left: 0; padding-left: 0; }
@@ -441,3 +442,26 @@
   .rd .tp-ktest .ph .r { flex-basis: auto; margin-left: auto; flex-wrap: nowrap; }
   .rd .tp-ktest .ph .r .ell { display: none; }
 }
+/* ⚡ PR C: the order check under the legs, the auto tag, the Kite day check */
+.rd .tp-kcheck { display: grid; gap: 3px; font-size: 12px; min-width: 0; border-top: 1px dashed var(--border); padding-top: 6px; }
+.rd .tp-kcheck .ck, .rd .tp-kday .ck { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.rd .tp-kcheck .ck > span:last-child, .rd .tp-kday .ck > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.rd .tp-kcheck .ck.red, .rd .tp-kday .ck.red { color: var(--bad); }
+.rd .tp-kcheck .ck.amber, .rd .tp-kday .ck.amber { color: var(--warn); }
+.rd .tp-kcheck .ck.ok { color: var(--ok); }
+.rd .tp-kcheck .ck.ai { color: var(--text); }
+.rd .tp-kcheck .ck.ai .rtag { flex: none; }
+.rd .tp-kcheck .ck.dim { color: var(--muted); }
+.rd .tp-kcheck .gi, .rd .tp-kday .gi { flex: none; width: 16px; }
+.rd .tp-adot { font-size: 9px; vertical-align: 1px; }
+.rd .tp-kday .rbody { display: grid; gap: 5px; font-size: 12.5px; }
+.rd .tp-kday .ph > b { display: flex; align-items: center; gap: 8px; flex: none; }
+.rd .tp-kday .ph .r .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd .tp-kday .ph .r .btn { flex: none; }
+.rd .tp-kday .sum { font-size: 12.5px; }
+@media (max-width: 700px) {
+  .rd .tp-kday .ph { flex-wrap: nowrap; }
+  .rd .tp-kday .ph .r { flex-basis: auto; margin-left: auto; flex-wrap: nowrap; }
+  .rd .tp-kday .ph .r .ell { display: none; }
+}
+.rd .tp-leg .d.nw { color: var(--text); }

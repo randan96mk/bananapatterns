@@ -86,7 +86,7 @@ def test_whole_flow_entry_stop_t1_cost_t2(pushed):
     c, b, hid = setup()
     h = ko.place_all(c, b, hid, 2, now=at("10:00"))
     e = b.last(transaction_type="BUY")
-    assert e["order_type"] == "MARKET" and e["quantity"] == 30 and e["product"] == "NRML" and e["tag"] == "bptips"
+    assert e["order_type"] == "LIMIT" and e["price"] == 270 and e["quantity"] == 30   # PR C: a zone rests as a LIMIT at its top and e["product"] == "NRML" and e["tag"] == "bptips"
     assert e["exchange"] == "NFO" and e["tradingsymbol"] == "BANKNIFTY26NOV50300PE"
     assert h["kite"]["state"] == "armed" and h["kite"]["auto_rest"]
     b.fill(e["order_id"], 262.0)
@@ -120,7 +120,7 @@ def test_whole_flow_entry_stop_t1_cost_t2(pushed):
 def test_stop_fill_cancels_targets_and_counts_the_loss(pushed):
     c, b, hid = setup(kite_loss_cap=1000.0)
     ko.place_all(c, b, hid, 2, now=at("10:00"))
-    b.fill(b.last(order_type="MARKET")["order_id"], 262.0)
+    b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     ko.sync(c, b, at("10:01"))
     sl, t1 = b.last(order_type="SL-M"), b.last(order_type="LIMIT")
     b.fill(sl["order_id"], 190.0)
@@ -137,7 +137,7 @@ def test_stop_fill_cancels_targets_and_counts_the_loss(pushed):
 def test_rejection_is_reported_and_the_hint_can_be_tried_again(pushed):
     c, b, hid = setup()
     ko.place_entry(c, b, hid, 1, now=at("10:00"))
-    b.reject(b.last(order_type="MARKET")["order_id"], "Insufficient margin")
+    b.reject(b.last(transaction_type="BUY")["order_id"], "Insufficient margin")
     r = ko.sync(c, b, at("10:00", sec=10))
     assert r["lines"] == ["⚠️ Kite · #1 entry REJECTED · Insufficient margin"]
     k = bk.load(hid)["kite"]
@@ -153,7 +153,7 @@ def test_rejection_is_reported_and_the_hint_can_be_tried_again(pushed):
 def test_kill_switch_cancels_and_exits(pushed):
     c, b, hid = setup()
     ko.place_all(c, b, hid, 2, now=at("10:00"))
-    b.fill(b.last(order_type="MARKET")["order_id"], 262.0)
+    b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     ko.sync(c, b, at("10:01"))
     sl, t1 = b.last(order_type="SL-M"), b.last(order_type="LIMIT")
     out = ko.set_kill(c, b, True, at("10:05"))
@@ -213,9 +213,9 @@ def test_click_legs_one_by_one_spot_stop_modify_cancel_exit(pushed):
     c, b, hid = setup()
     ko.place_entry(c, b, hid, 2, now=at("10:00"))
     assert ko.sync(c, b, at("10:00", sec=5))["lines"] == []          # still pending: nothing to say
-    b.fill(b.last(order_type="MARKET")["order_id"], 262.0)
+    b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     assert ko.sync(c, b, at("10:01"))["lines"] == ["⚡ Kite · #1 entry filled 262 ×30"]   # no Place all: nothing more
-    assert b.last(order_type="MARKET")["quantity"] == 30 and len(b.placed) == 1
+    assert b.last(transaction_type="BUY")["quantity"] == 30 and len(b.placed) == 1
     v = tr.hint_view(bk.load(hid), config=c)["kite"]
     assert {"rest", "stop", "targets", "exit"} <= set(v["actions"])
     with pytest.raises(TipsError, match="after target 1 fills"):
@@ -252,7 +252,7 @@ def test_one_lot_is_not_split_and_views_are_12_hour(pushed):
     ko.place_entry(c, b, hid, 2, now=at("10:07", sec=14))
     t = ko.today(c, b, at("10:08"))
     assert t["window"] == "9:20 AM – 2:30 PM" and t["orders"][0]["time"] == "10:07 AM" and t["orders"][0]["time_s"] == "10:07:14 AM"
-    assert t["orders"][0]["label"] == "Entry BANKNIFTY 50300 PE" and t["caps"] == {"entries": 1, "max_entries": 4, "max_lots": 2,
+    assert t["orders"][0]["label"] == "Entry BANKNIFTY 50300 PE" and t["caps"] == {"entries": 0, "max_entries": 4, "max_lots": 2,
                                                                                    "loss_cap": 6000.0, "used_loss": 0.0}
     legs = {x["leg"]: x for x in tr.hint_view(bk.load(hid), config=c)["kite"]["legs"]}
     assert legs["entry"]["at"] == "10:07:14 AM" and set(legs) == {"entry", "stop", "t1", "t2"}
@@ -291,7 +291,7 @@ def test_routes(fake_kite, make_client, monkeypatch, pushed):
         assert r.status_code == 200 and r.json()["kite"]["state"] == "armed"
         assert api.post("/api/tips/hints/1/kite/entry", json={}).status_code == 409
         assert api.post("/api/tips/hints/1/kite/modify_stop", json={}).status_code in (400, 409)
-        b.fill(b.last(order_type="MARKET")["order_id"], 262.0)
+        b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
         r = api.post("/api/tips/kite/resync").json()
         assert r["changed"] == 1 and [o["leg"] for o in r["orders"]] == ["t1", "stop", "entry"]
         h = api.get("/api/tips/hints/1").json()
@@ -344,7 +344,7 @@ def test_no_broker_name_past_kite_and_phone_safe_markup():
     for s in (src, eng):
         assert not re.search(r"zerodha", s, re.I)
     assert "Place all on Kite" in src and "Real money on your Kite account" in src and "Kite orders today" in src
-    assert "By my click" in src and "auto arrives in the next update" in src
+    assert "By my click" in src and "entries armed on the level" in src
     table = src[src.index("Kite orders today"):]
     for col in ("'Type'", "'Price'", "'Order id'", "'By'"):
         assert re.search(r"\{ h: " + col + r"[^}]*lo: true", table), col          # phones keep Time / Hint / Leg / Side / Qty / Status
