@@ -345,6 +345,12 @@ def set_symbol(config, hid: int, symbol: str, who: str = "page", now: Optional[d
     event(h, now, f"you set the symbol: {old or '?'} → {sym} ({who}) · " + (f"contract {h['tradingsymbol']}" if h.get("tradingsymbol") else f"no contract: {h.get('untracked_why')}"), "owner")
     refresh(h)
     save(h)
+    try:                                                    # ⚡ auto: the hint may be placeable now
+        from backend.tips import kite_auto as ka
+        if ka.on_new(config, ka.app_client(), hid, now):
+            h = load(hid) or h
+    except Exception:
+        logger.exception("Tips Kite auto after the symbol failed")
     return h
 
 
@@ -504,6 +510,8 @@ def channel_action(config, h: dict, act: dict, text: str, now: datetime, ltp: Op
         tg = (h.get("plan") or {}).get("targets") or []
         bits = [f"T{i + 1} {pl.fmt(t)} ✓" for i, t in enumerate(tg[:hits])]
         out = " · ".join(bits) if bits else "no target reached on our quotes yet"
+    elif a == "add":
+        out = "add-on ignored (never averaged)"
     elif a == "trail" and pos and pos.get("state") == "open" and auto:
         r = pos["run"]
         r["trail"] = True
@@ -511,6 +519,20 @@ def channel_action(config, h: dict, act: dict, text: str, now: datetime, ltp: Op
             r["stop"] = max(r["stop"] or 0, r["entry_px"]) if _sign(h) > 0 else min(r["stop"] or 1e12, r["entry_px"])
             r["stop_moved"], r["spot_stop"] = True, None
         out = "trail on · you were informed"
+    elif a == "stop" and not act.get("spot") and act.get("value") is not None and (pos is None or pos.get("state") == "armed") \
+            and (h.get("kite") or {}).get("state") != "entered":
+        # a stop revised before you are in ("210 revise sl 193"): the plan carries it, so a later entry uses it
+        old = (h.get("stop") or {}).get("value")
+        h["stop"] = {"kind": "premium", "value": act["value"]}
+        posted = datetime.fromisoformat(h["posted_at"]) if h.get("posted_at") else now
+        allowed, paused = bool((run or {}).get("allowed")), bool((run or {}).get("paused"))
+        h["plan"] = pl.build(h, config.tips, posted)
+        if run is not None and run.get("state") != "closed":
+            run["stop"], run["spot_stop"] = act["value"], None
+            run["allowed"], run["paused"] = allowed, paused
+        if pos is not None:
+            pos["run"]["stop"], pos["run"]["spot_stop"] = act["value"], None
+        out = f"plan stop revised {pl.fmt(old)} → {pl.fmt(act['value'])} (channel)"
     elif a == "stop" and auto:
         r = pos["run"]
         if act.get("spot"):
@@ -536,6 +558,10 @@ def channel_action(config, h: dict, act: dict, text: str, now: datetime, ltp: Op
         e = pl._close(r, h["plan"], frac, ltp, now, "channel_exit")
         _apply(h, [e], now, "channel", conn)
         out = f"followed: half booked at {pl.fmt(ltp)}"
+        if act.get("cost") and r["state"] != "closed":
+            r["stop"] = max(r["stop"] or 0, r["entry_px"]) if _sign(h) > 0 else min(r["stop"] or 1e12, r["entry_px"])
+            r["stop_moved"], r["spot_stop"] = True, None
+            out += f" · SL → cost {pl.fmt(r['entry_px'])}"
     elif a in ("exit", "sl_hit", "stop", "trail", "partial") and pos is not None and not auto:
         out = "not followed: " + ("you overrode this position" if pos.get("override") else "auto-follow is off") + " · your call"
     elif a in ("exit", "sl_hit"):

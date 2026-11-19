@@ -223,6 +223,7 @@ export const tipsKiteResync = () => req('POST', '/api/tips/kite/resync', {});
 export const tipsKiteTest = () => req('POST', '/api/tips/kite/test', {});            // the connection test (real Kite, ~6 s)
 export const tipsKiteDryClear = () => req('POST', '/api/tips/kite/dry/clear', {});   // void today's dry run
 export const tipsKiteRehearse = () => req('POST', '/api/tips/kite/dry/rehearse', {}); // a made-up hint to rehearse on (dry run)
+export const tipsKiteDayCheck = () => req('POST', '/api/tips/kite/daycheck', {});     // the Kite day check now (3:35 PM by itself)
 export const tipsTestPost = (text) => req('POST', '/api/tips/test-post', { text });
 export const tipsLogin = (phone) => req('POST', '/api/tips/login', { phone });
 export const tipsLoginCode = (code, password) => req('POST', '/api/tips/login/code', password ? { code, password } : { code });

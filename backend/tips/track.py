@@ -297,7 +297,7 @@ def poll(config, client, now: Optional[datetime] = None) -> dict:
             h["run"] = run
             s15 = pl.spot_close15(_spot_samples(conn, h["id"], now.date().isoformat()), now) if (plan.get("stop") or {}).get("kind") == "spot" else None
             was = run["state"]
-            evs = pl.step(run, plan, ltp, now, s15)
+            evs = pl.step(run, plan, ltp, now, s15, spot)
             for e in evs:
                 n_ev += 1
                 if e["kind"] == "fill":
@@ -312,7 +312,7 @@ def poll(config, client, now: Optional[datetime] = None) -> dict:
             pos = h.get("pos") if h.get("taken") else None
             if pos and pos.get("state") in ("armed", "open"):
                 pos["run"]["last_ltp"] = ltp if ltp is not None else pos["run"].get("last_ltp")
-                pevs = pl.step(pos["run"], plan, ltp, now, s15)
+                pevs = pl.step(pos["run"], plan, ltp, now, s15, spot)
                 for ln in bk._apply(h, pevs, now, "code", conn):
                     lines.append((f"tips|pos|{h['id']}|{len(h['events'])}", _line(h, ln, now)))
             bk.refresh(h)

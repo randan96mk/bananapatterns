@@ -552,7 +552,8 @@ class TipsConfig:
     preview_fallback: bool = True          # the public preview page every 30 s while the reader is down
     # ⚡ Tips → Kite orders (real money, Kite Connect): off | dry (a rehearsal: the same buttons and legs, a simulator
     # fills from live quotes, nothing reaches Kite) | click (every leg by your click, each through a confirm; Place all =
-    # entry now, the stop + T1 the moment it fills) | auto (the next update; for now it behaves as click)
+    # entry now, the stop + T1 the moment it fills) | auto (entries armed on the level / the channel's activation, SL +
+    # T1 on the fill, the channel's exits followed, you are told)
     kite_mode: str = "off"
     kite_product: str = "NRML"             # NRML | MIS
     kite_market_protection: float = 5.0    # % market protection on MARKET / SL-M orders (the exchange rule for API orders: never 0)
@@ -561,6 +562,8 @@ class TipsConfig:
     kite_loss_cap: float = 6000.0          # ₹ realised loss a day from these orders; at or past it no new entry
     kite_entry_from: str = "09:20"         # entries only from here (HH:MM; shown 12-hour)
     kite_entry_until: str = "14:30"        # ... until here
+    kite_auto_max_open: int = 1            # auto: Kite hints open (armed or entered) at once; a second one waits
+    kite_auto_book_part: str = "channel"   # auto, "book part" with ONE lot open: channel = book it | hold = keep it, stop to cost
 
 
 TIPS_KITE_MODES = ("off", "dry", "click", "auto")
@@ -594,6 +597,10 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_entry_from must be before kite_entry_until")
     if int(sec.kite_max_entries_day) < 1 or int(sec.kite_max_lots) < 1 or float(sec.kite_loss_cap) <= 0:
         raise ValueError("kite_max_entries_day, kite_max_lots and kite_loss_cap must be positive")
+    if int(sec.kite_auto_max_open) < 1:
+        raise ValueError("kite_auto_max_open must be 1 or more")
+    if sec.kite_auto_book_part not in ("channel", "hold"):
+        raise ValueError("kite_auto_book_part must be channel or hold")
 
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")

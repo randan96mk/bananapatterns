@@ -5,8 +5,12 @@ order runs exactly as for real; nothing reaches Kite and no login is needed.
   fills     from live quotes (the hint's last LTP: tips_quotes, or what the sync passes to mark()):
               MARKET  COMPLETE at once at the last known LTP (also outside market hours: the owner can rehearse in the
                       evening); with no quote yet it waits OPEN for the first one
-              LIMIT   sell COMPLETE at the price when ltp >= price · buy when ltp <= price
-              SL-M    sell COMPLETE at the trigger when ltp <= trigger · buy when ltp >= trigger
+              LIMIT   sell COMPLETE at the price when ltp >= price · buy when ltp <= price (a LIMIT already
+                      marketable when placed fills at once at the better of the LTP and the price, as on Kite)
+              SL-M    sell COMPLETE at the trigger when ltp <= trigger · buy when ltp >= trigger (a stop-entry:
+                      "BUY ABOVE 370" rests as a BUY SL-M with trigger 370)
+  index     an index-level entry ("SENSEX above 82400") is watched by the app on the hint's stored spot quote
+            (tips_quotes.spot), the sim's index quote; the app then sends a MARKET order here
   orders()  Kite-shaped dicts: order_id ("DRY-<n>"), status OPEN / COMPLETE / CANCELLED / REJECTED, average_price,
             filled_quantity, quantity, tag, tradingsymbol, transaction_type, order_type, price, trigger_price,
             status_message.
@@ -103,6 +107,11 @@ class SimClient:
                 ltp = self.ltp_for(tradingsymbol)
                 if ltp is not None:
                     o.update(status="COMPLETE", average_price=float(ltp), filled_quantity=int(quantity))
+            elif order_type == "LIMIT" and price is not None:      # a marketable LIMIT fills at once at the better price
+                ltp = self.ltp_for(tradingsymbol)
+                if ltp is not None and _crossed(o, float(ltp)) is not None:
+                    px = min(float(ltp), float(price)) if transaction_type == "BUY" else max(float(ltp), float(price))
+                    o.update(status="COMPLETE", average_price=round(px, 2), filled_quantity=int(quantity))
             d["orders"].append(o)
             self._save(d)
             return o["order_id"]

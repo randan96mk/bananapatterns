@@ -225,6 +225,11 @@ class Scheduler:
             jobs += archive.due(now, self.state.config, self.done_today(today))
         except Exception:
             logger.exception("Archive due check failed")
+        try:                                               # ⚡ Tips → Kite: the 3:35 PM day check (trading days)
+            from backend.tips import kite_check as kc
+            jobs += kc.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
+        except Exception:
+            logger.exception("Tips Kite day check due failed")
         try:                                               # 🤖 suggestions: an open one past its time expires (no tap)
             from backend.ai import suggest
             suggest.expire_open(now)
@@ -466,6 +471,19 @@ class Scheduler:
         except Exception as exc:
             logger.exception("AI notes enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_tips_kite_day(self, now: datetime) -> dict:
+        """⚡ 3:35 PM: every Tips order of today against the hints, one Telegram summary (backend/tips/kite_check.py)."""
+        from backend.tips import kite_check as kc
+        today, started = now.date(), now_ist()
+        try:
+            res = kc.day_check(self.state.config, now, client=getattr(self.state, "client", None))
+        except Exception as exc:
+            logger.exception("Tips Kite day check failed")
+            self.record(kc.DAY_JOB, today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        self.record(kc.DAY_JOB, today, "ok", res["summary"], started)
+        return {"status": "ok", **res}
 
     def run_ai_brief(self, now: datetime) -> dict:
         """🤖 brief: queue today's morning brief (kind "brief"; the guard decides at run time) and record the job so it

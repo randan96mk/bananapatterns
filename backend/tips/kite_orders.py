@@ -22,7 +22,17 @@ to Kite (the app's own Kite Connect session) by button click, each click through
   test      connection_test(): one LIMIT buy of a far OTM NIFTY PE at half its price, cancelled 5 s later (session,
             static IP, order permission), at most once per 5 minutes; its row is hint 0, leg "test".
   ip        the server's public IP (the one to whitelist in Kite Connect), looked up by the Syncer every 10 minutes.
-Mode `auto` arrives in the next update: for now it behaves exactly like click."""
+  levels    PR C: an entry with a level is never sent at market at once. A premium "above X" buy (below X sell) is a
+            resting SL-M with trigger X; "at X" / a zone is a resting LIMIT (the zone's top for a buy, its bottom for a
+            sell); an index level ("SENSEX above 82400") cannot rest on Kite, so the app arms it ("armed_watch") and the
+            Syncer buys at market on the index cross. Activation words never gate an entry that has a level: the level
+            is the trigger. An at / zone / market entry with wait words ("wait for activation") arms ("armed_wait") and
+            is sent when the channel says active (or you press Send now). An unfilled armed / resting entry is cancelled
+            at the end of the entry window, at the time stop, on the channel's avoid / cancel / not now, or by you.
+  time stop a Kite position still open at the plan's time stop is exited at market by the sync (a hold-to-expiry sell
+            is not); the caps count an entry when it fills (or a MARKET entry when it is sent), never when armed.
+  auto      kite_mode "auto": backend/tips/kite_auto.py arms every placeable hint by itself (the same guards), follows
+            the channel on an open position and tells you; backend/tips/kite_check.py checks every Kite event."""
 
 import json
 import re
@@ -47,6 +57,10 @@ KILL_KEY = "tips.kite.kill"
 SYNC_KEY = "tips.kite.sync_at"
 TAG = "bptips"
 LIVE = ("placed", "open")                      # an order still working on Kite
+ARMED = ("armed", "armed_watch", "armed_wait")  # an entry not filled yet: resting on Kite / watched by the app / waiting
+WORKING = ARMED + ("entered",)                 # a hint with something on Kite (or armed for it)
+ARM_KEYS = ("kind", "order_type", "price", "trigger", "level", "level_kind", "index", "dir", "text", "what")
+CHASE_MAX = 0.10                               # a level already passed by more than this is not chased at market
 SYNC_FAST_S, SYNC_IDLE_S = 10, 30
 LEG_NAMES = {"entry": "Entry", "stop": "Stop", "t1": "Target 1", "t2": "Target 2", "exit": "Exit"}
 WARNING = ("Real money on your Kite account. The app never averages, never re-enters after a stop, and stops for the day "
@@ -94,7 +108,7 @@ def routes_dry(config, h: dict) -> bool:
     """Whether this hint's next action goes to the simulator: a working position stays where it was placed; anything
     else follows the mode."""
     k = kstate(h)
-    if k["state"] in ("armed", "entered"):
+    if k["state"] in WORKING:
         return bool(k.get("dry"))
     return mode(config) == "dry"
 
@@ -149,7 +163,8 @@ def exit_side(h: dict) -> str:
 
 def new_kite() -> dict:
     return {"state": "none", "lots": 0, "qty": 0, "qty_open": 0, "entry_px": None, "stop_px": None, "auto_rest": False,
-            "realised": 0.0, "reason": None, "legs": {}, "log": [], "by": None, "day": None}
+            "realised": 0.0, "reason": None, "legs": {}, "log": [], "by": None, "day": None, "arm": None, "entry_at": None,
+            "stop_moves": [], "check": None, "ai": None, "auto": None}
 
 
 def kstate(h: dict) -> dict:
@@ -224,7 +239,7 @@ def _insert(row: dict, conn=None) -> int:
         with get_db() as c:
             return _insert(row, c)
     cols = ("hint_id", "leg", "side", "qty", "order_type", "price", "trigger", "status", "order_id", "filled_px", "filled_qty",
-            "placed_at", "updated_at", "by", "note", "day")
+            "placed_at", "updated_at", "by", "note", "day", "tradingsymbol")
     cur = conn.execute(f"INSERT INTO tips_orders ({', '.join(chr(34) + c + chr(34) for c in cols)}) VALUES ({','.join('?' * len(cols))})",
                        tuple(row.get(c) for c in cols))
     return cur.lastrowid
@@ -238,12 +253,23 @@ def _update(rid: int, conn=None, **kw) -> None:
     conn.execute(f"UPDATE tips_orders SET {', '.join(chr(34) + k + chr(34) + ' = ?' for k in kw)} WHERE id = ?", (*kw.values(), rid))
 
 
-def entries_today(day: str, dry: bool = False) -> int:
-    """Entries today toward the cap: a dry run's only while dry, real ones only otherwise (voided rows never)."""
+def counts_entry(r: dict, resting: bool = False) -> bool:
+    """An entry row toward the cap: filled, or a MARKET sent (it fills at once); a resting SL-M / LIMIT only with
+    `resting` (the guard counts it so the cap can never be passed by fills); cancelled / rejected / voided never."""
+    if r.get("leg") != "entry" or r.get("status") in ("rejected", "failed", "voided", "cancelled"):
+        return False
+    if r.get("status") == "complete" or (r.get("order_type") or "MARKET") == "MARKET":
+        return True
+    return bool(resting) and r.get("status") in LIVE
+
+
+def entries_today(day: str, dry: bool = False, resting: bool = False) -> int:
+    """Entries today toward the cap: a dry run's only while dry, real ones only otherwise (voided rows never). An entry
+    counts when it fills; one armed or resting is not an entry yet (`resting` = count the resting ones too)."""
     with get_db() as conn:
         rows = [_row(r) for r in conn.execute("SELECT * FROM tips_orders WHERE day = ? AND leg = 'entry' AND status NOT IN ('rejected', 'failed', 'voided')",
                                               (day,))]
-    return sum(1 for r in rows if is_dry_row(r) == bool(dry))
+    return sum(1 for r in rows if is_dry_row(r) == bool(dry) and counts_entry(r, resting))
 
 
 def realised_by_hint(rows: list[dict]) -> dict:
@@ -305,11 +331,45 @@ def premium_stop(h: dict) -> Optional[float]:
 def _ref_px(h: dict, k: dict) -> Optional[float]:
     if k.get("entry_px") is not None:
         return k["entry_px"]
+    arm = k.get("arm") or {}
+    if arm.get("kind") in ("slm", "limit") and arm.get("level") is not None:
+        return float(arm["level"])
+    e = entry_of(h)
+    if not k.get("arm") and e.get("mode") in ("above", "below") and not pl.is_spot(e) and e.get("lo") is not None:
+        return float(e["lo"])                            # a stop-entry fills at its trigger
     ltp = bk.last_ltp(h)
     if ltp is not None:
         return ltp
     e = h.get("entry") or {}
     return e.get("hi") or e.get("lo")
+
+
+def after_event(config, h: dict, now: datetime, notify: bool = True) -> None:
+    """After every Kite event (placed / filled / modified / cancelled / rejected): the order check (code), its red
+    lines to Telegram once, and the AI read queued (backend/tips/kite_check.py). Never raises; never places anything."""
+    try:
+        from backend.tips import kite_check as kc
+        kc.after_event(config, h, now, notify)
+    except Exception:
+        logger.exception("Tips Kite check #%s failed", h.get("id"))
+
+
+def index_ltp(h: dict, client=None) -> Optional[float]:
+    """The index quote of a hint: the tracker's last stored spot (tips_quotes, every 5 s), else one quote call."""
+    with get_db() as conn:
+        r = conn.execute("SELECT spot FROM tips_quotes WHERE hint_id = ? AND spot IS NOT NULL ORDER BY t DESC LIMIT 1", (h["id"],)).fetchone()
+    if r and r[0]:
+        return float(r[0])
+    if client is None or is_dry(client) or not hasattr(client, "quote"):
+        return None
+    try:
+        from backend.tips import track as tr
+        key = tr.spot_key(h)
+        q = client.quote([key]) or {} if key else {}
+        v = (q.get(key) or {}).get("last_price") if key else None
+        return float(v) if v else None
+    except Exception:
+        return None
 
 
 # --- the guards ----------------------------------------------------------------------------------------------------------
@@ -328,7 +388,7 @@ def base_guards(config, client, now: datetime, exchange: Optional[str] = None) -
     c = config.tips
     day = now.date().isoformat()
     dry = is_dry(client)
-    n = entries_today(day, dry)
+    n = entries_today(day, dry, resting=True)
     used = realised_today(day, dry)
     m = mode(config)
     exch = exchange or "NFO"
@@ -345,7 +405,7 @@ def base_guards(config, client, now: datetime, exchange: Optional[str] = None) -
         window = _g(inwin, f"entries only {window_text(config)}", "window")
     return [
         login, market, window,
-        _g(m != "off", "Kite orders on · " + {"click": "by your click", "auto": "auto (works as by your click for now)",
+        _g(m != "off", "Kite orders on · " + {"click": "by your click", "auto": "auto · entries armed on the level / the channel's activation",
                                               "dry": "dry run · nothing reaches Kite"}.get(m, "off"), "mode"),
         _g(not killed(), "kill switch off" if not killed() else "kill switch ON · no new order", "kill"),
         _g(n < int(c.kite_max_entries_day), f"entries today {n} of {int(c.kite_max_entries_day)}", "entries"),
@@ -375,7 +435,7 @@ def guards(config, client, h: dict, lots: Optional[int], now: Optional[datetime]
     lots = int(lots or 0)
     plan = h.get("plan") or {}
     ok_plan = bool(plan.get("ok")) and bool(h.get("tradingsymbol")) and bool(h.get("lot_size")) and bool(plan.get("targets"))
-    live = k["state"] in ("armed", "entered")
+    live = k["state"] in WORKING
     dry = is_dry(client)
     mine = [r for r in rows_for(h["id"]) if r["status"] != "voided" and is_dry_row(r) == dry]
     filled_before = any(r["leg"] == "entry" and r["status"] == "complete" for r in mine)
@@ -424,7 +484,7 @@ def _place(config, client, h: dict, leg: str, side: str, qty: int, order_type: s
     k = kstate(h)
     row = {"hint_id": h["id"], "leg": leg, "side": side, "qty": int(qty), "order_type": order_type, "price": price, "trigger": trigger,
            "status": "placed", "order_id": None, "placed_at": now.isoformat(timespec="seconds"), "updated_at": now.isoformat(timespec="seconds"),
-           "by": by, "note": None, "day": now.date().isoformat()}
+           "by": by, "note": None, "day": now.date().isoformat(), "tradingsymbol": h.get("tradingsymbol")}
     try:
         oid = client.place_order(exchange=h["exchange"], tradingsymbol=h["tradingsymbol"], transaction_type=side, quantity=int(qty),
                                  product=config.tips.kite_product, order_type=order_type, price=price, trigger_price=trigger, tag=TAG,
@@ -455,9 +515,82 @@ def _type_text(order_type: str, price, trigger) -> str:
     return order_type or "—"
 
 
+def entry_of(h: dict) -> dict:
+    return (h.get("plan") or {}).get("entry") or h.get("entry") or {"mode": "market"}
+
+
+def needs_activation(h: dict) -> bool:
+    """Wait words with no level (an at / zone / market entry) and the channel has not said active yet."""
+    return bool(entry_of(h).get("needs_activation")) and not (h.get("run") or {}).get("allowed")
+
+
+def index_name(h: dict) -> str:
+    e = entry_of(h)
+    return str(e.get("index") or h.get("symbol") or "the index")
+
+
+def entry_plan(h: dict, ltp: Optional[float] = None, force_market: bool = False) -> dict:
+    """How the entry goes to Kite: {kind market|slm|limit|watch, order_type, price, trigger, level, level_kind, index,
+    dir, text (the leg's type text), what (the confirm's words), refuse (a level already passed too far)}."""
+    e = entry_of(h)
+    side = entry_side(h)
+    buy = side == "BUY"
+    m = e.get("mode") or "market"
+    allowed = bool((h.get("run") or {}).get("allowed"))
+    mk = {"kind": "market", "order_type": "MARKET", "price": None, "trigger": None, "level": None, "level_kind": None,
+          "text": "MARKET", "what": f"{side} at market now"}
+    if force_market or m == "market" or (allowed and not pl.is_spot(e)) or e.get("lo") is None:
+        if allowed and m != "market":
+            mk["what"] = f"{side} at market now (the channel said active)"
+        return mk
+    lo, hi = float(e["lo"]), float(e.get("hi") or e["lo"])
+    if pl.is_spot(e):
+        if allowed:
+            return {**mk, "what": f"{side} at market now (the channel said active)"}
+        idx = index_name(h)
+        if m in ("above", "below"):
+            d = m
+        else:                                            # the option's favour: a CE buy wants the index at or under the top
+            up = buy == (h.get("opt_type") != "PE")
+            d = "below" if up else "above"
+        lvl = (hi if d == "below" else lo) if m in ("at", "zone") else lo
+        sym = "≥" if d == "above" else "≤"
+        return {"kind": "watch", "order_type": "MARKET", "price": None, "trigger": None, "level": lvl, "level_kind": "spot",
+                "index": idx, "dir": d, "text": f"MARKET when {idx} {sym} {pl.fmt(lvl)}",
+                "what": f"the app watches {idx} and {'buys' if buy else 'sells'} at market when it trades {pl.fmt(lvl)} or {'above' if d == 'above' else 'below'}"}
+    stop_entry = (m == "above" and buy) or (m == "below" and not buy)
+    if stop_entry:
+        out = {"kind": "slm", "order_type": "SL-M", "price": None, "trigger": lo, "level": lo, "level_kind": "premium",
+               "text": f"SL-M trigger {pl.fmt(lo)}", "what": f"a {side} stop order rests on Kite at {pl.fmt(lo)} (it fills when the premium trades {pl.fmt(lo)} or {'above' if buy else 'below'})"}
+        if ltp is not None and ((buy and ltp >= lo) or (not buy and ltp <= lo)):
+            past = abs(ltp - lo) / lo if lo else 0.0
+            if past > CHASE_MAX:
+                out["refuse"] = f"already {round(past * 100)} % past the level {pl.fmt(lo)} (now {pl.fmt(ltp)}) · not chased"
+                return out
+            return {**mk, "level": lo, "level_kind": "premium", "what": f"{side} at market now (already past {pl.fmt(lo)}: now {pl.fmt(ltp)})",
+                    "past": True}
+        return out
+    px = lo if m in ("above", "below") else (hi if buy else lo)
+    return {"kind": "limit", "order_type": "LIMIT", "price": px, "trigger": None, "level": px, "level_kind": "premium",
+            "text": f"LIMIT {pl.fmt(px)}", "what": f"a {side} LIMIT rests on Kite at {pl.fmt(px)}" + (" (the zone's top)" if m == "zone" and buy else " (the zone's bottom)" if m == "zone" else "")}
+
+
+def _send_entry(config, client, h: dict, ep: dict, now: datetime, by: str) -> dict:
+    """The entry order itself (MARKET / SL-M / LIMIT) and the kite state "armed" (resting or working on Kite)."""
+    k = kstate(h)
+    row_by = "dry" if is_dry(client) else by
+    r = _place(config, client, h, "entry", entry_side(h), int(k["qty"]), ep["order_type"], now, row_by, price=ep.get("price"), trigger=ep.get("trigger"))
+    k["state"] = "armed"
+    k["arm"] = {k2: v for k2, v in ep.items() if k2 in ARM_KEYS}
+    k["arm"]["at"] = now.isoformat(timespec="seconds")
+    return r
+
+
 def place_entry(config, client, hid: int, lots: Optional[int] = None, by: str = "click", now: Optional[datetime] = None,
                 auto_rest: bool = False, notify: bool = True) -> dict:
-    """MARKET entry (BUY; a SELL hint sells) for `lots` (default: the post's size, else tips.lots). Every guard first."""
+    """The entry for `lots` (default: the post's size, else tips.lots), every guard first. A market entry goes at once
+    (MARKET); a premium level rests on Kite (SL-M trigger / LIMIT); an index level is armed and watched by the app
+    ("armed_watch"); wait words with no level arm it until the channel says active ("armed_wait")."""
     now = now or _now()
     with _LOCK:
         h = bk._get(hid)
@@ -465,23 +598,133 @@ def place_entry(config, client, hid: int, lots: Optional[int] = None, by: str = 
         n = int(lots) if lots is not None else default_lots(config, h)
         _check(guards(config, client, h, n, now, "entry"))
         qty = n * int(h["lot_size"])
+        ep = entry_plan(h, bk.last_ltp(h))
+        if ep.get("refuse"):
+            raise TipsError(409, ep["refuse"])
         k["dry"] = is_dry(client)
-        try:
-            _place(config, client, h, "entry", entry_side(h), qty, "MARKET", now, "dry" if k["dry"] else by)
-        finally:
-            save_kite(h)
-        k.update(state="armed", lots=n, qty=qty, qty_open=0, entry_px=None, stop_px=premium_stop(h), auto_rest=bool(auto_rest),
-                 reason=None, by=by, day=now.date().isoformat())
-        for leg in ("stop", "t1", "t2", "exit"):
+        for leg in ("entry", "stop", "t1", "t2", "exit"):
             k["legs"].pop(leg, None)
-        text = f"Kite: entry placed {entry_side(h)} {qty} MARKET ({'your click' if by == 'click' else by})" + \
-            (" · SL + T1 the moment it fills" if auto_rest else "")
+        k.update(lots=n, qty=qty, qty_open=0, entry_px=None, stop_px=premium_stop(h), auto_rest=bool(auto_rest), reason=None,
+                 by=by, day=now.date().isoformat(), arm=None, entry_at=None, stop_moves=[], check=None)
+        who = "your click" if by == "click" else by
+        wait = needs_activation(h)
+        if wait:
+            k["state"] = "armed_wait"
+            k["arm"] = {**{k2: v for k2, v in ep.items() if k2 in ARM_KEYS},
+                        "wait": True, "at": now.isoformat(timespec="seconds")}
+            text = f"Kite: entry armed {entry_side(h)} {qty} · {ep['text']} · nothing is sent until the channel says active ({who})"
+        elif ep["kind"] == "watch":
+            k["state"] = "armed_watch"
+            k["arm"] = {k2: v for k2, v in ep.items() if k2 in ARM_KEYS}
+            k["arm"]["at"] = now.isoformat(timespec="seconds")
+            text = f"Kite: entry armed {entry_side(h)} {qty} · {ep['text']} · the app watches {ep['index']} ({who})"
+        else:
+            try:
+                _send_entry(config, client, h, ep, now, by)
+            finally:
+                save_kite(h)
+            text = f"Kite: entry placed {entry_side(h)} {qty} {ep['text']} ({who})" + (" · resting on Kite" if ep["kind"] != "market" else "") + \
+                (f" · {ep['what']}" if ep.get("past") else "")
+        if auto_rest:
+            text += " · SL + T1 the moment it fills"
+        if entry_of(h).get("wait_words") and not wait:
+            text += " · activation words · the level decides"
         _log(k, now, text)
         save_kite(h)
         if notify:
+            what = "armed" if k["state"] in ("armed_wait", "armed_watch") else "entry placed"
+            tail = (" · waits for the channel's activation" if k["state"] == "armed_wait" else " · resting on Kite" if ep["kind"] in ("slm", "limit") else "")
             _push(config, f"tips|kite|{hid}|entry|{now.isoformat(timespec='seconds')}",
-                  f"{pfx(h)}#{hid} entry placed {entry_side(h)} {qty} MARKET" + (" · SL + T1 on fill" if auto_rest else ""))
+                  f"{pfx(h)}#{hid} {what} {entry_side(h)} {qty} {ep['text']}{tail}" + (" · SL + T1 on fill" if auto_rest else ""))
+        after_event(config, h, now, notify)
         return h
+
+
+def send_now(config, client, hid: int, now: Optional[datetime] = None, by: str = "click", notify: bool = True) -> dict:
+    """"Send now" on an armed entry: skip the channel's activation (armed_wait) or the index watch (armed_watch) and
+    send it now (the order the arm holds; a watch goes at market). Every entry guard again."""
+    now = now or _now()
+    with _LOCK:
+        h = bk._get(hid)
+        k = kstate(h)
+        if k["state"] not in ("armed_wait", "armed_watch"):
+            raise TipsError(409, f"#{hid} has no armed entry to send")
+        return _fire(config, client, h, now, by, "your Send now" if by == "click" else by, notify, force_market=k["state"] == "armed_watch")
+
+
+def _fire(config, client, h: dict, now: datetime, by: str, why: str, notify: bool = True, force_market: bool = False) -> dict:
+    """An armed entry goes to Kite now (the channel activated / the index crossed / Send now). The entry guards are
+    checked again (the caps count it now); a failing guard disarms it with the reason."""
+    k = kstate(h)
+    hid = h["id"]
+    lots = int(k.get("lots") or default_lots(config, h))
+    was = k["state"]
+    gs = [g for g in guards(config, client, {**h, "kite": {**k, "state": "none"}}, lots, now, "entry") if g["key"] != "one"]
+    bad = next((g for g in gs if not g["ok"]), None)
+    if bad:
+        disarm(config, client, h, now, f"not sent: {bad['text']}", notify=notify)
+        raise TipsError(409, bad["text"])
+    ltp = bk.last_ltp(h)
+    ep = entry_plan(h, ltp, force_market=force_market or was == "armed_watch")
+    if ep.get("refuse"):
+        disarm(config, client, h, now, ep["refuse"], notify=notify)
+        raise TipsError(409, ep["refuse"])
+    try:
+        _send_entry(config, client, h, ep, now, by)
+    except TipsError:
+        k.update(state="none", reason="entry refused", arm=None)
+        save_kite(h)
+        raise
+    text = f"Kite: entry sent {entry_side(h)} {k['qty']} {ep['text']} · {why}"
+    _log(k, now, text)
+    save_kite(h)
+    if notify:
+        _push(config, f"tips|kite|{hid}|fire|{now.isoformat(timespec='seconds')}", f"{pfx(h)}#{hid} entry sent {entry_side(h)} {k['qty']} {ep['text']} · {why}")
+    after_event(config, h, now, notify)
+    return h
+
+
+def disarm(config, client, h: dict, now: datetime, why: str, notify: bool = True) -> bool:
+    """An unfilled entry ends: the resting order cancelled (armed) or the arm dropped (armed_watch / armed_wait).
+    Never counted toward the caps. One log line + one Telegram line. False when nothing was armed."""
+    k = kstate(h)
+    if k["state"] not in ARMED:
+        return False
+    if k["state"] == "armed":
+        cl = sim() if k.get("dry") else client
+        try:
+            _cancel_leg(cl, h, "entry", now)
+        except TipsError as exc:
+            _log(k, now, f"Kite: the unfilled entry could not be cancelled · {str(exc)[:100]} · cancel it in Kite by hand")
+            save_kite(h)
+            return False
+    k.update(state="none", reason=why, auto_rest=False, arm=None)
+    _log(k, now, f"Kite: the unfilled entry cancelled · {why}")
+    save_kite(h)
+    if notify:
+        _push(config, f"tips|kite|{h['id']}|disarm|{now.isoformat(timespec='seconds')}", f"{pfx(h)}#{h['id']} unfilled entry cancelled · {why}")
+    after_event(config, h, now, notify)
+    return True
+
+
+def activate(config, client, h: dict, now: datetime, notify: bool = True) -> Optional[str]:
+    """The channel said active / activated: an armed_wait entry is sent; a resting level order (or an index watch) not
+    filled yet is cancelled and sent at MARKET (the channel considers it live). After the fill: nothing extra."""
+    k = kstate(h)
+    by = "auto" if k.get("by") == "auto" else "app"
+    if k["state"] == "armed_wait":
+        _fire(config, client, h, now, by, "the channel activated", notify)
+        return "sent on the channel's activation"
+    if k["state"] == "armed_watch":
+        _fire(config, client, h, now, by, "the channel activated before the index level", notify, force_market=True)
+        return "the channel activated before the level · sent at market"
+    if k["state"] == "armed" and (k.get("arm") or {}).get("kind") in ("slm", "limit"):
+        cl = sim() if k.get("dry") else client
+        _cancel_leg(cl, h, "entry", now)
+        k["state"] = "armed_watch"                       # momentarily: _fire sends at market
+        _fire(config, cl, h, now, by, "the channel activated before the level filled · resting order cancelled", notify, force_market=True)
+        return "the channel activated before the level filled · resting order cancelled · sent at market"
+    return None
 
 
 def place_all(config, client, hid: int, lots: Optional[int] = None, now: Optional[datetime] = None) -> dict:
@@ -549,6 +792,7 @@ def place_stop(config, client, hid: int, now: Optional[datetime] = None, by: str
             _log(k, now, f"Kite: SL-M {pl.fmt(r['trigger'])} ×{r['qty']} placed ({'your click' if by == 'click' else by})")
         finally:
             save_kite(h)
+        after_event(config, h, now)
         return h
 
 
@@ -568,6 +812,7 @@ def place_targets(config, client, hid: int, now: Optional[datetime] = None, by: 
                 _log(k, now, f"Kite: T1 LIMIT {pl.fmt(r['price'])} ×{r['qty']} placed ({'your click' if by == 'click' else by})")
         finally:
             save_kite(h)
+        after_event(config, h, now)
         return h
 
 
@@ -596,6 +841,7 @@ def place_rest(config, client, hid: int, now: Optional[datetime] = None) -> dict
             _log(k, now, "Kite: " + " and ".join(done) + " placed (your click)")
         finally:
             save_kite(h)
+        after_event(config, h, now)
         return h
 
 
@@ -620,16 +866,44 @@ def modify_stop(config, client, hid: int, to, now: Optional[datetime] = None) ->
         ltp = bk.last_ltp(h)
         if ltp is not None and ((_sign(h) > 0 and px >= ltp) or (_sign(h) < 0 and px <= ltp)):
             raise TipsError(400, f"the stop {pl.fmt(px)} is on the wrong side of the price {pl.fmt(ltp)}")
-        try:
-            client.modify_order(leg["order_id"], trigger_price=px)
-        except Exception as exc:
-            raise TipsError(409, f"Kite refused the change: {str(exc)[:160]}")
-        _update(leg["row"], trigger=px)
-        leg["trigger"] = px
-        k["stop_px"] = px
-        _log(k, now, f"Kite: stop moved to {pl.fmt(px)} (your click)")
+        _move_stop(client, h, px, now, "your click")
         save_kite(h)
+        after_event(config, h, now)
         return h
+
+
+def _move_stop(client, h: dict, px: float, now: datetime, who: str) -> None:
+    """The working stop's trigger to `px` on Kite, its row, the leg, the log and the record of moves (the check)."""
+    k = kstate(h)
+    leg = k["legs"].get("stop") or {}
+    try:
+        client.modify_order(leg["order_id"], trigger_price=px)
+    except Exception as exc:
+        raise TipsError(409, f"Kite refused the change: {str(exc)[:160]}")
+    _update(leg["row"], trigger=px)
+    leg["trigger"] = px
+    k["stop_px"] = px
+    k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": px, "who": who})
+    _log(k, now, f"Kite: stop moved to {pl.fmt(px)} ({who})")
+
+
+def _resize(client, h: dict, now: datetime) -> list[str]:
+    """After a part of the position is sold (a partial booking): the resting stop and targets never sell more than is
+    still held (their quantity is cut to the open quantity)."""
+    k = kstate(h)
+    out = []
+    q = int(k.get("qty_open") or 0)
+    for leg in ("stop", "t1", "t2"):
+        lg = k["legs"].get(leg) or {}
+        if lg.get("status") in LIVE and q > 0 and int(lg.get("qty") or 0) > q:
+            try:
+                client.modify_order(lg["order_id"], quantity=q)
+                _update(lg["row"], qty=q)
+                lg["qty"] = q
+                out.append(f"{LEG_NAMES[leg].lower()} ×{q}")
+            except Exception as exc:
+                out.append(f"{LEG_NAMES[leg].lower()} resize refused: {str(exc)[:60]}")
+    return out
 
 
 def cancel(config, client, hid: int, leg: str, now: Optional[datetime] = None) -> dict:
@@ -640,14 +914,18 @@ def cancel(config, client, hid: int, leg: str, now: Optional[datetime] = None) -
     with _LOCK:
         h = bk._get(hid)
         k = _ready(config, client, h, "cancel", now)
+        if leg == "entry" and k["state"] in ("armed_watch", "armed_wait"):
+            disarm(config, client, h, now, "you cancelled it", notify=False)
+            return h
         lg = k["legs"].get(leg) or {}
         if lg.get("status") not in LIVE:
             raise TipsError(409, f"no {LEG_NAMES[leg].lower()} working on Kite")
         _cancel_leg(client, h, leg, now)
         if leg == "entry":
-            k.update(state="none", reason="entry cancelled", auto_rest=False)
+            k.update(state="none", reason="entry cancelled", auto_rest=False, arm=None)
         _log(k, now, f"Kite: {LEG_NAMES[leg].lower()} cancelled (your click)")
         save_kite(h)
+        after_event(config, h, now)
         return h
 
 
@@ -666,17 +944,19 @@ def _cancel_leg(client, h: dict, leg: str, now: datetime, conn=None) -> bool:
     return True
 
 
-def exit_now(config, client, hid: int, now: Optional[datetime] = None, by: str = "click", notify: bool = True) -> dict:
+def exit_now(config, client, hid: int, now: Optional[datetime] = None, by: str = "click", notify: bool = True, why: str = "") -> dict:
     """Cancel the working stop / targets (or the unfilled entry), then a MARKET exit of the open quantity."""
     now = now or _now()
     with _LOCK:
         h = bk._get(hid)
         k = _ready(config, client, h, "exit", now)
-        if k["state"] == "armed":
-            _cancel_leg(client, h, "entry", now)
-            k.update(state="none", reason="entry cancelled", auto_rest=False)
+        if k["state"] in ARMED:
+            if k["state"] == "armed":
+                _cancel_leg(client, h, "entry", now)
+            k.update(state="none", reason="entry cancelled", auto_rest=False, arm=None)
             _log(k, now, "Kite: the unfilled entry cancelled (exit)")
             save_kite(h)
+            after_event(config, h, now, notify)
             return h
         if k["state"] != "entered" or k["qty_open"] <= 0:
             raise TipsError(409, f"#{hid} has nothing open on Kite")
@@ -687,11 +967,12 @@ def exit_now(config, client, hid: int, now: Optional[datetime] = None, by: str =
                 _cancel_leg(client, h, leg, now)
             r = _place(config, client, h, "exit", exit_side(h), k["qty_open"], "MARKET", now, by)
             k["auto_rest"] = False
-            _log(k, now, f"Kite: exit {r['side']} {r['qty']} MARKET ({'your click' if by == 'click' else by}) · stop and targets cancelled")
+            _log(k, now, f"Kite: exit {r['side']} {r['qty']} MARKET ({'your click' if by == 'click' else by}) · stop and targets cancelled" + (f" · {why}" if why else ""))
         finally:
             save_kite(h)
         if notify:
-            _push(config, f"tips|kite|{hid}|exit|{now.isoformat(timespec='seconds')}", f"{pfx(h)}#{hid} exit {exit_side(h)} {k['qty_open']} MARKET · stop and targets cancelled")
+            _push(config, f"tips|kite|{hid}|exit|{now.isoformat(timespec='seconds')}", f"{pfx(h)}#{hid} exit {exit_side(h)} {k['qty_open']} MARKET · stop and targets cancelled" + (f" · {why}" if why else ""))
+        after_event(config, h, now, notify)
         return h
 
 
@@ -705,7 +986,7 @@ def set_kill(config, client, on: bool, now: Optional[datetime] = None) -> dict:
     if not on:
         return out
     with _LOCK:
-        hids = sorted({r["hint_id"] for r in live_rows()} | {h["id"] for h in bk.rows("json_extract(kite, '$.state') IN ('armed', 'entered')")})
+        hids = sorted({r["hint_id"] for r in live_rows()} | {h["id"] for h in bk.rows("json_extract(kite, '$.state') IN ('armed', 'armed_watch', 'armed_wait', 'entered')")})
         for hid in hids:
             h = bk.load(hid)
             if not h:
@@ -716,8 +997,8 @@ def set_kill(config, client, on: bool, now: Optional[datetime] = None) -> dict:
                 for leg in ("entry", "stop", "t1", "t2"):
                     if cl is not None and _cancel_leg(cl, h, leg, now):
                         out["cancelled"] += 1
-                if k["state"] == "armed":
-                    k.update(state="none", reason="kill switch", auto_rest=False)
+                if k["state"] in ARMED:
+                    k.update(state="none", reason="kill switch", auto_rest=False, arm=None)
                 if k["state"] == "entered" and k["qty_open"] > 0 and (k["legs"].get("exit") or {}).get("status") not in LIVE and cl is not None:
                     _place(config, cl, h, "exit", exit_side(h), k["qty_open"], "MARKET", now, "click")
                     out["exits"] += 1
@@ -794,6 +1075,7 @@ def sync(config, client, now: Optional[datetime] = None, notify: bool = True) ->
                 logger.exception("Tips Kite sync #%s failed", hid)
                 lines = []
             save_kite(h)
+            after_event(config, h, now, notify)
             for i, ln in enumerate(lines):
                 out["lines"].append(ln)
                 if notify:
@@ -839,21 +1121,21 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
         lg.update(status=r["status"], filled_px=r.get("filled_px"), filled_qty=r.get("filled_qty"), note=r.get("note"))
         if r["status"] == "rejected":
             if leg == "entry":
-                k.update(state="none", reason="entry rejected", auto_rest=False)
+                k.update(state="none", reason="entry rejected", auto_rest=False, arm=None)
             msg = r.get("note") or "no reason given"
             _log(k, now, f"Kite: {LEG_NAMES[leg].lower()} REJECTED · {msg}")
             lines.append(f"{pfx(h, '⚠️')}#{hid} {LEG_NAMES[leg].lower()} REJECTED · {msg}")
             continue
         if r["status"] == "cancelled":
             if leg == "entry" and k["state"] == "armed":
-                k.update(state="none", reason="entry cancelled", auto_rest=False)
+                k.update(state="none", reason="entry cancelled", auto_rest=False, arm=None)
             _log(k, now, f"Kite: {LEG_NAMES[leg].lower()} cancelled")
             continue
         if r["status"] != "complete":
             continue
         fpx, fq = r.get("filled_px"), int(r.get("filled_qty") or r["qty"])
         if leg == "entry":
-            k.update(state="entered", entry_px=fpx, qty_open=fq, qty=fq)
+            k.update(state="entered", entry_px=fpx, qty_open=fq, qty=fq, entry_at=now.isoformat(timespec="seconds"))
             text = f"{P}#{hid} entry filled {pl.fmt(fpx)} ×{fq}"
             if k.get("auto_rest") and not killed():
                 bits = []
@@ -884,6 +1166,7 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                     _update(st["row"], trigger=k["entry_px"], qty=k["qty_open"])
                     st.update(trigger=k["entry_px"], qty=k["qty_open"])
                     k["stop_px"] = k["entry_px"]
+                    k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": k["entry_px"], "who": "T1 filled"})
                     text += f" · stop → cost {pl.fmt(k['entry_px'])}"
                 except Exception as exc:
                     text += f" · stop to cost refused: {str(exc)[:80]}"
@@ -892,6 +1175,17 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                 text += f" · T2 {pl.fmt(t2['price'])} ×{t2['qty']} placed"
         else:
             text += f" · {rupees(pnl, sign=True)}"
+            if k["qty_open"] > 0 and leg == "exit":                 # a part booked: the rest's orders never oversell
+                rs2 = _resize(client, h, now)
+                if rs2:
+                    text += f" · {k['qty_open']} left · " + ", ".join(rs2)
+                if k.get("cost_after_part") and k.get("entry_px") is not None and (k["legs"].get("stop") or {}).get("status") in LIVE:
+                    try:
+                        _move_stop(client, h, float(k["entry_px"]), now, "the channel: TSL at cost")
+                        text += f" · stop → cost {pl.fmt(k['entry_px'])}"
+                    except TipsError as exc:
+                        text += f" · stop to cost refused: {str(exc)[:60]}"
+                    k["cost_after_part"] = False
         if k["qty_open"] <= 0:
             left = []
             for other in ("stop", "t1", "t2"):
@@ -903,7 +1197,7 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                         pass
             if left:
                 text += " · " + ("targets cancelled" if leg == "stop" else "stop cancelled" if left == ["stop"] else "leftovers cancelled")
-            k.update(state="closed", reason={"stop": "stop", "t1": "target 1", "t2": "target 2", "exit": "your exit"}[leg], auto_rest=False)
+            k.update(state="closed", reason=k.get("exit_why") or {"stop": "stop", "t1": "target 1", "t2": "target 2", "exit": "your exit"}[leg], auto_rest=False)
             text += f" · closed {rupees(k['realised'], sign=True)} total" if leg != "stop" else ""
         _log(k, now, text.replace(f"{P}#{hid} ", "Kite: "))
         lines.append(text)
@@ -934,14 +1228,7 @@ class Syncer:
         while not self._stop.is_set():
             wait = SYNC_IDLE_S
             try:
-                now = _now()
-                live = live_rows()
-                if any(is_dry_row(r) for r in live):          # the dry run fills from quotes at any hour
-                    self.last = sync(self.state.config, sim(), now)
-                    wait = SYNC_FAST_S
-                if any(not is_dry_row(r) for r in live) and (market_open("NFO", now) or market_open("MCX", now)):
-                    self.last = sync(self.state.config, self.state.client, now)
-                    wait = SYNC_FAST_S
+                wait = self.pass_once()
             except Exception:
                 logger.exception("Tips Kite sync failed")
             try:
@@ -950,6 +1237,29 @@ class Syncer:
             except Exception:
                 logger.exception("Tips Kite public IP lookup failed")
             self._stop.wait(wait)
+
+    def pass_once(self, now: Optional[datetime] = None) -> int:
+        """One pass: the order books synced, the housekeeping (index watch, activation, window end, time stop), auto
+        arming. Returns the seconds to the next pass (10 while anything is working or armed, else 30)."""
+        from backend.tips import kite_auto as ka
+        now = now or _now()
+        wait = SYNC_IDLE_S
+        cfg, real = self.state.config, self.state.client
+        live = live_rows()
+        if any(is_dry_row(r) for r in live):          # the dry run fills from quotes at any hour
+            self.last = sync(cfg, sim(), now)
+            wait = SYNC_FAST_S
+        mk = market_open("NFO", now) or market_open("MCX", now)
+        if any(not is_dry_row(r) for r in live) and mk:
+            self.last = sync(cfg, real, now)
+            wait = SYNC_FAST_S
+        if ka.anything_armed():
+            ka.housekeep(cfg, real, now)
+            wait = SYNC_FAST_S
+        if mode(cfg) == "auto" and mk:
+            if ka.auto_scan(cfg, real, now):
+                wait = SYNC_FAST_S
+        return wait
 
 
 # --- the page's views ----------------------------------------------------------------------------------------------------
@@ -1000,9 +1310,33 @@ def legs_view(config, h: dict) -> list[dict]:
     e_detail = f"{lots} lot{'s' if lots != 1 else ''} · {config.tips.kite_product}" + (f" · ≈ {rupees(prem)}" if prem is not None and e_lg.get("status") != "complete" else "")
     if e_lg.get("status") == "complete" and e_lg.get("filled_px") is not None:
         e_detail = f"{lots} lot{'s' if lots != 1 else ''} · {config.tips.kite_product} · {rupees(e_lg['filled_px'] * (e_lg.get('filled_qty') or qty))}"
-    leg("entry", entry_side(h), qty, "MARKET", None, None, e_detail, {"premium": prem})
+    arm = k.get("arm") or {}
+    ep = arm if arm else ({"kind": None} if e_lg else entry_plan(h, bk.last_ltp(h)))   # a placed entry shows its own order
+    extra = {"premium": prem, "arm_kind": ep.get("kind"), "what": ep.get("what") or "", "refuse": ep.get("refuse")}
+    if k["state"] == "armed_watch":
+        now_i = index_ltp(h)
+        extra.update(status_override="armed", status_text_override="armed", type_text_override=ep.get("text"),
+                     index_now=now_i)
+        e_detail = f"{ep.get('text')}{f' · now {pl.fmt(now_i)}' if now_i is not None else ''} · armed · the app watches {ep.get('index') or 'the index'} · {e_detail}"
+    elif k["state"] == "armed_wait":
+        extra.update(status_override="armed", status_text_override="armed · waiting for activation", type_text_override=ep.get("text"))
+        e_detail = f"armed · waiting for the channel's activation · then {ep.get('text')} · {e_detail}"
+    elif ep.get("kind") in ("slm", "limit", "watch") or (k["state"] == "none" and ep.get("kind") == "market"):
+        extra["type_text_override"] = ep.get("text")
+        if e_lg.get("status") in LIVE and ep.get("kind") in ("slm", "limit"):
+            extra["status_text_override"] = "resting on Kite" if not k.get("dry") else "resting (dry)"
+    leg("entry", entry_side(h), qty, ep.get("order_type") or "MARKET", ep.get("price"), ep.get("trigger"), e_detail, extra)
+    d0 = out[-1]
+    if d0.get("type_text_override"):
+        d0["type_text"] = d0["type_text_override"]
+    if d0.get("status_override") and d0["status"] == "none":
+        d0["status"] = d0["status_override"]
+    if d0.get("status_text_override"):
+        d0["status_text"] = d0["status_text_override"]
     if premium_stop(h) is None:
-        leg("stop", exit_side(h), open_q, "SL-M", None, None, "spot stop: watched by the app, exit by hand", {"placeable": False})
+        none = ((plan.get("stop") or {}).get("kind") or "none") == "none"
+        leg("stop", exit_side(h), open_q, "SL-M", None, None, "no stop in the post: no plan, nothing goes to Kite" if none else "spot stop: watched by the app, exit by hand",
+            {"placeable": False})
     else:
         loss = round((stop_px - ref) * open_q * sign, 2) if ref is not None and stop_px is not None else None
         moved = k.get("entry_px") is not None and stop_px == k.get("entry_px")
@@ -1018,14 +1352,58 @@ def legs_view(config, h: dict) -> list[dict]:
         leg("t2", exit_side(h), q2, "LIMIT", float(tg[1]), None,
             "rest · placed after T1 · the stop moves to cost" if t1s != "complete" else "rest · T1 filled · the stop is at cost",
             {"after_t1": True})
+    now_texts(h, out, bk.last_ltp(h))
     return out
+
+
+def _pct(a: float, b: float) -> str:
+    """'+17 %' / '−34 %': how far `a` is from `b`, in % of `b`."""
+    v = (float(a) - float(b)) / float(b) * 100 if b else 0.0
+    return f"{'+' if v >= 0 else '−'}{abs(v):.1f} %".replace(".0 %", " %")
+
+
+def now_texts(h: dict, legs: list[dict], ltp: Optional[float]) -> None:
+    """The live price on every leg (the 5 s Tips quote poll; no Kite call): where the option trades against the plan.
+    Entry "now 196.1 · in the zone 191–198" / "now 337 · level 370 is 9.8 % away" / "now 460 · at market"; stop "now
+    196.1 · stop 130 is −34 %"; targets "now 196.1 · target 230 is +17 %"."""
+    if ltp is None:
+        return
+    now = f"now {pl.fmt(ltp)}"
+    e = entry_of(h)
+    m = e.get("mode") or "market"
+    for d in legs:
+        if d["leg"] == "entry":
+            if d.get("status") == "complete":
+                fpx = kstate(h).get("entry_px")
+                d["now_text"] = f"{now} · {_pct(ltp, fpx)} from the fill" if fpx else now
+                continue
+            if pl.is_spot(e):
+                d["now_text"] = f"{now} · {e.get('index') or 'the index'} level {pl.fmt(e.get('lo'))}"
+            elif m == "zone" or m == "at":
+                lo, hi = float(e["lo"]), float(e.get("hi") or e["lo"])
+                zone = f"{pl.fmt(lo)}–{pl.fmt(hi)}" if m == "zone" else pl.fmt(lo)
+                if lo <= ltp <= hi:
+                    d["now_text"] = f"{now} · in the zone {zone}" if m == "zone" else f"{now} · at {zone}"
+                else:
+                    edge = hi if ltp > hi else lo
+                    d["now_text"] = f"{now} · {'zone ' + zone if m == 'zone' else 'level ' + zone} is {abs((ltp - edge) / ltp * 100):.1f} % away"
+            elif m in ("above", "below"):
+                lv = float(e["lo"])
+                past = (ltp >= lv) if m == "above" else (ltp <= lv)
+                d["now_text"] = f"{now} · {'past the level ' + pl.fmt(lv) if past else f'level {pl.fmt(lv)} is {abs((lv - ltp) / ltp * 100):.1f} % away'}"
+            else:
+                d["now_text"] = f"{now} · at market"
+        elif d["leg"] == "stop" and d.get("trigger") is not None:
+            d["now_text"] = f"{now} · stop {pl.fmt(d['trigger'])} is {_pct(d['trigger'], ltp)}"
+        elif d["leg"] in ("t1", "t2") and d.get("price") is not None:
+            d["now_text"] = f"{now} · target {pl.fmt(d['price'])} is {_pct(d['price'], ltp)}"
 
 
 def kite_actions(config, h: dict) -> list[str]:
     k = kstate(h)
     if mode(config) == "off":
-        return ["exit"] if k["state"] in ("armed", "entered") else []
-    if k["state"] in ("armed", "entered") and bool(k.get("dry")) != (mode(config) == "dry"):
+        return ["exit"] if k["state"] in WORKING else []
+    if k["state"] in WORKING and bool(k.get("dry")) != (mode(config) == "dry"):
         return [a for a in _actions(config, h, k) if a == "exit" or a.startswith("cancel:")]     # getting out only
     return _actions(config, h, k)
 
@@ -1041,6 +1419,10 @@ def _actions(config, h: dict, k: dict) -> list[str]:
         acts += ["all", "entry"]
     if k["state"] == "armed":
         acts += ["cancel:entry", "exit"]
+    elif k["state"] == "armed_watch":
+        acts += ["cancel:entry"]
+    elif k["state"] == "armed_wait":
+        acts += ["send_now", "cancel:entry"]
     if k["state"] == "entered":
         t1s = (legs.get("t1") or {}).get("status")
         need_stop = not live("stop") and premium_stop(h) is not None
@@ -1071,7 +1453,33 @@ def hint_kite(config, h: dict) -> dict:
             "auto_rest": bool(k.get("auto_rest")), "realised": k.get("realised") or 0.0, "reason": k.get("reason"),
             "legs": legs_view(config, h), "actions": kite_actions(config, h), "log": k.get("log") or [],
             "dry": bool(k.get("dry")) and k["state"] != "none", "sim": routes_dry(config, h),
-            "beyond_t2": max(0, len((h.get("plan") or {}).get("targets") or []) - 2)}
+            "beyond_t2": max(0, len((h.get("plan") or {}).get("targets") or []) - 2),
+            "arm": k.get("arm"), "by": k.get("by"), "check": k.get("check"), "ai": k.get("ai"), "auto": auto_tag(config, h),
+            "needs_activation": needs_activation(h) and k["state"] in ("none", "armed_wait"),
+            "entry_what": (k.get("arm") or entry_plan(h, bk.last_ltp(h))).get("what") or "",
+            "level_kind": entry_of(h).get("level_kind") if entry_of(h).get("mode") not in (None, "market") else None,
+            "time_stop": (h.get("plan") or {}).get("time_stop"), "hold_to_expiry": bool((h.get("plan") or {}).get("hold_to_expiry"))}
+
+
+def auto_tag(config, h: dict) -> Optional[dict]:
+    """The card's auto tag (mode auto only): {state armed|waiting|entered|closed|not_armed|waiting_turn, text}."""
+    if mode(config) != "auto":
+        return None
+    k = kstate(h)
+    a = k.get("auto") or {}
+    st = k["state"]
+    if st == "armed_wait":
+        return {"state": "waiting", "text": "auto · waiting for activation"}
+    if st in ("armed", "armed_watch"):
+        return {"state": "armed", "text": "auto · armed"}
+    if st == "entered":
+        return {"state": "entered", "text": "auto · in the trade" if k.get("by") == "auto" else "your click · auto follows only its own"}
+    if st == "closed" and k.get("by") == "auto":
+        why = f" · {k['reason']}" if k.get("reason") else ""
+        return {"state": "closed", "text": f"auto · closed{why}"}
+    if a.get("why"):
+        return {"state": "not_armed", "text": f"auto · not armed: {a['why']}"}
+    return None
 
 
 def _order_view(r: dict, names: dict, entry_qty: dict) -> dict:
@@ -1110,8 +1518,29 @@ def today(config, client=None, now: Optional[datetime] = None) -> dict:
                net=used, last_sync=last, last_sync_label=t12(last, True) if last else None, open=len(live),
                warning=DRY_WARNING if dry else WARNING, at=now.isoformat(timespec="seconds"), dry=dry,
                market_open=market_open("NFO", now), test=last_test(), public_ip=cached_ip(),
-               dry_rows=sum(1 for r in rows if is_dry_row(r) and r["status"] != "voided"))
+               dry_rows=sum(1 for r in rows if is_dry_row(r) and r["status"] != "voided"), day_check=_day_check())
+    if mode(config) == "auto":
+        out["guards"] = out["guards"] + auto_guards(config, now)
     return out
+
+
+def _day_check() -> Optional[dict]:
+    try:
+        from backend.tips import kite_check as kc
+        return kc.last_day()
+    except Exception:
+        return None
+
+
+def auto_guards(config, now: datetime) -> list[dict]:
+    """The Guards panel's auto rows: max open at once, the activation rule."""
+    from backend.tips import kite_auto as ka
+    mx = int(getattr(config.tips, "kite_auto_max_open", 1))
+    n = ka.open_count()
+    bp = getattr(config.tips, "kite_auto_book_part", "channel")
+    return [_g(n < mx, f"auto: open at once {n} of {mx} · a second hint waits", "auto_open"),
+            _g(True, "auto: a level is the trigger · wait words alone wait for the channel's activation", "auto_act"),
+            _g(True, "auto: never averages · add-ons ignored · book part with one lot: " + ("booked" if bp == "channel" else "held, stop to cost"), "auto_add")]
 
 
 def view_rows(rows: list[dict], dry: bool) -> list[dict]:
@@ -1128,11 +1557,14 @@ def lite(config, now: Optional[datetime] = None, rows: Optional[list] = None, us
     rows = rows if rows is not None else view_rows(rows_today(day), dry)
     used = used if used is not None else realised_today(day, dry)
     c = config.tips
-    n = sum(1 for r in rows if r["leg"] == "entry" and r["status"] not in ("rejected", "failed", "voided"))
+    n = sum(1 for r in rows if counts_entry(r))
     return {"mode": mode(config), "kill": killed(), "open": sum(1 for r in rows if r["status"] in LIVE),
             "caps": {"entries": n, "max_entries": int(c.kite_max_entries_day), "max_lots": int(c.kite_max_lots),
                      "loss_cap": float(c.kite_loss_cap), "used_loss": round(min(used, 0.0), 2)},
-            "window": window_text(config), "product": c.kite_product}
+            "window": window_text(config), "product": c.kite_product,
+            "auto": {"max_open": int(getattr(c, "kite_auto_max_open", 1)), "book_part": getattr(c, "kite_auto_book_part", "channel"),
+                     "line": "auto: entries armed on the level / the channel's activation · SL + T1 on the fill · the channel's exits followed · you are told"}
+            if mode(config) == "auto" else None}
 
 
 def health_row(config) -> dict:
@@ -1142,9 +1574,16 @@ def health_row(config) -> dict:
         last = get_setting(conn, SYNC_KEY) or None
     m = mode(config)
     k = killed()
-    return {"key": "tips_kite", "name": "Tips → Kite orders", "ok": True, "warn": bool(k and m != "off"),
-            "state": f"{m}{' · kill switch ON' if k else ''} · {n} open order{'s' if n != 1 else ''}",
+    d = _day_check()
+    with get_db() as conn:
+        reds = conn.execute("SELECT COALESCE(SUM(json_extract(kite, '$.check.red')), 0) FROM tips_hints WHERE json_extract(kite, '$.day') = ?",
+                            (_now().date().isoformat(),)).fetchone()[0] or 0
+    chk = f" · last check {t12(d['at'])} · {d.get('red', 0)} red" if d else (f" · {reds} red" if reds else "")
+    fresh = bool(d and d.get("day") == _now().date().isoformat())
+    return {"key": "tips_kite", "name": "Tips → Kite orders", "ok": True, "warn": bool(k and m != "off") or bool(reds) or bool(fresh and d.get("red")),
+            "state": f"{m}{' · kill switch ON' if k else ''} · {n} open order{'s' if n != 1 else ''}{chk}",
             "detail": ("dry run: a simulator fills from live quotes · nothing reaches Kite" if m == "dry" else
+                       "auto: entries armed on the level / the channel's activation · the channel's exits followed" if m == "auto" else
                        "by your click, each through a confirm · synced every 10 s while an order is working") + (f" · last sync {t12(last, True)}" if last else ""),
             "at": last}
 

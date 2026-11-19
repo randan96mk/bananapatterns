@@ -72,6 +72,11 @@ def signals(config, kite: bool) -> dict:
         out["ai"] = _pack(_ai(config))
     except Exception:
         out["ai"] = _pack([])
+    try:                                                   # ⚡ Tips → Kite: a red order check names the hand action
+        from backend.tips import kite_check as kc
+        out["tips"] = _pack(kc.attention_items())
+    except Exception:
+        out["tips"] = _pack([])
     return out
 
 
