@@ -329,7 +329,8 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
     h.update(events=[], channel=channel, post_id=post_id, posted_at=posted.isoformat(timespec="seconds"), raw=text, source=source)
     how = "decoded by code" if all(v == "code" for v in (d.get("decoded") or {}).values()) else "decoded by code + AI"
     exp = {"post": "expiry from the post", "listed": "expiry from the nearest listed", "computed": "expiry computed"}.get(h.get("expiry_src"), "")
-    bk.event(h, posted, "💡 hint posted · " + how + (f" · {exp}" if exp else "") + ("" if h["plan"]["ok"] else f" · no plan: {h['plan']['why']}"), "code")
+    bk.event(h, posted, "💡 hint posted · " + how + (f" · {exp}" if exp else "") + ("" if h["plan"]["ok"] else f" · no plan: {h['plan']['why']}")
+             + (f" · index {h['symbol']} read from the strike level (the post named none)" if (d.get("decoded") or {}).get("symbol") == "strike" else ""), "code")
     for k in ("taken", "tracked", "open_ended"):
         h[k] = bool(h.get(k))
     bk.save(h, conn)

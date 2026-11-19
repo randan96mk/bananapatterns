@@ -27,7 +27,7 @@ def test_fixture_calls_decode(p):
         assert d["expiry"] == e["expiry"] and d["expiry_src"] == "post"
     if "instrument" in e:
         assert d["instrument"] == e["instrument"]
-    assert all(v == "code" for v in d["decoded"].values())
+    assert all(v in ("code", "strike") for v in d["decoded"].values())        # "strike": the index read from the level
 
 
 @pytest.mark.parametrize("text,sym", [("Buy BNF 51500 PE above 355", "BANKNIFTY"), ("buy bank nifty 50300 PE at 10", "BANKNIFTY"),
@@ -74,7 +74,7 @@ def test_model_fill_only_from_the_text():
     t = "Buy 22950 ce at 90-93\nTgt 120/130"
     d = dc.decode(t, "2026-11-17", fill=lambda text, missing: {"stop": {"kind": "premium", "value": 70}, "symbol": "NIFTY"})
     assert d["stop"]["kind"] == "none" and "stop" not in d["decoded"]          # 70 is not in the text: dropped
-    assert d["symbol"] is None                                                  # "nifty" is not in the text either
+    assert d["symbol"] == "NIFTY" and d["decoded"]["symbol"] == "strike"      # not from the model: read from the strike level
     t2 = "Buy nifty 22950 ce at 90-93\nstoploss below premium 70 please\nTgt 120"
     d2 = dc.decode(t2.replace("stoploss", "risk"), "2026-11-17", fill=lambda text, missing: {"stop": {"kind": "premium", "value": 70}})
     assert d2["stop"] == {"kind": "premium", "value": 70} and d2["decoded"]["stop"] == "ai"
@@ -83,3 +83,17 @@ def test_model_fill_only_from_the_text():
 def test_title():
     d = dc.decode("Buy bank nifty 50300 PE near 250-270 when comes\nSl 190\nTgt 320", "2026-11-17")
     assert dc.title(d) == "BUY BANKNIFTY 50300 PE"
+
+
+def test_an_index_option_with_no_name_is_read_from_the_strike_level():
+    from datetime import datetime
+    from backend.config import IST
+    from backend.tips import decode as dc
+    now = datetime.now(IST)
+    d = dc.decode("buy 82400 pe near 680-700 cmp\n2 lots", now)
+    assert d["symbol"] == "SENSEX" and d["decoded"]["symbol"] == "strike" and d["strike"] == 82400 and d["opt_type"] == "PE"
+    assert dc.decode("buy 25900 ce at 100 sl 80", now)["symbol"] == "NIFTY"
+    assert dc.decode("sell 58200 pe at 140", now)["symbol"] == "BANKNIFTY"
+    assert dc.decode("buy 40000 ce at 10", now).get("symbol") is None            # between the bands: never guessed
+    d = dc.decode("BUY SENSEX 82000 CE NEAR 460", now)
+    assert d["symbol"] == "SENSEX" and d["decoded"]["symbol"] == "code"         # a named index stays "code"

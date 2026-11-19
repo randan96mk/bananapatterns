@@ -49,6 +49,18 @@ ENTRY_RE = re.compile(r"\b(above|abv|below|near|around|at|cmp|from)\b\s*(?:rs\.?
 STRIKE_RE = re.compile(r"(?<![\d.])(\d{3,6}(?:\.\d+)?)\s*(?:([a-z]+)\s+)?(ce|pe|call|put)\b|(?<![\d.])(\d{3,6})(c|p)\b", re.I)
 
 
+STRIKE_BANDS = (("NIFTY", 18000, 32000), ("BANKNIFTY", 44000, 68000), ("SENSEX", 70000, 98000))   # bands, Nov 2026 levels
+
+
+def index_from_strike(strike: float) -> Optional[str]:
+    """The index an option strike belongs to when the post names none (NIFTY ~25k, BANKNIFTY ~55-62k, SENSEX ~80k+).
+    FINNIFTY / MIDCPNIFTY / BANKEX overlap those bands and are never inferred."""
+    for name, lo, hi in STRIKE_BANDS:
+        if lo <= float(strike) <= hi:
+            return name
+    return None
+
+
 def symbol_of(text: str) -> Optional[str]:
     """The first alias found (bank nifty before nifty), else None."""
     low = text.lower()
@@ -232,7 +244,11 @@ def decode(text: str, posted_at, fill: Optional[Callable[[str, list], dict]] = N
         bs = re.search(r"\b(buy|sell)\s+([A-Za-z][A-Za-z&\-]{2,19})\b", text, re.I)
         if bs and bs.group(2).lower() not in STOP_WORDS:
             sym = bs.group(2).upper()
-    if sym:
+    if sym is None and strike is not None and opt:
+        sym = index_from_strike(strike)                   # "buy 82400 pe near 680" names no index: the level says SENSEX
+        if sym:
+            out["symbol"], decoded["symbol"] = sym, "strike"
+    if sym and "symbol" not in decoded:
         out["symbol"], decoded["symbol"] = sym, "code"
     if strike is not None:
         out["strike"], out["opt_type"] = strike, opt

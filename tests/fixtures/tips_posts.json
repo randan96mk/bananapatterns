@@ -352,7 +352,7 @@
   "has_media": false,
   "kind": "hint",
   "expect": {
-   "symbol": null,
+   "symbol": "NIFTY",
    "side": "BUY",
    "strike": 22950,
    "opt_type": "CE",

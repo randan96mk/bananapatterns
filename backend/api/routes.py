@@ -2521,6 +2521,10 @@ class TipsTrail(BaseModel):
     to: float
 
 
+class TipsSymbol(BaseModel):
+    symbol: str
+
+
 class TipsLogin(BaseModel):
     phone: str
 
@@ -2595,6 +2599,13 @@ def tips_skip(hid: int):
 def tips_exit(hid: int):
     from backend.tips import book as tb
     return _tips_act(tb.exit_now, hid, who="page")
+
+
+@router.post("/tips/hints/{hid}/symbol")
+def tips_symbol(hid: int, req: TipsSymbol):
+    """You name the index of a hint whose post did not: the contract is resolved and tracking starts (before a take)."""
+    from backend.tips import book as tb
+    return _tips_act(tb.set_symbol, hid, req.symbol, who="page")
 
 
 @router.post("/tips/hints/{hid}/trail")

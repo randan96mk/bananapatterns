@@ -141,3 +141,17 @@ def test_owner_exit_skip_and_cancel(pushed):
     bk.take(c, hid3, now=at("10:11"), ltp=300.0)                                  # armed: the zone has not come
     h3 = bk.exit_now(c, hid3, now=at("10:12"))
     assert h3["pos"]["state"] == "closed" and h3["pos"]["entry_px"] is None
+
+
+def test_the_owner_sets_the_index_of_a_nameless_post(monkeypatch):
+    from backend.tips import reader as rd
+    c, w = cfg(), world()
+    r = rd.ingest(c, "aakankshatrading", 9901, at("09:32"), "buy 82400 pe near 680-700 cmp\n2 lots", False, push=False, model=False, client=w)
+    h = bk.load(r["hint_id"])
+    assert h["symbol"] == "SENSEX" and h["decoded"]["symbol"] == "strike"
+    assert any("read from the strike level" in e["text"] for e in h["events"])
+    h = bk.set_symbol(c, h["id"], "bankex")
+    assert h["symbol"] == "BANKEX" and h["decoded"]["symbol"] == "owner" and h["exchange"] == "BFO"
+    assert any("you set the symbol: SENSEX → BANKEX" in e["text"] for e in h["events"])
+    with pytest.raises(bk.TipsError):
+        bk.set_symbol(c, h["id"], "GOLD")
