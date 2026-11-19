@@ -42,7 +42,8 @@ STOP_GRACE_S = 60
 FILL_SLACK = 0.02
 SYSTEM = ("You check a trading app's broker orders against a Telegram channel's call. Write exactly 3 short lines, plain "
           "text, no markdown, at most 25 words each: 1) what the app did and why; 2) does it match what the channel meant; "
-          "3) what to look at now. Use only figures that appear in the input. Never advise buying more.")
+          "3) what to look at now. Use only figures that appear in the input. Never advise buying more. Plain sentences only: "
+          "no JSON, no braces, no bullet points.")
 
 
 def _now() -> datetime:
@@ -232,7 +233,7 @@ def parse_lines(raw: str, src: str) -> tuple[list[str], int]:
     out, dropped = [], 0
     for ln in (raw or "").split("\n"):
         t = re.sub(r"^\s*(?:[-*•]|\d[.)]|\[?AI\]?:?)\s*", "", ln).strip().strip("*").strip()
-        if not t:
+        if not t or not re.search(r"[A-Za-z]{3}", t):     # "{}", "[]", a bare number: not a sentence (the model's empty JSON showed as "{}")
             continue
         if _figures_ok(t, allowed):
             out.append(t[:240])
@@ -254,8 +255,8 @@ def ai_read(config, hid: int, generate: Optional[Callable[[str, str], str]] = No
     tokens, model = None, getattr(config.ai, "day_model", None)
     if generate is None:
         from backend.ai import client
-        r = client.generate(config.ai.day_model, src, system=SYSTEM, timeout=float(config.ai.timeout_s), keep_alive=config.ai.keep_alive,
-                            options={"temperature": 0, "num_predict": 160})
+        r = client.generate(config.ai.day_model, src + "\n\nWrite the 3 lines now, plain text:", system=SYSTEM, json_mode=False,
+                            timeout=float(config.ai.timeout_s), keep_alive=config.ai.keep_alive, options={"temperature": 0, "num_predict": 160})
         raw, tokens, model = r.get("text") or "", r.get("tokens"), r.get("model") or model
     else:
         raw = generate(SYSTEM, src)
@@ -264,13 +265,13 @@ def ai_read(config, hid: int, generate: Optional[Callable[[str, str], str]] = No
     with ko._LOCK:
         h = bk.load(hid) or h
         k = ko.kstate(h)
-        k["ai"] = {"state": "done", "lines": lines, "dropped": dropped, "at": now.isoformat(timespec="seconds"), "model": model}
+        k["ai"] = {"state": "done" if lines else "empty", "lines": lines, "dropped": dropped, "at": now.isoformat(timespec="seconds"), "model": model}
         ko.save_kite(h)
     with get_db() as conn:
         conn.execute("INSERT INTO ai_notes (created, day, kind, symbol, book, severity, title, text, data, model, prompt_version, ms) "
                      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                      (now_ist(), now.date().isoformat(), AI_KIND, h.get("tradingsymbol") or h.get("symbol"), "tips", "info",
-                      f"Kite check #{hid}", "\n".join(lines), json.dumps({"hint_id": hid, "raw": raw[:2000], "dropped": dropped, "input": src[:4000]}),
+                      f"Kite check #{hid}", "\n".join(lines) or "[AI] nothing usable from the model (the code check stands)", json.dumps({"hint_id": hid, "raw": raw[:2000], "dropped": dropped, "input": src[:4000]}),
                       model, PROMPT_V, None))
     return {"lines": lines, "dropped": dropped, "tokens": tokens, "note": f"tips kite #{hid}"}
 

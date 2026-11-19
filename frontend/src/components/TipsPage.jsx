@@ -295,7 +295,7 @@ function KiteLegs({ h, kinfo, onDone }) {
 function KiteCheck({ k }) {
   const items = arr(k?.check?.items);
   const ai = k?.ai || null;
-  const lines = arr(ai?.lines);
+  const lines = arr(ai?.lines).filter((x) => typeof x === 'string' && /[A-Za-z]{3}/.test(x));
   if (!items.length && !lines.length && ai?.state !== 'pending' && !(k?.check && k.state && k.state !== 'none')) return null;
   return <div className="tp-kcheck">
     {k?.check && !items.length && <div className="ck ok"><span className="gi">✓</span><span>order check · all clear{k.check.at ? ` · ${when(k.check.at)}` : ''}</span></div>}
@@ -303,6 +303,7 @@ function KiteCheck({ k }) {
       <span>{x.text}{x.hand ? <b> · {x.hand}</b> : ''}</span></div>)}
     {lines.map((x, i) => <div key={`a${i}`} className="ck ai"><AiTag title="the AI read of these orders · every figure checked against the post, the plan and the order rows" /><span>{x}</span></div>)}
     {ai?.state === 'pending' && <div className="ck ai dim"><AiTag title="the AI read waits for the local model" /><span>AI read pending</span></div>}
+    {ai?.state === 'empty' && <div className="ck ai dim"><AiTag title="the model answered with nothing usable; the code check above still stands" /><span>AI read: nothing usable from the model</span></div>}
   </div>;
 }
 
