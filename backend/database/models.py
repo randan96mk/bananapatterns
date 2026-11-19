@@ -733,6 +733,9 @@ def _migrate_ai_notes(conn) -> None:
     _add_column(conn, "ai_notes", "source_key", "TEXT")
     _add_column(conn, "tips_posts", "reply_to", "INTEGER")        # 💡 the post a reply quotes (Telegram's reply-to id)
     _add_column(conn, "tips_hints", "kite", "TEXT")               # ⚡ the hint's Kite legs (JSON; Tips → Kite orders)
+    _add_column(conn, "tips_posts", "media_path", "TEXT")         # 📷 the downloaded screenshot (data/tips_media/…; the file goes after 2 days)
+    _add_column(conn, "tips_posts", "ocr", "TEXT")                # 📷 the OCR read (JSON: lines + facts + ms + engine + error; kept forever)
+    _add_column(conn, "tips_hints", "shot", "TEXT")               # 📷 the hint's screenshot facts / mismatch (JSON)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
                  "WHERE source_key IS NOT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_notes_symbol ON ai_notes(symbol, created)")

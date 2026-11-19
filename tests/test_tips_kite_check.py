@@ -48,7 +48,7 @@ def test_a_clean_flow_passes_and_nothing_is_touched_by_the_check(pushed):
     assert not any(p.startswith("⚠️ Kite check") for p in pushed)
 
 
-def test_wrong_qty_strike_and_missing_stop_are_red_with_the_hand_action(pushed):
+def test_wrong_qty_strike_and_missing_stop_are_red_with_the_hand_action(pushed, monkeypatch):
     c, w, s = dry_setup()
     hid = post(c, w, w, 1, "13:52", CALL2)["hint_id"]
     tr.poll(c, w, t19("13:52", 30))
@@ -74,6 +74,7 @@ def test_wrong_qty_strike_and_missing_stop_are_red_with_the_hand_action(pushed):
     att = kc.attention_items(t19("14:03"))
     assert ("warn", "⚡ Kite #1 · no stop resting → place the SL on Kite now") in att
     from backend.engine import attention
+    monkeypatch.setattr(kc, "_now", lambda: t19("14:03"))                  # Home reads "today": the test's day, not the wall clock
     sig = attention.signals(c, True)
     assert any("no stop resting" in x["text"] for x in sig["tips"]["items"])
 

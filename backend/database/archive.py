@@ -1,5 +1,7 @@
 """🧹 Archive and vacuum: old rows of the fast-growing log tables MOVE to data/archive.db (next to the live DB);
-nothing is ever deleted without its copy in the archive first.
+nothing is ever deleted without its copy in the archive first. The one exception (the owner's rule): the Tips
+screenshot files under data/tips_media are deleted after 2 days (backend/tips/vision.py sweep, daily and here); their
+OCR text stays on the post forever.
 
 `run(config, now)` ATTACHes the archive file, creates the same table shapes there (the live CREATE TABLE text) and,
 per table in TABLES, moves the rows older than `maintenance.archive_days`:
@@ -167,7 +169,13 @@ def _run(config: AppConfig, now: datetime) -> dict:
     finally:
         conn.close()
     total = sum(moved.values())
-    out = {"at": now.isoformat(timespec="seconds"), "cutoff": cutoff, "moved_by_table": moved, "moved": total,
+    try:                                                   # 📷 the one deletion of downloaded data: screenshots after 2 days
+        from backend.tips import vision as vs
+        media = vs.sweep(now)
+    except Exception:
+        logger.exception("Tips media sweep in the archive run failed")
+        media = {"removed": 0}
+    out = {"tips_media_removed": media.get("removed", 0), "at": now.isoformat(timespec="seconds"), "cutoff": cutoff, "moved_by_table": moved, "moved": total,
            "live_mb": _mb(live), "archive_mb": _mb(arch), "vacuumed": vacuumed,
            "archive_file": str(arch), "error": error}
     message = (f"moved {total} rows older than {cutoff} (" + ", ".join(f"{t} {n}" for t, n in moved.items())

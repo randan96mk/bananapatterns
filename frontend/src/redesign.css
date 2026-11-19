@@ -390,6 +390,23 @@
   .rd .tp-feed .fk { grid-column: 2; justify-self: start; }
 }
 
+/* 📷 the screenshot read: the header tag, the line under the Decoded cells (agrees / mismatch + two buttons / not read) */
+.rd .tp-hint .h .rtag:has(.tp-shtag) { flex: none; }
+.rd .tp-shot { font-size: 12px; min-width: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.rd .tp-shot .rtag { margin-left: 0; max-width: 100%; white-space: normal; }
+.rd .tp-shot .tx { min-width: 0; }
+.rd .tp-shot.ok { color: var(--ok, var(--green)); }
+.rd .tp-shot.dim { color: var(--muted); }
+.rd .tp-shot.bad { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--bad); padding: 6px 8px; border-radius: 8px;
+  background: color-mix(in srgb, var(--bad) 8%, transparent); border: 1px solid color-mix(in srgb, var(--bad) 30%, var(--border)); }
+.rd .tp-shot.bad .tx { flex: 1 1 260px; min-width: 0; }
+.rd .tp-shot.bad .gi { margin-right: 6px; }
+.rd .tp-shot.bad .bt { display: flex; gap: 6px; flex-wrap: wrap; flex: none; }
+@media (max-width: 760px) {
+  .rd .tp-hint .h .rtag { max-width: 100%; white-space: normal; min-width: 0; }     /* a long tag wraps inside the card, never past it */
+  .rd .tp-shot.bad .tx { flex-basis: 100%; }
+}
+
 /* ⚡ Tips → Kite orders: the bar under the Head, a hint's legs, the guards, today's orders */
 .rd .tp-kbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
 .rd .tp-kbar.killed { border-color: color-mix(in srgb, var(--bad) 55%, var(--border)); }

@@ -225,6 +225,11 @@ class Scheduler:
             jobs += archive.due(now, self.state.config, self.done_today(today))
         except Exception:
             logger.exception("Archive due check failed")
+        try:                                               # 📷 Tips screenshots older than 2 days: once a day
+            from backend.tips import vision as vs
+            jobs += vs.due(now, self.done_today(today))
+        except Exception:
+            logger.exception("Tips media due check failed")
         try:                                               # ⚡ Tips → Kite: the 3:35 PM day check (trading days)
             from backend.tips import kite_check as kc
             jobs += kc.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
@@ -471,6 +476,15 @@ class Scheduler:
         except Exception as exc:
             logger.exception("AI notes enqueue failed")
             return {"status": "failed", "error": str(exc)[:200]}
+
+    def run_tips_media(self, now: datetime) -> dict:
+        """📷 The daily sweep: Tips screenshot files older than 2 days are deleted (the OCR text stays on the post)."""
+        from backend.tips import vision as vs
+        today, started = now.date(), now_ist()
+        res = vs.sweep(now)
+        self.record(vs.JOB, today, "ok", f"{res['removed']} image file(s) older than 2 days removed · {res['kept']} kept"
+                    + (f" · {res['errors']} not removable" if res["errors"] else ""), started)
+        return {"status": "ok", **res}
 
     def run_tips_kite_day(self, now: datetime) -> dict:
         """⚡ 3:35 PM: every Tips order of today against the hints, one Telegram summary (backend/tips/kite_check.py)."""

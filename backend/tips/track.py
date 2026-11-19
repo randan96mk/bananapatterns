@@ -481,6 +481,7 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
     """One hint for the page (the keys the frontend reads). `kite`: the hint's Kite legs (⚡ Tips → Kite orders)."""
     from backend.timefmt import ampm
     from backend.tips import kite_orders as ko
+    from backend.tips import vision as vs
     now = now or datetime.now(IST)
     run, pos = h.get("run") or {}, h.get("pos") if h.get("taken") else None
     posted = datetime.fromisoformat(h["posted_at"])
@@ -514,11 +515,12 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
                           "charges": pos.get("charges"), "ended": pos.get("ended"), "override": pos.get("override"),
                           "booked": pos.get("booked") or [], "who": pos.get("who"), "size_src": pos.get("size_src")} if pos else None),
             "actions": acts, "telegram": f"take {h['id']} · take {h['id']} 2 · skip {h['id']}", "source": h.get("source"),
-            "kite": ko.hint_kite(config or _app_config(), h)}
+            "kite": ko.hint_kite(config or _app_config(), h), "shot": vs.shot_view(h)}
 
 
 def feed_rows(kind: Optional[str] = None, limit: int = 50, channel: Optional[str] = None) -> list[dict]:
     from backend.timefmt import ampm
+    from backend.tips import vision as vs
     where, args = [], []
     if kind:
         ks = [k.strip() for k in kind.split(",") if k.strip()]
@@ -539,11 +541,18 @@ def feed_rows(kind: Optional[str] = None, limit: int = 50, channel: Optional[str
             a = pl.followup_action(r["text"]).get("action")
             if a == "avoid":
                 label = "follow-up · avoid"
+        try:                                                 # 📷 the screenshot's read (kept forever; the file goes after 2 days)
+            ocr = json.loads(r.get("ocr") or "null") or {}
+        except (TypeError, ValueError):
+            ocr = {}
+        if k == "image" and r["hint_id"]:
+            label = f"screenshot #{r['hint_id']}"
         out.append({"id": r["id"], "channel": r["channel"], "post_id": r["post_id"], "posted_at": r["posted_at"],
                     "time": ampm(datetime.fromisoformat(r["posted_at"])), "text": r["text"] if r["text"] or not r["has_media"] else "",
                     "has_media": bool(r["has_media"]), "kind": k, "hint_id": r["hint_id"], "classified_by": r["classified_by"],
                     "ai": r["classified_by"] == "ai", "label": label, "edited": bool(r["edited_at"]), "deleted": bool(r["deleted_at"]),
-                    "source": r["source"]})
+                    "source": r["source"], "ocr_line": vs.first_line(ocr) if not ocr.get("error") else None,
+                    "ocr_error": ocr.get("error"), "ocr_facts": ocr.get("facts") or None})
     return out
 
 

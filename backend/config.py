@@ -564,6 +564,9 @@ class TipsConfig:
     kite_entry_until: str = "14:30"        # ... until here
     kite_auto_max_open: int = 1            # auto: Kite hints open (armed or entered) at once; a second one waits
     kite_auto_book_part: str = "channel"   # auto, "book part" with ONE lot open: channel = book it | hold = keep it, stop to cost
+    # 📷 the channel's screenshots read on this server (RapidOCR): off = no download, no read. Images kept 2 days at most.
+    vision: bool = False
+    vision_mode: str = "report"            # report = a strike mismatch is shown and pushed | check = auto also holds / cancels
 
 
 TIPS_KITE_MODES = ("off", "dry", "click", "auto")
@@ -601,6 +604,8 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_auto_max_open must be 1 or more")
     if sec.kite_auto_book_part not in ("channel", "hold"):
         raise ValueError("kite_auto_book_part must be channel or hold")
+    if getattr(sec, "vision_mode", "report") not in ("report", "check"):
+        raise ValueError("vision_mode must be report or check")
 
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")

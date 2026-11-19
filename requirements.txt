@@ -16,6 +16,10 @@ httpx>=0.27.0
 
 # 💡 Tips: the Telegram channel reader (a user client on your own account)
 telethon==1.45.0
+# 📷 Tips: the channel's screenshots read on this server (tips.vision; off by default). The ONNX models ship inside the
+# wheel (nothing downloaded at runtime); it pulls onnxruntime, opencv-python, numpy, Pillow, pyclipper, Shapely
+# (all have linux/arm64 wheels). opencv-python needs libgl1 + libglib2.0-0 on a slim image (Dockerfile).
+rapidocr-onnxruntime==1.2.3
 
 # Chart images for Telegram alerts
 matplotlib>=3.8

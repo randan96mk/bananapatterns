@@ -2525,6 +2525,14 @@ class TipsSymbol(BaseModel):
     symbol: str
 
 
+class TipsStrike(BaseModel):
+    """📷 the screenshot's strike ("Use screenshot") or keep: true ("Keep" the text's)."""
+    strike: Optional[float] = None
+    opt_type: Optional[str] = None
+    symbol: Optional[str] = None
+    keep: bool = False
+
+
 class TipsLogin(BaseModel):
     phone: str
 
@@ -2606,6 +2614,16 @@ def tips_symbol(hid: int, req: TipsSymbol):
     """You name the index of a hint whose post did not: the contract is resolved and tracking starts (before a take)."""
     from backend.tips import book as tb
     return _tips_act(tb.set_symbol, hid, req.symbol, who="page")
+
+
+@router.post("/tips/hints/{hid}/strike")
+def tips_strike(hid: int, req: TipsStrike):
+    """📷 A screenshot mismatch resolved: {strike, opt_type?, symbol?} uses the screenshot's contract (re-resolved, the
+    plan rebuilt, logged); {keep: true} keeps the text's. 404 / 409 (no open mismatch, taken, filled on Kite) / 400."""
+    from backend.tips import book as tb
+    if req.keep:
+        return _tips_act(tb.keep_strike, hid, who="page")
+    return _tips_act(tb.set_strike, hid, req.strike, req.opt_type, req.symbol, who="page")
 
 
 @router.post("/tips/hints/{hid}/trail")

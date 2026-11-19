@@ -307,6 +307,32 @@ function KiteCheck({ k }) {
   </div>;
 }
 
+// 📷 the channel's screenshot read on the server (RapidOCR, rules only): agrees (quiet), a strike mismatch (red, two
+// buttons: the owner picks), resolved, or "screenshot not read: <why>" (dim). Nothing when the post had no image.
+function shotTag(s) {
+  if (!s || s.state === 'error' || !s.label) return null;
+  const c = s.state === 'agrees' ? 'ok' : s.state === 'mismatch' ? 'bad' : '';
+  const short = s.state === 'agrees' ? '📷 ✓' : s.state === 'mismatch' ? '📷 ✗ strike' : '📷';
+  return <Tag c={c} title={s.state === 'mismatch' ? s.text : s.label}><span className="tp-shtag">{short}</span></Tag>;
+}
+function ShotLine({ h, busy, onUse, onKeep }) {
+  const s = h?.shot;
+  if (!s) return null;
+  if (s.state === 'error') return <div className="tp-shot dim">{s.label}</div>;
+  const at = s.time ? ` at ${s.time}` : '';
+  if (s.state === 'mismatch') {
+    return <div className="tp-shot bad"><span className="tx"><span className="gi">⛔</span>{s.text}</span>
+      <span className="bt"><button type="button" className="btn small" disabled={busy} onClick={onUse}>{s.use_label}</button>
+        <button type="button" className="btn ghost small" disabled={busy} onClick={onKeep}>{s.keep_label}</button></span></div>;
+  }
+  const shown = isNum(s.price) ? ` · channel showed ${Number(s.price).toFixed(2)}${at}` : '';
+  const live = isNum(h?.ltp) ? ` · live ${px(h.ltp)}` : '';
+  if (s.state === 'agrees') {
+    return <div className="tp-shot ok"><Tag c="ok" title={s.quiet}>{s.label}</Tag><span className="tx">{s.quiet || '✓ screenshot agrees'}{shown}{live}</span></div>;
+  }
+  return <div className="tp-shot dim"><Tag title={s.label}>{s.label}</Tag><span className="tx">{shown.replace(/^ · /, '')}</span></div>;
+}
+
 // PR C: the Kite day check (3:35 PM on trading days, or "Check now"): today's orders against the hints.
 function KiteDayCheck({ kd, onDone }) {
   const [msg, setMsg] = useState('');
@@ -406,6 +432,16 @@ function HintCard({ h, defLots, onDone, kinfo }) {
     run(api.tipsSymbol(id, sym), `symbol set to ${sym}`);
   };
   const resume = () => { if (window.confirm(`Resume #${id} · ${name}?\n\nThe entry rule is watched again.`)) run(api.tipsResume(id), 'resumed'); };
+  const shot = h?.shot;
+  const useShot = () => {
+    const u = shot?.use || {};
+    if (!window.confirm(`${shot?.use_label} for #${id}?\n\n${shot?.text}\n\nThe contract is resolved again and the plan rebuilt; an armed Kite entry on the old strike is cancelled first. Logged.`)) return;
+    run(api.tipsStrike(id, { strike: u.strike, opt_type: u.opt_type, symbol: u.symbol }), `strike set from the screenshot`);
+  };
+  const keepText = () => {
+    if (!window.confirm(`${shot?.keep_label} for #${id}?\n\nThe text's strike stays; the mismatch is marked resolved. Logged.`)) return;
+    run(api.tipsStrike(id, { keep: true }), "the text's strike kept");
+  };
   const raw = h?.text ?? h?.raw ?? '';
   const live = open && h?.taken && isNum(h?.ltp) ? `live ${px(h.ltp)}${isNum(h?.pnl) ? ` · ${money(h.pnl)}` : ''}` : '';
   return <div className={`tp-hint ${h?.status === 'active' ? 'active' : ''} ${open ? '' : 'closed'}`} data-id={id}>
@@ -414,11 +450,13 @@ function HintCard({ h, defLots, onDone, kinfo }) {
       {symInferred && <Tag c="w" title="the post named no index: it was read from the strike level · set it by hand if the screenshot says otherwise">index from strike</Tag>}
       {h?.kite?.needs_activation && open && <Tag c="w" title="wait words and no level: the entry waits for the channel's active / activated">needs activation</Tag>}
       {h?.kite?.auto && <Tag c={h.kite.auto.state === 'not_armed' ? 'bad' : h.kite.auto.state === 'waiting' ? 'w' : 'ok'} title={h.kite.auto.text}><span className="tp-adot">●</span> {h.kite.auto.text}</Tag>}
+      {shotTag(shot)}
       {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px' }} title="the post named no index: pick it after looking at the channel's screenshot">
         <option value="">{h?.symbol ? 'change index…' : 'set index…'}</option>{['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].map((x) => <option key={x} value={x}>{x}</option>)}</select>}
       <span className="who">{[h?.channel, when(h?.created ?? h?.posted_at)].filter(Boolean).join(' · ')}</span></div>
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
     <Decoded h={h} />
+    <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />
     <Timeline events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
     {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) && <KiteLegs h={h} kinfo={kinfo} onDone={onDone} />}
@@ -450,20 +488,23 @@ function kindTag(p) {
   const k = p?.kind;
   if (k === 'hint') return <Tag c="ok">hint{p.hint_id != null ? ` #${p.hint_id}` : ''}</Tag>;
   if (k === 'follow_up') return <Tag c="a">follow-up{p.hint_id != null ? ` #${p.hint_id}` : ''}</Tag>;
+  if (k === 'image' && p.hint_id != null) return <Tag>📷 screenshot #{p.hint_id}</Tag>;
   return <Tag>{k || 'post'}</Tag>;
 }
 function Feed({ feed, reader }) {
   const [all, setAll] = useState(false);
   const posts = arr(feed);
-  const quiet = posts.filter((p) => QUIET.includes(p?.kind)).length;
-  const shown = all ? posts : posts.filter((p) => !QUIET.includes(p?.kind));
+  const isQuiet = (p) => QUIET.includes(p?.kind) && !p?.ocr_line;      // 📷 a screenshot that was read is shown
+  const quiet = posts.filter(isQuiet).length;
+  const shown = all ? posts : posts.filter((p) => !isQuiet(p));
   const src = reader?.state === 'live' ? 'your account' : reader?.state === 'preview' ? 'public preview' : reader?.state === 'down' ? 'reader down' : 'not logged in';
   const lag = reader?.state === 'live' && isNum(reader?.lag_ms) && reader.lag_ms < 3600000 ? ` · ${Number(reader.lag_ms) < 1000 ? `${Math.round(reader.lag_ms)} ms` : `${Math.round(reader.lag_ms / 1000)} s`}` : '';
   return <Panel title="Channel feed" meta={reader?.state ? String(reader.state).replace('_', ' ') : null} right={<span>{src}{lag}</span>}>
     {!shown.length && <p className="muted small rempty">{posts.length ? 'Only chatter so far.' : 'No posts yet: they appear here about a second after the channel posts.'}</p>}
     <div className="tp-feed">{shown.map((p, i) => {
-      const q = QUIET.includes(p?.kind);
-      const text = p?.kind === 'image' && !p?.text ? '📷 image · ignored' : p?.text || (p?.has_media ? '📷 media' : '');
+      const q = isQuiet(p);
+      const text = p?.kind === 'image' && !p?.text ? (p?.ocr_line ? `📷 read: ${p.ocr_line}` : p?.ocr_error ? `📷 screenshot not read: ${p.ocr_error}` : '📷 image · ignored')
+        : p?.text || (p?.has_media ? (p?.ocr_line ? `📷 read: ${p.ocr_line}` : '📷 media') : '');
       return <div key={p?.id ?? i} className={`fmsg ${q ? 'chat' : ''} ${p?.deleted_at || p?.deleted ? 'del' : ''}`}>
         <span className="t">{when(p?.posted_at)}</span>
         <span className="raw" title={p?.deleted_at ? `deleted ${when(p.deleted_at)} · kept` : p?.edited_at ? `edited ${when(p.edited_at)}` : undefined}>{text}{(p?.edited_at || p?.edited) && <span className="dim"> · edited</span>}{(p?.deleted_at || p?.deleted) && <span className="dim"> · deleted</span>}</span>
