@@ -203,6 +203,7 @@ export const getWeek = (week) => req('GET', `/api/week${qs({ week })}`);
 export const writeWeek = (week) => req('POST', `/api/week/write${qs({ week })}`);
 // 💡 Tips: a channel's calls caught, decoded and scored; a separate paper book (never linked to any strategy).
 export const getTips = () => req('GET', '/api/tips');
+export const getHomeTips = () => req('GET', '/api/home/tips');              // 🏠 Home · 💡 Tips · Kite (no quote / Kite call)
 export const getTipsHints = (params = {}) => req('GET', `/api/tips/hints${qs(params)}`);
 export const getTipsHint = (id) => req('GET', `/api/tips/hints/${encodeURIComponent(id)}`);
 export const tipsTake = (id, body = {}) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/take`, body);

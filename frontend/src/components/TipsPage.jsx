@@ -5,6 +5,7 @@ import { clock, ampm } from '../timefmt';
 import { inr } from '../fmt';
 import { useIsPhone } from '../useMedia';
 import { Card, Cards, Panel, FixedTable, Tag, AiTag, Chip, Head, Seg, Switch } from './ui2';
+import { DRY_WARN, DRY_NOTE, KMODES, kmodeNote, hintName, modeConfirm, killConfirm, legLine, kiteTexts } from './tipsKite';
 
 // 💡 Research › Tips: a Telegram channel's calls caught, filtered, decoded and scored. NOT linked to any strategy:
 // every take is the owner's, each through a confirm, into a separate Tips PAPER book (nothing is sent to the broker).
@@ -47,7 +48,7 @@ const dayLabel = (d) => {
 const hm12 = (v) => (v && /^\d{1,2}:\d{2}/.test(String(v)) ? ampm(String(v)) : v || '—');
 
 export const OPEN = ['new', 'waiting', 'active', 'paused'];
-export const hintName = (h) => h?.title || [h?.side, h?.symbol, h?.strike, h?.opt_type].filter((x) => x != null && x !== '').join(' ') || h?.tradingsymbol || 'hint';
+export { hintName };
 const isAi = (h, ...fields) => fields.some((f) => h?.decoded?.[f] === 'ai');
 
 export function entryText(e, ltp, status, noKind) {
@@ -118,11 +119,6 @@ function Timeline({ events }) {
 }
 
 // ⚡ Tips → Kite orders ----------------------------------------------------------------------------------------------
-const KITE_WARN = 'Real money on your Kite account. The app never averages, never re-enters after a stop, and stops for the day at the loss cap.';
-const DRY_WARN = 'DRY RUN · nothing reaches Kite. A simulator fills from live quotes; the caps count the dry run only.';
-const DRY_NOTE = 'dry run: same buttons, same legs · a simulator fills from live quotes · nothing reaches Kite';
-const KMODES = [['off', 'Off', 'paper book only · nothing reaches Kite'], ['dry', 'Dry run', DRY_NOTE], ['click', 'By my click', 'you press every button · each one confirms first'], ['auto', 'Auto', "auto: entries armed on the level / the channel's activation · SL + T1 on the fill · the channel's exits followed · you are told"]];
-const kmodeNote = (m) => (KMODES.find((x) => x[0] === m) || KMODES[0])[2];
 const LEG_IC = { entry: '🟢', stop: '🛑', t1: '🎯', t2: '🎯', exit: '⏏' };
 const LIVE_ST = ['placed', 'open'];
 const legTag = (lg) => {
@@ -131,7 +127,6 @@ const legTag = (lg) => {
   const text = s === 'none' && lg?.after_t1 ? 'placed after T1' : s === 'placed' && lg?.leg !== 'entry' ? 'placed' : lg?.status_text || 'not placed';
   return <Tag c={c} title={lg?.note || undefined}>{lg?.dry && s && s !== 'none' ? 'DRY · ' : ''}{text}</Tag>;
 };
-const legLine = (lg) => (lg ? `${lg.type_text} ×${px(lg.qty)}` : '');
 export const kiteCaps = (k) => {
   const c = k?.caps || {};
   return `today ${px(c.entries ?? 0)} of ${px(c.max_entries ?? 0)} entries · lots cap ${px(c.max_lots ?? 0)} · loss cap ${isNum(c.loss_cap) ? inr(Number(c.loss_cap)) : '—'} · used ${isNum(c.used_loss) ? (Number(c.used_loss) < 0 ? `−${inr(Math.abs(Number(c.used_loss)))}` : `−${inr(0)}`) : '—'}`;
@@ -145,18 +140,11 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
   const dry = mode === 'dry';
   const setMode = (m) => {
     if (m === mode) return;
-    const label = (KMODES.find((x) => x[0] === m) || [])[1] || m;
-    const why = m === 'off' ? 'Nothing more is sent to Kite from the Tips. Orders already on Kite stay there: exit or cancel them from the cards.'
-      : m === 'auto' ? "The app arms every placeable hint by itself: a level rests on Kite (SL-M trigger / LIMIT) or is watched (an index level); wait words alone wait for the channel's activation. SL + T1 go on the fill; the channel's exit / SL / trail / book part are followed on the app's own positions; one Telegram line each. Never averages; one Kite position at a time (kite_auto_max_open). The kill switch, the caps, the window and the loss cap hold as always."
-        : m === 'dry' ? 'A rehearsal: the same buttons and legs, each through its confirm, but a simulator fills them from live quotes (outside market hours a MARKET order fills at the last price). The caps count the dry run only. A hint you trade dry is not traded real the same day.'
-          : 'The cards get Kite legs: every order is your click, each through a confirm. Place all = entry now, the stop and T1 the moment it fills.';
-    if (!window.confirm(`Kite orders: ${label}?\n\n${why}\n\n${m === 'dry' ? DRY_WARN : KITE_WARN}`)) return;
+    if (!window.confirm(modeConfirm(m))) return;
     api.putTipsSettings({ kite_mode: m }).then(() => { setMsg(''); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
   };
   const setKill = (on) => {
-    const t = on ? 'Turn the Kite kill switch ON?\n\nEvery working Tips order on Kite is cancelled and every open quantity is exited at market now. No new order until you turn it off.'
-      : 'Turn the Kite kill switch off?\n\nNew Tips orders are allowed again (each still your click). Nothing is placed by turning it off.';
-    if (!window.confirm(t)) return;
+    if (!window.confirm(killConfirm(on))) return;
     api.tipsKiteKill(on).then((r) => { setMsg(on ? `kill switch on · ${px(r?.cancelled ?? 0)} cancelled · ${px(r?.exits ?? 0)} exits` : ''); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
   };
   const clearDry = () => {
@@ -212,15 +200,11 @@ function KiteLegs({ h, kinfo, onDone }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const k = h?.kite || {};
-  const W = k.sim ? DRY_WARN : KITE_WARN;               // a dry run's confirms say so in place of the real-money warning
-  const to = k.sim ? 'the dry run' : 'Kite';
+  const T = kiteTexts(h, kinfo);                        // the confirms' words (shared with Home · Tips · Kite)
+  const { W, to, L, id, head } = T;
   const acts = arr(k.actions);
   const legs = arr(k.legs);
-  const L = Object.fromEntries(legs.map((x) => [x.leg, x]));
-  const id = h?.id;
-  const name = hintName(h);
   const caps = kinfo?.caps || {};
-  const contract = `${h?.tradingsymbol || '—'} · ${h?.exchange || ''} · ${plural(px(k.lots), 'lot')} = ${px(k.qty)} · ${kinfo?.product || 'NRML'}${isNum(h?.ltp) ? ` · last ${px(h.ltp)}` : ''}`;
   const capsAfter = `${px((caps.entries ?? 0) + 1)} of ${px(caps.max_entries ?? 0)} entries · ${px(k.lots)} of ${px(caps.max_lots ?? 0)} lots · loss cap ${isNum(caps.loss_cap) ? inr(Number(caps.loss_cap)) : '—'}${isNum(L.stop?.max_loss) ? ` · this trade's max loss ${money(L.stop.max_loss)}` : ''}`;
   const stopTxt = L.stop ? (L.stop.placeable === false ? 'spot stop: watched by the app, exit by hand' : `${legLine(L.stop)}${isNum(L.stop.max_loss) ? ` (${money(L.stop.max_loss)})` : ''}`) : '—';
   const run = (action, body, text, okText) => {
@@ -228,7 +212,6 @@ function KiteLegs({ h, kinfo, onDone }) {
     setBusy(true); setMsg('');
     api.tipsKite(id, action, body).then(() => { setMsg(okText); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false));
   };
-  const head = (t) => `${k.sim ? 'DRY RUN · ' : ''}⚡ ${t} · #${id} ${name}\n\ncontract   ${contract}\n`;
   // PR C: what the entry does, in words from the server ("a BUY stop order rests on Kite at 370", "the app watches SENSEX
   // and buys at market when it trades 82,400 or above", "nothing is sent until the channel says active")
   const ew = k.needs_activation ? `armed: nothing is sent until the channel says active · then ${k.entry_what || 'at market'}` : (k.entry_what || `${L.entry?.side} at market now`);
@@ -239,10 +222,10 @@ function KiteLegs({ h, kinfo, onDone }) {
   const rest = () => run('rest', {}, `${head('Place the rest on Kite')}now   ${L.stop?.status && LIVE_ST.includes(L.stop.status) ? '' : `SL ${stopTxt}`}${L.t1 && !['placed', 'open', 'complete'].includes(L.t1.status) ? ` · T1 ${legLine(L.t1)}` : ''}${L.t1?.status === 'complete' && L.t2 ? ` · T2 ${legLine(L.t2)}` : ''}\n${L.t2 && L.t1?.status !== 'complete' ? `after T1 fills   T2 ${legLine(L.t2)} · SL moved to cost\n` : ''}\nWhat follows a fill is the app's, as the consequence of this click.\n\n${W}`, `the rest sent to ${to}`);
   const stop = () => run('stop', {}, `${head('Place the stop on Kite')}order   ${L.stop?.side} ${stopTxt}\n\n${W}`, `stop sent to ${to}`);
   const tgts = (which) => run('targets', {}, `${head(`Place ${which === 't2' ? 'target 2' : 'target 1'} on Kite`)}order   ${L[which]?.side} ${legLine(L[which])}${which === 't1' && isNum(L.t1?.if_filled) ? ` (${money(L.t1.if_filled)} if filled)` : ''}\n\n${W}`, `${which === 't2' ? 'T2' : 'T1'} sent to ${to}`);
-  const exit = () => run('exit', {}, `⚡ Exit #${id} ${name} on Kite now?\n\n${k.state === 'armed' ? 'The entry has not filled: it is cancelled.' : `The working stop and targets are cancelled, then ${L.stop?.side || 'SELL'} ${px(k.qty_open)} MARKET.`}\n\n${W}`, `exit sent to ${to}`);
-  const cancel = (leg) => run('cancel', { leg }, `Cancel the ${L[leg]?.name || leg} of #${id} on Kite?\n\norder ${L[leg]?.order_id || '—'} · ${legLine(L[leg])}\n\nNothing else changes.`, `${L[leg]?.name || leg} cancelled`);
-  const sendNow = () => run('send_now', {}, `${head('Send the armed entry now')}order   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'}\n\nSkips the channel's activation: the entry goes to Kite now (every guard is checked again).\n\n${W}`, `entry sent to ${to}`);
-  const toCost = () => run('modify_stop', { to: 'cost' }, `Move the Kite stop of #${id} to cost?\n\nSL-M ${px(L.stop?.trigger)} → ${px(k.entry_px)} (the entry fill) ×${px(L.stop?.qty)}\n\n${W}`, 'stop moved to cost');
+  const exit = () => run('exit', {}, T.exit, `exit sent to ${to}`);
+  const cancel = (leg) => run('cancel', { leg }, T.cancel(leg), `${L[leg]?.name || leg} cancelled`);
+  const sendNow = () => run('send_now', {}, T.sendNow, `entry sent to ${to}`);
+  const toCost = () => run('modify_stop', { to: 'cost' }, T.moveStop('cost'), 'stop moved to cost');
   const resync = () => { if (window.confirm('Re-sync with Kite?\n\nReads the Kite order book once (only the app\'s own Tips orders) and applies what changed.')) { setBusy(true); api.tipsKiteResync().then(() => { setMsg('re-synced'); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false)); } };
   const live = (leg) => LIVE_ST.includes(L[leg]?.status);
   const btn = (label, fn, extra = {}) => <button type="button" className={`btn ghost small ${extra.cls || ''}`} disabled={busy || extra.off} title={extra.title} onClick={fn}>{label}</button>;

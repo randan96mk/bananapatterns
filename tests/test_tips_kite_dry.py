@@ -390,7 +390,7 @@ def test_migration_keeps_pr_a_rows(tmp_path):
 
 
 def test_no_broker_name_past_kite_and_the_page_carries_dry_and_the_test():
-    src = (ROOT / "frontend/src/components/TipsPage.jsx").read_text(encoding="utf-8")
+    src = "\n".join((ROOT / f"frontend/src/components/{f}").read_text(encoding="utf-8") for f in ("TipsPage.jsx", "tipsKite.js"))   # the confirms' words are shared with Home
     for f in ("backend/tips/kite_orders.py", "backend/tips/kite_sim.py"):
         assert not re.search(r"zerodha", (ROOT / f).read_text(encoding="utf-8"), re.I)
     assert not re.search(r"zerodha", src, re.I)

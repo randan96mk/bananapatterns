@@ -2509,6 +2509,14 @@ def portfolio_view(days: int = 365):
     return ov.portfolio(st.config, max(1, min(days, 3650)), st.live.quotes if st.client.has_token else None)
 
 
+@router.get("/home/tips")
+def home_tips_view():
+    """🏠 Home · 💡 Tips · Kite: the two cards, the strip, the working Kite rows, today's calls, the checks, the record,
+    the Tips times for Next up. Stored hints / kite JSON / tips_orders only: no quote call, no Kite call."""
+    from backend.tips import home as th
+    return th.home_tips(S().config)
+
+
 # --- 💡 Tips: a Telegram channel's calls, decoded, tracked and scored (standalone; backend/tips) ---------------------
 
 class TipsTake(BaseModel):
@@ -2938,6 +2946,7 @@ def _stream_topics() -> dict:
         "today_card": (today_card_view, lambda d: 60),
         "plan_heat": (plan_heat_view, lambda d: 60 if (d or {}).get("market_open") else 600),
         "tips": (tips_summary, lambda d: 5 if (d or {}).get("any_open") else 60),
+        "home_tips": (home_tips_view, lambda d: 5 if (d or {}).get("live") else 30),
         "ai": (ai_summary, lambda d: 5 if ((d or {}).get("models") or {}).get("pull", {}).get("running") or ((d or {}).get("queue") or {}).get("job") else 60),
     }
 
