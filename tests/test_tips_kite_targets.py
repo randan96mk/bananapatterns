@@ -259,7 +259,7 @@ def test_the_card_has_a_now_cell_and_the_watched_legs(pushed):
     assert (t1["status"], t1["type_text"], t1["now_text"]) == ("watched", "at ≥ 320", "now 247.3 · target 320 is +29.4 %")
     assert t1["detail"] == "watched by the app · half · +₹870 if hit"
     src = (ROOT / "frontend/src/components/TipsPage.jsx").read_text(encoding="utf-8")
-    assert 'className={`nowc ' in src and '<div className="kk">now</div>' in src and "tp-dec${nowCell ? ' n7' : ''}" in src
+    assert 'className={`nowc ' in src and '<div className="kk">now</div>' in src and "tp-dec${nt ? ' n8' : nowCell ? ' n7' : ''}" in src
     assert "Place T1…" not in src and "Place now…" not in src and "placed after T1" not in src
     kite_js = (ROOT / "frontend/src/components/tipsKite.js").read_text(encoding="utf-8")
     assert "a resting target would be rejected for margin on a long option" in kite_js

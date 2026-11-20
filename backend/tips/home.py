@@ -98,17 +98,26 @@ def row(config, h: dict, now: datetime) -> dict:
            "tradingsymbol": h.get("tradingsymbol"), "exchange": h.get("exchange"), "ltp": ltp, "kite": v,
            "product": config.tips.kite_product, "now": ko.now_cell(h)}
     if st == "entered":
+        from backend.tips import card as cd
         out["tag"], out["tag_c"] = f"{dry}open · {_lots(lots)}", "ok"
-        out["pnl"] = open_pnl(h)
+        strip = cd.pnl_strip(config, h, None, now, day={})       # the card's P&L strip: the same open ₹
+        out["pnl"] = strip["open"] if strip else open_pnl(h)
+        out["pnl_pct"] = strip.get("pct") if strip else None
         nxt = next((legs[x] for x in ("t1", "t2") if x in legs and legs[x]["status"] != "complete"), None)
         parts = [f"now {pl.fmt(ltp)}"] if ltp is not None else []
         st_leg = legs.get("stop") or {}
-        if st_leg.get("trigger") is not None:
-            parts.append(_strip_now(st_leg.get("now_text")) or f"stop {pl.fmt(st_leg['trigger'])}")
-        elif st_leg:
-            parts.append("spot stop · watched by the app")
-        if nxt and nxt.get("price") is not None:
-            parts.append(_strip_now(nxt.get("now_text")) or f"target {pl.fmt(nxt['price'])}")
+        bar = cd.dist(h)                                          # the card's distance bar: the same % labels
+        if bar:
+            s0, t0 = bar["stop"], bar["target"]
+            parts.append(f"stop {pl.fmt(s0['px'])} is {s0['pct_text']}" + (" · close to the stop" if bar.get("danger") else ""))
+            parts.append(f"target {pl.fmt(t0['px'])} is {t0['pct_text']}" + (f" · {t0['note']}" if t0.get("note") else ""))
+        else:
+            if st_leg.get("trigger") is not None:
+                parts.append(_strip_now(st_leg.get("now_text")) or f"stop {pl.fmt(st_leg['trigger'])}")
+            elif st_leg:
+                parts.append("spot stop · watched by the app")
+            if nxt and nxt.get("price") is not None:
+                parts.append(_strip_now(nxt.get("now_text")) or f"target {pl.fmt(nxt['price'])}")
         out["facts"] = " · ".join(p for p in parts if p)
         stop_on = (k["legs"].get("stop") or {}).get("status") in ko.LIVE
         rest = ("stop resting in the dry run" if k.get("dry") else "stop resting on Kite") if stop_on else \

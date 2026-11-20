@@ -663,7 +663,7 @@ def place_entry(config, client, hid: int, lots: Optional[int] = None, by: str = 
             text = f"Kite: entry placed {entry_side(h)} {qty} {ep['text']} ({who})" + (" · resting on Kite" if ep["kind"] != "market" else "") + \
                 (f" · {ep['what']}" if ep.get("past") else "")
         if auto_rest:
-            text += " · SL the moment it fills · targets watched by the app"
+            text += " · SL rests the moment it fills · target watched by the app"
         if entry_of(h).get("wait_words") and not wait:
             text += " · activation words · the level decides"
         _log(k, now, text)
@@ -1157,6 +1157,7 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
         fpx, fq = r.get("filled_px"), int(r.get("filled_qty") or r["qty"])
         if leg == "entry":
             k.update(state="entered", entry_px=fpx, qty_open=fq, qty=fq, entry_at=now.isoformat(timespec="seconds"))
+            bk.mark_kite_taken(h, k.get("by") or r.get("by"), bool(k.get("dry")) or is_dry_row(r), now)   # the taken flag follows the fill
             text = f"{P}#{hid} entry filled {pl.fmt(fpx)} ×{fq}"
             if k.get("auto_rest") and not killed():
                 s = _try(_place_stop, config, client, h, now, "app")
@@ -1228,11 +1229,27 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
             if left:
                 text += " · " + ("targets cancelled" if leg == "stop" else "stop cancelled" if left == ["stop"] else "leftovers cancelled")
             k.update(state="closed", reason=k.get("exit_why") or {"stop": "stop", "t1": "target 1", "t2": "target 2", "exit": "your exit"}[leg], auto_rest=False,
-                     no_stop=False, watch=None)
+                     no_stop=False, watch=None, closed_at=now.isoformat(timespec="seconds"), exit_by=exit_by_of(k, leg, r.get("by")))
+            if k.get("entry_px") is not None and int(k.get("qty") or 0) > 0:     # the average exit (the card's P&L strip)
+                k["exit_px"] = round(float(k["entry_px"]) + float(k["realised"]) / (int(k["qty"]) * _sign(h)), 2)
             text += f" · closed {rupees(k['realised'], sign=True)} total" if leg != "stop" else ""
         _log(k, now, text.replace(f"{P}#{hid} ", "Kite: "))
         lines.append(text.replace(P, wpfx(h), 1) if watched else text)
     return lines
+
+
+def exit_by_of(k: dict, leg: str, by: Optional[str]) -> str:
+    """How a Kite position closed, for the card's facts: auto / you / time_stop / target / stop."""
+    why = str(k.get("exit_why") or "")
+    if why.startswith("time stop"):
+        return "time_stop"
+    if leg == "stop":
+        return "stop"
+    if leg in ("t1", "t2"):
+        return "target"
+    if why.startswith("the channel"):
+        return "auto"
+    return "you" if by in ("click", "dry") or by is None else "auto"
 
 
 # --- the target watch (only the stop rests on Kite) ----------------------------------------------------------------------

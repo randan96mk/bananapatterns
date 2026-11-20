@@ -226,6 +226,11 @@ def ai_input(h: dict, rows: Optional[list] = None) -> str:
                      f"{r['status']}" + (f" at {pl.fmt(r['filled_px'])}" if r.get("filled_px") is not None else "") + f" by {r.get('by')}")
     chk = k.get("check") or {}
     lines.append("Code check: " + ("; ".join(f"{x['level']}: {x['text']}" for x in chk.get("items") or []) or "all clear"))
+    try:                                               # 💡 the trade facts (best / worst move, the stop's nearest) for the read
+        from backend.tips import facts as fx
+        lines.append(fx.summary_line(fx.for_hint(h)))
+    except Exception:
+        logger.exception("Tips facts line #%s failed", h.get("id"))
     return "\n".join(lines)
 
 
@@ -387,6 +392,11 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
            "caps_text": f"entries {caps['entries']} of {caps['max_entries']} · realised {ko.rupees(caps['loss'], sign=True)} of the −{ko.rupees(caps['loss_cap'])} cap"}
     with get_db() as conn:
         set_setting(conn, DAY_KEY, json.dumps(res))
+    try:                                               # 💡 the day's facts row (tips_day_facts), for future AI features
+        from backend.tips import facts as fx
+        res["facts"] = fx.day_facts(config, now)
+    except Exception:
+        logger.exception("Tips day facts failed")
     if notify:
         lines = [summary] + [f"⛔ {x['text']}" + (f" · {x['hand']}" if x.get("hand") else "") for x in items if x["level"] == "red"][:6]
         bk.push(config, f"tips|kite|day|{day}", "\n".join(lines))

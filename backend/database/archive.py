@@ -41,10 +41,14 @@ LAST_KEY = "maintenance.last"           # app_settings: the last run's summary (
 TABLES = {
     "options_chain_snap": ("day", ("id",), None),
     "tips_quotes": ("t", ("hint_id", "t"), None),
+    "tips_ticks": ("at", ("hint_id", "at"), None),
     "ai_jobs": ("created", ("id",), "status IN ('queued', 'running')"),
     "job_runs": ("run_date", ("id",), "id IN (SELECT MAX(id) FROM main.job_runs GROUP BY job)"),
     "sent_alerts": ("sent_at", ("key",), "ok = 0 OR key NOT GLOB '[0-9][0-9][0-9][0-9]*'"),
 }
+
+# a table kept longer than maintenance.archive_days in the live DB (days): the Tips card's tick store, 180 days
+TABLE_DAYS = {"tips_ticks": 180}
 
 _lock = threading.Lock()
 
@@ -66,8 +70,9 @@ def _mb(p: Path) -> float:
     return round(size / 1e6, 1)
 
 
-def _cutoff(config: AppConfig, now: datetime) -> str:
-    return (now.date() - timedelta(days=int(config.maintenance.archive_days))).isoformat()
+def _cutoff(config: AppConfig, now: datetime, table: Optional[str] = None) -> str:
+    days = TABLE_DAYS.get(table or "", int(config.maintenance.archive_days))
+    return (now.date() - timedelta(days=int(days))).isoformat()
 
 
 def _ensure_table(conn, table: str) -> list[str]:
@@ -151,7 +156,7 @@ def _run(config: AppConfig, now: datetime) -> dict:
         conn.execute("ATTACH DATABASE ? AS a", (str(arch),))
         for table in TABLES:
             try:
-                moved[table] = _move(conn, table, cutoff)
+                moved[table] = _move(conn, table, _cutoff(config, now, table))
             except sqlite3.Error as exc:                  # one table failing leaves the others (and its rows) alone
                 logger.exception("Archive of %s failed", table)
                 error = f"{table}: {exc}"

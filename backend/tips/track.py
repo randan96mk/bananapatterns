@@ -238,6 +238,13 @@ def tracked_hints(conn=None) -> list[dict]:
                    "OR (taken = 1 AND json_extract(pos, '$.state') IN ('armed', 'open'))", order="id", conn=conn)
 
 
+def kite_tick_hints(now: datetime, conn=None) -> list[dict]:
+    """Hints with something on Kite (armed / open) or closed there in the last 10 minutes (the tick store's)."""
+    since = (now - timedelta(minutes=10)).isoformat(timespec="seconds")
+    return bk.rows("json_extract(kite, '$.state') IN ('armed', 'armed_watch', 'armed_wait', 'entered') "
+                   "OR (json_extract(kite, '$.state') = 'closed' AND json_extract(kite, '$.closed_at') >= ?)", (since,), order="id", conn=conn)
+
+
 def _spot_samples(conn, hid: int, day: str) -> list:
     return [(r[0], r[1]) for r in conn.execute("SELECT t, spot FROM tips_quotes WHERE hint_id = ? AND t >= ? ORDER BY t", (hid, day))]
 
@@ -245,13 +252,21 @@ def _spot_samples(conn, hid: int, day: str) -> list:
 def poll(config, client, now: Optional[datetime] = None) -> dict:
     """One pass: quotes for every tracked hint (one call), the record runs and the paper positions stepped, the lines
     pushed. {hints, quoted, events, lines}."""
+    from backend.tips import facts as fx
+    from backend.tips import kite_orders as ko
     now = now or datetime.now(IST)
     hs = tracked_hints()
-    if not hs:
+    kmode = ko.mode(config)
+    seen = {h["id"] for h in hs}
+    # 💡 the tick store: hints armed / open on Kite (and 10 min after the close) are quoted even when their record is over
+    kh = [h for h in kite_tick_hints(now) if fx.wants_ticks(h, kmode, now)]
+    extra = [h for h in kh if h["id"] not in seen]
+    tick_ids = {h["id"] for h in kh}
+    if not hs and not extra:
         return {"hints": 0, "quoted": 0, "events": 0, "lines": []}
     has_token = client is not None and bool(getattr(client, "has_token", False))
     keys = set()
-    for h in hs:
+    for h in hs + extra:
         if h.get("plan") and not h.get("tradingsymbol") and h.get("untracked_why") in ("no instrument", "log in", None) and has_token:
             try:
                 resolve(h, client, now.date())
@@ -292,6 +307,9 @@ def poll(config, client, now: Optional[datetime] = None) -> dict:
                 if ltp is not None:
                     conn.execute("INSERT OR REPLACE INTO tips_quotes (hint_id, t, ltp, spot) VALUES (?,?,?,?)", (h["id"], t, ltp, spot))
                     quoted += 1
+                    if h["id"] in tick_ids:
+                        bid, ask = fx.depth(q[qk])
+                        fx.write_tick(conn, h["id"], t, ltp, spot, bid, ask, bool((h.get("kite") or {}).get("dry")))
             run = h.get("run") or pl.new_run(plan)
             run["seen"] = True
             h["run"] = run
@@ -319,6 +337,23 @@ def poll(config, client, now: Optional[datetime] = None) -> dict:
             if was != "closed" and run["state"] == "closed" and not (pos and pos.get("state") in ("armed", "open")):
                 thin(conn, h["id"])
             bk.save(h, conn)
+        for h in extra:                         # a Kite position whose record is over: the quote and the tick only
+            qk, sk = quote_key(h), spot_key(h)
+            if not qk or qk not in q:
+                continue
+            ltp = float(q[qk].get("last_price") or 0) or None
+            if ltp is None:
+                continue
+            spot = (float((q.get(sk) or {}).get("last_price") or 0) or None) if sk else None
+            conn.execute("INSERT OR REPLACE INTO tips_quotes (hint_id, t, ltp, spot) VALUES (?,?,?,?)", (h["id"], t, ltp, spot))
+            bid, ask = fx.depth(q[qk])
+            fx.write_tick(conn, h["id"], t, ltp, spot, bid, ask, bool((h.get("kite") or {}).get("dry")))
+            quoted += 1
+    for h in kh:                                # the trade facts, live while open, final at the close
+        try:
+            fx.refresh(bk.load(h["id"]) or h, now)
+        except Exception:
+            logger.exception("Tips facts #%s failed", h["id"])
     for key, html in lines:                     # the book's steps always; "entry reached" with push_hints
         if key.startswith("tips|reach|") and not config.tips.push_hints:
             continue
@@ -496,7 +531,18 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
     tg = (h.get("plan") or {}).get("targets") or h.get("targets") or []
     hits = len(((pos or {}).get("run") or run).get("hits") or [])
     exp = h.get("expiry")
-    return {"id": h["id"], "channel": h["channel"], "post_id": h["post_id"], "posted_at": h["posted_at"],
+    from backend.tips import card as cd
+    cfg = config or _app_config()
+    kv = ko.hint_kite(cfg, h)
+    try:                                              # 💡 the card's Kite blocks (P&L strip, NOW tile, bar, chips, facts)
+        cb = cd.blocks(cfg, h, now)
+        kv["legs"] = cd.adjust_legs(h, kv["legs"], cb["trade_facts"])
+    except Exception:
+        logger.exception("Tips card #%s failed", h.get("id"))
+        cb = {"pnl_strip": None, "now_tile": None, "dist": None, "said_next": [], "facts": None, "trade_facts": None}
+    kv["taken"] = (h.get("kite") or {}).get("taken") if isinstance(h.get("kite"), dict) else None
+    kv["footer"] = bk.kite_taken_text(h)
+    return {**cb, "id": h["id"], "channel": h["channel"], "post_id": h["post_id"], "posted_at": h["posted_at"],
             "time": ampm(posted), "day": posted.date().isoformat(), "day_label": "today" if posted.date() == now.date() else f"{posted:%a %d %b}",
             "raw": h.get("raw") or "", "title": dc.title(h), "symbol": h.get("symbol"), "side": h.get("side"),
             "instrument": h.get("instrument"), "strike": h.get("strike"), "opt_type": h.get("opt_type"), "expiry": exp,
@@ -515,7 +561,7 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
                           "charges": pos.get("charges"), "ended": pos.get("ended"), "override": pos.get("override"),
                           "booked": pos.get("booked") or [], "who": pos.get("who"), "size_src": pos.get("size_src")} if pos else None),
             "actions": acts, "telegram": f"take {h['id']} · take {h['id']} 2 · skip {h['id']}", "source": h.get("source"),
-            "kite": ko.hint_kite(config or _app_config(), h), "shot": vs.shot_view(h), "now": ko.now_cell(h)}
+            "kite": kv, "shot": vs.shot_view(h), "now": ko.now_cell(h)}
 
 
 def feed_rows(kind: Optional[str] = None, limit: int = 50, channel: Optional[str] = None) -> list[dict]:
