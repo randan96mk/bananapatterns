@@ -189,8 +189,9 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     if conn is None:
         with get_db() as c:
             out = ingest(config, channel, post_id, posted_at, text, has_media, source, push, model, client, c, reply_to)
-        if out.get("push"):
-            bk.push(config, out["push"][0], out["push"][1])
+        for key in ("day_push", "push"):
+            if out.get(key):
+                bk.push(config, out[key][0], out[key][1])
         if out.get("new") and source in ("live", "preview"):
             kite_after(config, client, out, push)
         return out
@@ -246,11 +247,28 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     if source == "import" and has_media:                 # 📷 the export never downloads: the reason is stored
         from backend.tips import vision as vs
         vs.import_note(config, conn, channel, int(post_id), posted, has_media)
+    live = source in ("live", "preview")
+    fresh = (datetime.now(IST) - posted).total_seconds() <= PUSH_MAX_AGE_S
     if kind == "hint":
         h = new_hint(config, conn, channel, int(post_id), posted, text, d, source, client)
         conn.execute("UPDATE tips_posts SET hint_id = ? WHERE id = ?", (h["id"], cur.lastrowid))
         out["hint_id"] = h["id"]
-        fresh = (datetime.now(IST) - posted).total_seconds() <= PUSH_MAX_AGE_S
+        if live:                                         # a new call the same day: the channel is trading again
+            from backend.tips import kite_auto as ka
+            ln = ka.reopen_day(conn, h["id"], posted)
+            if ln:
+                bk.event(h, posted, "day re-opened by a new call", "code")
+                bk.save(h, conn)
+                if push and fresh:
+                    out["day_push"] = (f"tips|day|open|{posted.date().isoformat()}|{h['id']}", ln)
+    elif live and pl.day_closed(text):                   # "temporarily close the day": nothing new armed today
+        from backend.tips import kite_auto as ka
+        ln = ka.close_day(conn, channel, int(post_id), posted, text)
+        if ln:
+            out["day_closed"] = True
+            if push and fresh:
+                out["day_push"] = (f"tips|day|close|{posted.date().isoformat()}|{post_id}", ln)
+    if kind == "hint":
         if push and source in ("live", "preview") and config.tips.push_hints and fresh:
             from backend.alerts import messages as msg
             out["push"] = (f"tips|hint|{h['id']}", msg.tips_hint(h))
@@ -291,7 +309,12 @@ def kite_after(config, client, out: dict, push: bool = True) -> None:
         if (datetime.now(IST) - now).total_seconds() > PUSH_MAX_AGE_S:
             return                                         # a caught-up old post never moves a Kite order
         if out.get("kind") == "follow_up" and out.get("hint_id") and out.get("act"):
-            ka.on_followup(config, client, out["hint_id"], out["act"], out.get("text") or "", now, notify=push)
+            kline = ka.on_followup(config, client, out["hint_id"], out["act"], out.get("text") or "", now, notify=push)
+            try:                                           # 🤖 the AI second opinion (informational: never acts)
+                from backend.tips import kite_check as kc
+                kc.enqueue_followup(config, out["hint_id"], out.get("post_id"), out.get("text") or "", out["act"], kline or out.get("line"), notify=push)
+            except Exception:
+                logger.exception("Tips follow-up AI read not queued")
         if out.get("kind") in ("hint", "follow_up") and out.get("hint_id"):
             ka.on_new(config, client, out["hint_id"], now, notify=push)
     except Exception:

@@ -20,11 +20,12 @@
              or the next day; a Kite position still open at the time stop is exited at market (not a hold-to-expiry
              sell); the order check runs on every working hint (a stop missing 60 s after the fill turns red)."""
 
+import json
 from datetime import datetime
 from typing import Optional
 
 from backend.config import IST
-from backend.database.models import get_db
+from backend.database.models import get_db, get_setting, set_setting
 from backend.logging_config.logger import setup_logger
 from backend.timefmt import ampm
 from backend.tips import book as bk
@@ -35,7 +36,7 @@ from backend.tips.book import TipsError
 logger = setup_logger("tips")
 
 AUTO = "🤖 Kite AUTO · "
-RETRY_CAUSES = ("market", "window", "max_open", "kill", "login", "entries", "loss", "mismatch")     # these can clear on their own
+RETRY_CAUSES = ("market", "window", "max_open", "kill", "login", "entries", "loss", "mismatch", "day_closed")     # these can clear on their own
 
 
 def _now() -> datetime:
@@ -55,6 +56,50 @@ def app_client():
     except Exception:
         pass
     return None
+
+
+# --- the channel closed the day ------------------------------------------------------------------------------------------
+
+DAY_CLOSED_KEY = "tips.day_closed"
+
+
+def day_closed(now: Optional[datetime] = None, conn=None) -> Optional[dict]:
+    """{day, at, at_label, post_id, channel, text} when the channel closed TODAY ("temporarily close the day"), else None."""
+    now = now or _now()
+    if conn is None:
+        with get_db() as c:
+            return day_closed(now, c)
+    try:
+        d = json.loads(get_setting(conn, DAY_CLOSED_KEY) or "null")
+    except ValueError:
+        return None
+    if not d or d.get("day") != now.date().isoformat() or d.get("reopened"):
+        return None
+    return d
+
+
+def close_day(conn, channel: str, post_id: int, at: datetime, text: str) -> Optional[str]:
+    """The channel closed the day: the per-day flag (auto arms nothing new for the rest of the day; open positions and
+    resting stops are untouched). Returns the Telegram line, or None when today is already closed."""
+    if day_closed(at, conn):
+        return None
+    lbl = ampm(at)
+    set_setting(conn, DAY_CLOSED_KEY, json.dumps({"day": at.date().isoformat(), "at": at.isoformat(timespec="seconds"), "at_label": lbl,
+                                                  "post_id": int(post_id), "channel": channel, "text": (text or "").strip()[:120]}))
+    logger.info("Tips: the channel closed the day at %s (post %s)", lbl, post_id)
+    q = (text or "").strip().replace("\n", " ")[:60]
+    return f'📕 Tips · the channel closed the day at {lbl} ("{q}") · auto arms nothing new today · open positions and resting stops untouched'
+
+
+def reopen_day(conn, hid: int, at: datetime) -> Optional[str]:
+    """A new call from the channel the same day: it is trading again. Returns the Telegram line, or None."""
+    d = day_closed(at, conn)
+    if not d:
+        return None
+    d.update(reopened=at.isoformat(timespec="seconds"), reopened_by=hid)
+    set_setting(conn, DAY_CLOSED_KEY, json.dumps(d))
+    logger.info("Tips: day re-opened by a new call (#%s)", hid)
+    return f"📗 Tips · day re-opened by a new call (#{hid}) · the channel closed it at {d.get('at_label')} · auto arms again"
 
 
 # --- auto: arm -----------------------------------------------------------------------------------------------------------
@@ -135,6 +180,10 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
     why = vs.blocks_auto(config, h)
     if why:
         _note(config, h, "mismatch", why, now, notify)
+        return None
+    closed = day_closed(now)
+    if closed:                                           # the channel closed the day: logged on the card, no push
+        _note(config, h, "day_closed", f"the channel closed the day at {closed.get('at_label')}", now, False)
         return None
     rearm = bool((k.get("auto") or {}).get("rearm"))
     if [r for r in ko.rows_for(h["id"]) if r["leg"] == "entry" and r["status"] != "voided" and not (rearm and r["status"] == "cancelled")]:
@@ -300,7 +349,9 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
             q = (open_lots // 2) * lot
             if (k["legs"].get("exit") or {}).get("status") in ko.LIVE:
                 return None
-            k["cost_after_part"] = bool(act.get("cost"))
+            rs = act.get("rest_stop") if not act.get("spot") else None
+            k["rest_stop_after_part"] = float(rs) if rs is not None else None
+            k["cost_after_part"] = bool(act.get("cost")) and rs is None     # an explicit rest stop wins over "cost"
             # margin: a second sell beside the resting stop is refused (20 Nov) → the stop is cut to the rest FIRST
             st = k["legs"].get("stop") or {}
             rest = int(k["qty_open"]) - q
@@ -316,7 +367,8 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
                     _line(config, h, now, f'the channel "{quote}" · {out}', notify, "part")
                     return out
             ko._place(config, cl, h, "exit", ko.exit_side(h), q, "MARKET", now, "auto")
-            out = f"booked part: {ko.exit_side(h)} {q} of {k['qty_open']} MARKET · stop cut to {rest} first" + (" · the stop to cost on the fill" if act.get("cost") else "")
+            out = (f"booked part: {ko.exit_side(h)} {q} of {k['qty_open']} MARKET · stop cut to {rest} first"
+                   + (f" · rest stop → {pl.fmt(rs)}" if rs is not None else " · the stop to cost on the fill" if act.get("cost") else ""))
             ko.save_kite(h)
             _line(config, h, now, f'followed the channel "{quote}" · {out}', notify, "part")
             ko.after_event(config, h, now, notify)
@@ -329,7 +381,9 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
             _line(config, h, now, f'followed the channel "{quote}" · one lot open: booked at market', notify, "part")
             return "one lot booked"
         out = "one lot open: kept for the target"
-        if act.get("cost"):
+        if act.get("rest_stop") is not None and not act.get("spot"):
+            out += " · " + ko.rest_stop_to(config, cl, h, float(act["rest_stop"]), now, "auto: book part, rest SL")
+        elif act.get("cost"):
             out += " · " + _to_cost(config, cl, h, now, "auto: book part, TSL at cost")
         ko.save_kite(h)
         _line(config, h, now, f'the channel "{quote}" · {out}', notify, "part")

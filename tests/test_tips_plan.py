@@ -134,3 +134,33 @@ def test_followup_actions():
     assert fa("cmp 93")["action"] == "active" and fa("93 level active")["action"] == "active"
     assert fa("Avoid.. wait")["action"] == "avoid" and fa("SL hit")["action"] == "sl_hit"
     assert fa("Defensive traders book Partly")["action"] == "partial" and fa("Good")["action"] == "note"
+
+
+NOV20 = ("bnf 440 to 500++\nDEFENSIVE TRADERS: book part qty and keep TSL at cost for rest qty\nAGGRESSIVE TRADERS: book part qty and "
+         "for rest qty keep TSL at NPNL\nNote- If you are trading with 1 lot only, you can book now. If you are trading with more lots, "
+         "book part lots and then trail for target with balance lots.\nrest sl 440")
+
+
+def test_followup_precedence_booking_outranks_a_stop_change_in_one_post():
+    fa = pl.followup_action
+    assert fa(NOV20) == {"action": "partial", "cost": True, "rest_stop": 440}          # 20 Nov: partial, 440 for the remainder
+    assert fa("rest sl 440") == {"action": "stop", "value": 440, "spot": False}         # a stop figure alone stays a stop
+    for t, v in (("rest stoploss 440", 440), ("sl for rest 445", 445), ("balance sl 450", 450), ("remaining sl 455", 455)):
+        assert fa(t) == {"action": "stop", "value": v, "spot": False}
+        assert fa("book part · " + t) == {"action": "partial", "cost": False, "rest_stop": v}
+    assert fa("book half, modify SL to 230")["rest_stop"] == 230
+    for t in ("defensive traders book", "book it", "book now", "Defensive traders book Partly", "partial booking now"):
+        assert fa(t)["action"] == "partial" and fa(t)["rest_stop"] is None
+    for t in ("book full", "book all", "book everything", "book profits fully", "exit", "exit now · rest sl 440", "sl hit"):
+        assert fa(t)["action"] in ("exit", "sl_hit")
+    assert fa("trade slow only")["action"] == "note"
+    assert fa("keep trailing sl and part part booking")["action"] == "trail"           # booking named beside a trail: the trail
+    assert fa("tgt 1 done trail sl to cost") == {"action": "trail", "cost": True}         # trail > targets
+
+
+def test_the_channel_closes_the_day():
+    for t in ("temporarily close the day", "Close the day here", "done for the day", "No more trades today", "That's it for today",
+              "that’s it for today"):
+        assert pl.day_closed(t), t
+    for t in ("trade slow only", "close it", "book now", "today is a trending day"):
+        assert not pl.day_closed(t), t

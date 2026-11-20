@@ -343,36 +343,77 @@ def spot_close15(samples: list[tuple[str, Optional[float]]], now: datetime) -> O
 
 # --- the channel's follow-ups ------------------------------------------------------------------------------------------
 
+_NUM = r"(\d+(?:\.\d+)?)"
+_SLW = r"(?:t?sl|stop\s*loss|stoploss)"
+# the stop of the REMAINDER after a part is booked: "rest sl 440", "sl for rest 440", "balance sl 440", "remaining sl 440"
+REST_STOP_RE = re.compile(r"\b(?:rest|balance|remaining)\s*(?:the\s*)?(?:qty\s*|quantity\s*|lots?\s*)?" + _SLW + r"\s*(?:to|at|now|is|:|-)?\s*" + _NUM
+                          + r"|\b" + _SLW + r"\s*(?:for|of)\s*(?:the\s*)?(?:rest|balance|remaining)(?:\s*(?:qty|quantity|lots?))?\s*(?:to|at|is|:|-)?\s*" + _NUM)
+STOP_RES = (
+    re.compile(r"\b(?:rest|revise|revised|new)\s*(?:the\s*)?" + _SLW + r"\s*(?:to|at|now|is)?\s*" + _NUM
+               + r"|\b" + _SLW + r"\s*(?:now|is\s*now)\s*(?:at|to)?\s*" + _NUM),
+    re.compile(r"\b(?:modify|modified|change|changed|move|moved|revise|revised|trail)\s*(?:the\s*)?(?:sl|stop\s*loss)\s*(?:to|at)?\s*" + _NUM
+               + r"|\b(?:sl|stop\s*loss)\s*(?:modified|changed|moved|revised)\s*(?:to|at)?\s*" + _NUM),
+    REST_STOP_RE,
+)
+EXIT_RE = re.compile(r"\b(exit|exited|close (it|all)|book\s*(all|full|fully|everything|entire|complete|profits?(\s*fully)?)|"
+                     r"square\s*off|cost to cost|exit near cost)\b")
+PART_RE = re.compile(r"\b(part(ly|ial)?\s*book|book\s*(part|partly|partial|half)|half\s*book)")
+BOOK_RE = re.compile(r"\bbook(ing)?\b")             # "book" alone ("defensive traders book", "book it", "book now"): a part
+DAY_CLOSE_RE = re.compile(r"\b(?:temporarily\s+)?clos(?:e|ing)\s+(?:the\s+|for\s+the\s+)?day\b|\bdone\s+for\s+(?:the\s+)?(?:day|today)\b|"
+                          r"\bno\s+more\s+(?:trades?|calls?|positions?)\s+(?:for\s+)?today\b|\bthat'?s\s+it\s+for\s+today\b|"
+                          r"\bthat\s+is\s+it\s+for\s+today\b")
+
+
+def _val(v: str):
+    f = float(v)
+    return int(f) if f.is_integer() else f
+
+
+def stop_figure(low: str):
+    """The stop figure a post names ("rest sl 440", "modify SL to 230", "sl now 520"), or None."""
+    for rx in STOP_RES:
+        m = rx.search(low)
+        if m:
+            return _val(next(g for g in m.groups() if g))
+    return None
+
+
+def day_closed(text: str) -> bool:
+    """The channel closes the day ("temporarily close the day", "done for the day", "no more trades today", "that's it
+    for today"). "trade slow only" is not a close."""
+    return bool(DAY_CLOSE_RE.search((text or "").lower().replace("’", "'")))
+
+
 def followup_action(text: str) -> dict:
     """What a follow-up says, by code: {action: exit|sl_hit|stop|trail|partial|add|active|avoid|targets|price|note, n,
-    value, spot, cost}. "add more near 440" is an add-on (never averaged); bare numbers are price notes. Words only: the channel's "target done" never sets a price or a P&L."""
+    value, spot, cost, rest_stop}. Precedence inside ONE post: SL hit / exit (full) > partial (book part / half / "book"
+    alone) > stop change > trail > targets > avoid > active > price > note. A booking with a stop figure is a partial whose
+    remainder takes that stop ("book part ... rest sl 440" -> {partial, rest_stop 440}); a stop figure alone is a stop.
+    "add more near 440" is an add-on (never averaged); bare numbers are price notes. Words only: the channel's "target
+    done" never sets a price or a P&L."""
     low = (text or "").lower()
     if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(hit|triggered|done|gone)\b", low):
         return {"action": "sl_hit"}
     if re.search(r"^\W*add\b|\badd\s+(?:more|\d+\s*(?:-\s*\d+\s*)?lots?)\b", low):
         return {"action": "add"}                        # "add more near 440" / "add 5 lots at 560": never averaged
-    m = re.search(r"\b(?:rest|revise|revised|new)\s*(?:the\s*)?(?:t?sl|stop\s*loss|stoploss)\s*(?:to|at|now|is)?\s*(\d+(?:\.\d+)?)"
-                  r"|\b(?:t?sl|stop\s*loss|stoploss)\s*(?:now|is\s*now)\s*(?:at|to)?\s*(\d+(?:\.\d+)?)", low)
-    if m:
-        v = float(m.group(1) or m.group(2))
-        return {"action": "stop", "value": int(v) if v.is_integer() else v, "spot": "spot" in low}
-    m = re.search(r"\b(?:modify|modified|change|changed|move|moved|revise|revised|trail)\s*(?:the\s*)?(?:sl|stop\s*loss)\s*(?:to|at)?\s*(\d+(?:\.\d+)?)"
-                  r"|\b(?:sl|stop\s*loss)\s*(?:modified|changed|moved|revised)\s*(?:to|at)?\s*(\d+(?:\.\d+)?)", low)
-    if m:
-        v = float(m.group(1) or m.group(2))
-        return {"action": "stop", "value": int(v) if v.is_integer() else v, "spot": "spot" in low}
-    if re.search(r"\b(exit|exited|close (it|all)|book (all|full|profits?)|square\s*off|cost to cost|exit near cost)\b", low):
+    if EXIT_RE.search(low):
         return {"action": "exit"}
+    cost = bool(re.search(r"\bcost\b", low))
+    fig = stop_figure(low)
+    trail = bool(re.search(r"\b(trail|trailing)\b", low))
+    if (PART_RE.search(low) or BOOK_RE.search(low)) and not (trail and fig is None and not re.search(r"\bbook\b", low)):
+        # "keep trailing sl and part booking" names the booking as a noun beside the trail: the trail is the instruction
+        return {"action": "partial", "cost": cost, "rest_stop": fig}
+    if fig is not None:
+        return {"action": "stop", "value": fig, "spot": "spot" in low}
+    if trail:
+        return {"action": "trail", "cost": cost}
+    if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(?:to|at)\s*cost\b", low):
+        return {"action": "trail", "cost": True}
     m = re.search(r"\b(\d|all)\s*(?:targets?|tgts?)\s*(?:done|hit|achieved)|\b(?:target|tgt)\s*(\d)\s*(?:done|hit|achieved)|hit\s*tgt\s*(\d)", low)
     if m:
         n = m.group(1) or m.group(2) or m.group(3)
         return {"action": "targets", "n": None if n == "all" else int(n)}
-    if re.search(r"\b(trail|trailing)\b", low):
-        return {"action": "trail", "cost": bool(re.search(r"\bcost\b", low))}
-    if re.search(r"\b(part(ly|ial)?\s*book|book\s*(part|partly|partial|half)|half\s*book)", low):
-        return {"action": "partial", "cost": bool(re.search(r"\bcost\b", low))}
-    if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(?:to|at)\s*cost\b", low):
-        return {"action": "trail", "cost": True}
     if re.search(r"\b(avoid|don'?t (enter|take)|not now|cancel)\b", low) or re.fullmatch(r"\s*wait\W*", low):
         return {"action": "avoid"}
     if re.search(r"\b(active|activated|triggered|start taking|enter now|entry done|take it)\b", low) or re.search(r"\bcmp\b", low):

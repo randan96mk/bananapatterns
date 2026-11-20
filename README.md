@@ -2053,6 +2053,39 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   cancelled + `MARKET` exit; trail / TSL at cost → the stop to cost (never lower for a buy); "modify SL to N", "REST
   STOPLOSS 530", "REVISE SL 298", "sl now 298" → the stop's trigger; book part → half the open lots at market (one lot
   open: `kite_auto_book_part`). One Telegram line each. In click mode these stay informational. Never averages.
+- **Follow-up precedence** (`plan.followup_action`, one post, the first that applies wins):
+
+  | # | The post says | Action |
+  |---|---|---|
+  | 1 | "SL hit" / "tsl gone" · "exit", "book full", "book all", "book everything", "book profits fully", "square off" | `sl_hit` / `exit` |
+  | 2 | "book part", "book half", "partly book", or **"book" alone** ("defensive traders book", "book it", "book now") | `partial` (+ `cost` when it says cost, + `rest_stop` N when it also names a stop) |
+  | 3 | "rest sl N", "rest stoploss N", "sl for rest N", "balance sl N", "remaining sl N", "modify SL to N", "sl now N" | `stop` N |
+  | 4 | "trail", "TSL at cost" | `trail` |
+  | 5 | "2 targets done" | `targets` |
+  | 6 | avoid / cancel / not now · active / cmp · a bare price · anything else | `avoid` · `active` · `price` · `note` |
+
+  20 Nov (#12 BANKNIFTY 64300 CE, 1 lot, entry 440, price 495): "book part qty and keep TSL at cost for rest qty … if
+  you are trading with 1 lot only, you can book now … rest sl 440" is `{partial, cost, rest_stop 440}` (it was a stop
+  move to 440, and the price fell through it). Auto: one lot open with `kite_auto_book_part` `channel` → the lot is
+  booked at market ("one lot open: booked at market"); `hold` → kept, the stop to the rest stop (else cost). 2+ lots →
+  the stop cut to the rest first, the part sold at market, then on the fill the rest's stop → N (never lowered for a
+  buy, never past the price; an explicit N wins over "cost"): "booked part: SELL 30 of 60 MARKET · stop cut to 30
+  first · rest stop → 440". The paper book does the same (half booked, then the remainder's stop). "keep trailing sl
+  and part booking" (booking named beside a trail, no figure) stays a trail.
+- **Day closed by the channel**: "temporarily close the day", "close the day", "done for the day", "no more trades
+  today", "that's it for today" set the per-day flag `tips.day_closed` (app_settings: the post id and the time). Auto
+  arms nothing new for the rest of the day (the card: "auto: not armed · the channel closed the day at 1:07 PM"; the
+  Guards panel shows it), open positions and resting stops are untouched; a new call from the channel the same day
+  re-opens it ("day re-opened by a new call"). One Telegram line each way (📕 closed · 📗 re-opened); the Kite bar
+  shows "day closed 1:07 PM". "trade slow only" is not a close (logged only).
+- **AI second opinion on follow-ups** (`kite_check.followup_read`, kind `tips_followup`, prompt `followup-v1`, the day
+  model, plain text): after a follow-up linked to a hint with an open or armed Kite position (any mode but off), the
+  model gets the post, the hint's one-line state (qty open, lots, entry, stop, targets, live price) and what the app
+  did, and writes ONE line: "reads as: book now | book part | move stop to N | exit | trail | nothing · agrees |
+  differs: why". A figure not in the input drops the line. Agrees → "[AI] agrees" on the card, no push. Differs → ONE
+  Telegram line `[AI] #12 reads "…" as book now · the app moved the stop to 440 · your call` (kind tips) and an amber
+  item on the card and Home. At most one read per follow-up; none for a bare price ("476"), chatter or an add-on; the
+  AI guard / quiet hours hold it like any job. It never places, modifies or cancels anything.
 - **Order check** (`backend/tips/kite_check.py`), after every Kite event: code compares the post and the plan with the
   order rows (contract, side, qty = lots × lot size, the fill against the level, the stop and target prices, one
   entry, a stop resting within 60 s of the fill, nothing open after the time stop). A red item: "⚠️ Kite check · #6 ·

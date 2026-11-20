@@ -627,16 +627,29 @@ def channel_action(config, h: dict, act: dict, text: str, now: datetime, ltp: Op
             out = f"followed: {'rest ' if len(pos.get('booked') or []) > 1 else ''}closed at {pl.fmt(ltp)} · {inr(pos['realised'], sign=True)} total"
         elif pos["state"] == "open":
             out = "no quote to follow it at · exit it yourself"
-    elif a == "partial" and auto and pos["state"] == "open" and ltp is not None and pos["run"]["open_frac"] > 0.5:
+    elif a == "partial" and auto and pos["state"] == "open" and (ltp is not None or act.get("rest_stop") is not None):
+        # partial first (half booked while more than half is open), then the remainder's stop: the post's "rest sl N"
+        # (an explicit figure wins over "TSL at cost"; never lowered for a buy), else cost when the post says so
         r = pos["run"]
-        frac = r["open_frac"] / 2
-        e = pl._close(r, h["plan"], frac, ltp, now, "channel_exit")
-        _apply(h, [e], now, "channel", conn)
-        out = f"followed: half booked at {pl.fmt(ltp)}"
-        if act.get("cost") and r["state"] != "closed":
+        bits = []
+        if ltp is not None and r["open_frac"] > 0.5:
+            frac = r["open_frac"] / 2
+            e = pl._close(r, h["plan"], frac, ltp, now, "channel_exit")
+            _apply(h, [e], now, "channel", conn)
+            bits.append(f"half booked at {pl.fmt(ltp)}")
+        rs = act.get("rest_stop")
+        if r["state"] != "closed" and rs is not None and not act.get("spot"):
+            cur = r.get("stop")
+            if cur is not None and ((_sign(h) > 0 and float(rs) < float(cur)) or (_sign(h) < 0 and float(rs) > float(cur))):
+                bits.append(f"rest stop kept at {pl.fmt(cur)} (the post's {pl.fmt(rs)} is lower)")
+            else:
+                r["stop"], r["stop_moved"], r["spot_stop"] = rs, True, None
+                bits.append(f"rest stop → {pl.fmt(rs)}")
+        elif act.get("cost") and r["state"] != "closed":
             r["stop"] = max(r["stop"] or 0, r["entry_px"]) if _sign(h) > 0 else min(r["stop"] or 1e12, r["entry_px"])
             r["stop_moved"], r["spot_stop"] = True, None
-            out += f" · SL → cost {pl.fmt(r['entry_px'])}"
+            bits.append(f"SL → cost {pl.fmt(r['entry_px'])}")
+        out = ("followed: " + " · ".join(bits)) if bits else "follow-up linked"
     elif a in ("exit", "sl_hit", "stop", "trail", "partial") and pos is not None and not auto:
         out = "not followed: " + ("you overrode this position" if pos.get("override") else "auto-follow is off") + " · your call"
     elif a in ("exit", "sl_hit"):

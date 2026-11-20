@@ -196,3 +196,61 @@ def test_the_ai_read_asks_for_plain_text_not_json(monkeypatch):
     src = inspect.getsource(kc.ai_read)
     assert "json_mode=False" in src and "plain text" in src
     assert "no JSON" in kc.SYSTEM
+
+
+# --- the AI second opinion on a follow-up (informational: never places, modifies or cancels) ---------------------------------
+
+def _fu_setup(monkeypatch):
+    from backend.ai import queue as q
+    from tests.test_tips_kite_auto import auto_setup
+    c, w, s = auto_setup()
+    c.ai.enabled = True
+    c.tips.model_classify = False
+    jobs = []
+    monkeypatch.setattr(q, "enqueue", lambda config, kind, key, fn, model=None, note=None: jobs.append((kind, key)) or {"id": len(jobs), "dedup": False})
+    hid = post(c, w, s, 1, "12:50", CALL1)["hint_id"]
+    tick(c, w, {S82200: 538.0}, "12:51")
+    tick(c, w, {S82200: 590.0}, "13:00")
+    return c, w, s, hid, jobs
+
+
+def test_followup_ai_agrees_quietly_differs_pushes_one_line_and_an_amber_item(pushed, monkeypatch):
+    c, w, s, hid, jobs = _fu_setup(monkeypatch)
+    post(c, w, s, 2, "13:01", "sl now 560")
+    assert [j for j in jobs if j[0] == kc.FU_KIND] == [(kc.FU_KIND, f"tips_followup:{hid}:2")]
+    before = [dict(r) for r in ko.rows_for(hid)]
+    res = kc.followup_read(c, hid, "2", "sl now 560", {"action": "stop", "value": 560, "spot": False}, "stop → 560",
+                           generate=lambda sysm, src: "reads as: move stop to 560 · agrees", now=t19("13:01", 20))
+    assert res["result"]["agrees"] and not res["pushed"]
+    k = bk.load(hid)["kite"]
+    assert any(x["text"].startswith("[AI] agrees") for x in k["log"]) and not k.get("ai_fu_items")
+    assert not any(p.startswith("[AI]") for p in pushed)
+    res = kc.followup_read(c, hid, "3", "you can book now", {"action": "stop", "value": 560, "spot": False}, "stop → 560",
+                           generate=lambda sysm, src: "reads as: book now · differs: the channel says book the lot now", now=t19("13:02"))
+    assert res["pushed"]
+    line = '[AI] #%d reads "you can book now" as book now · the app moved the stop to 560 · your call' % hid
+    assert [p for p in pushed if p.startswith("[AI]")] == [line]
+    h = bk.load(hid)
+    amb = [x for x in h["kite"]["check"]["items"] if x["level"] == "amber" and x["text"].startswith(line)]
+    assert amb and h["kite"]["check"]["red"] == 0
+    assert any(x["text"].startswith(line) for x in kc.check(c, h, now=t19("13:03"))["items"])     # kept through the next check
+    assert any(lvl == "info" and line in t for lvl, t in kc.attention_items(t19("13:03")))         # Home
+    assert [dict(r) for r in ko.rows_for(hid)] == before                                          # nothing placed / modified
+    with get_db() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM ai_notes WHERE kind = 'tips_followup' AND prompt_version = 'followup-v1'").fetchone()[0]
+    assert n == 2
+
+
+def test_followup_ai_figure_check_drops_a_bad_line_and_bare_prices_are_skipped(pushed, monkeypatch):
+    c, w, s, hid, jobs = _fu_setup(monkeypatch)
+    res = kc.followup_read(c, hid, "2", "sl now 560", {"action": "stop", "value": 560}, "stop → 560",
+                           generate=lambda sysm, src: "reads as: move stop to 777 · differs: the stop is 777", now=t19("13:01"))
+    assert res["result"] is None and not res["pushed"] and not bk.load(hid)["kite"].get("ai_fu_items")
+    assert any("dropped" in x["text"] for x in bk.load(hid)["kite"]["log"])
+    n = len(jobs)
+    post(c, w, s, 3, "13:02", "476")                                             # a bare price: no read
+    post(c, w, s, 4, "13:03", "add more near 540")                               # an add-on: no read
+    assert len([j for j in jobs[n:] if j[0] == kc.FU_KIND]) == 0
+    assert kc.fu_skip("476", {"action": "price"}) and kc.fu_skip("🚀🚀", {"action": "note"}) and not kc.fu_skip("book now", {"action": "partial"})
+    c.tips.kite_mode = "off"                                                      # off: never read
+    assert kc.enqueue_followup(c, hid, 9, "book now", {"action": "partial"}, None) is None

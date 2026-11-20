@@ -531,3 +531,100 @@ def test_a_partial_booking_cuts_the_stop_before_the_second_sell(pushed):
     sells = [o for o in book[n_before:] if o["transaction_type"] == "SELL" and o["order_type"] == "MARKET"]
     assert int(stop["quantity"]) == 40 and len(sells) == 1 and int(sells[0]["quantity"]) == 40     # the stop was cut, one sell
     assert any("stop cut to 40 first" in p for p in pushed)
+
+
+# --- 20 Nov: a booking outranks a stop change in one post · the day closed by the channel -------------------------------------
+
+BN64 = "NFO:BANKNIFTY26NOV64300CE"
+BNCALL = "BUY BANKNIFTY 64300 CE NEAR 430-440\nSL 400\nTGT 500/550"
+NOV20 = ("bnf 440 to 500++\nDEFENSIVE TRADERS: book part qty and keep TSL at cost for rest qty\nAGGRESSIVE TRADERS: book part qty and "
+         "for rest qty keep TSL at NPNL\nNote- If you are trading with 1 lot only, you can book now. If you are trading with more lots, "
+         "book part lots and then trail for target with balance lots.\nrest sl 440")
+
+
+def bnworld(**prices):
+    w = sworld(**prices)
+    w.dumps["NFO"] = w.dumps["NFO"] + [opt("BANKNIFTY", 64300, t, EXP, lot=30) for t in ("CE", "PE")]
+    return w
+
+
+def test_20_nov_one_lot_books_at_market_and_never_moves_the_stop(pushed):
+    c, _, s = auto_setup()
+    w = bnworld(**{BN64: 438.0})
+    hid = post(c, w, s, 1, "12:50", BNCALL)["hint_id"]
+    tick(c, w, {BN64: 438.0}, "12:51")
+    k = bk.load(hid)["kite"]
+    assert k["state"] == "entered" and k["qty_open"] == 30 and k["legs"]["stop"]["trigger"] == 400
+    tick(c, w, {BN64: 495.0}, "13:06")
+    r = post(c, w, s, 2, "13:07", NOV20)
+    assert r["act"] == {"action": "partial", "cost": True, "rest_stop": 440}
+    tick(c, w, {BN64: 495.0}, "13:07", 30)
+    k = bk.load(hid)["kite"]
+    assert k["state"] == "closed" and k["qty_open"] == 0 and not k.get("stop_moves")            # booked, the stop never moved to 440
+    ex = next(x for x in ko.rows_for(hid) if x["leg"] == "exit")
+    assert ex["order_type"] == "MARKET" and abs(float(ex["filled_px"]) - 495) < 1 and k["realised"] > 1500
+    assert any("one lot open: booked at market" in p for p in pushed)
+
+
+def test_20_nov_two_lots_cut_the_stop_sell_half_then_the_rest_stop(pushed):
+    c, _, s = auto_setup(kite_auto_max_open=5, kite_max_lots=4)
+    w = bnworld(**{BN64: 438.0})
+    hid = post(c, w, s, 1, "12:50", BNCALL + "\n2 lots")["hint_id"]
+    tick(c, w, {BN64: 438.0}, "12:51")
+    k = bk.load(hid)["kite"]
+    assert k["qty_open"] == 60 and k["legs"]["stop"]["qty"] == 60
+    tick(c, w, {BN64: 495.0}, "13:06")
+    n_before = len(s.orders())
+    post(c, w, s, 2, "13:07", NOV20)
+    book = s.orders()
+    stop = next(o for o in book if o["order_id"] == k["legs"]["stop"]["order_id"])
+    sells = [o for o in book[n_before:] if o["transaction_type"] == "SELL" and o["order_type"] == "MARKET"]
+    assert int(stop["quantity"]) == 30 and len(sells) == 1 and int(sells[0]["quantity"]) == 30       # the stop cut first, half sold
+    assert any("booked part: SELL 30 of 60 MARKET · stop cut to 30 first · rest stop → 440" in p for p in pushed)
+    tick(c, w, {BN64: 495.0}, "13:07", 30)
+    k = bk.load(hid)["kite"]
+    assert k["qty_open"] == 30 and k["legs"]["stop"]["qty"] == 30 and k["legs"]["stop"]["trigger"] == 440 and k["stop_px"] == 440
+    assert k.get("rest_stop_after_part") is None and not k.get("cost_after_part")
+    p = bk.load(hid)["pos"]                                                    # the paper book: half booked, the rest's stop 440
+    if p:
+        assert p["run"]["stop"] == 440
+
+
+def test_a_rest_stop_is_never_lowered_and_hold_moves_it(pushed):
+    c, _, s = auto_setup()
+    c.tips.kite_auto_book_part = "hold"
+    w = bnworld(**{BN64: 438.0})
+    hid = post(c, w, s, 1, "12:50", BNCALL)["hint_id"]
+    tick(c, w, {BN64: 438.0}, "12:51")
+    tick(c, w, {BN64: 495.0}, "13:06")
+    post(c, w, s, 2, "13:07", "book part · rest sl 380")                      # lower than the stop 400: kept
+    k = bk.load(hid)["kite"]
+    assert k["state"] == "entered" and k["legs"]["stop"]["trigger"] == 400
+    post(c, w, s, 3, "13:08", "book part · rest sl 440")                      # one lot held: the stop to the rest stop
+    k = bk.load(hid)["kite"]
+    assert k["state"] == "entered" and k["legs"]["stop"]["trigger"] == 440
+
+
+def test_the_channel_closes_the_day_and_a_new_call_reopens_it(pushed):
+    c, w, s = auto_setup(kite_auto_max_open=5)
+    w.prices.update({S82200: 545.0, S82400: 280.0})
+    h1 = post(c, w, s, 1, "13:00", "BUY SENSEX 82200 CE NEAR 530-540")["hint_id"]     # no stop / target yet: not placeable
+    assert bk.load(h1)["kite"]["state"] in ("none", None) if bk.load(h1).get("kite") else True
+    r = post(c, w, s, 2, "13:07", "Temporarily close the day")
+    assert r.get("day_closed") and ka.day_closed(t19("13:08"))["at_label"] == "1:07 PM"
+    assert len([p for p in pushed if "closed the day at 1:07 PM" in p]) == 1
+    post(c, w, s, 3, "13:09", "SL 480\nTGT 600/650")                            # the plan completes after the close: not armed
+    k = bk.load(h1)["kite"]
+    assert k["state"] == "none" and k["auto"]["why"] == "the channel closed the day at 1:07 PM"
+    assert not any("not armed · the channel closed" in p for p in pushed)     # logged on the card, one line each way only
+    assert any(g["key"] == "day_closed" and not g["ok"] for g in ko.auto_guards(c, t19("13:10")))
+    assert ko.lite(c, t19("13:10"))["day_closed"]["at_label"] == "1:07 PM"
+    post(c, w, s, 4, "13:12", "trade slow only")                                # not a close, no new line
+    assert len([p for p in pushed if "closed the day" in p]) == 1
+    h2 = post(c, w, s, 5, "14:04", CALL3)["hint_id"]                           # a new call: the channel is trading again
+    assert ka.day_closed(t19("14:05")) is None and ko.lite(c, t19("14:05"))["day_closed"] is None
+    assert len([p for p in pushed if "day re-opened by a new call (#%d)" % h2 in p]) == 1
+    assert bk.load(h2)["kite"]["state"] == "armed"
+    assert any("day re-opened by a new call" in e["text"] for e in bk.load(h2)["events"])
+    ka.auto_scan(c, s, t19("14:06"))
+    assert bk.load(h1)["kite"]["state"] in ko.WORKING                          # the earlier hint is armed again too
