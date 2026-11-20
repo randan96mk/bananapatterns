@@ -7,7 +7,7 @@
           43,450 (15-min close)"); no stop at all = "stop missing", no plan (the card says so).
   targets half at T1 (partial_at_t1), the stop to cost (trail_to_cost_after_t1), the rest at T2; with "trail" on (the
           channel says trail, or you trail) the rest rides target to target with the stop one target behind.
-  time    option buys: the intraday time stop (tips.intraday_time_stop, 3:20 PM; MCX 11:20 PM). Option sells with
+  time    option buys: the intraday time stop (tips.intraday_time_stop, 3:14 PM; MCX 11:20 PM). Option sells with
           "Target 0" are held to expiry unless the stop / an exit says otherwise.
   after hours  a hint posted after the close (or on a holiday) is planned for the next open.
 `step` is one quote's worth of that machine; the record replays stored quotes through the same function."""

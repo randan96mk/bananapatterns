@@ -401,3 +401,12 @@ def test_the_sensex_pe_sequence_with_the_plan_in_a_second_post(monkeypatch):
     h = bk.load(hid)
     assert h["targets"] == [745, 770, 800, 850, 900] and h["stop"]["value"] == 550      # "tgt 1 done" changed no level
     assert out[3]["line"] == "entry allowed at the market"
+
+
+def test_a_saved_old_time_stop_moves_to_the_new_default():
+    c = cfg()
+    c.tips.intraday_time_stop = "15:20"
+    assert rd.migrate_time_stop(c) is True and c.tips.intraday_time_stop == "15:14"
+    c.tips.intraday_time_stop = "15:05"
+    assert rd.migrate_time_stop(c) is False and c.tips.intraday_time_stop == "15:05"
+    assert AppConfig().tips.intraday_time_stop == "15:14"

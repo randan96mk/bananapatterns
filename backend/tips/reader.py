@@ -841,10 +841,22 @@ def migrate_channels(config) -> bool:
     return False
 
 
+def migrate_time_stop(config) -> bool:
+    """A saved intraday_time_stop of 15:20 (the old default) becomes 15:14 once; any other saved value is the owner's."""
+    if str(config.tips.intraday_time_stop) == "15:20":
+        config.tips.intraday_time_stop = "15:14"
+        return True
+    return False
+
+
 def ensure(state, client_factory=None, fetch=None) -> dict:
     """Start the reader when tips.enabled and a session exist, stop it otherwise. The reader status."""
     global READER
     try:
+        if migrate_time_stop(state.config):
+            from backend.config import save_config
+            save_config(state.config)
+            logger.info("Tips time stop moved from 15:20 to the default 15:14")
         if migrate_channels(state.config):
             from backend.config import save_config
             save_config(state.config)

@@ -77,9 +77,9 @@ def test_cards_rows_chips_checks_record_from_a_seeded_day(pushed):  # noqa: F811
 def test_next_up_times_before_and_after_the_window():
     c, _, _ = auto_setup()
     lab = lambda now: [x["label"] for x in th.next_times(c, now)]       # noqa: E731
-    assert lab(t19("10:00")) == ["3:00 PM", "3:20 PM", "3:35 PM"]
+    assert lab(t19("10:00")) == ["3:00 PM", "3:14 PM", "3:35 PM"]
     assert [x["key"] for x in th.next_times(c, t19("10:00"))] == ["tips_window", "tips_time_stop", "tips_day_check"]
-    assert lab(t19("15:10")) == ["3:20 PM", "3:35 PM"]
+    assert lab(t19("15:10")) == ["3:14 PM", "3:35 PM"]
     assert lab(t19("15:40")) == []
     assert lab(at("10:00", date(2026, 11, 21))) == []                   # a Saturday
     c.tips.kite_mode = "off"

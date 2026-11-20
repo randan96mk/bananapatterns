@@ -235,10 +235,10 @@ def test_time_stop_exits_an_open_kite_position(pushed):
     ko.place_all(c, ko.sim(), hid, 1, now=t19("13:53"))
     tick(c, w, {S82300: 381.0}, "13:54")
     assert bk.load(hid)["kite"]["state"] == "entered"
-    tick(c, w, {S82300: 420.0}, "15:20")
+    tick(c, w, {S82300: 420.0}, "15:14")
     k = bk.load(hid)["kite"]
-    assert k["state"] == "closed" and k["reason"] == "time stop 3:20 PM" and k["legs"]["stop"]["status"] == "cancelled"
-    assert any("exit SELL 20 MARKET · stop and targets cancelled · time stop 3:20 PM" in p for p in pushed)
+    assert k["state"] == "closed" and k["reason"] == "time stop 3:14 PM" and k["legs"]["stop"]["status"] == "cancelled"
+    assert any("exit SELL 20 MARKET · stop and targets cancelled · time stop 3:14 PM" in p for p in pushed)
 
 
 # --- auto -------------------------------------------------------------------------------------------------------------------

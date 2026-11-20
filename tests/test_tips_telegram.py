@@ -41,7 +41,7 @@ def test_hint_line_per_the_mock():
     lines = t.split("\n")
     assert lines[0] == "💡 <b>Tip #1 · aakankshatrading · " + msg._tip_t(h["posted_at"]) + "</b>"
     assert lines[1].startswith("BUY BANKNIFTY 50300 PE · near 250–270 when comes · SL 190 · Tgt 320 / 350 / 400++ · expiry Wed 25 Nov")
-    assert lines[2] == "<i>plan: wait for the zone · half out at 320, SL to cost, rest to 350 / trail · time stop 3:20 PM · skipped if the zone never comes</i>"
+    assert lines[2] == "<i>plan: wait for the zone · half out at 320, SL to cost, rest to 350 / trail · time stop 3:14 PM · skipped if the zone never comes</i>"
     assert "<b>take 1</b> · <b>take 1 2</b> (lots) · <b>skip 1</b> · <b>tip 1</b>" in lines[-1] and "size not stated → <b>take 1 N</b>" in lines[-1]
     assert msg._tip_t(datetime(2026, 11, 16, 14, 0, tzinfo=IST)).endswith("2:00 PM")
 
