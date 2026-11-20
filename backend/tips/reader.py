@@ -108,7 +108,8 @@ def status() -> dict:
     st = json.loads(raw) if raw else {}
     return {"state": st.get("state") or ("logged_out" if not session_string() else "down"), "reason": st.get("reason"),
             "account_masked": st.get("account_masked"), "last_post_at": st.get("last_post_at"), "lag_ms": st.get("lag_ms"),
-            "via": st.get("via"), "since": st.get("since"), "channels": channels_of(None)}
+            "via": st.get("via"), "since": st.get("since"), "channels": channels_of(None),
+            "relayed_today": int(st.get("relayed_today") or 0) if st.get("relay_day") == datetime.now(IST).date().isoformat() else 0}
 
 
 def set_status(**kw) -> dict:
@@ -777,7 +778,8 @@ class Reader:
 
         async def on_new(ev):
             ch = names.get(getattr(ev, "chat_id", None)) or _chat_name(ev, chans)
-            self._on_message(ch, ev.message)
+            r = self._on_message(ch, ev.message)
+            self._relay_soon(ch, ev.message, r)                     # ↗ after the post is stored; never blocks it
             if getattr(ev.message, "media", None) is not None and getattr(cfg.tips, "vision", False):
                 t = asyncio.get_running_loop().create_task(self._capture(ch, ev.message))   # never blocks the next post
                 self._tasks.add(t)
@@ -812,7 +814,46 @@ class Reader:
         except Exception:
             logger.exception("Tips screenshot %s/%s failed", channel, getattr(m, "id", "?"))
 
-    def _on_message(self, channel: str, m) -> None:
+    def _relay_soon(self, channel: str, m, r: Optional[dict]):
+        """↗ tips.relay: a NEW live post (not an edit, not the catch-up, not the rehearsal channel) is forwarded to each
+        relay_to entry in a task on this loop, so the next post and the order handling never wait for it."""
+        tips = self.state.config.tips
+        if not (r and r.get("new")) or not getattr(tips, "relay", False) or channel == REHEARSAL_CHANNEL:
+            return None
+        try:
+            entries = relay_entries(tips)
+        except ValueError:
+            logger.warning("Tips relay: tips.relay_to has a bad entry; nothing forwarded")
+            return None
+        if not entries or self._client is None:
+            return None
+        t = asyncio.get_running_loop().create_task(self._relay(self._client, m, entries))
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
+        return t
+
+    async def _relay(self, client, m, entries: list) -> int:
+        """Forward the original message object as-is (text + media, Telegram's own "Forwarded from") to each entry. A
+        failure is one log line and, once per entry per day, one Telegram line to the owner; the others still go.
+        No retry. Returns the number sent. Never raises."""
+        sent = 0
+        for entry in entries:
+            try:
+                peer = await _relay_peer(client, entry)
+                await client.forward_messages(peer, m)
+                sent += 1
+            except Exception as exc:
+                why = relay_reason(exc)
+                logger.warning("Tips relay to %s failed: %s", entry, why)
+                await relay_failed(self.state.config, entry, why)
+        if sent:
+            try:
+                relay_count(sent)
+            except Exception:
+                logger.exception("Tips relay count failed")
+        return sent
+
+    def _on_message(self, channel: str, m) -> Optional[dict]:
         try:
             when = getattr(m, "date", None) or datetime.now(timezone.utc)
             text = getattr(m, "message", None) or ""
@@ -822,8 +863,77 @@ class Reader:
             lag = int((datetime.now(timezone.utc) - (when if when.tzinfo else when.replace(tzinfo=timezone.utc))).total_seconds() * 1000)
             if r.get("new"):
                 set_status(last_post_at=_iso(when), lag_ms=max(0, lag))
+            return r
         except Exception:
             logger.exception("Tips post %s/%s failed", channel, getattr(m, "id", "?"))
+            return None
+
+
+# --- ↗ the relay: each new post forwarded as-is from the owner's own account ------------------------------------------------
+
+REHEARSAL_CHANNEL = "rehearsal"         # the dry-run rehearsal hint's channel (kite_orders.REHEARSAL_CHANNEL): never relayed
+_relay_peers: dict = {}                 # {entry: the resolved peer}, once per process
+_relay_warned: set = set()              # {(entry, day)}: the owner is told once per entry per day
+
+
+def relay_entries(tips) -> list[str]:
+    from backend.config import split_relay
+    return split_relay(getattr(tips, "relay_to", "") or "")
+
+
+async def _relay_peer(client, entry: str):
+    """An entry's peer, resolved once per process (client.get_entity; a phone resolves only when it is in the
+    account's contacts; a numeric id the session has not seen yet is looked up after loading the dialogs once)."""
+    if entry in _relay_peers:
+        return _relay_peers[entry]
+    if entry.lstrip("-").isdigit():
+        try:
+            peer = await client.get_entity(int(entry))
+        except ValueError:
+            await client.get_dialogs()
+            peer = await client.get_entity(int(entry))
+    else:
+        peer = await client.get_entity(entry)
+    _relay_peers[entry] = peer
+    return peer
+
+
+def relay_reason(exc: Exception) -> str:
+    """A short reason for the log and the owner's line (no secrets are in it)."""
+    name = type(exc).__name__
+    if name == "ChatForwardsRestrictedError":
+        return "the channel restricts forwarding"
+    if name == "FloodWaitError":
+        return f"flood wait {int(getattr(exc, 'seconds', 0) or 0)} s · skipped"
+    if name in ("UsernameNotOccupiedError", "UsernameInvalidError", "PeerIdInvalidError") or isinstance(exc, ValueError):
+        return "unknown user (a phone number must be in your contacts)"
+    return _reason(exc)
+
+
+async def relay_failed(config, entry: str, why: str) -> None:
+    """One Telegram line to the owner (kind tips) per entry per day; sent off the reader's loop."""
+    day = datetime.now(IST).date().isoformat()
+    if (entry, day) in _relay_warned:
+        return
+    _relay_warned.add((entry, day))
+    import html
+    line = f"↗ relay to {html.escape(entry)} failed: {html.escape(why)}"
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, bk.push, config, f"tips|relay|fail|{entry}|{day}", line)
+    except Exception:
+        logger.exception("Tips relay failure line not sent")
+
+
+def relay_count(n: int) -> int:
+    """relayed_today in the reader status (a new day starts at 0). Returns today's count."""
+    day = datetime.now(IST).date().isoformat()
+    with get_db() as conn:
+        st = json.loads(get_setting(conn, "tips.reader") or "{}")
+        if st.get("relay_day") != day:
+            st["relay_day"], st["relayed_today"] = day, 0
+        st["relayed_today"] = int(st.get("relayed_today") or 0) + int(n)
+        set_setting(conn, "tips.reader", json.dumps(st))
+    return st["relayed_today"]
 
 
 def _chat_name(ev, chans: list) -> str:

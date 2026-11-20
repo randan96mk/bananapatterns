@@ -165,6 +165,8 @@ const HELP_TIPS = {
   vision: '📷 Read the channel\'s screenshots on this server (RapidOCR; nothing leaves the server): the strike, index, expiry and price shown, checked against the text (true/false; off = no download, no read). Images are deleted after 2 days; the read text stays. Posts older than 2 days are never read',
   vision_mode: '📷 "report" (a strike mismatch between the text and the screenshot is shown on the card, pushed and on Home) or "check" (also: auto does not arm the hint and an armed Kite entry is cancelled until you pick the strike)',
   kite_auto_book_part: 'Auto, "book part" with ONE lot open: "channel" = book it at market (the channel\'s "you can book now") · "hold" = keep it for the target and move the stop to cost',
+  relay: '↗ Forward every new channel post from your own Telegram account to the people in relay_to (true/false)',
+  relay_to: 'forwards go out as you, the moment a post arrives · exactly as posted · @username, phone or id, one per line · a phone number must be in your contacts',
 };
 // 🧹 archive and vacuum (section-scoped: enabled / day / time are generic names)
 const HELP_MAINT = {
@@ -175,6 +177,8 @@ const HELP_MAINT = {
   time: 'Time the archive runs on that day (24-hour HH:MM, IST); a missed run catches up later the same day',
 };
 const HELP_SEC = { tips: HELP_TIPS, maintenance: HELP_MAINT };
+// text kept one entry per line (a textarea for a plain string)
+const MULTI = { tips: ['relay_to'] };
 
 // Under 760 px the three columns stack (the same breakpoint redesign.css uses).
 function useNarrow() {
@@ -226,7 +230,10 @@ export default function SettingsPanel() {
                 <div style={{ textAlign: 'right' }}>{Array.isArray(v)
                   ? <textarea rows={Math.min(4, v.length || 1)} style={{ width: 220, maxWidth: '100%', fontSize: 11, textAlign: 'left' }} value={v.join('\n')}
                       onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />
-                  : <input className="mono" value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</div>
+                  : (MULTI[section] || []).includes(k)
+                    ? <textarea rows={Math.min(4, Math.max(2, String(v).split('\n').length))} style={{ width: 220, maxWidth: '100%', fontSize: 11, textAlign: 'left' }} value={String(v)}
+                        onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
+                    : <input className="mono" value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</div>
               </div>))}</div>}
           <div className="rwrap"><button className="btn small" disabled={!vals || !dirty} onClick={save}>Save</button><span className="msg">{msg}</span></div>
         </Panel>
