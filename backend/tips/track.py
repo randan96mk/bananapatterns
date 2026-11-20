@@ -539,7 +539,8 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
         kv["legs"] = cd.adjust_legs(h, kv["legs"], cb["trade_facts"])
     except Exception:
         logger.exception("Tips card #%s failed", h.get("id"))
-        cb = {"pnl_strip": None, "now_tile": None, "dist": None, "said_next": [], "facts": None, "trade_facts": None}
+        cb = {"pnl_strip": None, "now_tile": None, "dist": None, "said_next": [], "facts": None, "trade_facts": None,
+              "log_open": False}
     try:                                              # 🤖 AI on Tips: the grade, the evening review, the pre-flight read
         from backend.tips import ai4
         cb["ai4"] = ai4.card_view(cfg, h)

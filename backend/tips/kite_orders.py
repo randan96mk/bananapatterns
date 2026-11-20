@@ -1257,6 +1257,86 @@ def exit_by_of(k: dict, leg: str, by: Optional[str]) -> str:
     return "you" if by in ("click", "dry") or by is None else "auto"
 
 
+# --- backfill: the close facts of a hint closed before the card's P&L strip existed -----------------------------------------
+
+EXIT_LEGS = ("exit", "stop", "t1", "t2")
+BACKFILL_LINE = "backfilled close facts from the order rows"
+
+
+def _row_at(r: dict) -> Optional[str]:
+    return r.get("updated_at") or r.get("placed_at")
+
+
+def _time_stop_exit(k: dict) -> bool:
+    if str(k.get("exit_why") or "").startswith("time stop") or str(k.get("reason") or "").startswith("time stop"):
+        return True
+    return any(re.match(r"^Kite(?: DRY)?: exit\b.*\btime stop\b", str(x.get("text") or "")) for x in k.get("log") or [])
+
+
+def close_facts(h: dict, rows: list[dict]) -> dict:
+    """The close facts a closed hint lacks (closed_at / exit_px / exit_by / taken), from its stored order rows. Pure:
+    only what is missing and derivable; {} when nothing is. exit_px is the quantity-weighted average of the complete
+    exit-side fills (the same average the sync stores at the close; the one fill when there is one)."""
+    k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
+    if k.get("state") != "closed":
+        return {}
+    out: dict = {}
+    exits = [r for r in rows if r.get("leg") in EXIT_LEGS and r.get("status") == "complete" and r.get("filled_px") is not None]
+    if exits:
+        last = exits[-1]
+        if k.get("exit_px") is None:
+            q = [(float(r["filled_px"]), int(r.get("filled_qty") or r.get("qty") or 0)) for r in exits]
+            tot = sum(n for _, n in q)
+            out["exit_px"] = round(sum(p * n for p, n in q) / tot, 2) if tot else round(float(last["filled_px"]), 2)
+        if not k.get("closed_at") and _row_at(last):
+            out["closed_at"] = _row_at(last)
+        if not k.get("exit_by"):
+            leg, by = last.get("leg"), last.get("by")
+            if leg == "stop":
+                out["exit_by"] = "stop"
+            elif leg in ("t1", "t2"):
+                out["exit_by"] = "target"
+            elif _time_stop_exit(k):
+                out["exit_by"] = "time_stop"
+            elif by in ("click", "dry"):
+                out["exit_by"] = "you"
+            else:
+                out["exit_by"] = "auto"
+    if not k.get("taken"):
+        ent = next((r for r in rows if r.get("leg") == "entry" and r.get("status") == "complete"), None)
+        if ent is not None:
+            by = k.get("by") or ent.get("by")
+            who = "auto" if by == "auto" else "you" if by in ("click", "dry") else (by or "app")
+            out["taken"] = {"by": who, "at": k.get("entry_at") or _row_at(ent), "dry": bool(k.get("dry")) or is_dry_row(ent)}
+    return out
+
+
+def backfill_close_facts() -> list[int]:
+    """Once at startup and on the Syncer's first pass (idempotent: only missing fields are filled, nothing is removed or
+    overwritten, no order is touched): every closed Kite hint lacking closed_at / exit_px / exit_by / taken gets them
+    from its stored order rows. Returns the hint ids filled."""
+    done = []
+    with _LOCK:
+        hs = bk.rows("kite IS NOT NULL AND json_extract(kite, '$.state') = 'closed'")
+        need = [h for h in hs if any(h["kite"].get(f) in (None, "", {}) for f in ("closed_at", "exit_px", "exit_by", "taken"))]
+        if not need:
+            return done
+        rows = rows_for_hints([h["id"] for h in need])
+        by_hint: dict = {}
+        for r in rows:
+            by_hint.setdefault(r["hint_id"], []).append(r)
+        with get_db() as conn:
+            for h in need:
+                add = close_facts(h, by_hint.get(h["id"], []))
+                if not add:
+                    continue
+                h["kite"].update(add)
+                save_kite(h, conn)
+                done.append(h["id"])
+                logger.info("Tips Kite #%s: %s (%s)", h["id"], BACKFILL_LINE, ", ".join(sorted(add)))
+    return done
+
+
 # --- the target watch (only the stop rests on Kite) ----------------------------------------------------------------------
 
 def wpfx(h: dict) -> str:
@@ -1513,6 +1593,7 @@ class Syncer:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last: Optional[dict] = None
+        self._backfilled = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -1546,6 +1627,12 @@ class Syncer:
         now = now or _now()
         wait = SYNC_IDLE_S
         cfg, real = self.state.config, self.state.client
+        if not self._backfilled:                       # once: the close facts of hints closed before the P&L strip
+            try:
+                backfill_close_facts()
+            except Exception:
+                logger.exception("Tips Kite close-facts backfill failed")
+            self._backfilled = True
         try:                                           # the target watch first: a market exit it sends is read back below
             watched = watch_all(cfg, real, now)
         except Exception:

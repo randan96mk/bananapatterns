@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
     state.tips_tracker = tips_track.Tracker(state)
     from backend.tips import kite_orders as tips_kite
     state.tips_kite = tips_kite.Syncer(state)
+    try:                                  # ⚡ once: the close facts of Kite hints closed before the card's P&L strip
+        tips_kite.backfill_close_facts()
+    except Exception:
+        logger.exception("Tips Kite close-facts backfill failed")
     if os.getenv("BP_NO_SCHEDULER") != "1":
         state.scheduler.start()           # evening job, reminders, login links, intraday heads-up, weekly refresh
         try:                              # 🤖 a deploy at night: the skipped night jobs are queued again

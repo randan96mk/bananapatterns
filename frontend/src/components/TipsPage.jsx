@@ -132,8 +132,8 @@ export function PnlStrip({ s }) {
     <div className="pkv"><span className="lbl">net after charges</span><span className="vv" title="estimate: brokerage, STT, exchange, SEBI, stamp duty, GST at the broker's F&O option rates"><b>{s.net_text}</b></span></div>
     <div className="pkv"><span className="lbl">{s.time_k}</span><span className="vv" title={`${s.time_v}${s.time_sub ? ` · ${s.time_sub}` : ''}`}><b>{s.time_v}</b>{s.time_sub ? ` · ${s.time_sub}` : ''}</span></div>
     <div className="pkv"><span className="lbl">best · worst</span><span className="vv">{mv(s.best, 'up')} · {mv(s.worst, 'down')}</span></div>
-    {s.state === 'closed' && <div className="pkv"><span className="lbl">channel's call</span><span className="vv" title={s.channel ? `${s.channel.text} · ${s.channel.note}` : undefined}>
-      {s.channel ? <>{s.channel.text} · <b className={s.channel.tone || ''}>{s.channel.note}</b></> : 'no result yet'}</span></div>}
+    {s.state === 'closed' && <div className="pkv"><span className="lbl">channel's call</span><span className="vv" title={s.channel ? `${s.channel.text}${s.channel.note ? ` · ${s.channel.note}` : ''}` : undefined}>
+      {s.channel ? <>{s.channel.text}{s.channel.note ? <> · <b className={s.channel.tone || ''}>{s.channel.note}</b></> : null}</> : 'no result yet'}</span></div>}
     <span className="day" title={s.day?.text}>{s.day?.text || ''}</span>
   </div>;
 }
@@ -181,12 +181,27 @@ export function TargetBar({ h }) {
     {isAi(h, 'targets') && <AiTag title="targets filled by the local model from the post's own text" />}</div>;
 }
 
-function Timeline({ events }) {
+// The card's event log: folded to its last LOG_TAIL lines by default (open by default only while the hint is working
+// today: the server's log_open), a fixed-height toggle row at the top. The choice is remembered per hint on this
+// device. Folded lines stay in the DOM (hidden), nothing is dropped.
+const LOG_TAIL = 3;
+const LOG_KEY = (id) => `bp.tips.log.${id}`;
+const readLog = (id) => { try { const v = localStorage.getItem(LOG_KEY(id)); return v === 'open' ? true : v === 'closed' ? false : null; } catch { return null; } };
+const saveLog = (id, open) => { try { localStorage.setItem(LOG_KEY(id), open ? 'open' : 'closed'); } catch { /* private mode */ } };
+
+function Timeline({ events, id, defOpen }) {
   const ev = arr(events);
+  const [mine, setMine] = useState(() => (id != null ? readLog(id) : null));
+  const open = mine ?? !!defOpen;
   if (!ev.length) return null;
-  return <div className="tp-tl">{ev.map((e, i) => <div key={i}><span className="tt">{when(e?.t)}</span>
-    {e?.src && e.src !== 'ai' && SRC[e.src] && <span className="src" title={e.src}>{SRC[e.src]}</span>}
-    <span className="tx">{e?.text || ''}</span>{e?.src === 'ai' && <AiTag of={e} />}</div>)}</div>;
+  const more = ev.length - LOG_TAIL;
+  const toggle = () => { const v = !open; setMine(v); if (id != null) saveLog(id, v); };
+  return <div className="tp-tl">
+    {more > 0 && <button type="button" className="tp-tlt" aria-expanded={open} onClick={toggle}>
+      {open ? '▾ show less' : `▸ ${more} more line${more === 1 ? '' : 's'} · show all`}</button>}
+    {ev.map((e, i) => <div key={i} hidden={!open && i < more}><span className="tt">{when(e?.t)}</span>
+      {e?.src && e.src !== 'ai' && SRC[e.src] && <span className="src" title={e.src}>{SRC[e.src]}</span>}
+      <span className="tx">{e?.text || ''}</span>{e?.src === 'ai' && <AiTag of={e} />}</div>)}</div>;
 }
 
 // ⚡ Tips → Kite orders ----------------------------------------------------------------------------------------------
@@ -620,7 +635,7 @@ function HintCard({ h, defLots, onDone, kinfo }) {
     <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />
     <SaidNext chips={h?.said_next} />
-    <Timeline events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
+    <Timeline id={id} defOpen={h?.log_open} events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
     {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) ? <KiteLegs h={h} kinfo={kinfo} onDone={onDone} /> : <FactsRow f={h?.facts} />}
     <div className="acts">
       {offer && <>

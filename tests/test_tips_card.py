@@ -256,3 +256,96 @@ def test_old_wording_is_gone():
         t = p.read_text()
         assert "SL + T1" not in t and not re.search(r"\bthe SL the moment it fills\b", t), p.name
     assert "SL rests the moment it fills · target watched by the app" in (ROOT / "backend/tips/kite_orders.py").read_text()
+
+
+# --- the event log fold (log_open) and the backfill of old closed hints ------------------------------------------------------------
+
+def test_log_open_only_while_working_today():
+    now = T0 + timedelta(hours=1)
+    assert cd.log_open(hint(day=T0.date().isoformat()), now)                                    # open on Kite today
+    assert cd.log_open(hint(state="armed"), now)
+    assert not cd.log_open(hint(state="closed", qty_open=0), now)                               # closed
+    assert not cd.log_open(hint(), now + timedelta(days=1))                                     # not from today
+    rec = {**hint(), "kite": {"state": "none"}, "status": "active", "taken": False}             # record-only
+    assert not cd.log_open(rec, now)
+    assert cd.log_open({**rec, "taken": True}, now)                                             # a paper take still open
+    assert not cd.log_open({**rec, "status": "skipped"}, now)
+    assert cd.blocks(AppConfig(), hint(state="closed", qty_open=0), now)["log_open"] is False
+    src = (ROOT / "frontend/src/components/TipsPage.jsx").read_text()
+    assert "defOpen={h?.log_open}" in src and "show all" in src and "▾ show less" in src and "bp.tips.log." in src
+    assert "hidden={!open && i < more}" in src                                                  # folded lines stay in the DOM
+
+
+def _old_hint(kite: dict, run: dict, score: dict) -> int:
+    with get_db() as conn:
+        cur = conn.execute("INSERT INTO tips_hints (channel, post_id, created, posted_at, raw, symbol, side, instrument, exchange, lot_size, "
+                           "status, plan, run, score, kite, events) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           ("chan", 9011, iso(T0), iso(T0), "Buy NIFTY 26000 CE 230", "NIFTY", "BUY", "option", "NFO", 65, "closed",
+                            json.dumps({"targets": [270.0], "stop": {"kind": "premium", "value": 175.0}, "time_stop": "15:14"}),
+                            json.dumps(run), json.dumps(score), json.dumps(kite), "[]"))
+        return cur.lastrowid
+
+
+def _order(conn, hid, leg, status, px, qty, by, at_, side="BUY"):
+    conn.execute('INSERT INTO tips_orders (hint_id, leg, side, qty, order_type, status, order_id, filled_px, filled_qty, placed_at, '
+                 'updated_at, "by", day) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (hid, leg, side, qty, "MARKET", status, f"O{leg}{hid}", px, qty if px is not None else None, at_, at_, by, at_[:10]))
+
+
+def test_backfill_close_facts_from_the_order_rows_idempotent(ltp):
+    entry_at, exit_at = iso(T0 + timedelta(seconds=32)), iso(T0 + timedelta(minutes=53, seconds=32))
+    k = {"state": "closed", "entry_px": 230.0, "qty": 65, "qty_open": 0, "lots": 1, "realised": round((247.55 - 230) * 65, 2),
+         "by": "auto", "dry": None, "entry_at": entry_at, "reason": "your exit", "day": T0.date().isoformat(), "stop_px": 175.0,
+         "legs": {}, "log": [{"t": exit_at, "text": "Kite: exit SELL 65 MARKET (your click) · stop and targets cancelled", "src": "kite"}]}
+    run = {"state": "active", "hits": []}                                     # the record's run: no hits kept on it
+    score = {"entry_reached": True, "first": "t1", "end": "t1", "exit_px": 271.05, "open": False}
+    hid = _old_hint(k, run, score)
+    with get_db() as conn:
+        _order(conn, hid, "entry", "complete", 230.0, 65, "auto", iso(T0 + timedelta(seconds=5)))
+        _order(conn, hid, "stop", "cancelled", None, 65, "app", entry_at, side="SELL")
+        _order(conn, hid, "exit", "complete", 247.55, 65, "click", exit_at, side="SELL")
+        before = [dict(r) for r in conn.execute("SELECT * FROM tips_orders WHERE hint_id = ?", (hid,))]
+    assert ko.backfill_close_facts() == [hid]
+    kk = bk.load(hid)["kite"]
+    assert kk["exit_px"] == 247.55 and kk["closed_at"] == exit_at and kk["exit_by"] == "you"
+    assert kk["taken"] == {"by": "auto", "at": entry_at, "dry": False} and kk["log"] == k["log"]   # nothing removed from the log
+    assert ko.backfill_close_facts() == [] and bk.load(hid)["kite"] == kk                         # idempotent
+    with get_db() as conn:
+        after = [dict(r) for r in conn.execute("SELECT * FROM tips_orders WHERE hint_id = ?", (hid,))]
+    assert after == before                                                                       # the order rows untouched
+    h = bk.load(hid)
+    ltp["v"] = 271.05
+    s = cd.pnl_strip(AppConfig(), h, None, T0 + timedelta(hours=3), day={})
+    assert s["label"] == "closed · your exit 10:51 AM" and s["time_v"] == "53 min"
+    assert s["channel"] == {"text": "T1 at 271.05", "left": 1527.5, "note": "left ₹1,528", "tone": "down"}   # the record's call
+    t = cd.now_tile(h)
+    assert t["value"] == 247.55 and t["sub"] == "exit fill · now 271.05"
+    assert bk.kite_taken_text(h) == "taken by auto on Kite"
+    row = cd.facts_row(h, fx.for_hint(h, T0 + timedelta(hours=3)))
+    assert row[0]["v"] == "0 min 32 s" and row[-1]["v"] == "you · 10:51 AM" and row[2]["v"] == "—"   # no ticks: "—"
+
+
+def test_backfill_exit_by_rules_and_the_card_before_backfill(ltp):
+    base = {"state": "closed", "entry_px": 100.0, "qty": 50, "qty_open": 0, "by": "app", "entry_at": iso(T0), "log": []}
+    rows = lambda leg, by: [{"leg": "entry", "status": "complete", "filled_px": 100.0, "by": by, "updated_at": iso(T0)},   # noqa: E731
+                            {"leg": leg, "status": "complete", "filled_px": 90.0, "filled_qty": 50, "by": by, "updated_at": iso(T0 + timedelta(minutes=9))}]
+    assert ko.close_facts({"kite": dict(base)}, rows("stop", "app"))["exit_by"] == "stop"
+    assert ko.close_facts({"kite": dict(base)}, rows("t1", "app"))["exit_by"] == "target"
+    assert ko.close_facts({"kite": dict(base)}, rows("exit", "app"))["exit_by"] == "auto"
+    assert ko.close_facts({"kite": dict(base)}, rows("exit", "click"))["exit_by"] == "you"
+    ts = {**base, "log": [{"t": iso(T0), "text": "Kite: exit SELL 50 MARKET (app) · stop and targets cancelled · time stop 3:14 PM"}]}
+    assert ko.close_facts({"kite": ts}, rows("exit", "app"))["exit_by"] == "time_stop"
+    two = [{"leg": "t1", "status": "complete", "filled_px": 120.0, "filled_qty": 25, "by": "app"},
+           {"leg": "t2", "status": "complete", "filled_px": 130.0, "filled_qty": 25, "by": "app", "updated_at": iso(T0)}]
+    assert ko.close_facts({"kite": dict(base)}, two)["exit_px"] == 125.0                          # the average exit
+    assert ko.close_facts({"kite": {**base, "state": "entered"}}, rows("exit", "click")) == {}     # only closed hints
+    full = {**base, "exit_px": 95.0, "closed_at": iso(T0), "exit_by": "you", "taken": {"by": "you"}}
+    assert ko.close_facts({"kite": full}, rows("exit", "app")) == {}                              # nothing overwritten
+    h = hint(state="closed", qty_open=0, realised=1140.75)                                      # before a backfill: no exit price
+    ltp["v"] = 271.05
+    t = cd.now_tile(h)
+    assert t["value"] == 271.05 and "exit fill" not in t["sub"].replace("exit fill not stored", "") and t["label"] == "now · after exit"
+    h["run"] = {"state": "closed", "hits": [{"k": 1, "t": iso(T0 + timedelta(hours=2)), "px": 271.05}]}
+    assert cd.channel_vs_you(h, None) == {"text": "T1 at 271.05", "note": "", "tone": ""}           # the record, not "no result yet"
+    h["run"] = {"state": "active", "hits": []}
+    assert cd.channel_vs_you(h, None) is None                                                    # genuinely open: no result yet

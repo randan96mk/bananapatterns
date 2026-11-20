@@ -161,6 +161,11 @@ def channel_result(h: dict) -> Optional[dict]:
         return {"outcome": f"T{x.get('k')}", "exit_px": x.get("px"), "at": x.get("t"), "closed": run.get("state") == "closed"}
     if run.get("state") == "closed" and run.get("entry_px") is not None:
         return {"outcome": str(run.get("end") or "closed"), "exit_px": run.get("exit_px"), "at": run.get("exit_t"), "closed": True}
+    sc = h.get("score") if isinstance(h.get("score"), dict) else {}
+    if sc and not sc.get("open") and sc.get("entry_reached") and sc.get("exit_px") is not None:   # an old hint: the stored score
+        end = str(sc.get("end") or sc.get("first") or "closed")
+        return {"outcome": end.upper() if re.fullmatch(r"t\d+", end) else end, "exit_px": sc.get("exit_px"),
+                "at": run.get("exit_t") or run.get("first_t"), "closed": True}
     return None
 
 
@@ -332,7 +337,9 @@ def for_hint(h: dict, now: Optional[datetime] = None) -> Optional[dict]:
     st = h.get("facts") if isinstance(h.get("facts"), dict) else None
     if st and st.get("final"):
         k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
-        return {**st, "channel_result": channel_result(h), "followups": followups(h), "ai_opinions": ai_opinions(k)}
+        fill = {"exit_px": _num(k.get("exit_px")), "exit_at": k.get("closed_at"), "exit_by": k.get("exit_by")}   # backfilled close facts
+        fill = {key: v for key, v in fill.items() if v is not None and st.get(key) is None}
+        return {**st, **fill, "channel_result": channel_result(h), "followups": followups(h), "ai_opinions": ai_opinions(k)}
     k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
     if k.get("state") not in ("entered", "closed") or k.get("entry_px") is None:
         return None
