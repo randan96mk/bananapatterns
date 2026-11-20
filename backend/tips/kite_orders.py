@@ -493,10 +493,30 @@ def _client_ok(client) -> None:
 
 # --- placing -------------------------------------------------------------------------------------------------------------
 
+import contextvars as _cv
+_CFG: "_cv.ContextVar" = _cv.ContextVar("tips_kite_cfg", default=None)
+
+
+def _tick(px: float) -> float:
+    return round(round(float(px) / 0.05) * 0.05, 2)
+
+
+def sl_price(config, side: str, trigger: float) -> float:
+    """The limit of an SL order: `kite_sl_buffer_pct` past the trigger (a SELL stop: below it; a BUY stop-entry: above
+    it). Options allow no SL-M: the broker turns one into an SL with a limit of its own, and a later trigger-only
+    modify then fails ("difference between limit price and trigger price … beyond the permissible range", 20 Nov)."""
+    b = float(getattr(config.tips, "kite_sl_buffer_pct", 1.5)) / 100.0
+    px = float(trigger) * (1 - b) if side == "SELL" else float(trigger) * (1 + b)
+    return max(0.05, _tick(px))
+
+
 def _place(config, client, h: dict, leg: str, side: str, qty: int, order_type: str, now: datetime, by: str,
            price: Optional[float] = None, trigger: Optional[float] = None, conn=None) -> dict:
-    """One order to Kite and its row. A refusal is stored (status failed, Kite's words) and raised as 409."""
+    """One order to Kite and its row. A refusal is stored (status failed, Kite's words) and raised as 409. A stop
+    (SL-M asked) goes as SL with its own limit (sl_price)."""
     k = kstate(h)
+    if order_type == "SL-M" and trigger is not None:
+        order_type, price = "SL", sl_price(config, side, trigger)
     row = {"hint_id": h["id"], "leg": leg, "side": side, "qty": int(qty), "order_type": order_type, "price": price, "trigger": trigger,
            "status": "placed", "order_id": None, "placed_at": now.isoformat(timespec="seconds"), "updated_at": now.isoformat(timespec="seconds"),
            "by": by, "note": None, "day": now.date().isoformat(), "tradingsymbol": h.get("tradingsymbol")}
@@ -523,6 +543,8 @@ def _leg_of(row: dict) -> dict:
 
 
 def _type_text(order_type: str, price, trigger) -> str:
+    if order_type == "SL" and price is not None:
+        return f"SL {pl.fmt(trigger)} · limit {pl.fmt(price)}"
     if order_type in ("SL-M", "SL"):
         return f"{order_type} {pl.fmt(trigger)}"
     if order_type == "LIMIT":
@@ -576,7 +598,7 @@ def entry_plan(h: dict, ltp: Optional[float] = None, force_market: bool = False)
     stop_entry = (m == "above" and buy) or (m == "below" and not buy)
     if stop_entry:
         out = {"kind": "slm", "order_type": "SL-M", "price": None, "trigger": lo, "level": lo, "level_kind": "premium",
-               "text": f"SL-M trigger {pl.fmt(lo)}", "what": f"a {side} stop order rests on Kite at {pl.fmt(lo)} (it fills when the premium trades {pl.fmt(lo)} or {'above' if buy else 'below'})"}
+               "text": f"SL trigger {pl.fmt(lo)}", "what": f"a {side} stop order rests on Kite at {pl.fmt(lo)} (it fills when the premium trades {pl.fmt(lo)} or {'above' if buy else 'below'})"}
         if ltp is not None and ((buy and ltp >= lo) or (not buy and ltp <= lo)):
             past = abs(ltp - lo) / lo if lo else 0.0
             if past > CHASE_MAX:
@@ -828,22 +850,34 @@ def modify_stop(config, client, hid: int, to, now: Optional[datetime] = None) ->
         ltp = bk.last_ltp(h)
         if ltp is not None and ((_sign(h) > 0 and px >= ltp) or (_sign(h) < 0 and px <= ltp)):
             raise TipsError(400, f"the stop {pl.fmt(px)} is on the wrong side of the price {pl.fmt(ltp)}")
-        _move_stop(client, h, px, now, "your click")
+        _move_stop(client, h, px, now, "your click", config)
         save_kite(h)
         after_event(config, h, now)
         return h
 
 
-def _move_stop(client, h: dict, px: float, now: datetime, who: str) -> None:
-    """The working stop's trigger to `px` on Kite, its row, the leg, the log and the record of moves (the check)."""
+def _stop_kw(config, h: dict, trigger: float, qty: Optional[int] = None) -> dict:
+    """modify_order arguments for a stop: trigger AND limit together (an SL order), plus the quantity when given."""
+    kw = {"order_type": "SL", "trigger_price": float(trigger), "price": sl_price(config, exit_side(h), trigger)}
+    if qty is not None:
+        kw["quantity"] = int(qty)
+    return kw
+
+
+def _move_stop(client, h: dict, px: float, now: datetime, who: str, config=None) -> None:
+    """The working stop to `px` on Kite (trigger and limit together), its row, the leg, the log and the record of
+    moves (the check)."""
+    from backend.config import AppConfig
+    config = config or _CFG.get() or AppConfig()
     k = kstate(h)
     leg = k["legs"].get("stop") or {}
+    kw = _stop_kw(config, h, px)
     try:
-        client.modify_order(leg["order_id"], trigger_price=px)
+        client.modify_order(leg["order_id"], **kw)
     except Exception as exc:
         raise TipsError(409, f"Kite refused the change: {str(exc)[:160]}")
-    _update(leg["row"], trigger=px)
-    leg["trigger"] = px
+    _update(leg["row"], trigger=px, price=kw["price"], order_type="SL")
+    leg.update(trigger=px, price=kw["price"], type="SL")
     k["stop_px"] = px
     k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": px, "who": who})
     _log(k, now, f"Kite: stop moved to {pl.fmt(px)} ({who})")
@@ -1135,9 +1169,10 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
             st = k["legs"].get("stop") or {}
             if st.get("status") in LIVE and k.get("entry_px") is not None:
                 try:
-                    client.modify_order(st["order_id"], trigger_price=k["entry_px"], quantity=k["qty_open"])
-                    _update(st["row"], trigger=k["entry_px"], qty=k["qty_open"])
-                    st.update(trigger=k["entry_px"], qty=k["qty_open"])
+                    kw = _stop_kw(config, h, k["entry_px"], k["qty_open"])
+                    client.modify_order(st["order_id"], **kw)
+                    _update(st["row"], trigger=k["entry_px"], qty=k["qty_open"], price=kw["price"], order_type="SL")
+                    st.update(trigger=k["entry_px"], qty=k["qty_open"], price=kw["price"], type="SL")
                     k["stop_px"] = k["entry_px"]
                     k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": k["entry_px"], "who": "T1 filled"})
                     text += f" · stop → cost {pl.fmt(k['entry_px'])}"
@@ -1151,7 +1186,7 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                     text += f" · {k['qty_open']} left · " + ", ".join(rs2)
                 if k.get("cost_after_part") and k.get("entry_px") is not None and (k["legs"].get("stop") or {}).get("status") in LIVE:
                     try:
-                        _move_stop(client, h, float(k["entry_px"]), now, "the channel: TSL at cost")
+                        _move_stop(client, h, float(k["entry_px"]), now, "the channel: TSL at cost", config)
                         text += f" · stop → cost {pl.fmt(k['entry_px'])}"
                     except TipsError as exc:
                         text += f" · stop to cost refused: {str(exc)[:60]}"
@@ -1304,9 +1339,10 @@ def _stop_for_rest(config, client, h: dict, now: datetime) -> str:
     st = k["legs"].get("stop") or {}
     if st.get("status") in LIVE:                         # still resting (should not be): resize + move instead
         try:
-            client.modify_order(st["order_id"], trigger_price=trig, quantity=k["qty_open"])
-            _update(st["row"], trigger=trig, qty=k["qty_open"])
-            st.update(trigger=trig, qty=k["qty_open"])
+            kw = _stop_kw(config, h, trig, k["qty_open"])
+            client.modify_order(st["order_id"], **kw)
+            _update(st["row"], trigger=trig, qty=k["qty_open"], price=kw["price"], order_type="SL")
+            st.update(trigger=trig, qty=k["qty_open"], price=kw["price"], type="SL")
             k["stop_px"] = trig
             k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": trig, "who": "T1 hit"})
             return f"stop → cost {pl.fmt(trig)} for the rest"
@@ -1597,6 +1633,10 @@ def target_leg(k: dict, out: list, key: str, side: str, q: int, price: float, de
         status, text = "open", "resting on Kite · cancelled by the next sync"
     elif mkt and s in ("rejected", "failed") or (k.get("watch") == "refused" and k["state"] == "entered"):
         status, text = "rejected", "exit refused · exit by hand"
+    elif k["state"] in ("closed", "none") and k.get("reason"):
+        status, text = "cancelled", f"not reached · {k.get('reason')}"           # the position closed before this target
+    elif k["state"] not in ("entered",):
+        status, text = "watched", "watched after the entry fills"
     else:
         status, text = "watched", "watched"
     d = {"leg": key, "name": LEG_NAMES[key], "side": lg.get("side") or side, "qty": (lg.get("qty") if mkt else None) or q, "type": "WATCH",

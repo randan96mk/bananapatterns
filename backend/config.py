@@ -558,6 +558,7 @@ class TipsConfig:
     kite_mode: str = "off"
     kite_product: str = "NRML"             # NRML | MIS
     kite_market_protection: float = 5.0    # % market protection on MARKET / SL-M orders (the exchange rule for API orders: never 0)
+    kite_sl_buffer_pct: float = 1.5        # stop orders go as SL (trigger + limit): the limit sits this % past the trigger (options allow no SL-M)
     kite_max_entries_day: int = 4          # entry orders a day at most
     kite_max_lots: int = 2                 # lots per entry order at most
     kite_loss_cap: float = 6000.0          # ₹ realised loss a day from these orders; at or past it no new entry
@@ -594,6 +595,8 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_product must be NRML or MIS")
     if not (0.5 <= float(sec.kite_market_protection) <= 20):
         raise ValueError("kite_market_protection must be 0.5 … 20 (%), never 0 for API orders")
+    if not (0.2 <= float(sec.kite_sl_buffer_pct) <= 10):
+        raise ValueError("kite_sl_buffer_pct must be 0.2 … 10 (%)")
     for k in ("kite_entry_from", "kite_entry_until"):
         if not _hhmm_ok(getattr(sec, k)):
             raise ValueError(f"{k} {getattr(sec, k)!r} must be HH:MM")

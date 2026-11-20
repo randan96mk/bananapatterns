@@ -92,7 +92,7 @@ def test_whole_flow_entry_stop_watched_t1_cost_t2(pushed):
     b.fill(e["order_id"], 262.0)
     r = ko.sync(c, b, at("10:00", sec=10))
     assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     assert sl["trigger_price"] == 190.0 and sl["quantity"] == 30 and sl["transaction_type"] == "SELL"
     assert len(b.placed) == 2                                  # only the stop rests on Kite
     rows = {x["leg"]: x for x in ko.rows_for(hid)}
@@ -106,7 +106,7 @@ def test_whole_flow_entry_stop_watched_t1_cost_t2(pushed):
     r = ko.sync(c, b, at("10:20", sec=5))
     assert r["lines"] == ["⚡ Kite · #1 T1 hit 321 · sold 15 of 30 at market · stop → cost 262 for the rest · watching T2 350"]
     sl2 = b.placed[-1]
-    assert (sl2["order_type"], sl2["trigger_price"], sl2["quantity"]) == ("SL-M", 262.0, 15)
+    assert (sl2["order_type"], sl2["trigger_price"], sl2["quantity"]) == ("SL", 262.0, 15)
     b.prices[KEY12] = 351.0
     tr.poll(c, b, at("11:00"))
     ko.watch_all(c, b, at("11:00"))
@@ -130,7 +130,7 @@ def test_stop_fill_cancels_targets_and_counts_the_loss(pushed):
     ko.place_all(c, b, hid, 2, now=at("10:00"))
     b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     ko.sync(c, b, at("10:01"))
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     b.fill(sl["order_id"], 190.0)
     r = ko.sync(c, b, at("10:30"))
     assert r["lines"] == ["⚡ Kite · #1 stop filled 190 ×30 · −₹2,160"]
@@ -163,7 +163,7 @@ def test_kill_switch_cancels_and_exits(pushed):
     ko.place_all(c, b, hid, 2, now=at("10:00"))
     b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     ko.sync(c, b, at("10:01"))
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     out = ko.set_kill(c, b, True, at("10:05"))
     assert out == {"kill": True, "cancelled": 1, "exits": 1, "errors": []}
     assert sl["order_id"] in b.cancelled
@@ -234,7 +234,7 @@ def test_click_legs_one_by_one_spot_stop_modify_cancel_exit(pushed):
     with pytest.raises(TipsError, match="wrong side"):
         ko.modify_stop(c, b, hid, 300, now=at("10:03"))
     h = ko.modify_stop(c, b, hid, "cost", now=at("10:03"))
-    assert h["kite"]["stop_px"] == 262.0 and b.modified[-1][1] == {"trigger_price": 262.0}
+    assert h["kite"]["stop_px"] == 262.0 and b.modified[-1][1] == {"order_type": "SL", "trigger_price": 262.0, "price": 258.05}
     with pytest.raises(TipsError, match="no target 1 working"):     # a watched target has no order to cancel
         ko.cancel(c, b, hid, "t1", now=at("10:04"))
     h = ko.exit_now(c, b, hid, now=at("10:05"))

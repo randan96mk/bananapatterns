@@ -104,7 +104,7 @@ def test_ai_read_with_a_fake_model_drops_lines_with_figures_not_in_the_input(pus
                 "- Watch the stop at 999 and the 12345 lots.\n"
                 "3. Look at the time stop at 3:20 PM.")
     out = kc.ai_read(c, hid, generate=fake, now=t19("14:00"))
-    assert "SL-M" in seen["user"] and "WAIT FOR ACTIVATION" in seen["user"] and "Code check: all clear" in seen["user"]
+    assert "SL 200 · limit 197" in seen["user"] and "WAIT FOR ACTIVATION" in seen["user"] and "Code check: all clear" in seen["user"]
     assert out["dropped"] == 1 and len(out["lines"]) == 3
     assert out["lines"][0].startswith("The app rested a BUY stop at 370") and not any("999" in x for x in out["lines"])
     k = bk.load(hid)["kite"]

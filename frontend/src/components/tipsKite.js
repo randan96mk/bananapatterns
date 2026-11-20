@@ -48,8 +48,8 @@ export function kiteTexts(h, kinfo) {
     exit: `⚡ Exit #${id} ${name} on Kite now?\n\n${k.state === 'armed' ? 'The entry has not filled: it is cancelled.' : `The working stop is cancelled (the targets are only watched), then ${L.stop?.side || 'SELL'} ${px(k.qty_open)} MARKET.`}\n\n${W}`,
     cancel: (leg) => `Cancel the ${L[leg]?.name || leg} of #${id} on Kite?\n\norder ${L[leg]?.order_id || '—'} · ${legLine(L[leg])}\n\nNothing else changes.`,
     sendNow: `${head('Send the armed entry now')}order   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'}\n\nSkips the channel's activation: the entry goes to Kite now (every guard is checked again).\n\n${W}`,
-    moveStop: (dest) => (dest === 'cost' ? `Move the Kite stop of #${id} to cost?\n\nSL-M ${px(L.stop?.trigger)} → ${px(k.entry_px)} (the entry fill) ×${px(L.stop?.qty)}\n\n${W}`
-      : `Move the Kite stop of #${id} to ${px(dest)}?\n\nSL-M ${px(L.stop?.trigger)} → ${px(dest)} ×${px(L.stop?.qty)}\n\n${W}`),
+    moveStop: (dest) => (dest === 'cost' ? `Move the Kite stop of #${id} to cost?\n\nSL ${px(L.stop?.trigger)} → ${px(k.entry_px)} (the entry fill) ×${px(L.stop?.qty)}\n\n${W}`
+      : `Move the Kite stop of #${id} to ${px(dest)}?\n\nSL ${px(L.stop?.trigger)} → ${px(dest)} ×${px(L.stop?.qty)}\n\n${W}`),
   };
 }
 

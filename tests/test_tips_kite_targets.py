@@ -58,7 +58,7 @@ def test_two_lots_t1_half_new_stop_at_cost_t2_rest_closed_auto_line(pushed):
     c, b, hid = setup("auto")
     r = entered(c, b, hid, by="auto")
     assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     price(c, b, 300.0, "10:10")
     assert ko.watch_all(c, b, at("10:10"))["open"] == 1 and b.placed[-1] is sl      # under T1: nothing
     price(c, b, 320.0, "10:20")                                                     # ≥ T1
@@ -73,7 +73,7 @@ def test_two_lots_t1_half_new_stop_at_cost_t2_rest_closed_auto_line(pushed):
     assert r["lines"] == ["⚡ Kite AUTO · #1 T1 hit 320.5 · sold 15 of 30 at market · stop → cost 262 for the rest · watching T2 350"]
     assert pushed[-1] == r["lines"][0]
     sl2 = b.placed[-1]
-    assert (sl2["order_type"], sl2["trigger_price"], sl2["quantity"], sl2["transaction_type"]) == ("SL-M", 262.0, 15, "SELL")
+    assert (sl2["order_type"], sl2["trigger_price"], sl2["quantity"], sl2["transaction_type"]) == ("SL", 262.0, 15, "SELL")
     v = {x["leg"]: x for x in tr.hint_view(bk.load(hid), config=c)["kite"]["legs"]}
     assert v["t1"]["status"] == "complete" and v["t1"]["status_text"] == "hit · sold 320.5" and v["t2"]["status"] == "watched"
     assert v["stop"]["trigger"] == 262.0 and v["stop"]["qty"] == 15
@@ -92,7 +92,7 @@ def test_two_lots_t1_half_new_stop_at_cost_t2_rest_closed_auto_line(pushed):
 def test_one_lot_t1_is_a_full_exit(pushed):
     c, b, hid = setup()
     entered(c, b, hid, lots=1)
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     price(c, b, 330.0, "10:20")
     ko.watch_all(c, b, at("10:20"))
     m = b.placed[-1]
@@ -124,7 +124,7 @@ def test_a_sell_hint_is_mirrored(pushed):
     h["plan"]["targets"] = [200.0, 180.0]
     bk.save(h)
     entered(c, b, hid)
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     assert (sl["transaction_type"], sl["trigger_price"]) == ("BUY", 300.0)
     price(c, b, 210.0, "10:10")
     ko.watch_all(c, b, at("10:10"))
@@ -136,14 +136,14 @@ def test_a_sell_hint_is_mirrored(pushed):
     b.fill(m["order_id"], 199.0)
     ko.sync(c, b, at("10:20", sec=10))
     s2 = b.placed[-1]
-    assert (s2["order_type"], s2["transaction_type"], s2["trigger_price"], s2["quantity"]) == ("SL-M", "BUY", 262.0, 15)
+    assert (s2["order_type"], s2["transaction_type"], s2["trigger_price"], s2["quantity"]) == ("SL", "BUY", 262.0, 15)
     assert not [p for p in b.placed if p["order_type"] == "LIMIT" and p["transaction_type"] == "BUY" and p is not b.placed[0]]
 
 
 def test_a_rejected_market_exit_re_places_the_stop_at_once(pushed):
     c, b, hid = setup()
     entered(c, b, hid)
-    sl = b.last(order_type="SL-M")
+    sl = b.last(order_type="SL")
     price(c, b, 321.0, "10:20")
     ko.watch_all(c, b, at("10:20"))
     m = b.placed[-1]
@@ -151,7 +151,7 @@ def test_a_rejected_market_exit_re_places_the_stop_at_once(pushed):
     r = ko.sync(c, b, at("10:20", sec=5))
     assert r["lines"] == ["⚠️ Kite · #1 target exit refused: Insufficient funds · stop re-placed · exit by hand"]
     s2 = b.placed[-1]
-    assert (s2["order_type"], s2["trigger_price"], s2["quantity"]) == ("SL-M", sl["trigger_price"], sl["quantity"])
+    assert (s2["order_type"], s2["trigger_price"], s2["quantity"]) == ("SL", sl["trigger_price"], sl["quantity"])
     k = bk.load(hid)["kite"]
     assert k["legs"]["stop"]["status"] == "placed" and k["watch"] == "refused" and not k["no_stop"]
     n = len(b.placed)
@@ -193,7 +193,7 @@ def test_click_mode_entry_then_place_sl_gets_the_same_watch(pushed):
     r = entered(c, b, hid, place_all=False)
     assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30"]
     h = ko.place_rest(c, b, hid, now=at("10:01"))                    # "Place rest…" = the stop only + the watch
-    assert [p["order_type"] for p in b.placed] == ["LIMIT", "SL-M"] and h["kite"]["auto_rest"]
+    assert [p["order_type"] for p in b.placed] == ["LIMIT", "SL"] and h["kite"]["auto_rest"]
     v = tr.hint_view(bk.load(hid), config=c)["kite"]
     assert "rest" not in v["actions"] and "targets" not in v["actions"]
     price(c, b, 320.0, "10:20")
@@ -265,3 +265,18 @@ def test_the_card_has_a_now_cell_and_the_watched_legs(pushed):
     assert "a resting target would be rejected for margin on a long option" in kite_js
     home = (ROOT / "frontend/src/components/HomeTips.jsx").read_text(encoding="utf-8")
     assert "nowv" in home
+
+
+def test_stops_go_as_sl_with_a_limit_and_moves_send_both(monkeypatch):
+    """20 Nov: the broker turned our SL-M into an SL with its own limit, and a trigger-only modify (175 → 230) was refused
+    ('difference between limit price and trigger price … beyond the permissible range'). Stops now go as SL with a limit
+    1.5 % past the trigger, and every move sends trigger and limit together."""
+    from backend.config import AppConfig
+    from backend.tips import kite_orders as ko
+    c = AppConfig()
+    assert ko.sl_price(c, "SELL", 175) == 172.4 and ko.sl_price(c, "BUY", 370) == 375.55 and ko.sl_price(c, "SELL", 1.0) == 1.0
+    c.tips.kite_sl_buffer_pct = 2.0
+    assert ko.sl_price(c, "SELL", 230) == 225.4
+    kw = ko._stop_kw(c, {"side": "BUY"}, 230, 65)
+    assert kw == {"order_type": "SL", "trigger_price": 230.0, "price": 225.4, "quantity": 65}
+    assert ko._type_text("SL", 172.4, 175) == "SL 175 · limit 172.4"
