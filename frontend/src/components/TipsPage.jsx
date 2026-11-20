@@ -747,6 +747,7 @@ export default function TipsPage() {
   const st = STATE[reader.state] || ['', reader.state ? `reader ${reader.state}` : 'reader —'];
   const chans = channelsOf(data);
   const settings = data.settings || {};
+  const relayN = String(settings.relay_to || '').split(/[\n;]+/).filter((x) => x.trim()).length;
   const defLots = settings.lots ?? data.book?.lots ?? 1;
   const C = data.cards || {};
   const book = data.book || {};
@@ -775,6 +776,7 @@ export default function TipsPage() {
       <Chip dot={st[0]} title={[reader.account_masked ? `account ${reader.account_masked}` : '', reader.reason ? `why: ${reader.reason}` : ''].filter(Boolean).join(' · ') || undefined}>{st[1]}{reader.state !== 'live' && reader.reason ? <> · <span className="down">{String(reader.reason).slice(0, 90)}</span></> : ''}{reader.last_post_at ? <> · last post {when(reader.last_post_at)}</> : ''}</Chip>
       {isNum(capital) && <Chip>paper book <b>{inr(Number(capital))}</b> · separate</Chip>}
       <Chip>not linked to any strategy · you decide every take</Chip>
+      {settings.relay && relayN > 0 && <Chip title="every new post forwarded as-is from your Telegram account (Settings › tips)">↗ relay on · {relayN} {relayN === 1 ? 'person' : 'people'}{isNum(reader.relayed_today) ? ` · ${px(reader.relayed_today)} sent today` : ''}</Chip>}
     </Head>
     <KiteBar k={{ ...(data.kite || {}), ...(kd || {}) }} onDone={reload} toOrders={() => document.getElementById('tp-kite-orders')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
       testing={ktest.busy} onTest={runTest} />

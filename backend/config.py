@@ -8,6 +8,7 @@ section here for the screener dials using the same mechanism.
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import timezone, timedelta
 from pathlib import Path
@@ -533,6 +534,9 @@ class TipsConfig:
     # 📷 the channel's screenshots read on this server (RapidOCR): off = no download, no read. Images kept 2 days at most.
     vision: bool = False
     vision_mode: str = "report"            # report = a strike mismatch is shown and pushed | check = auto also holds / cancels
+    # ↗ relay: every new channel post forwarded as-is from your own Telegram account (the reader's client) to these people
+    relay: bool = False
+    relay_to: str = ""                     # one per line / ';': @username, a phone in international form (+91…, in your contacts) or a numeric id
 
 
 TIPS_KITE_MODES = ("off", "dry", "click", "auto")
@@ -544,8 +548,36 @@ def _hhmm_ok(v) -> bool:
     return h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60
 
 
+RELAY_USER_RE = re.compile(r"@?[A-Za-z][A-Za-z0-9_]{3,31}")
+
+
+def split_relay(raw) -> list[str]:
+    """tips.relay_to → entries, each in one form: '@username', '+<digits>' (a phone, international form) or '<digits>'
+    (a numeric Telegram id). New lines and ';' separate. ValueError on an entry that is none of the three."""
+    out = []
+    for part in re.split(r"[;\n]+", str(raw or "")):
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith("+"):
+            digits = re.sub(r"[\s().-]", "", part[1:])
+            if not (digits.isdigit() and 8 <= len(digits) <= 15):
+                raise ValueError(f"relay_to: {part!r} is not a phone in international form (+91…)")
+            e = "+" + digits
+        elif re.fullmatch(r"-?\d{5,20}", part):
+            e = part
+        elif RELAY_USER_RE.fullmatch(part):
+            e = "@" + part.lstrip("@")
+        else:
+            raise ValueError(f"relay_to: {part!r} is not an @username, a phone (+91…) or a numeric id")
+        if e.lower() not in (x.lower() for x in out):
+            out.append(e)
+    return out
+
+
 def check_tips(sec: "TipsConfig") -> None:
-    """💡 size_mode lots|rupees, the time stop HH:MM, sizes and capital positive."""
+    """💡 size_mode lots|rupees, the time stop HH:MM, sizes and capital positive; relay_to parsed and written one per
+    line."""
     if sec.size_mode not in TIPS_SIZE_MODES:
         raise ValueError("size_mode must be lots or rupees")
     h, _, m = str(sec.intraday_time_stop).partition(":")
@@ -574,6 +606,7 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_auto_book_part must be channel or hold")
     if getattr(sec, "vision_mode", "report") not in ("report", "check"):
         raise ValueError("vision_mode must be report or check")
+    sec.relay_to = "\n".join(split_relay(sec.relay_to))
 
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
