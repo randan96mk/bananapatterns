@@ -429,6 +429,15 @@ CREATE TABLE IF NOT EXISTS tips_orders (
     "by" TEXT CHECK("by" IN ('click', 'app', 'auto', 'dry', 'test')), note TEXT, day TEXT);
 CREATE INDEX IF NOT EXISTS idx_tips_orders_day ON tips_orders(day);
 CREATE INDEX IF NOT EXISTS idx_tips_orders_hint ON tips_orders(hint_id);
+-- 💡 the Tips card's tick store (backend/tips/facts.py): every quote the Tips poll reads for a hint while it is armed /
+-- open on Kite (any mode but off; a dry run's rows carry dry = 1) and for 10 min after it closes. Kept for future AI
+-- features; never deleted (the archive job MOVES rows older than 180 days to data/archive.db).
+CREATE TABLE IF NOT EXISTS tips_ticks (hint_id INTEGER NOT NULL, at TEXT NOT NULL, ltp REAL, spot REAL NULL, bid REAL NULL,
+    ask REAL NULL, dry INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tips_ticks_hint_at ON tips_ticks(hint_id, at);
+-- 💡 one row per trading day, written by the 3:35 PM Kite day check: calls, taken, won / lost, realised, net, the cap
+-- used, the slowest fill, the reader's down minutes, AI disagreements, how the positions closed (JSON).
+CREATE TABLE IF NOT EXISTS tips_day_facts (day TEXT PRIMARY KEY, json TEXT NOT NULL);
 
 -- 🤖 Local AI (backend/ai): every job the queue ran (queued / running / done / failed / skipped) and the notes the
 -- model wrote (filled from PR 2). Nothing here is ever deleted.
@@ -714,6 +723,7 @@ def _migrate_ai_notes(conn) -> None:
     _add_column(conn, "tips_posts", "media_path", "TEXT")         # 📷 the downloaded screenshot (data/tips_media/…; the file goes after 2 days)
     _add_column(conn, "tips_posts", "ocr", "TEXT")                # 📷 the OCR read (JSON: lines + facts + ms + engine + error; kept forever)
     _add_column(conn, "tips_hints", "shot", "TEXT")               # 📷 the hint's screenshot facts / mismatch (JSON)
+    _add_column(conn, "tips_hints", "facts", "TEXT")              # 💡 the trade facts (JSON; backend/tips/facts.py, its own UPDATE)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
                  "WHERE source_key IS NOT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_notes_symbol ON ai_notes(symbol, created)")

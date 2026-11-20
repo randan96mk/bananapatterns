@@ -2450,6 +2450,13 @@ def tips_test_post(req: TipsTestPost):
     return out
 
 
+@router.get("/today-pnl")
+def today_pnl_view():
+    """₹ Today (the status bar chip): Kite (live) + real in the total; paper and a dry run shown, not counted."""
+    from backend.engine.today_pnl import today_pnl
+    return today_pnl(S().config)
+
+
 # --- 📡 one live connection: the page subscribes to topics; each is sent when it changes ---------------------
 
 def _stream_topics() -> dict:
@@ -2467,6 +2474,7 @@ def _stream_topics() -> dict:
         "plan_heat": (plan_heat_view, lambda d: 60 if (d or {}).get("market_open") else 600),
         "tips": (tips_summary, lambda d: 5 if (d or {}).get("any_open") else 60),
         "home_tips": (home_tips_view, lambda d: 5 if (d or {}).get("live") else 30),
+        "today_pnl": (today_pnl_view, lambda d: 5 if (d or {}).get("open") else 60),
         "ai": (ai_summary, lambda d: 5 if ((d or {}).get("models") or {}).get("pull", {}).get("running") or ((d or {}).get("queue") or {}).get("job") else 60),
     }
 

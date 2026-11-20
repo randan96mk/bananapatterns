@@ -101,12 +101,75 @@ export function Decoded({ h }) {
     last,
   ];
   const nw = h?.now && isNum(h.now.ltp) && (OPEN.includes(h?.status) || h?.kite?.state === 'entered' || h?.position?.state === 'open') ? h.now : null;
-  const nowCell = nw && <div key="now" className={`nowc ${nw.tone || ''}`} title={`now ${px(nw.ltp)}${nw.sub ? ` · ${nw.sub}` : ''}`}>
-    <div className="kk">now</div><b className={`nv ${nw.tone || ''}`}><span className="v">{px(nw.ltp)}</span></b>{nw.sub && <div className="ns">{nw.sub}</div>}</div>;
+  const nt = h?.now_tile && h.now_tile.value_text ? h.now_tile : null;     // 💡 the Kite NOW tile (live · at exit · armed)
+  const nowCell = nt ? <NowTile key="now" t={nt} />
+    : nw && <div key="now" className={`nowc ${nw.tone || ''}`} title={`now ${px(nw.ltp)}${nw.sub ? ` · ${nw.sub}` : ''}`}>
+      <div className="kk">now</div><b className={`nv ${nw.tone || ''}`}><span className="v">{px(nw.ltp)}</span></b>{nw.sub && <div className="ns">{nw.sub}</div>}</div>;
   const out = cells.map(([k, v, f]) => <div key={k} title={typeof v === 'string' ? v : undefined}>
     <div className="kk">{k}</div><b className={k === 'stop' && v === 'no usable stop' ? 'warn' : ''}><span className="v">{v}</span>{isAi(h, ...f) && <AiTag title="filled by the local model from the post's own text" />}</b></div>);
   if (nowCell) out.splice(2, 0, nowCell);                // NOW next to ENTRY / STOP / EXPIRY
-  return <div className={`tp-dec${nowCell ? ' n7' : ''}`}>{out}</div>;
+  return <div className={`tp-dec${nt ? ' n8' : nowCell ? ' n7' : ''}`}>{out}</div>;
+}
+
+// 💡 The Kite card blocks (the server computes every figure; the page only renders). Every value sits on one line and
+// ellipsizes, so a live tick never squeezes or grows the card.
+// The big NOW tile: two cells wide, a 24 px price (green / red against the fill, grey before it), the tick's change,
+// a pulse while open on Kite; "NOW · AT EXIT" once closed.
+function NowTile({ t }) {
+  return <div className={`nowt ${t.state} ${t.tone || ''}`} title={`${t.label} ${t.value_text}${t.sub ? ` · ${t.sub}` : ''}`}>
+    <div className="kk">{t.label}</div>
+    <div className="nb"><span className={`v ${t.tone || ''}`}>{t.value_text}</span>{t.sub && <span className={`s ${t.state === 'live' ? t.tone || '' : ''}`}>{t.sub}</span>}</div>
+    {t.pulse && <span className="pulse" aria-label="live" />}</div>;
+}
+
+// The P&L strip under the card header (only when Kite has / had a position on the hint).
+export function PnlStrip({ s }) {
+  if (!s) return null;
+  const mv = (x, c) => (x ? <><b className={c}>{x.text}</b>{x.at ? ` ${x.at}` : ''}</> : '—');
+  return <div className={`tp-pnl ${s.tone === 'down' ? 'neg' : s.tone === 'up' ? 'pos' : ''}`}>
+    <div className="pk"><span className="lbl" title={s.label}>{s.dry ? 'DRY · ' : ''}{s.label}</span>
+      <div className={`big ${s.tone || ''}`}><span className="v">{s.pnl_text}</span><small>{s.pct_text}</small></div></div>
+    <div className="pkv"><span className="lbl">net after charges</span><span className="vv" title="estimate: brokerage, STT, exchange, SEBI, stamp duty, GST at the broker's F&O option rates"><b>{s.net_text}</b></span></div>
+    <div className="pkv"><span className="lbl">{s.time_k}</span><span className="vv" title={`${s.time_v}${s.time_sub ? ` · ${s.time_sub}` : ''}`}><b>{s.time_v}</b>{s.time_sub ? ` · ${s.time_sub}` : ''}</span></div>
+    <div className="pkv"><span className="lbl">best · worst</span><span className="vv">{mv(s.best, 'up')} · {mv(s.worst, 'down')}</span></div>
+    {s.state === 'closed' && <div className="pkv"><span className="lbl">channel's call</span><span className="vv" title={s.channel ? `${s.channel.text} · ${s.channel.note}` : undefined}>
+      {s.channel ? <>{s.channel.text} · <b className={s.channel.tone || ''}>{s.channel.note}</b></> : 'no result yet'}</span></div>}
+    <span className="day" title={s.day?.text}>{s.day?.text || ''}</span>
+  </div>;
+}
+
+// stop ◀──●──▶ target: the red zone near the stop, the green one near the last target, a marker at the fill, ticks at
+// the targets before the last, the dot at the price (the exit once closed).
+export function DistBar({ d }) {
+  if (!d) return null;
+  const tname = d.target?.name && d.target.name !== 'target' ? `target ${d.target.name}` : 'target';
+  return <div className={`tp-dist ${d.closed ? 'closed' : ''} ${d.danger ? 'danger' : ''}`}>
+    <div className="lbls">
+      <span className="l">stop <b>{px(d.stop?.px)}</b> · <b className={d.stop?.tone || ''}>{d.stop?.pct_text}</b> {d.stop?.note}</span>
+      <span className="m">fill <b>{px(d.fill?.px)}</b></span>
+      <span className="r">{tname} <b>{px(d.target?.px)}</b>{!d.closed && <> · <b className={d.target?.tone || ''}>{d.target?.pct_text}</b></>}
+        {d.target?.note ? <> · <b className={d.target?.tone || ''}>{d.target.note}</b></> : ''}</span></div>
+    <div className="bar" role="img" aria-label={`price ${px(d.dot_px)} between the stop ${px(d.stop?.px)} and the target ${px(d.last)}`}>
+      <span className="zs" style={{ width: `${d.zones?.[0] ?? 16}%` }} /><span className="zt" style={{ left: `${d.zones?.[1] ?? 84}%` }} />
+      {arr(d.ticks).map((x) => <em key={x.label} className="tk" style={{ left: `${x.pos}%` }} title={`${x.label} ${px(x.px)}`} />)}
+      <em className="fl" style={{ left: `${d.fill?.pos ?? 0}%` }} title={`fill ${px(d.fill?.px)}`} />
+      <i className="dot" style={{ left: `${d.dot ?? 0}%` }} /></div>
+  </div>;
+}
+
+// "channel said next": every linked follow-up and what the app did, post edits, your exit, the record, the AI reads.
+export function SaidNext({ chips }) {
+  const c = arr(chips);
+  if (!c.length) return null;
+  return <div className="tp-fu"><span className="lb">channel said next</span>{c.map((x, i) => <span key={i} className={`c ${x.kind || ''}`} title={`${x.at_label ? `${x.at_label} · ` : ''}${x.text}`}>
+    {x.kind !== 'ai' && x.kind !== 'more' && x.at_label && <b>{x.at_label}</b>}<span className="tx">{x.text}</span></span>)}</div>;
+}
+
+// The trade facts row: post → fill · slippage · spread · index move · stop nearest · exit by.
+export function FactsRow({ f }) {
+  const c = arr(f);
+  if (!c.length) return null;
+  return <div className="tp-facts">{c.map((x) => <div key={x.k} title={`${x.k}: ${x.v}`}><span className="kk">{x.k}</span><span className={`v ${x.tone || ''}`}>{x.v}</span></div>)}</div>;
 }
 
 export function TargetBar({ h }) {
@@ -247,7 +310,7 @@ function KiteLegs({ h, kinfo, onDone }) {
     } else if (lg.leg === 'stop') {
       if (live('stop') && isNum(k.entry_px) && Number(lg.trigger) !== Number(k.entry_px) && acts.includes('modify_stop')) out.push(btn(`Modify → cost ${px(k.entry_px)}`, toCost));
       if (acts.includes('cancel:stop')) out.push(btn('Cancel', () => cancel('stop')));
-      if (!live('stop') && lg.status !== 'complete' && lg.placeable !== false) out.push(btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }));
+      if (!live('stop') && lg.status !== 'complete' && lg.placeable !== false && !lg.closed && k.state !== 'closed') out.push(btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }));
     } else if (lg.leg === 't1' || lg.leg === 't2') {      // watched by the app: no order to place (a resting one from before can be cancelled)
       if (acts.includes(`cancel:${lg.leg}`)) out.push(btn('Cancel', () => cancel(lg.leg)));
     }
@@ -255,18 +318,19 @@ function KiteLegs({ h, kinfo, onDone }) {
   };
   const note = msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>
     : k.state === 'closed' ? `closed on Kite${k.reason ? ` · ${k.reason}` : ''} · ${money(k.realised)}`
-      : acts.includes('all') ? (L.entry?.arm_kind && L.entry.arm_kind !== 'market' ? `Place all = ${L.entry.arm_kind === 'watch' ? 'the app watches the index' : 'the entry rests on Kite'}${k.needs_activation ? " (after the channel's activation)" : ''}, the SL the moment it fills · targets watched by the app` : 'Place all = entry now, the SL the moment it fills · targets watched by the app')
+      : acts.includes('all') ? (L.entry?.arm_kind && L.entry.arm_kind !== 'market' ? `Place all = ${L.entry.arm_kind === 'watch' ? 'the app watches the index' : 'the entry rests on Kite'}${k.needs_activation ? " (after the channel's activation)" : ''} · SL rests the moment it fills · target watched by the app` : 'Place all = entry now · SL rests the moment it fills · target watched by the app')
         : k.state === 'armed_watch' ? `armed · the app watches ${k.arm?.index || 'the index'} · buys at market on the cross${k.auto_rest ? ' · then SL' : ''}`
         : k.state === 'armed_wait' ? `armed · waiting for the channel's activation${k.auto_rest ? ' · then SL' : ''}`
         : k.state === 'armed' ? `entry ${k.arm?.kind === 'slm' || k.arm?.kind === 'limit' ? 'resting on Kite' : 'on Kite'} · waiting for the fill${k.auto_rest ? ' · then SL by the app' : ''}`
-          : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'} · only the stop rests · targets watched by the app${k.beyond_t2 ? ' · targets past T2: paper record only' : ''}`
+          : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'} · only the stop rests · targets watched by the app${k.beyond_t2 ? ' · targets past T2: paper record only' : ''}${k.footer ? ` · ${k.footer}` : ''}`
             : k.sim ? 'dry run · every button opens a confirm · nothing reaches Kite' : 'every button opens a confirm · the paper book stays as it is';
   return <div className="tp-kite">
     <div className="tp-legs">{legs.map((lg) => <div key={lg.leg} className={`tp-leg ${lg.status}`}>
       <div className="t"><span className="ic">{LEG_IC[lg.leg]}</span><b>{lg.name}</b><span className="ln">· {lg.side} {px(lg.qty)} · {lg.type_text}</span>{legTag(lg)}</div>
       <div className="d" title={lg.note || undefined}>{[lg.at, lg.order_id ? `order ${lg.order_id}` : '', lg.detail].filter(Boolean).join(' · ')}</div>
-      {lg.now_text && <div className="d nw" title={lg.now_text}>{lg.now_text}</div>}
+      {lg.now_text && <div className={`d nw ${lg.tone || ''}`} title={lg.now_text}>{lg.now_text}</div>}
       <div className="a">{legBtns(lg)}</div></div>)}</div>
+    <FactsRow f={h?.facts} />
     <div className="acts tp-kacts">
       {acts.includes('all') && <button type="button" className="btn small" disabled={busy} onClick={all}>⚡ Place all on Kite · entry + SL…</button>}
       {acts.includes('rest') && <button type="button" className="btn small" disabled={busy} onClick={rest}>⚡ Place rest…</button>}
@@ -362,7 +426,7 @@ function KiteOrders({ kd, onDone }) {
     right={<>{msg ? <span className="down">{msg}</span> : <span>net <b className={tone(kd?.net)}>{money(kd?.net ?? 0)}</b> realised{kd?.last_sync_label ? ` · synced ${kd.last_sync_label}` : ''}</span>}
       <button type="button" className="btn ghost small" onClick={resync}>Re-sync</button></>}>
     <FixedTable cols={[{ h: 'Leg', ell: true }, { h: 'Time', w: 88 }, { h: 'Hint', w: 54 }, { h: 'Side', w: 50 }, { h: 'Qty', w: 54, n: true },
-      { h: 'Type', w: 100, lo: true }, { h: 'Price', w: 80, n: true, lo: true }, { h: 'Status', w: 128, ell: true }, { h: 'Order id', w: 136, lo: true }, { h: 'By', w: 52, lo: true }]}
+      { h: 'Type', w: 140, lo: true }, { h: 'Price', w: 80, n: true, lo: true }, { h: 'Status', w: 128, ell: true }, { h: 'Order id', w: 150, lo: true }, { h: 'By', w: 52, lo: true }]}
       rows={rows} empty="No Kite orders today. Every one starts from a card's button, through a confirm; only the app's own Tips orders are shown." />
   </Panel>;
 }
@@ -441,12 +505,15 @@ function HintCard({ h, defLots, onDone, kinfo }) {
       {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px' }} title="the post named no index: pick it after looking at the channel's screenshot">
         <option value="">{h?.symbol ? 'change index…' : 'set index…'}</option>{['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].map((x) => <option key={x} value={x}>{x}</option>)}</select>}
       <span className="who">{[h?.channel, when(h?.created ?? h?.posted_at)].filter(Boolean).join(' · ')}</span></div>
+    <PnlStrip s={h?.pnl_strip} />
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
     <Decoded h={h} />
+    <DistBar d={h?.dist} />
     <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />
+    <SaidNext chips={h?.said_next} />
     <Timeline events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
-    {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) && <KiteLegs h={h} kinfo={kinfo} onDone={onDone} />}
+    {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) ? <KiteLegs h={h} kinfo={kinfo} onDone={onDone} /> : <FactsRow f={h?.facts} />}
     <div className="acts">
       {offer && <>
         <span className="lotf"><input inputMode="numeric" aria-label="lots" placeholder={String(n)} value={lots} onChange={(e) => setLots(e.target.value.replace(/[^\d]/g, '').slice(0, 3))} />lots</span>
@@ -465,7 +532,7 @@ function HintCard({ h, defLots, onDone, kinfo }) {
       <span className="note">{msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>
         : live ? <span className={tone(h?.pnl)}>{live}</span>
           : open ? (!offer ? (h?.plan?.text || '') : `${!stated && !h?.taken ? 'size not stated · you choose · ' : ''}Telegram: ${h?.telegram || `take ${id} · take ${id} 2 · skip ${id}`}`)
-            : h?.taken ? `${money(h?.pnl)} · closed${h?.exit_px != null ? ` at ${px(h.exit_px)}` : ''}` : "scored for the channel's record only · you did not take it"}</span>
+            : h?.taken ? `${money(h?.pnl)} · closed${h?.exit_px != null ? ` at ${px(h.exit_px)}` : ''}` : h?.kite?.footer ? `${h.kite.state === 'closed' ? `closed on Kite${h.kite.reason ? ` · ${h.kite.reason}` : ''} · ${money(h.kite.realised)} · ` : ''}${h.kite.footer}` : "scored for the channel's record only · you did not take it"}</span>
     </div></div>;
 }
 

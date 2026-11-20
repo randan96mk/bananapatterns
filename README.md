@@ -168,6 +168,7 @@ first, and only rows whose exact copy is in the archive are then removed from th
 |---|---|---|
 | `options_chain_snap` | `day` | — (the options replay reads at most 90 days; its window is capped at `archive_days`) |
 | `tips_quotes` | `t` | — |
+| `tips_ticks` | `at` (kept **180 days**, whatever `archive_days` says) | — |
 | `ai_jobs` | `created` | jobs still queued / running |
 | `job_runs` | `run_date` | the latest row of every job |
 | `sent_alerts` | `sent_at` | alerts not sent yet (`ok = 0`) and undated dedup keys (e.g. `near|…`, once per base) |
@@ -2211,7 +2212,51 @@ only gives text.
 forever. A post older than 2 days is never read (catch-up, the export import: "older than 2 days"). `scripts/backup.sh`
 does not back up the folder (a 2-day scratch).
 
-**Tables** (never deleted; 📷 only the screenshot files under `data/tips_media` go after 2 days): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`, `tips_orders`.
+**Tables** (never deleted; 📷 only the screenshot files under `data/tips_media` go after 2 days): `tips_posts`, `tips_hints`, `tips_quotes`, `tips_trades`, `tips_equity`, `tips_instruments`, `tips_orders`, `tips_ticks`, `tips_day_facts` (and the JSON column `tips_hints.facts`).
+
+**The Tips card · Kite blocks** (`backend/tips/card.py`, `backend/tips/facts.py`; computed on the server, the page only
+renders them; read-only: nothing here places, modifies or cancels an order, and no AI call is made). Only when Kite
+has / had a position on the hint; a paper-only hint keeps its old look.
+- **P&L strip** under the card header: open "open P&L · 1 lot · 65 qty" + the signed ₹ and the % from the fill
+  ((ltp − fill) × open qty + the booked parts; a sell hint mirrored), "≈ net" after the estimated charges (Zerodha F&O
+  option rates in `facts.RATES`: brokerage the lower of ₹20 and 0.03 % per executed order, STT 0.1 % on the sell side,
+  exchange 0.03503 % NSE / 0.0325 % BSE, SEBI 0.0001 %, stamp 0.003 % on the buy side, GST 18 % on brokerage +
+  exchange + SEBI), "in trade 46 min · 4 h 30 min to 3:14 PM", "best · worst +18.4 % 10:44 AM · −1.7 % 10:01 AM";
+  closed "closed · your exit 10:51 AM" (realised), "held 53 min · fill 9:58 → exit 10:51", and the channel's own call
+  against your exit ("T1 at 271.05 · left ₹1,528" when the record closed better, "beat the channel by ₹x" when you did).
+  The right side / second line: "today across Tips +₹x · loss cap room ₹y · entries n of 4" ("DRY · " in a dry run).
+- **NOW tile** (two cells wide, fixed height): a 24 px price, green / red against the fill, "▲ +0.35 · +17.8 % from
+  fill" (the change since the previous poll), a pulsing dot while open on Kite (still under prefers-reduced-motion);
+  "NOW · AT EXIT 247.55 · now 271.05" once closed; grey while armed ("level 370 is 9.8 % away").
+- **Distance bar** stop ◀──●──▶ target: the dot is the price (the exit once closed) mapped linearly from the stop to the
+  LAST target (clamped), red zone 0–16 %, green 84–100 %, a marker at the fill, ticks at the earlier targets. Labels
+  "stop 175 · −35.4 % away" | "fill 230" | "target 270 · −0.4 % · almost there" (≤ 1 %); "close to the stop" in red
+  within 3 %; closed: "hit at 11:57 AM after your exit" / "not reached". On a phone the labels stack.
+- **Leg lines**: a target's "now" line green within 3 % of it, the stop's red within 3 %; a closed position's stop says
+  "never within x % of the stop" and has no Place SL; a target the record reached after your exit says so.
+- **"channel said next"** chips: every linked follow-up (time · text → what the app did), post edits, your exit, the
+  record ("T1 271.05 · record"), the AI second opinions already read ("[AI] 10:49 AM · reads as book part · agrees",
+  blue); the newest 7 and "+n" when there are more than 8.
+- **Trade facts** row: post → fill · slippage at entry (fill − the quote at order time) · spread at entry (ask − bid
+  when the quote carried depth) · index move in the trade · stop nearest ("never near" past 10 %) · exit by.
+- The footer says **"taken by auto on Kite"** (the taken flag follows the Kite fill: `kite.taken` {by, at, dry}; a dry
+  run's fill says "DRY · taken by … in the dry run"; the paper book's own take is untouched).
+- **Stored for later AI features** (no UI beyond the facts row): `tips_ticks(hint_id, at, ltp, spot, bid, ask, dry)`
+  from the Tips quote poll while a hint is armed / open on Kite (any mode but off; dry rows flagged) and for 10 min
+  after it closes, unique on (hint_id, at), moved to `data/archive.db` after 180 days, never deleted;
+  `tips_hints.facts` (`facts.build(h, ticks, now)`: entry / exit, exit by, size, MFE / MAE in ₹ / % / time, time to T1 /
+  to the stop, slippage, spread, the index at the fill and at the exit, post → fill, the nearest the stop came, the
+  follow-ups, the AI opinions, the channel's result, charges and net; live while open, final at the close);
+  `tips_day_facts(day, json)` written by the 3:35 PM Kite day check (calls, taken, won, lost, realised, net, cap used,
+  slowest fill, reader down minutes, AI disagreements, closed by auto / you / time stop / target / stop). The order
+  check's AI input carries one "Trade facts:" line (best / worst move, the nearest the stop came).
+- `GET /api/tips` hints carry `pnl_strip`, `now_tile`, `dist`, `said_next`, `facts` (the six cells) and `trade_facts`;
+  `GET /api/home/tips` rows reuse the strip's open ₹ and the bar's % labels. Tests: `tests/test_tips_card.py`.
+- **₹ Today** chip in the top status bar (`backend/engine/today_pnl.py`, stream topic `today_pnl`, `GET /api/today-pnl`):
+  "₹ Today +₹840 · Kite +₹540 · paper +₹186 · real +₹300"; the total is Kite (live: realised today + open at the stored
+  quote) + real (value now against the last equity before today); paper and a dry run ("dry +₹x") are shown, never
+  counted; mode off leaves Kite out; click → Home; hidden before 9:00 AM and when nothing happened; phone: the total only.
+  Tests: `tests/test_today_pnl.py`.
 
 **Tests**: `tests/test_tips_decode.py` (32: the 15 real calls of `tests/fixtures/tips_posts.json`, aliases, shapes),
 `test_tips_filter.py` (14), `test_tips_plan.py` (12), `test_tips_book.py` (8), `test_tips_track.py` (6),

@@ -18,7 +18,7 @@ from backend.tips import plan as pl
 
 logger = setup_logger("tips")
 
-JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite", "shot")
+JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite", "shot", "facts")
 SAVE_COLS = ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "tradingsymbol", "exchange",
              "lot_size", "entry", "stop", "targets", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
              "lots", "entry_px", "exit_px", "pnl", "events", "tracked", "untracked_why", "run", "pos", "score")
@@ -282,6 +282,25 @@ def _get(hid: int) -> dict:
     if not h:
         raise TipsError(404, f"no hint #{hid}")
     return h
+
+
+def mark_kite_taken(h: dict, by: Optional[str], dry: bool, now: datetime) -> dict:
+    """⚡ The taken flag follows a Kite fill: the moment the entry fills on Kite the hint is marked taken there (who took
+    it, when; a dry run's fill is marked dry and never counts as a real take). Kept on the hint's `kite` JSON (written by
+    kite_orders' own UPDATE), so the paper book's own `taken` stays the paper take."""
+    k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
+    who = "auto" if by == "auto" else "you" if by in ("click", "dry") else (by or "app")
+    k["taken"] = {"by": who, "at": now.isoformat(timespec="seconds"), "dry": bool(dry)}
+    h["kite"] = k
+    return k["taken"]
+
+
+def kite_taken_text(h: dict) -> Optional[str]:
+    """The card footer's words for a Kite take: "taken by auto on Kite" / "DRY · taken by you in the dry run"."""
+    t = (h.get("kite") or {}).get("taken") if isinstance(h.get("kite"), dict) else None
+    if not t:
+        return None
+    return f"DRY · taken by {t.get('by')} in the dry run" if t.get("dry") else f"taken by {t.get('by')} on Kite"
 
 
 def last_ltp(h: dict) -> Optional[float]:
