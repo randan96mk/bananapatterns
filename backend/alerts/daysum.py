@@ -5,9 +5,7 @@ tables, never Kite, and a part that fails is left out (the others still go).
   real_part(config, day)      💰 value (live where the stop watch saw it), today's P&L, stops hit, failed orders,
                                  tomorrow's BUYs / EXITs once the evening has planned them
   paper_parts(config, day)    📝 per account: value, today's P&L once marked (the evening job), stops hit
-  futures_part(config, day)   📐 the long side's primary account: value, today's MTM, open lots, the roll day
   options_part(config, day)   🧩 the options_days row of `day` (written at 3:35 PM): equity, P&L, trades, result
-  flow_part(config, day)      ⚡ the signal track / paper intraday: trades, won, net on the capital (only with trades)
   ai_part(config, day)        🤖 tonight's AI work, or what last night's run made (notes, suggestions, ratings)
   parts(config, day)          all of the above, keyed by book, books with nothing left out
 """
@@ -75,20 +73,6 @@ def paper_parts(config: AppConfig, day: str) -> list[dict]:
     return out
 
 
-def futures_part(config: AppConfig, day: str) -> Optional[dict]:
-    """📐 {tag, value, today, lots, roll} of the long side's primary account; None without a futures book."""
-    from backend.futures import book
-    st = book._state()
-    if not st:
-        return None
-    pk = book.primary(config, "long")
-    a = st["accounts"][pk]
-    value = book._value(a)
-    roll = st.get("roll_day")
-    return {"tag": book.mode_of(pk), "value": round(value, 2), "today": round(value - (a.get("day_start") or st["capital"]), 2),
-            "lots": sum(int(p.get("lots") or 0) for p in a["positions"].values()), "roll": roll if roll and roll >= day else None}
-
-
 def options_part(config: AppConfig, day: str) -> Optional[dict]:
     """🧩 {tag, value, today, trades, result} from the options_days row of `day`; None without one."""
     from backend.options import book as obook
@@ -100,18 +84,6 @@ def options_part(config: AppConfig, day: str) -> Optional[dict]:
     n = row.get("trades") or 0
     return {"tag": obook.TAG, "value": row.get("equity"), "today": row.get("pnl") or 0.0, "trades": n,     # the afternoon pair = 1 trade
             "result": row.get("result") if n else row.get("why"), "afternoon": "afternoon" in (row.get("kinds") or [])}
-
-
-def flow_part(config: AppConfig, day: str) -> Optional[dict]:
-    """⚡ {kind, trades, won, net, capital} of the day's intraday flow; None when it is off or made no trade."""
-    if config.flow.mode == "off":
-        return None
-    from backend.intraday import flow
-    st = flow._stats(day)
-    if not st.get("trades"):
-        return None
-    return {"kind": "signal" if config.flow.mode == "signals" else "paper", "trades": st["trades"], "won": st.get("won", 0),
-            "net": st.get("realised", 0.0), "capital": st.get("capital")}
 
 
 def ai_part(config: AppConfig, day: str) -> Optional[dict]:
@@ -129,8 +101,7 @@ def ai_part(config: AppConfig, day: str) -> Optional[dict]:
     return {"ran": False, "after": config.alerts.job_time, "parts": parts}
 
 
-PARTS = (("real", real_part), ("paper", paper_parts), ("futures", futures_part), ("options", options_part), ("flow", flow_part),
-         ("ai", ai_part))
+PARTS = (("real", real_part), ("paper", paper_parts), ("options", options_part), ("ai", ai_part))
 
 
 def parts(config: AppConfig, day: str) -> dict:

@@ -1,5 +1,5 @@
 """🤖 Local AI, PR 3 · C (the morning brief): the settings, the guard's brief window, the facts from the books (Real
-morning plan, futures, options chain line, the night's high notes, results on held names), the validator (≤ 5 lines of
+morning plan, options chain line, the night's high notes, results on held names), the validator (≤ 5 lines of
 ≤ 160 chars, numbers only from the facts, no broker names), the run (one call, one retry, the row, the message, once a
 day), the scheduler's due rule and job, the readers and the routes. Everything against the fake Ollama; no network."""
 
@@ -15,7 +15,6 @@ from backend.alerts.jobs import Scheduler
 from backend.config import IST, AIConfig, AlertsConfig, AppConfig
 from backend.database.models import get_db, now_ist
 from backend.engine import real
-from backend.futures import book as fbook
 from backend.options import book as obook
 from tests.test_ai_infra import NIGHT, DAY, no_brokers
 from tests.test_ai_notes import FakeNotes, _note_row, hold
@@ -24,7 +23,7 @@ from tests.test_login import LoginState
 
 TODAY = now_ist()[:10]
 LINES = ["Real sends 3 orders at 9:16 AM: EXIT S0; BUY S1, S2. Cash after 103,699; 9 free slots.",
-         "S3 is skipped by the results guard.", "Futures: HELDF long 2 lots held; roll day Thu 20 Nov.",
+         "S3 is skipped by the results guard.",
          "Options: last chain PCR 0.82, put wall 25,000, call wall 25,500; VIX 13.2."]
 
 
@@ -77,15 +76,6 @@ def seed_real():
     return st
 
 
-def seed_futures(cfg):
-    st = fbook._new(cfg, "2026-10-01")
-    st["accounts"]["paper_long"]["positions"]["HELDF"] = {"symbol": "HELDF", "side": "long", "lots": 2, "lot_size": 100, "entry": 100.0, "last": 104.0,
-                                                           "stop": 95.0, "d": "2026-11-03", "charges": 0.0, "margin_est": 20000.0, "expiry": "2026-11-25"}
-    st["roll_day"] = "2026-11-20"
-    st["warnings"] = {"results": [{"symbol": "HELDF", "date": "2026-11-19", "sessions": 2}], "ban": [], "lot_change": []}
-    fbook._save(st)
-
-
 def seed_options(cfg, vix=13.2):
     st = obook._new(cfg, "2026-10-01")
     st["day"] = {**obook._new_day(st, TODAY), "vix": vix, "chain": {"at": f"{TODAY}T09:30:00", "pcr": 0.82, "walls": {"support": 25000, "resistance": 25500},
@@ -129,7 +119,6 @@ def test_facts_empty_without_books(cfg):
 
 def test_facts_from_the_books(cfg):
     seed_real()
-    seed_futures(cfg)
     seed_options(cfg)
     hold("HELD")
     with get_db() as conn:
@@ -139,13 +128,11 @@ def test_facts_from_the_books(cfg):
     assert f["empty"] is False
     r = f["real"]
     assert r["exits"] == ["S0"] and r["buys"] == ["S1", "S2"] and r["skipped"] == ["S3 (results guard)"] and r["cash"] == 103699.0 and r["free"] == 9
-    assert f["futures"]["held"] == ["HELDF long 2 lots"] and f["futures"]["roll_day"] == "Fri 20 Nov" and f["futures"]["results"] == ["HELDF Thu 19 Nov (in 2 sessions)"]
     o = f["options"]
     assert (o["pcr"], o["support"], o["resistance"], o["vix"], o["line"]) == (0.82, 25000, 25500, 13.2, "bearish 3/5")
     assert f["notes"][0]["symbol"] == "S1" and f["results"] == [f"HELD {brief.day_label(TODAY)} (in 0 sessions)"]
     text = "\n".join(f["lines"])
     assert "Real: 3 orders at 9:16 AM: EXIT S0; BUY S1, S2. Cash after 103,699; 9 free slots of 10. Skipped: S3 (results guard)." in text
-    assert "Futures: held HELDF long 2 lots" in text and "roll day Fri 20 Nov" in text
     assert "last chain PCR 0.82, put wall 25,000, call wall 25,500 (bearish 3/5); VIX 13.2;" in text
     assert "Note (high, plan): S1 filing: Pledge raised." in text and "Results within 3 sessions on held names: HELD" in text
 
@@ -161,9 +148,9 @@ def test_facts_mark_real_off_and_vix_over_half(cfg):
 
 def test_a_failing_section_is_left_out(cfg, monkeypatch):
     seed_real()
-    monkeypatch.setattr(fbook, "has_account", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(obook, "has_account", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     f = brief.facts(cfg, now_at("06:30"))
-    assert f["futures"] is None and f["real"]["exits"] == ["S0"] and f["empty"] is False
+    assert f["options"] is None and f["real"]["exits"] == ["S0"] and f["empty"] is False
 
 
 # --- the validator ------------------------------------------------------------------------------------------------------------
@@ -199,13 +186,13 @@ def test_run_writes_the_row_and_sends_once(ollama, cfg):
     fake = FakeTG()
     n = Notifier(cfg.alerts, fake)
     out = brief.run(cfg, now_at("06:30"), n)
-    assert out["id"] and out["tokens"] == 9 and out["note"] == "brief · 4 line(s)"
+    assert out["id"] and out["tokens"] == 9 and out["note"] == "brief · 3 line(s)"
     body = ollama.calls[-1][2]
     assert body["model"] == NIGHT and body["format"] == "json" and "Facts:\n- Day:" in body["prompt"] and "never advise" in body["system"]
     row = notes.get_note(out["id"])
     assert row["kind"] == "brief" and row["day"] == TODAY and row["symbol"] is None and row["severity"] == "info" and row["source_key"] == f"brief:{TODAY}"
     assert row["title"] == f"Morning brief · {brief.day_label(TODAY)}" and row["prompt_version"] == "brief-v1" and row["alerted"] is True
-    assert row["text"].split("\n")[0].startswith("Real sends 3 orders") and len(row["text"].split("\n")) == 4
+    assert row["text"].split("\n")[0].startswith("Real sends 3 orders") and len(row["text"].split("\n")) == 3
     assert len(fake.sent) == 1
     html = fake.sent[0][1]
     assert html.startswith(f"☀️ <b>[AI] Morning brief · {brief.day_label(TODAY)} · 6:30 AM</b>\n<i>AI ·</i> Real sends 3 orders at 9:16 AM")
@@ -274,7 +261,7 @@ def test_queue_runs_brief_under_its_window(ollama, cfg):
     job = brief.enqueue(cfg, now_at("06:31"))
     assert job["dedup"] is False and brief.enqueue(cfg, now_at("06:31"))["dedup"] is True
     row = q.wait(job["id"], 10)
-    assert row["status"] == "done" and row["note"] == "brief · 4 line(s)"
+    assert row["status"] == "done" and row["note"] == "brief · 3 line(s)"
     with get_db() as conn:
         conn.execute("DELETE FROM ai_notes")
     cfg.ai.brief = False
@@ -317,7 +304,7 @@ def test_routes_show_the_brief(api, ollama, cfg):
     seed_real()
     out = brief.run(cfg, now_at("06:30"), Notifier(cfg.alerts, FakeTG()))
     d = tc.get("/api/ai").json()
-    assert d["brief"]["id"] == out["id"] and len(d["brief"]["lines"]) == 4 and d["brief"]["day"] == TODAY
+    assert d["brief"]["id"] == out["id"] and len(d["brief"]["lines"]) == 3 and d["brief"]["day"] == TODAY
     r = tc.get("/api/ai/notes?kind=brief").json()
     assert r["total"] == 1 and r["rows"][0]["kind"] == "brief" and r["rows"][0]["title"].startswith("Morning brief")
     assert DAY not in (r["rows"][0]["model"] or "")                                        # the night model wrote it

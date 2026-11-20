@@ -16,7 +16,7 @@ from backend.alerts.commands import BotCommands
 from backend.alerts.dispatch import Notifier
 from backend.config import AIConfig, AlertsConfig, AppConfig
 from backend.database.models import get_db, now_ist
-from tests.test_ai_brief import seed_futures, seed_real
+from tests.test_ai_brief import seed_real
 from tests.test_ai_infra import DAY, NIGHT, at, no_brokers
 from tests.test_ai_notes import FakeNotes, _note_row, filing, plan
 from tests.test_login import BotTG, update
@@ -66,11 +66,11 @@ def gen_calls(fake):
 # --- the whitelist and the arguments -------------------------------------------------------------------------------------------
 
 def test_tool_list_matches_the_plan():
-    assert ask.TOOL_NAMES == ("real_morning", "real_summary", "paper_summary", "futures_summary", "options_summary", "options_days", "trades",
-                              "filings", "notes", "suggestions", "plan", "why_skipped", "positions_near_stop", "backtest_f", "levels")
+    assert ask.TOOL_NAMES == ("real_morning", "real_summary", "paper_summary", "options_summary", "options_days", "trades",
+                              "filings", "notes", "suggestions", "plan", "why_skipped", "positions_near_stop", "levels")
     args = {k: {a: t.__name__ for a, t in v["args"].items()} for k, v in ask.TOOLS.items()}
     assert args["real_morning"] == {"day": "str"} and args["trades"] == {"book": "str", "days": "int"} and args["why_skipped"] == {"symbol": "str", "day": "str"}
-    assert args["positions_near_stop"] == {"pct": "float"} and args["options_days"] == {"limit": "int"} and args["backtest_f"] == {}
+    assert args["positions_near_stop"] == {"pct": "float"} and args["options_days"] == {"limit": "int"} and "backtest_f" not in args
     text = ask.tool_list_text()
     assert text.startswith("real_morning(day: str) — ") and "filings(symbol: str, days: int) — " in text and no_brokers(text)
     assert all(callable(v["fn"]) for v in ask.TOOLS.values())
@@ -78,13 +78,13 @@ def test_tool_list_matches_the_plan():
 
 def test_coerce_args_defaults_bounds_and_cleaning():
     assert ask.coerce_args("trades", {}) == {"book": "real", "days": 7}
-    assert ask.coerce_args("trades", {"book": "Futures", "days": "400", "extra": 1}) == {"book": "futures", "days": 90}
+    assert ask.coerce_args("trades", {"book": "Options", "days": "400", "extra": 1}) == {"book": "options", "days": 90}
+    assert ask.coerce_args("trades", {"book": "futures"}) == {"book": "real", "days": 7}           # the futures book is gone
     assert ask.coerce_args("trades", {"book": "crypto", "days": 0}) == {"book": "real", "days": 1}
     assert ask.coerce_args("real_morning", {"day": "thursday"}) == {"day": ask._today()} and ask.coerce_args("plan", {"day": "2026-11-13T09:00"}) == {"day": "2026-11-13"}
     assert ask.coerce_args("positions_near_stop", {"pct": "abc"}) == {"pct": 2.0} and ask.coerce_args("positions_near_stop", {"pct": 99}) == {"pct": 20.0}
     assert ask.coerce_args("filings", {"symbol": "nmdc'; drop table --", "days": 3.9}) == {"symbol": "nmdc drop table --", "days": 3}
     assert ask.coerce_args("suggestions", {"status": "weird"}) == {"status": "open"} and ask.coerce_args("options_days", {"limit": 500}) == {"limit": 30}
-    assert ask.coerce_args("backtest_f", {"anything": 1}) == {}
 
 
 def test_parse_pick_whitelist():
@@ -115,7 +115,6 @@ def test_why_skipped_and_plan_and_morning(cfg):
 
 def test_filings_notes_trades_and_near_stop(cfg):
     seed_real()
-    seed_futures(cfg)
     filing(1, "S0", "Acquisition", "deal one", 1)
     _note_row("S0", "high", "held", "Weak quarter", day=TODAY, key="a1")
     with get_db() as conn:
@@ -127,11 +126,9 @@ def test_filings_notes_trades_and_near_stop(cfg):
     assert n["notes"][0]["title"] == "Weak quarter" and n["notes"][0]["severity"] == "high"
     t = ask.run_tool(cfg, "trades", {"book": "real", "days": 7})
     assert [x["symbol"] for x in t["trades"]] == ["NEW"] and ask.run_tool(cfg, "trades", {"book": "real", "days": 90})["trades"][-1]["symbol"] == "OLD"
-    near = ask.run_tool(cfg, "positions_near_stop", {"pct": 10})
-    assert [(x["book"], x["symbol"], x["distance_pct"]) for x in near["positions"]] == [("futures", "HELDF", 8.65)]
+    near = ask.run_tool(cfg, "positions_near_stop", {"pct": 15})
+    assert [(x["book"], x["symbol"]) for x in near["positions"]] == [("real", "S0")] and 13.0 < near["positions"][0]["distance_pct"] < 13.2
     assert ask.run_tool(cfg, "positions_near_stop", {"pct": 5})["positions"] == []            # S0: 13.1% away
-    fs = ask.run_tool(cfg, "futures_summary", {})
-    assert fs["positions"][0]["symbol"] == "HELDF" and fs["roll_day"] == "2026-11-20" and fs["warnings"]["results"][0]["symbol"] == "HELDF"
 
 
 def test_suggestions_tool_without_and_with_rows(cfg):

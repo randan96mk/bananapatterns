@@ -39,11 +39,9 @@ const AlertsPanel = lazyPage(() => import('./components/AlertsPanel'));
 const BreakoutPage = lazyPage(() => import('./components/BreakoutPage'));
 const PaperPage = lazyPage(() => import('./components/PaperPage'));
 const RealPage = lazyPage(() => import('./components/RealPage'));
-const FuturesPage = lazyPage(() => import('./components/FuturesPage'));
 const OptionsPage = lazyPage(() => import('./components/OptionsPage'));
 const AiPage = lazyPage(() => import('./components/AiPage'));
 const TodayPage = lazyPage(() => import('./components/TodayPage'));
-const FlowPage = lazyPage(() => import('./components/FlowPage'));
 const HomePage = lazyPage(() => import('./components/HomePage'));
 const PortfolioPage = lazyPage(() => import('./components/PortfolioPage'));
 const WeekPage = lazyPage(() => import('./components/WeekPage'));
@@ -62,13 +60,13 @@ const ICONS = {
 };
 export const SECTIONS = [
   ['home', 'Home', [['home', 'Overview']]],
-  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['flow', 'Intraday Flow'], ['breakout', 'Trend Breakout'], ['futures', '📐 Futures'], ['options', '🧩 Options']]],
+  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['breakout', 'Trend Breakout'], ['options', '🧩 Options']]],
   ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing'], ['week', '📖 Week']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe'], ['tips', '💡 Tips']]],
   ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs'], ['ai', '🤖 AI']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
-const DOTS = ['breakout', 'paper', 'real', 'futures', 'options'];
+const DOTS = ['breakout', 'paper', 'real', 'options'];
 const Icon = ({ id }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
   strokeLinejoin="round" aria-hidden="true"><path d={ICONS[id]} /></svg>;
 
@@ -114,7 +112,7 @@ export default function App() {
       if (e.key === 'Escape') { setHelp(false); return; }
       if (e.key === 'g') { g = Date.now(); return; }
       if (Date.now() - g < 1500) {
-        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', f: 'flow', b: 'breakout', u: 'futures', o: 'options', w: 'week', l: 'follow', c: 'screens', a: 'alerts', d: 'data', t: 'tips' }[e.key];
+        const to = { h: 'home', s: 'strategies', p: 'portfolio', r: 'research', y: 'system', b: 'breakout', o: 'options', w: 'week', l: 'follow', c: 'screens', a: 'alerts', d: 'data', t: 'tips' }[e.key];
         if (to) { go(to); g = 0; }
       }
     };
@@ -174,10 +172,8 @@ export default function App() {
           {tab === 'portfolio' && <PortfolioPage onStock={setStock} />}
           {tab === 'system' && <SystemHome onGo={go} onKite={() => { setShowKite(true); window.scrollTo(0, 0); }} />}
           {tab === 'plan' && <TodayPage />}
-          {tab === 'flow' && <FlowPage />}
           {tab === 'breakout' && <BreakoutPage />}
           {tab === 'real' && <RealPage />}
-          {tab === 'futures' && <FuturesPage />}
           {tab === 'options' && <OptionsPage />}
           {tab === 'paper' && <PaperPage />}
           {tab === 'week' && <WeekPage onGo={go} />}
@@ -199,7 +195,7 @@ export default function App() {
         <b style={{ fontSize: 16 }}>⌨️ Keyboard</b>
         <table className="grid small" style={{ marginTop: 8 }}><tbody>
           {[['⌘K or /', 'search a stock or a page'], ['g then h', 'Home'], ['g then s', 'Strategies'], ['g then p', 'Portfolio'], ['g then r', 'Research'], ['g then y', 'System'],
-            ['g then f / b / u / o', 'Intraday Flow / Trend Breakout / Futures / Options'], ['g then l / c / t', 'Follow / Screens / Tips'], ['g then a / d', 'Alerts / Data'], ['?', 'this list'], ['Esc', 'close']]
+            ['g then b / o', 'Trend Breakout / Options'], ['g then l / c / t', 'Follow / Screens / Tips'], ['g then a / d', 'Alerts / Data'], ['?', 'this list'], ['Esc', 'close']]
             .map(([k, l]) => <tr key={k}><td><kbd>{k}</kbd></td><td className="muted">{l}</td></tr>)}</tbody></table></div>}
       {cmdk && <CommandPalette sections={SECTIONS} symbols={symbols} onClose={() => setCmdk(false)}
         onPage={(p) => { go(p); setCmdk(false); }} onStock={(s) => { setStock(s); setCmdk(false); }} />}

@@ -11,14 +11,12 @@ import { useIsPhone } from '../useMedia';
 // Nothing happens until you tap: ✓ runs the SAME code path (and the same confirm text) as the hand action, ✗ records a
 // reason, Later moves the expiry four hours once. A row's height never depends on a number: every line is one line
 // with an ellipsis (the why may take two). Stream topic "ai" (the open count) → refetch.
-const BOOK = { real: 'Real', paper: 'Paper', futures: 'Futures', options: 'Options' };
+const BOOK = { real: 'Real', paper: 'Paper', options: 'Options' };
 const SUB = {                                                      // what the row's small text says, per kind
   skip: (s) => `${BOOK[s.book] || 'the'} plan${s.value ? ` · ≈ ${inr(s.value)}` : ''}`,
   exit: (s) => `held in ${BOOK[s.book] || 'a book'}${s.value ? ` · ≈ ${inr(s.value)}` : ''}`,
   flag: (s) => `${BOOK[s.book] || 'the'} plan${s.value ? ` · ≈ ${inr(s.value)}` : ''} · the 9:00 dry run`,
   hold_options: () => 'Options · the day\'s entry window',
-  roll_or_exit: (s) => `Futures · roll day${s.value ? ` · ≈ ${inr(s.value)}` : ''}`,
-  backtest: () => 'Backtest F · a settings idea',
 };
 const CONF = { high: 'w', medium: '', low: '' };
 const wday = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }) : '');

@@ -27,9 +27,9 @@ from typing import Optional
 
 from backend.config import IST, AppConfig
 from backend.database.models import get_candles, get_db, get_setting, now_ist, set_setting
-from backend.intraday import store
 from backend.logging_config.logger import setup_logger
 from backend.options import bias as bs
+from backend.options import candles_util
 from backend.options import chain as ch
 from backend.options import instruments as oi
 from backend.options.bias import BEARISH, BULLISH
@@ -310,7 +310,7 @@ def _bars(client, token: int, day: str) -> list[dict]:
     """Today's 1-minute bars of a token from Kite's minute history ({t, o, h, l, c, v})."""
     d = date.fromisoformat(day)
     rows = client.historical_minute(token, d, d)
-    return store.from_kite(rows).get(day, [])
+    return candles_util.from_kite(rows).get(day, [])
 
 
 def _daily_nifty() -> list[dict]:

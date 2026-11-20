@@ -96,26 +96,14 @@ RETRY_SUFFIX = ("\nYour previous answer was not valid: {why}. Reply with the JSO
 
 # --- the scope ------------------------------------------------------------------------------------------------------
 
-def _futures_held() -> set:
-    """Symbols with an open futures lot in any of the book's accounts (options legs are index spreads: skipped)."""
-    try:
-        from backend.futures import book
-        st = book._state() or {}
-        return {s for a in (st.get("accounts") or {}).values() for s in (a.get("positions") or {})}
-    except Exception:
-        return set()
-
-
 def scope() -> dict[str, dict]:
-    """{symbol: {book: held | plan | watch, why, rank}}: the stocks you hold (cash books via alerts.guard.positions,
-    futures via the book's state), have in the plan (rank = its number) or watch. Held wins over plan over watch."""
+    """{symbol: {book: held | plan | watch, why, rank}}: the stocks you hold (cash books via alerts.guard.positions),
+    have in the plan (rank = its number) or watch. Held wins over plan over watch."""
     from backend.alerts import guard as aguard
     from backend.alerts import plan as pl
     out: dict[str, dict] = {}
     for p in aguard.positions():
         out[p["symbol"]] = {"book": "held", "why": BOOK_WHY["held"], "rank": None}
-    for s in sorted(_futures_held()):
-        out.setdefault(s, {"book": "held", "why": BOOK_WHY["held"], "rank": None})
     for n, i in enumerate(pl.latest_plan()[1], start=1):
         out.setdefault(i["symbol"], {"book": "plan", "why": BOOK_WHY["plan"], "rank": n})
     with get_db() as conn:
@@ -630,7 +618,7 @@ def where_text(symbol: str, config: AppConfig, sc: Optional[dict] = None) -> tup
     except Exception:
         pass
     if not held and sc.get("book") == "held":
-        held.append("held in Futures" if symbol in _futures_held() else "held")
+        held.append("held")
     if held:
         return held[0], None
     if sc.get("book") == "plan":
@@ -785,7 +773,7 @@ def tonight(config: AppConfig, now: Optional[datetime] = None) -> list[dict]:
 
 def attach(rows: list, days: int = 7, today: Optional[str] = None) -> list:
     """Give every position row (dicts with a "symbol") an `ai_note: {title, severity, at} | None` from the stock's
-    newest note within `days`. Used by the Real, Paper and Futures summaries and the overview. Never raises."""
+    newest note within `days`. Used by the Real and Paper summaries and the overview. Never raises."""
     for r in rows:
         if isinstance(r, dict):
             r.setdefault("ai_note", None)

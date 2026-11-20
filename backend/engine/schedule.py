@@ -83,19 +83,6 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
             r.stop_check_min, True)
         add("real_send", "🚀", "Real orders sent", "the planned EXITs, then BUYs → the webhook", _next_at(now, _hm(r.send_time)),
             None, True)
-    try:                                                   # 📐 the futures book's own clock
-        from backend.futures import book
-        if book.has_account():
-            add("futures_stops", "📐", "Futures stop check", f"every {r.stop_check_min} min · futures quotes",
-                _next_every(now, time(9, 15), MARKET_CLOSE, r.stop_check_min, getattr(sch, "last_futures_stops", None)), r.stop_check_min)
-            if any(book.real_live(config, s) for s in book.SIDES):
-                add("futures_send", "📐", "Futures orders sent", "the real sides' EXITs, then entries", _next_at(now, _hm(r.send_time)), None, True)
-            rd = (book._state() or {}).get("roll_day")
-            if rd:
-                add("futures_roll", "↻", "Futures roll (T-2)", "EXIT the near month, then the next", datetime.combine(date.fromisoformat(rd), time(9, 20), tzinfo=IST)
-                    if date.fromisoformat(rd) >= now.date() else None)
-    except Exception:
-        pass
     try:                                                   # 🧩 the options book: one tick a minute
         from backend.options import book as obook
         if obook.active(config):
@@ -109,10 +96,6 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
                         getattr(sch, "last_intraday", None)), a.intraday_interval_min)
         if a.close_check:
             add("close_check", "🕒", "Close check", "breakouts still holding near the close", _next_at(now, _hm(a.close_check_time)))
-    if config.flow.mode != "off":
-        from backend.intraday import flow
-        add("flow", "🔀", "Intraday Flow", f"{config.flow.mode} · live 1-minute candles, runs at each candle close",
-            _next_at(now, time(9, 0)), skip="⏹ stopped" if flow.stopped() else None)
     if a.filings:
         from backend.alerts.jobs import filings_window_open
         nxt = _next_every(now, time(7, 0), time(23, 0), a.filings_interval_min, getattr(sch, "last_filings", None), False)
@@ -132,7 +115,7 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
     if a.top_setups or a.alert_style == "summary":
         add("top_setups", "📨", "Evening report", "one silent Telegram message", _next_at(now, _hm(a.top_setups_time)))
     if a.day_summary:
-        add("day_summary", "🌙", "Day summary", "one Telegram message: each book's value and the day's P&L, the signal track, the AI",
+        add("day_summary", "🌙", "Day summary", "one Telegram message: each book's value and the day's P&L, the AI",
             _next_at(now, _hm(a.day_summary_time)))
     if a.morning_plan:
         add("morning_plan", "🌅", "Morning plan", "top setups for the day", _next_at(now, _hm(a.morning_plan_time)))

@@ -32,7 +32,7 @@ const dayName = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLoca
 const weekday = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' }) : '');
 const sgn = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
 const shortName = (s) => (s && s.length > 9 ? `${s.slice(0, 8)}…` : s || '');       // the same shortening everywhere on the map
-const BOOK = { real: 'Real', paper_E: 'Paper E+', intraday: 'Intraday', futures: 'Futures', options: 'Options' };
+const BOOK = { real: 'Real', paper_E: 'Paper E+', options: 'Options' };
 const mins = (t) => (t ? +t.slice(0, 2) * 60 + +t.slice(3, 5) : 0);
 const pctOfDay = (t) => 3 + Math.max(0, Math.min(1, (mins(t) - 555) / 375)) * 94;   // 9:15 → 15:30, with a margin
 const evId = (e) => `${e.t}|${e.text}`;
@@ -95,7 +95,7 @@ function Contribution({ positions }) {
 
 // One tile per name. A name in both Real and Paper E+ is one tile tagged R·P (value = the sum, P&L % = Real's).
 function PositionsMap({ positions, onStock, view }) {
-  const tagOf = { real: 'R', paper_E: 'P', intraday: 'I', futures: 'F', options: 'O' };
+  const tagOf = { real: 'R', paper_E: 'P', options: 'O' };
   const merged = new Map();
   (positions || []).filter((p) => p.entry && p.qty && (view === 'both' || (view === 'real' ? p.book === 'real' : p.book === 'paper_E'))).forEach((p) => {
     const m = merged.get(p.symbol) || { symbol: p.symbol, value: 0, books: [], pct: null, accounts: [] };
@@ -106,7 +106,7 @@ function PositionsMap({ positions, onStock, view }) {
   const rows = [...merged.values()].sort((a, b) => b.value - a.value);
   if (!rows.length) return <div className="hmap"><p className="muted small">No open positions{view === 'both' ? '' : ` in ${view === 'real' ? 'Real' : 'Paper E+'}`}.</p></div>;
   const shade = (x) => { const a = Math.min(1, Math.abs(x || 0) / 6); return x >= 0 ? `color-mix(in srgb, var(--ok) ${25 + 65 * a}%, var(--panel))` : `color-mix(in srgb, var(--bad) ${25 + 65 * a}%, var(--panel))`; };
-  const order = ['real', 'paper_E', 'futures', 'options', 'intraday'];
+  const order = ['real', 'paper_E', 'options'];
   const MAX = 14, more = rows.length - MAX;
   return <div className="hmap">{rows.slice(0, more > 0 ? MAX : rows.length).map((p) => <div key={p.symbol} className="tile" style={{ background: shade(p.pct) }} title={`${p.symbol} · ${p.accounts.join(' · ')} · ${inr(p.value)}`} onClick={() => onStock(p.symbol)}>
       <b>{shortName(p.symbol)}</b><small>{pct(p.pct)}</small><em>{order.filter((b) => p.books.includes(b)).map((b) => tagOf[b]).join('·')}</em></div>)}
@@ -115,7 +115,7 @@ function PositionsMap({ positions, onStock, view }) {
 
 // The card opens to the right of the pointer (to its left at the window's edge) and under the hovered row, or
 // above the row when there is no room below: never over the row under the pointer.
-const shortStrategy = (s) => (/E\+/.test(s || '') ? 'E+' : /flow/i.test(s || '') ? 'Flow' : /spread/i.test(s || '') ? 'Opt' : s || '');
+const shortStrategy = (s) => (/E\+/.test(s || '') ? 'E+' : /spread/i.test(s || '') ? 'Opt' : s || '');
 function HoverCard({ p, at }) {
   const [c, setC] = useState(null);
   const ref = useRef(null);
@@ -220,7 +220,7 @@ export default function HomePage({ onGo, onStock }) {
   useEffect(() => { api.getPlan().then(setPlan).catch(() => setPlan(null)); }, []);
   const views = useAiViews([...(o?.positions || []).map((p) => p.symbol), ...(plan?.items || []).map((i) => i.symbol)]);
   if (!o) return <div className="rd"><Panel><p className="muted small rempty">Loading…</p></Panel></div>;
-  const A = o.accounts || {}, it = A.intraday || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {}, F = o.facts || {}, D = o.drift, N = o.next_open;
+  const A = o.accounts || {}, R = o.risk || {}, S = o.stats || {}, P = o.pulse || {}, F = o.facts || {}, D = o.drift, N = o.next_open;
   const hm24 = (t) => (t ? new Date(`2000-01-01T${t}:00`).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }) : '');
   const ptsOf = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v} pts`);
   const niftyPts = (acc) => {                                 // return since start against NIFTY rebased to the same start, in points
@@ -232,7 +232,7 @@ export default function HomePage({ onGo, onStock }) {
   const positions = o.positions || [];
   const net = positions.reduce((a, p) => a + (p.pnl || 0), 0);
   const liveNow = positions.some((p) => p.live) || o.feed === 'live';
-  const swing = (o.today || 0) - (it.day_pnl || 0);
+  const opt = A.options?.day_pnl || 0, swing = (o.today || 0) - opt;
 
   // the positions table: view (which books), quick filter, sort inside each book
   const realSyms = new Map(positions.filter((p) => p.book === 'real').map((p) => [p.symbol, p.qty]));
@@ -242,7 +242,7 @@ export default function HomePage({ onGo, onStock }) {
   const counts = { near: positions.filter(FILTERS.near).length, trail: positions.filter(FILTERS.trail).length, results: positions.filter(FILTERS.results).length };
   const shown = positions.filter(inView).filter(FILTERS[filter] || FILTERS.all);
   const sorter = (a, b) => { const d = SORTS[sort.key](a) - SORTS[sort.key](b); return sort.dir === 'desc' ? -d : d; };
-  const groups = ['real', 'paper_E', 'futures', 'options', 'intraday'].map((b) => [b, shown.filter((p) => p.book === b).sort(sorter)]).filter(([, ps]) => ps.length);
+  const groups = ['real', 'paper_E', 'options'].map((b) => [b, shown.filter((p) => p.book === b).sort(sorter)]).filter(([, ps]) => ps.length);
   const flip = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }));
   const arrow = (key) => (sort.key === key ? (sort.dir === 'desc' ? ' ▾' : ' ▴') : '');
   // Strategy is the short tag at 60 px; under 1440 px Entry and Trail are dropped (nw) so the Stock column keeps 140 px+
@@ -251,7 +251,7 @@ export default function HomePage({ onGo, onStock }) {
     { h: `Stop · distance${arrow('stop')}`, key: 'stop', w: 150, onClick: () => flip('stop'), title: 'sort by the distance to the stop' }, { h: 'Trail · events', w: 132, lo: true, nw: true },
     { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag for you; the stop and the trail stay as the rules set them' }];
   const posRows = groups.flatMap(([b, ps]) => [
-    `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} ${b === 'futures' ? 'notional' : b === 'options' ? 'premium' : 'in use'}`,
+    `${BOOK[b] || b} · ${ps.length} · ${signed(ps.reduce((a, p) => a + (p.pnl || 0), 0))} · ${inr(ps.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0))} ${b === 'options' ? 'premium' : 'in use'}`,
     ...ps.map((p) => { const f = flash[p.book + p.symbol]; return { key: p.book + p.symbol, cls: f ? `row-${f}` : '', onClick: () => onStock(p.symbol), cells: [
       <><b>{p.symbol}</b><AiDot note={p.ai_note} />{p.stop_dist != null && p.stop_dist < 2 && <Tag c="w">near stop</Tag>}{p.results_in != null && p.results_in <= 3 && <Tag c="w" title={`results on ${dayName(p.results_date)} (${p.results_in} session${p.results_in === 1 ? '' : 's'})`}>⚠ results {weekday(p.results_date)}</Tag>}{f === 'new' && <Tag c="a">new</Tag>}</>,
       <span className={/E\+/.test(p.strategy || '') ? 'vE' : 'muted'} title={p.strategy}>{shortStrategy(p.strategy)}</span>, p.qty, p.entry,
@@ -278,11 +278,11 @@ export default function HomePage({ onGo, onStock }) {
     <HealthStrip onGo={onGo} compact />
     <TodayCard onGo={onGo} />
     <Timeline events={o.timeline} jobs={jobs} now={now} feed={o.feed} phone={phone} picked={picked ? picked.map(evId) : null} onPick={(items) => setPicked(items && items.length ? items : null)} />
-    <Cards n={4 + (A.follow && A.follow.breakouts > 0 ? 1 : 0) + (A.futures ? 1 : 0) + (A.options ? 1 : 0)}>
+    <Cards n={4 + (A.follow && A.follow.breakouts > 0 ? 1 : 0) + (A.options ? 1 : 0)}>
       <Card label="Today · all books" value={signed(o.today)} num={o.today} k={cls(o.today)} spark={(o.today_curve || []).map((p) => p[1])} stale={stale} live={liveNow}
-        sub={<>intraday <span className={cls(it.day_pnl)}>{sgn(it.day_pnl)}</span> · swing <span className={cls(swing)}>{sgn(swing)}</span></>}
+        sub={<>swing <span className={cls(swing)}>{sgn(swing)}</span> · options <span className={cls(opt)}>{sgn(opt)}</span></>}
         fact={F.today ? <>high <b className="up">{sgn(F.today.high)}</b> {hm24(F.today.high_at)} · low <b className="down">{sgn(F.today.low)}</b></> : <span className="muted">high / low from the open</span>}
-        title={cardTip([`intraday ${signed(it.day_pnl)}`, `swing last session ${signed(swing)}`, F.today && `high ${signed(F.today.high)} at ${hm24(F.today.high_at)}`, F.today && `low ${signed(F.today.low)} at ${hm24(F.today.low_at)}`])} />
+        title={cardTip([`swing last session ${signed(swing)}`, `options ${signed(opt)}`, F.today && `high ${signed(F.today.high)} at ${hm24(F.today.high_at)}`, F.today && `low ${signed(F.today.low)} at ${hm24(F.today.low_at)}`])} />
       {A.real && <Card label={<>Real <span className={A.real.on ? 'up' : 'muted'}>· {A.real.on ? 'ON' : 'OFF'}{A.real.variant ? ` · ${A.real.variant === 'E' ? 'E+' : A.real.variant}` : ''}</span></>} value={inr(A.real.value)} num={A.real.value}
         sub={<><span className={cls(A.real.day_pnl)}>{sgn(A.real.day_pnl)}</span> last session{F.real ? <> · {F.real.slots} of {F.real.max_pos} slots</> : <> · {A.real.positions} positions</>}</>} spark={A.real.spark} spark2={A.real.spark_nifty} stale={stale}
         fact={<>vs NIFTY <b className={cls(niftyPts(A.real))}>{ptsOf(niftyPts(A.real))}</b> since start</>}
@@ -295,10 +295,6 @@ export default function HomePage({ onGo, onStock }) {
         sub={D && D.names ? `same ${D.names} name${D.names === 1 ? '' : 's'} · fills and slippage` : 'no name held in both books yet'}
         fact={D && D.names && D.pct_of_paper != null ? <>drift <Bar pct={Math.abs(D.pct_of_paper)} bad={D.diff < 0} ok={D.diff >= 0} /> <b className={cls(D.diff)}>{pct(D.pct_of_paper)}</b> of paper P&amp;L</> : <span className="muted">—</span>}
         title={D && D.names ? cardTip([`Real ${signed(D.real_pnl)} vs Paper E+ ${signed(D.paper_pnl)} on ${D.symbols.join(', ')}`, `difference ${signed(D.diff)}`, D.pct_of_paper != null && `${pct(D.pct_of_paper)} of the paper P&L`]) : 'What live execution costs: Real against Paper E+ on the names both books hold'} />}
-      {A.futures && <Card label={<>Futures <span className={A.futures.mode === 'real' ? 'up' : 'muted'}>· {A.futures.mode}</span>{A.futures.killed && <span className="down"> · killed</span>}</>} value={inr(A.futures.value)} num={A.futures.value} k={cls(A.futures.net)} spark={A.futures.spark} spark2={A.futures.spark_nifty} stale={stale}
-        sub={<><span className={cls(A.futures.day_pnl)}>{sgn(A.futures.day_pnl)}</span> today · {F.futures ? <>{F.futures.lots} of {F.futures.max_pos} lots</> : <>{A.futures.positions} lots</>}</>}
-        fact={<>margin <Bar pct={A.futures.margin_pct || 0} bad={(A.futures.margin_pct || 0) >= 80} ok={(A.futures.margin_pct || 0) < 70} /> <b className={(A.futures.margin_pct || 0) >= 70 ? 'warn' : ''}>{Math.round(A.futures.margin_pct || 0)}%</b> · {pct(A.futures.return)}</>}
-        title={cardTip([`Futures · ${A.futures.mode}`, `${A.futures.positions} lots`, `${pct(A.futures.return)} since start`, `margin ${Math.round(A.futures.margin_pct || 0)}% of capital`, 'corner chart: the book (solid) against NIFTY (dashed)'])} onClick={() => onGo('futures')} />}
       {A.options && <Card label={<>Options <span className="muted">· paper</span>{A.options.killed && <span className="down"> · killed</span>}</>} value={inr(A.options.value)} num={A.options.value} k={cls(A.options.net)} spark={A.options.spark} stale={stale} live={A.options.positions > 0}
         sub={<><span className={cls(A.options.day_pnl)}>{sgn(A.options.day_pnl)}</span> today · {A.options.positions ? <>1 spread open · {F.options?.lots ?? A.options.lots} lot{(F.options?.lots ?? A.options.lots) === 1 ? '' : 's'}</> : F.options?.status === 'no_trade' ? 'no trade today' : 'no spread open'}</>}
         fact={<>margin <Bar pct={A.options.margin_pct || 0} ok={(A.options.margin_pct || 0) < 50} /> <b>{Math.round(A.options.margin_pct || 0)}%</b> · {A.options.bias ? <span className={A.options.bias === 'BULLISH' ? 'up' : 'down'}>{A.options.bias === 'BULLISH' ? '↑ bullish' : '↓ bearish'}</span> : 'no bias'} · {pct(A.options.return)}</>}
@@ -315,14 +311,11 @@ export default function HomePage({ onGo, onStock }) {
       {ht && <TipsKiteCards d={ht} onGo={onGo} />}</Cards>}
     <OvernightPanel />
     {!S.error && <div className={`hstats ${phone ? 'phone' : ''}`}>
-      <div title={cardTip([`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'}`, `${it.trades || 0} trades`, F.intraday && `loss limit ${inr(F.intraday.loss_used)} / ${inr(F.intraday.loss_limit)}`])}><span className="l">Intraday · open · risk</span><b className={cls(it.day_pnl)}>{sgn(it.day_pnl)}<span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {it.open || 0} open · {inr(it.at_risk)}</span></b></div>
       <div><span className="l">Win streak</span><b className={S.win_streak ? 'up' : ''}>{S.win_streak || 0} day{S.win_streak === 1 ? '' : 's'}</b></div>
       <div><span className="l">Best day · 30 d</span><b className="up">{S.best_day ? `${signed(S.best_day.net)} · ${dayName(S.best_day.day)}` : '—'}</b></div>
       <div><span className="l">Worst day · 30 d</span><b className="down">{S.worst_day ? `${signed(S.worst_day.net)} · ${dayName(S.worst_day.day)}` : '—'}</b></div>
       <div><span className="l">Days since a loss</span><b>{S.days_since_loss ?? '—'}</b></div>
-      <div><span className="l">Signals today · hit rate 30 d</span><b>{S.signals_today ?? 0} · {S.hit_rate_30d != null ? `${S.hit_rate_30d}%` : '—'}</b></div>
       <div><span className="l">Real orders this week</span><b className={S.orders_failed_week ? 'down' : ''}>{S.orders_week ?? 0} · {S.orders_failed_week ?? 0} failed</b></div>
-      <div title={`intraday · ${it.mode === 'paper' ? 'paper' : it.mode || 'off'} · ${it.trades || 0} trades today`}><span className="l">Intraday loss limit · signals</span><b>{inr(F.intraday?.loss_used ?? R.loss_used)} / {inr(F.intraday?.loss_limit ?? it.loss_limit)}{F.intraday?.per_day ? <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> · {F.intraday.signals} of {F.intraday.per_day}</span> : null}</b></div>
     </div>}
     {!phone && <div className="hthree">
       <Panel title="Today, live" right="all books · one point a minute"><div className="hbody"><TodayCurve points={o.today_curve} today={o.today} /><Contribution positions={positions} /></div></Panel>
@@ -366,8 +359,7 @@ export default function HomePage({ onGo, onStock }) {
           <div className="hmini">
             <div><span className="l">Worst case to the stops</span><b className="down mono">{signed(R.worst_case)}</b></div>
             <div><span className="l">Biggest position</span><b className="mono">{R.biggest ? `${R.biggest.symbol} ${inr(R.biggest.value)}` : '—'}</b></div>
-            <div><span className="l">Real orders today</span><b className={R.orders_today?.failed ? 'down' : 'up'}>{R.orders_today?.sent ?? 0} sent · {R.orders_today?.failed ?? 0} failed</b></div>
-            <div><span className="l">Intraday loss limit</span><b className="mono">{inr(R.loss_used)} / {inr(R.loss_limit)}</b></div></div></div></Panel>}
+            <div style={{ gridColumn: '1 / -1' }}><span className="l">Real orders today</span><b className={R.orders_today?.failed ? 'down' : 'up'}>{R.orders_today?.sent ?? 0} sent · {R.orders_today?.failed ?? 0} failed</b></div></div></div></Panel>}
         <Panel title="Next up"><div className="rbody"><div className="v2list">{[...jobs.slice(0, 5), ...(ht?.next || []).filter((t) => new Date(t.at).getTime() > now)].sort((a, b) => new Date(a.at) - new Date(b.at)).map((j) => <div key={j.key} className={`it ${j.tips ? 'hk-next' : ''}`}
           title={j.tips ? `${j.name} · ${j.label} · Research › Tips` : undefined}><span>{j.icon}</span><span className="ell1">{j.name}</span>{j.tips && <span className="muted small nw">{j.label}</span>}<span className="mono" style={{ marginLeft: j.tips ? 8 : 'auto' }}>{left(j.at, now)}</span></div>)}</div></div></Panel>
         {N && <Panel title={`Next open · ${(N.buys || []).length} breakout${(N.buys || []).length === 1 ? '' : 's'}`} right={N.as_of ? `plan of ${dayName(N.as_of)}` : null}>

@@ -16,7 +16,7 @@ even then a score never sizes above 1.0×, never skips a name and never moves a 
                                  the shuffle test, the exit-watch flags, the Telegram lines
   score_outcomes(config)         h5 / h10 / h20 {pct, hit} for the views whose sessions have passed
   record(weeks)                  by verdict vs the plan baseline, by week, shuffle, lean, worst bucket, the unlock rule
-  attach(rows, source)           `ai_view` on plan / follow / screen / futures / position rows; never raises
+  attach(rows, source)           `ai_view` on plan / follow / screen / position rows; never raises
   size_mult / ai_qty             the size-by-score math (never above 1.0×, never under one share)
 Rows live in `ai_views` (never deleted; UNIQUE (day, symbol, source)); the prompt version is `PROMPT_V`.
 """
@@ -274,17 +274,7 @@ def swings(bars: list[dict], k: int = PIVOT_BARS) -> tuple[list[dict], list[dict
 
 
 def _vwap(symbol: str, day: str, bar: Optional[dict]) -> Optional[float]:
-    """The breakout day's VWAP from the 1-minute store, else the day's typical price (H+L+C)/3."""
-    try:
-        from backend.intraday import store
-        with get_db() as conn:
-            inst = find_instrument(conn, symbol, "NSE")
-        bars = store.load(inst["instrument_token"], day) if inst else None
-        vol = sum(b.get("volume") or 0 for b in bars or [])
-        if bars and vol:
-            return sum((b["high"] + b["low"] + b["close"]) / 3 * (b.get("volume") or 0) for b in bars) / vol
-    except Exception:
-        pass
+    """The breakout day's typical price (H+L+C)/3 (stands in for the VWAP)."""
     return (bar["high"] + bar["low"] + bar["close"]) / 3 if bar else None
 
 
@@ -681,7 +671,7 @@ def _plan_items() -> list[dict]:
 
 
 def _held_items() -> list[dict]:
-    """Every held name (Real, Paper, Futures), with the position facts."""
+    """Every held name (Real, Paper), with the position facts."""
     out = []
     try:
         from backend.engine import real
@@ -698,25 +688,7 @@ def _held_items() -> list[dict]:
                                                                                      "best": x.get("best"), "d": x.get("d"), "days": x.get("days")}})
     except Exception:
         logger.exception("view: paper positions")
-    try:
-        from backend.futures import book
-        for a in ((book._state() or {}).get("accounts") or {}).values():
-            for s, x in (a.get("positions") or {}).items():
-                out.append({"symbol": s, "source": "held", "book": "futures", "held": {"book": "futures", "entry": x.get("entry"), "stop": x.get("stop"),
-                                                                                       "best": x.get("best"), "d": x.get("d"), "days": x.get("days")}})
-    except Exception:
-        logger.exception("view: futures positions")
     return out
-
-
-def _futures_items() -> list[dict]:
-    try:
-        from backend.futures import book
-        plan = (book._state() or {}).get("plan") or {}
-        return [{"symbol": o["symbol"], "source": "futures", "book": "futures", "item": o} for s in ("long", "short") for o in plan.get(s, [])]
-    except Exception:
-        logger.exception("view: futures plan")
-        return []
 
 
 def _scan_rows(day: str) -> tuple[Optional[str], list[tuple[str, str, dict]]]:
@@ -746,12 +718,12 @@ def _screen_items(day: str) -> list[dict]:
 
 
 def scope(config: AppConfig, day: str) -> list[dict]:
-    """The night's names in order: plan, held (when view_rate_held), futures plan, Follow breakouts, Screens; one per
+    """The night's names in order: plan, held (when view_rate_held), Follow breakouts, Screens; one per
     symbol (the first source wins), rank_in_source numbered within each source."""
     groups: list[Callable[[], list]] = [_plan_items]
     if config.ai.view_rate_held:
         groups.append(_held_items)
-    groups += [_futures_items, lambda: _follow_items(day), lambda: _screen_items(day)]
+    groups += [lambda: _follow_items(day), lambda: _screen_items(day)]
     seen, out, rank = set(), [], {}
     for g in groups:
         try:

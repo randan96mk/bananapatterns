@@ -12,7 +12,7 @@ const KEY = 'bp.home.overnight';
 const remembered = () => { try { return localStorage.getItem(KEY) === 'all'; } catch { return false; } };
 const remember = (all) => { try { localStorage.setItem(KEY, all ? 'all' : 'moved'); } catch { /* private mode */ } };
 const dm = (d) => (d ? new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '');
-const BOOK = { real: 'Real', paper: 'Paper', paper_E: 'Paper', futures: 'Futures', options: 'Options' };
+const BOOK = { real: 'Real', paper: 'Paper', paper_E: 'Paper', options: 'Options' };
 const levelTone = (t) => (/broken|lost|under/i.test(t || '') ? 'bad' : /held|reclaimed|over/i.test(t || '') ? 'ok' : '');
 const src = (r) => {
   const s = r.source || '';

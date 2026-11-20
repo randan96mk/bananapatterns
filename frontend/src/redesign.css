@@ -150,12 +150,6 @@
   .rd .rtxt { font-size: 10.5px; }
   .rd .rsc { height: 120px; }
 }
-/* Intraday Flow: the canvas (boxes with their connecting lines, draggable) inside the redesign panel */
-.rd .flowcanvas { border: 0; border-radius: 0; max-height: 760px; }
-.rd .flowcanvas.full { max-height: none; }
-.rd .fnode { height: 112px; overflow: hidden; } .rd .fsum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 760px) { .rd .flowcanvas { display: none; } }
-
 /* ---- ✨ Home › the Today card (a hero band under the health strip) ---- */
 .rd .tc-hero { position: relative; overflow: hidden; border-radius: 12px; min-width: 0;
   background: linear-gradient(135deg, var(--panel) 0%, color-mix(in srgb, var(--panel) 92%, var(--blue)) 60%, color-mix(in srgb, var(--panel) 86%, var(--purple)) 100%);

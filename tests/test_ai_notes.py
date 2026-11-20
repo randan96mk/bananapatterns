@@ -249,14 +249,14 @@ def test_scope_from_every_book_and_the_ordering():
     hold("HELD")
     watch("WATCH", "BOTH")
     plan("PLAN", "BOTH")
-    with get_db() as conn:
+    with get_db() as conn:                                     # the kept futures_state row (history after the Futures removal): never read
         conn.execute("INSERT OR REPLACE INTO futures_state (id, payload) VALUES (1, ?)",
                      (json.dumps({"accounts": {"long_paper": {"positions": {"FUTX": {"symbol": "FUTX"}}}, "short_paper": {"positions": {}}}}),))
     sc = notes.scope()
-    assert sc["HELD"] == {"book": "held", "why": "you hold it", "rank": None} and sc["FUTX"]["book"] == "held"
+    assert sc["HELD"] == {"book": "held", "why": "you hold it", "rank": None} and "FUTX" not in sc
     assert sc["PLAN"] == {"book": "plan", "why": "in the plan", "rank": 1} and sc["BOTH"]["book"] == "plan" and sc["BOTH"]["rank"] == 2
     assert sc["WATCH"] == {"book": "watch", "why": "on your watchlist", "rank": None}
-    assert Scheduler._scope() == {"HELD": "you hold it", "FUTX": "you hold it", "PLAN": "in the plan", "BOTH": "in the plan", "WATCH": "on your watchlist"}
+    assert Scheduler._scope() == {"HELD": "you hold it", "PLAN": "in the plan", "BOTH": "in the plan", "WATCH": "on your watchlist"}
     for seq, sym, hours in ((1, "WATCH", 1), (2, "HELD", 5), (3, "PLAN", 2), (4, "HELD", 1)):
         filing(seq, sym, "Acquisition", "deal", hours)
     srcs = notes.filing_sources(sc, (datetime.now(IST) - timedelta(days=3)).replace(tzinfo=None).isoformat())
@@ -503,12 +503,12 @@ def test_overview_rows_carry_the_latest_note(cfg):
     _note_row("NOTED", "medium", title="Older note", key="a")
     nid = _note_row("NOTED", "high", title="Weak quarter", key="b")
     _note_row("STALE", "high", title="too old", created=(datetime.now(IST) - timedelta(days=9)).isoformat(timespec="seconds"), key="c")
-    rows = {p["symbol"]: p for p in overview.positions(cfg, paper_s={"accounts": {}}, live={"rows": {}})}
+    rows = {p["symbol"]: p for p in overview.positions(cfg, paper_s={"accounts": {}})}
     assert rows["NOTED"]["ai_note"] == {"title": "Weak quarter", "severity": "high", "at": notes.get_note(nid)["created"]}
     assert rows["QUIET"]["ai_note"] is None and rows["STALE"]["ai_note"] is None
-    intraday = {"book": "intraday", "symbol": "NOTED", "side": "long", "qty": 1, "entry": 1, "now": 1, "pnl": 0, "pct": 0, "stop": None, "stop_dist": None, "opened": "x"}
-    overview._add_ai_notes([intraday], now_ist()[:10])
-    assert intraday["ai_note"] is None
+    leg = {"book": "options", "symbol": "NOTED", "side": "long", "qty": 1, "entry": 1, "now": 1, "pnl": 0, "pct": 0, "stop": None, "stop_dist": None, "opened": "x"}
+    overview._add_ai_notes([leg], now_ist()[:10])
+    assert leg["ai_note"] is None
     assert notes.latest_for_symbol("NOTED")["title"] == "Weak quarter" and notes.latest_for_symbol("STALE", 7) is None
     assert notes.latest_for_symbol("STALE", 30)["title"] == "too old"
 

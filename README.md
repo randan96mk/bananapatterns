@@ -813,19 +813,15 @@ anything today, the value and the day's P&L always in the same place; a book wit
 🌙 Day summary · Mon 16 Nov
 💰 Real · ₹3,08,793 · today −₹1,702 · 1 stop hit (LAURUSLABS) · 0 orders failed · tomorrow 3 BUYs 1 EXIT
 📝 Paper E+ · ₹3,11,153 · today −₹1,751 · 1 stop hit
-📐 Futures · paper · ₹4,90,311 · today +₹3,150 · 2 lots · roll Thu
 🧩 Options · paper · ₹2,99,417 · today −₹583 · 1 trade · VWAP stop
-⚡ Signal track · 3 trades · 1 won · net −₹435 on ₹3,00,000
 🤖 AI · tonight after 6:30 PM: notes, why, suggestions, ratings
 ```
 
 Real: the value at the stop watch's last price, today = value − the previous close's equity (money added today left
 out), the stops sent today, the failed orders, and tomorrow's BUYs / EXITs once the evening has planned them. Paper is
-marked by the evening job, so until then its line says "today at the 6:30 PM mark". Futures: the long side's primary
-account (value, today's MTM, open lots, the roll day). Options: the `options_days` row of the day. The signal track /
-paper intraday: only with trades. AI: what runs tonight, or "n notes · n suggestions · n rated" once the night has run.
-The options book's own 3:35 PM summary line and the Intraday Flow's day-summary line are **no longer sent** on their
-own: their data stays on the pages, in the API's alert list and in `options_days`. Settings: `alerts.day_summary` (on),
+marked by the evening job, so until then its line says "today at the 6:30 PM mark". Options: the `options_days` row of
+the day. AI: what runs tonight, or "n notes · n suggestions · n rated" once the night has run. The options book's own
+3:35 PM summary line is **no longer sent** on its own: its data stays on the pages, in the API's alert list and in `options_days`. Settings: `alerts.day_summary` (on),
 `alerts.day_summary_time` (15:40). Tests: `tests/test_day_summary.py`.
 
 **Decision charts** (`backend/alerts/decision.py`). Each stock alert carries an annotated image plus matching text lines,
@@ -1190,216 +1186,6 @@ applies.
 | `confirm_time` | 10:00 | the fill check on trading days (24-hour in Settings, shown 10:00 AM; "" = off); again in the evening |
 | `confirm_alert` | true | Telegram: the buys the fill check confirmed and the evening "Real vs webhook side" line (the gate's alert always goes) |
 
-### Stock futures — data layer
-
-The first step of the stock futures module (`backend/futures/`): the data every later step (backtest, book, sender)
-reads. Kite stays login + market data only; nothing here orders, and no holdings or positions are read.
-
-**Tables** (`backend/database/models.py`; downloaded data is never deleted):
-
-| Table | Columns | Notes |
-|---|---|---|
-| `futures_contracts` | **PK (as_of, underlying, month)**, tradingsymbol, token, expiry, lot_size, lot_value, oi, oi_rank | NFO stock futures (segment `NFO-FUT`, index names excluded): the near and next month per underlying, per day. Expired rows stay as history; the latest `as_of` wins. `lot_value` = last price × lot and `oi_rank` (1 = most open interest) come from quotes; without quotes the lot value falls back to the stored futures close. |
-| `candles_fut_daily` | **PK (underlying, date)**, open, high, low, close, volume, oi | Continuous daily series of the near month (`historical_data(..., continuous=True, oi=True)`), incremental from the last stored date − 5 days, 3 years back the first time (`futures.history_years`). Not back-adjusted: `candles.roll_jump(underlying)` lists the jump at each expiry (first bar after the expiry vs the expiry-day close) for the backtest's roll cost. Expiry days = stored contract expiries, else the exchange rule (last Thursday; last Tuesday from Sep 2025; previous session on a holiday). |
-| `fo_ban` | **PK (date, symbol)** | NSE's MWPL ban list (`fo_secban.csv`, browser User-Agent, 10 s timeout). A failed fetch keeps the last good day (`stale_days` says how old); an empty day is valid (`app_settings` `futures.ban_date`). |
-
-**Modules**: `instruments.py` (`refresh(client)` once a day, `contracts / near / universe(lot_cap) / expiry_calendar`,
-`sessions_to_expiry(expiry, today)` on the NSE holiday calendar), `candles.py` (`sync(client, underlyings, years)`,
-`get`, `roll_jump`, `status`), `ban.py` (`refresh`, `banned(symbol, date)`, `stale_days`, `summary`),
-`eligibility.py` (`check(config, symbol, side, entry, stop, held_cash, held_fut, open_lots)` → `{ok, reasons,
-lot_size, lot_value, risk, risk_pct, margin_est, contract}`; reasons are the short strings the page shows: `no future`,
-`lot too big ₹9.0 L > ₹6 L`, `risk 6.4% > 6%`, `OI rank 140 > 100`, `in ban`, `results Thu`, `held in cash`,
-`held in futures`, `slots full` (a third slot only when every open lot and this one are under `small_lot_value`),
-`notional ₹12.0 L > ₹10 L`, `cash ₹1.2 L < ₹1.5 L`, `margin 84% ≥ 80%`, `heat 14% > 12%`; the margin estimate is
-`margin_pct` × lot value), `data.py` (the job step and the API summary).
-
-**Evening job**: after the candle sync, `_run_eod` runs the **futures data** step (contracts → futures candles for the
-eligible universe = lot value ≤ `futures.universe_lot_cap` → ban list) with its own `job_runs` record
-(`futures_data`: ok / partial / failed / waiting); it never fails the evening job. The Data page's health gains three
-rows: **Futures contracts** (as-of age; amber over 4 days), **Futures candles** (to date; amber when behind the cash
-candles) and **F&O ban list** (date, count; amber when the last good list is over 3 days old).
-
-**API**: `GET /api/futures/data` → `{contracts, as_of, candles: {underlyings, to, bars}, ban: {date, symbols,
-stale_days}, universe: [{symbol, lot_size, lot_value, expiry, oi_rank}], universe_lot_cap}`;
-`POST /api/futures/data/refresh[?force=true]` runs the step now in the background (needs the Kite login).
-
-**Settings** (`futures.*`, section "Stock futures"; `long_real` / `short_real` are switched on the Futures page, not here):
-
-| Key | Default | Meaning |
-|---|---|---|
-| `capital` | 500000 | the futures book's own capital |
-| `max_pos` / `small_lot_value` | 2 / 450000 | open lots at most; a third when every open lot is under this lot value |
-| `max_lot_value` / `max_risk_pct` / `top_oi` | 1000000 / 8.0 / 100 | eligibility: lot value cap, 1-lot risk at the stop (% of capital), OI rank |
-| `max_stop_pct` | 4.0 | the ATR stop is capped here (a ₹10 L lot risks ₹40,000, 8% of a ₹5 L book) |
-| `margin_pct` | 20.0 | margin estimate, % of lot value |
-| `max_notional_x` / `cash_floor` / `daily_loss_pct` / `heat_pct` | 4.0 / 150000 / 3.0 / 12.0 | guards (4× lets two ₹10 L lots sit in a ₹5 L book) |
-| `roll_days` / `results_guard_sessions` | 2 / 3 | roll T-N sessions before expiry; no entry with results within N sessions |
-| `long_paper` / `long_real` / `short_paper` / `short_real` | on / off / on / off | per-side switches (short real stays blocked until its backtest passes) |
-| `universe_lot_cap` / `history_years` | 1000000 / 3 | which underlyings get futures candles; how deep |
-
-**Why the caps moved (17 Nov 2026)**: with a ₹6 L cap only 3 of 91 E+ breakouts in 20 sessions were tradeable futures names, so the paper book never traded. The Futures page now shows that overlap ("breakouts · last 20 sessions · in the futures universe", `GET /api/futures` → `overlap`), computed from the stored candles. Saved settings override these defaults; the wider universe is synced by the next futures data job (needs a Kite login).
-
-### Stock futures — Backtest F
-
-Step 2 of the stock futures module: `backend/futures/backtest.py` trades the Trend Breakout signals on stock futures,
-one lot a name, from the stored cash and continuous futures candles (no Kite calls, never orders). It is the gate for
-the short side: `futures.short_real` cannot be switched on until the latest run's short verdict is True.
-
-**Signals** (decided on the cash close, filled at the next session's *futures* open):
-
-| Side | Rule |
-|---|---|
-| **Long = E+** | `trend_breakout.decide` on the cash candles, exactly the cash backtest (trend template, breakout over the 20-day high on 1.5× volume, the half market filter: 2 slots over NIFTY's 200-day average, 1 between the averages, none under the 50-day; the same top-N turnover universe), kept to the underlyings with a stored future whose lot value is ≤ `futures.universe_lot_cap`. Exit on a close under SMA50 (next open); the E+ late trail (25% under the best close once +100%) on the futures closes. |
-| **Short = E−** | close under the previous 20-day low, a lower-high structure (the last 5-bar pivot high under the one before, both known without look-ahead), close under SMA50 and SMA200, the market filter inverted (NIFTY 50 under its 50-day average); weakest 6-month return first. No short within 2 sessions before results (when the results calendar has the date; else the rule is skipped and noted). Time stop after 10 sessions; no late trail. |
-
-**Execution**: stop = `breakout.atr_mult` × ATR(14, futures) under / over the entry, capped at `futures.max_stop_pct`
-(a short's stop also never sits over its swing high); a day's low (high) through the stop exits at min(open, stop)
-(max(open, stop)), from the entry day on. Every entry goes through `eligibility.check` with the backtest's own held
-set and open lots: 2 slots (a third when every open lot and this one are under `small_lot_value`), lot cap, 1-lot risk
-cap, OI rank (ranked each day on the stored futures OI), ban list and results when the data exists (else skipped and
-noted), notional ≤ 2.5× capital, cash floor after margin, margin < 80%, heat. Margin = `margin_pct` × notional is
-reserved from cash; equity is marked to the futures close every day; a day's loss of `daily_loss_pct` of capital
-blocks the next session's entries (`skipped.daily_loss`). The current contract's lot size is used for the whole
-history (historical lot sizes are not stored; said in `run.notes`).
-
-**Rolls**: `roll_days` (2) sessions before each monthly expiry (`candles.expiry_days`: stored contract expiries, else
-the exchange rule) an open position rolls: an exit's and an entry's charges and slippage are booked that day, and the
-basis — the continuous series' jump after the expiry (`candles.roll_jump`) net of the cash candle's overnight move —
-is booked on the first session after the expiry while the position is still held (the continuous series is not
-back-adjusted, so without it a long would be credited the basis for free). A position whose exit is already due is not
-rolled (`exits.roll_exit`); one entered from the roll session on is already on the next month (`contract: next`).
-Nothing is ever held into expiry day on the old contract. `rolls: {n, cost, basis}` in the report.
-
-**Costs** per order on the notional: STT 0.02% on sells, exchange 0.00173%, SEBI 0.0001%, GST 18% on brokerage +
-exchange + SEBI, stamp 0.002% on buys, brokerage ₹20; slippage 0.05% a fill (stressed 0.15%). `futures_charges(value,
-sell)`.
-
-**Report** (`futures_runs`, the latest row; `saved()`): `{run: {from, to, sessions, capital, names, settings, notes,
-missing}, long: SIDE, short: SIDE, cash_same_signals: {cagr, drawdown, trades, net, costs, worst_month, no_slot_days,
-note} (E+ in the cash book at the futures capital on the futures names), nifty: {cagr, drawdown, return, curve},
-verdict: {long, short, reasons: {long: [...], short: [...]}}, ran_at}` with SIDE = `{cagr, net, gross, costs, rolls:
-{n, cost, basis}, trades, win_rate, avg_win, avg_loss, profit_factor, drawdown, worst_month, margin_worst_pct,
-cash_floor_held, skipped: {lot, risk, slots, ban, results, notional, cash, heat, oi, held, margin, daily_loss,
-no_bar}, no_slot_days, loss_days, curve: {dates, net, stress}, splits: [{name, from, to, net, stress, nifty}] (dev /
-val / OOS), years: [{year, net, nifty}], robust: [{label, counted, cagr, stress_cagr, drawdown, periods,
-stress_periods, trades, ok}], robust_pass, robust_of, exits: {stop, trail, time, rule, roll_exit, end}, stress: {cagr,
-net, costs, drawdown, trades}, ok_splits, beats_nifty, verdict, reasons, trades_rows, roll_rows}`. Robustness
-neighbours: stop cap 4% / 6%, lot cap ₹5 L / ₹7 L, roll T-1 / T-3, slippage +0.3% (the 7 counted), plus "3 lots", "no roll (close at T-2)", "roll winners only" (`futures.roll_mode` never / winners: a position below its entry closes at T-2 instead of rolling) and
-"walk-forward (years)" shown for information. **Verdict** per side: profitable after costs in every split (normal and
-stressed), CAGR over NIFTY 50's, drawdown ≤ 15% (long) / 20% (short), `robust_pass` ≥ 5 of 7; `reasons` lists what
-failed.
-
-**API**: `GET /api/futures/backtest` → `{built, progress: {state, message, at}, run (without trades_rows / roll_rows),
-rules}`; `POST /api/futures/backtest/run` (background; 409 while running); `GET /api/futures/backtest/trades?side=long|short&limit=&offset=`
-(newest first); `GET /api/futures/backtest/csv?side=`. `PUT /api/config/futures {short_real: true}` answers **400 "short
-side backtest has not passed"** while the latest run's `verdict.short` is not True. The evening job re-runs the backtest
-in the background after the futures data step when the futures candles advanced (or the saved run is behind them).
-
-### Stock futures — book, page, alerts
-
-Step 3 of the futures module (`backend/futures/book.py`, `frontend/src/components/FuturesPage.jsx`, `FuturesBacktest.jsx`):
-one futures book under Strategies › 📐 Futures, four virtual accounts that share one capital (`futures.capital`,
-₹5,00,000): `paper_long`, `real_long`, `paper_short`, `real_short`. Each side has a **Paper** and a **Real** switch
-(`futures.long_paper` … `futures.short_real`); Paper and Real of a side run from the **same plan**. The short Real
-switch is refused (API 400, book ValueError) while Backtest F's short verdict is False.
-
-| Table | Rows |
-|---|---|
-| `futures_state` | one JSON state: capital, deposits, the four accounts (cash, charges, positions, day_start), the plan per side, `waiting` per side (every rejected signal with its reasons), skips, rolls, short signals, held-name warnings |
-| `futures_orders` | every order, fill, roll and hand correction, keyed `day|account|symbol|action` (each once; never deleted) |
-| `futures_trades` | closed trades per account (`{symbol, side, lots, lot_size, qty, in, out, entry, exit, stop, days, best, rolls, contract, gross, costs, net, why}`) |
-| `futures_equity` | equity per account and day (`gross` before charges, NIFTY 50 close) |
-
-A position is `{symbol, side, lots, lot_size, contract, token, expiry, entry, stop, best, last, margin_est, est, manual_stop,
-edits, d, days, charges, rolls, trailed}`; margin = `futures.margin_pct` × lot value (an estimate), reserved from the
-account's cash; value = cash + margin + unrealised.
-
-**Evening** (`book.evening`, in `_run_eod` after the futures backtest step): each account is marked at the futures close
-from `candles_fut_daily`; paper accounts fill the previous evening's plan at the day's open (honouring the morning's
-skips and the guards at the fill), exit on the day's low (long) / high (short) at or past the stop, count the short time
-stop; real accounts have their estimated morning fills and exits corrected to the open. The E+ late trail raises long
-stops from the best futures close (never lowered, a hand-set stop too). Held-name warnings (MWPL ban, results within
-`results_guard_sessions`, a lot size change) are kept for the page and the alerts. Then the next open's plan per side:
-long = `trend_breakout.decide` on the cash candles under the half filter, short = Backtest F's E− signals under the
-inverted filter (NIFTY under its 50-day); EXITs for a long that closed under SMA(exit_sma) and a short past
-`SHORT_TIME_STOP`; every entry candidate (entry = last futures close, stop = ATR × atr_mult in futures points capped at
-`max_stop_pct`) through `eligibility.check` plus the book's guards (filter off, daily loss limit, kill switch); one lot a
-name; the rest wait with their reasons. `replan` rebuilds it from the accounts as they are now (the same report shape as
-Real's, `suggestion` null).
-
-**Morning**: `book.morning` has the same keys as `real.morning` plus `side`, `books`, `lots`, `margin`, `contract`;
-`skip_order` / `hold_today` / the results guard work like Real's (EXITs cannot be skipped; a skip stops both the paper
-fill and the real send of that side; Telegram `fut skip SYM`, `fut unskip SYM`, `fut hold`). `send_orders` sends the real
-sides' orders through `backend/futures/sender.py` (`send(symbol, action, lots)`, below; a failure is logged as a
-failed order and never retried) and books the fill at the NFO quote (est. until the evening). `watch_stops` every `real.stop_check_min` in market hours quotes `NFO:<contract>`: a long at or under its stop
-(or the day's low), a short at or over it (or the day's high) exits once per account, stock and day (paper at the price,
-real through the sender). **Rolls** (`book.roll`, 9:20 on a roll day = `roll_days` sessions before a held expiry): EXIT the
-near month, then, once the exit is booked, the entry on the next month at the same stop, logged as one roll with its
-cost (both charges + the basis between the two quotes); a lot whose exit rule fired, or without a next month, is exited;
-at T-1 a lot that could not roll is exited (never held into expiry). **Guards**: daily loss limit (used = day_start −
-value; no new entries once hit), notional ≤ 2.5× capital, free cash ≥ `cash_floor`, heat ≤ `heat_pct`, margin 70%
-warn / 80% block, the enable switch (`futures.enabled` app setting) and the kill switch (`futures.killed`: flipped on
-with a real side on, `sender.kill_switch()` sends kill_switch=1 once; every kill that went out is kept in
-`sender.sent_kills`). Hand
-corrections (`edit_position` with lots / entry / stop, `remove_position`, `add_position` with side and book) and deposits
-(`set_capital`: the difference moves every account's cash) mirror Real and Paper.
-
-**API** (`/api/futures`): `GET /api/futures` (the summary: `{capital, cash, margin_used, margin_pct, mtm_today, value,
-net, return, sides: {long: {paper, real, verdict, robust, real_allowed}, short: {...}}, guards: {kill, enabled,
-daily_loss: {used, limit, hit}, notional: {used, cap}, cash_floor: {free, floor, ok}, heat: {pct, rs, cap}, margin:
-{used, pct, warn, block}}, positions, waiting: [{symbol, side, reasons, why}], plan, rolls: {day, items}, roll_day,
-eligible_count, universe_count, next_expiry, short_paper: {open, signals_month, net, trades, verdict, robust}, deposits,
-accounts, trades, log, settings, send}`; the headline figures are the long side's primary account — real when the long
-side is real, else paper), `POST /api/futures/settings {long_paper, long_real, short_paper, short_real, enabled}`,
-`POST /api/futures/kill?on=`, `POST /api/futures/capital`, `POST /api/futures/replan`, `GET /api/futures/morning`,
-`POST /api/futures/skip`, `POST /api/futures/hold`, `POST /api/futures/position/{symbol}[?dry=1]` (lots / entry / stop /
-note / account), `DELETE /api/futures/position/{symbol}`, `POST /api/futures/position` (symbol, lots, entry, day, side,
-book, stop, note), `GET /api/futures/orders`, `GET /api/futures/trades[?account=]`, `POST /api/futures/roll`. Stream
-topics `futures` (every 30 s in market hours, else 120 s) and `futures_morning`. Jobs: `futures_preview` at
-`real.preview_time`, `futures_send` at `real.send_time` (real sides only), `futures_stops` every `stop_check_min` from
-9:15, `futures_roll` on a roll day from 9:20 (`book.due`), each with a job record and its own try/except.
-
-**Home**: `overview.accounts.futures` (`{name, value, net, return, day_pnl, positions, margin_pct, mode, spark}`), the
-"Futures · paper/real" card, positions with book `futures` (account "Futures · paper" / "Futures · real", side, lots),
-the futures trades and orders in Portfolio, attention items for the `futures` tab (plan, dry run, roll day, margin >
-70%, daily loss hit, kill, held-name warnings, short paper signals).
-
-**Alerts** (Telegram, tagged "paper · long" / "real · long" / "paper · short"; `backend/alerts/messages.py`
-`futures_*`): the evening plan with the waiting reasons, the 9:00 dry run (lots, margin needed, the skip reply), the
-orders sent, a stop hit on the futures price, the daily loss limit, margin over 70%, the held-name warnings (ban,
-results, lot size change), the short side's paper signals, the roll notice at T-3 and the roll lines on the roll day,
-the raised trail stops. Tests: `tests/test_futures_book.py`.
-
-#### Stock futures — the real sender
-
-Step 4 (`backend/futures/sender.py`): the webhook to the Tradetron deployment "Stock Futures Webhook Long Short"
-(current-month stock futures, quantities in **lots**, only the stocks in the strategy's lists trade).
-
-- **Token**: `TRADETRON_FUTURES_TOKEN` in `.env` (its own token, not the cash `TRADETRON_TOKEN`); never in git, the logs,
-  the order log, the API or the screen (`sender.public(body)` strips it; `GET /api/futures` only says whether one is set).
-  Without it every send and the kill switch refuse (`RuntimeError`, logged as a failed order).
-- **Endpoint**: POST JSON to `TRADETRON_URL` (default `https://api.tradetron.tech/api?`, the trailing `?` matters) with
-  `User-Agent: tt-webhook/1.0`, one signal per call, key/value pairs applied in order with `sig_action` **last**; the
-  symbol is the NSE name exactly (`M&M` stays `M&M` in the JSON):
-  - BUY / SELL: `{"auth-token": T, "key": "sig_symbol", "value": "RELIANCE", "key1": "sig_qty", "value1": "2", "key2": "sig_action", "value2": "BUY"}`
-  - EXIT: `{"auth-token": T, "key": "sig_symbol", "value": "RELIANCE", "key1": "sig_action", "value1": "EXIT"}` (no quantity: the whole lot closes)
-  - kill: `{"auth-token": T, "key": "kill_switch", "value": "1"}` (closes everything at the deployment, stops its entries)
-- **Pacing**: at least `real.send_gap_s` apart (default 10 s, floor 10 s, clamped to 30) on the clock shared with the
-  cash sender (a cash webhook just before makes the futures one wait too); the kill switch only waits the shared 1.5 s
-  floor. The deployment's own limits (3/s, 30/min, 250/hour → HTTP 429) sit far above this.
-- **Errors**: a 429 is retried after 2, 4, 8 s (or `Retry-After`, 30 s at most; `sender.last_retries` counts them); any
-  other HTTP error is raised at once and the order is logged `failed`, never retried. A **timeout** (or a connection lost
-  after the request went out) raises `SendUnknown`: the signal *may* have gone in, so the book logs the order
-  **`unknown · check`** under its day key (never re-sent, the morning line shows the status, `skip_order` refuses it),
-  books nothing and leaves the lot or the entry for the owner to check at the deployment and correct by hand
-  (`edit_position` / `add_position` / `remove_position`); a stop EXIT that timed out flags the lot (`check`). A reply
-  with **`REJECTED_ALREADY_HELD`** raises `AlreadyHeld`: the order is logged `failed` with "already held at the
-  deployment", the plan stays unfilled, nothing is re-sent (a flip is EXIT first, then the entry once closed).
-- **Market hours**: the sender refuses (`MarketClosed`) outside 09:15–15:30 IST or on a non-trading day of the NSE
-  calendar the book uses (`backend/ingest/holidays.py`): the deployment rejects (never queues) those anyway.
-- **Check**: `sender.check()` → `{token_set, url_host, gap_s, window: {open, close, state: open|closed|holiday, ok},
-  user_agent}`, in the summary as `GET /api/futures` → `sender`. Tests: `tests/test_futures_sender.py`.
-
 ### 🧩 NIFTY options — book, page, alerts
 
 The options module (`backend/options/`, `frontend/src/components/OptionsPage.jsx` under Strategies › 🧩 Options, shortcut
@@ -1467,7 +1253,7 @@ quotes' mids; per order brokerage ₹20, STT 0.1% of the premium on the sell sid
 Nothing is deleted: a day summarised again rewrites its row.
 
 **Jobs**: one scheduler job, `options_tick`, every minute 9:15–15:40 on trading days while the book is active
-(`book.due`, like futures; on the ⏱ Next up list). The minute's steps (`book.steps`, pure): first tick → contracts; 9:30
+(`book.due`, like Real; on the ⏱ Next up list). The minute's steps (`book.steps`, pure): first tick → contracts; 9:30
 → range, gap, previous-day levels, the 9:30 chain snapshot (OI baseline); 9:45–11:00 → the bias on each 5-minute close
 with a chain fetch and snapshot; every minute while open → MTM, the stops, the target, the live snapshot; 15:10 time exit;
 15:20 hard exit; 15:30 close snapshot; 15:35 day summary (→ `options_days`, `options_equity`). Health rows `opt_contracts`
@@ -1681,8 +1467,8 @@ is read, which numbers may be quoted, the severity shown and what is pushed; the
 
 - **What is read**: the `filings` table (every important kind plus updates, plus any filing about a pledge whatever its
   kind: NSE files those as updates) and the `deals` table (bulk / block deals and SAST stake disclosures, one note per
-  stock and day) for the stocks **in scope**: held in any book (the cash books via the position guard, the futures book's
-  open lots; options spreads are index legs and are skipped), in the plan, or on the watchlist (`notes.scope()`, shared
+  stock and day) for the stocks **in scope**: held in any book (the cash books via the position guard;
+  options spreads are index legs and are skipped), in the plan, or on the watchlist (`notes.scope()`, shared
   with the filing alerts). `ai.note_days` (3) days back. One night job per source through the queue (kind `night`, key
   `note:filing:<seq_id>` / `note:deal:<symbol>|<date>`), **held names first, then the plan, then the watchlist**, newest
   first, `ai.notes_per_night` (80) a night. Queued by the evening job once its record is in (`run_eod` → `run_ai_notes`)
@@ -1760,7 +1546,7 @@ the page's own button calls (never HTTP, never an order, a setting, a switch or 
      promoter selling, negative results, legal, downgrade) or a deal note ≥ 3% under the close. Action `POST /api/real/skip`
      (`real.skip_order`, the morning skip; Paper-only plans get a note-only suggestion). Expires at `real.send_time`
      (9:16 AM). Confidence high for pledge / legal / promoter selling, medium otherwise.
-  2. `exit` — a held name (Real / Paper / Futures) with a high negative note. There is no exit API that is not an order,
+  2. `exit` — a held name (Real / Paper) with a high negative note. There is no exit API that is not an order,
      so the action is `{path: "ui", route: "portfolio/<book>", hint: "Exit… on the row"}`: the accept only navigates;
      nothing lowers a stop. Expires at `real.send_time`. Confidence medium.
   3. `flag` — a planned name with a deal ≥ 3% under the close or results within 3 sessions: no action; the 9:00 dry run
@@ -1769,11 +1555,8 @@ the page's own button calls (never HTTP, never an order, a setting, a switch or 
   4. `hold_options` — an event day tomorrow (a calendar entry or filing naming RBI policy / the Union Budget) or a VIX
      close over `options.vix_half`: action `POST /api/options/hold` (`options.book.hold_today`). Expires at
      `options.window_end`. Confidence medium. Only while the options book exists.
-  5. `roll_or_exit` — a futures lot due to roll tomorrow whose next month's OI is under 20% of the near month's, or that
-     trades below its entry (above, for a short): note-only with the roll-queue line; expires 9:20 AM.
-  6. `backtest` — **Sunday night only**: ≥ 8 of the last 12 futures / real stops were hit within 1% of the stop and the
-     close 5 sessions later was back past the exit → "Backtest a stop cap of +1%" with `action.prefill {max_stop_pct,
-     roll_mode}` for the futures strategy page. No expiry, confidence low.
+  (The futures kinds `roll_or_exit` and `backtest` went with the Futures book on 20 Nov 2026: an old row stays as
+  history, is never listed as open and is not in the scorecard.)
 - **Row** (`GET /api/ai/suggestions` → `{rows, open, by_kind}`): `id, created, day, for_day` (the session it is about),
   `kind, icon, symbol, book, title, why, evidence [{icon, text, url?}], action {label, path, args, confirm_text} | {path:
   "ui", route, hint, prefill?} | null, confidence low | medium | high, expires_at, status open | accepted | dismissed |
@@ -1800,15 +1583,15 @@ the page's own button calls (never HTTP, never an order, a setting, a switch or 
   10 minutes**), `dismiss N [wrong|knew|later]`, `why N` (the evidence and the path the accept takes). Attention ("ai"
   tab): every open high-confidence suggestion as a `warn` line.
 - **🧾 Trade "why" notes** (`why.py`, `ai.why` true): one job `why:<day>` per night (kind `night`, after the notes) for
-  every trade closed today in the four books (`real_trades`, `paper_trades`, `futures_trades`, `options_trades`) and every
+  every trade closed today in the three books (`real_trades`, `paper_trades`, `options_trades`) and every
   held name that gapped > 1% at the open or hit a stop today. Code assembles the evidence — the trade row (entry, exit,
   stop, how it ended, net), the stock's gap and close vs the previous session, the industry's average move (the
   `industry` column of `universe_snapshots`, when known), NIFTY's move, the filings and deals of the last 3 days (the AI's
   note title when one exists); for options the bias, the score, the strikes, the credit, the exit time and the spot —
   and the model writes ONE line "likely cause: …" (≤ 180 chars, numbers only from the evidence, no broker; the prefix is
   added when missing). Row: `ai_notes` kind `why`, severity info, `title "SYMBOL · how it ended"`, `text` the line,
-  `source_key` `real:<trade id>` / `paper:…` / `futures:…` / `options:…` / `held:SYMBOL:day` (noted once per prompt
-  version `why-v1`), `data {trade, extra, evidence, numbers_checked}`. The Real / Paper / Futures / Options summaries'
+  `source_key` `real:<trade id>` / `paper:…` / `options:…` / `held:SYMBOL:day` (noted once per prompt
+  version `why-v1`), `data {trade, extra, evidence, numbers_checked}`. The Real / Paper / Options summaries'
   trade rows carry `ai_why: {id, text, at} | null` (paper trade rows now carry their `id`). One evening message
   "🧾 Today's exits, explained · Tue 17 Nov" lists each closed trade (book icon, name, how it ended, net) with its line
   (key `{day}|ai-why`; only when ≥ 1 trade closed; a held name that merely gapped gets a row, not a message line).
@@ -1842,7 +1625,7 @@ and the route).
 - **☀️ Morning brief** (`brief.py`): at `ai.brief_time` (9:00 AM) on a trading day the scheduler queues one job (kind
   `brief`, key `brief:<day>`, recorded as `ai_brief` so it is queued once) and the **night model** writes at most 5 lines
   (each ≤ 160 chars) from the facts code gathered: the Real morning plan (EXITs, BUYs, cash after, free slots, the skips
-  with their reason), the futures plan, lots held, roll day and roll queue, the options book (the open spread, the last
+  with their reason), the options book (the open spread, the last
   chain line: PCR, put / call walls, VIX against `options.vix_half`, an event day), the night's high notes, results due
   within 3 sessions on held names. The guard's window for kind `brief` is the night window extended to 9:15 AM
   (`guard.brief_window`). The answer is validated like a note: a JSON list, clipped, **no broker name** (invalid, one
@@ -1853,11 +1636,11 @@ and the route).
   book, no notes) → the job ends skipped. `GET /api/ai` gains `brief: {last_at, lines, day, id}`.
 - **💬 Ask the app** (`ask.py`): a question → the **day model** picks ONE tool from a fixed list (JSON `{tool, args}`) →
   code runs that read-only function with the arguments **coerced by type and defaulted by code** (days 1–90, limit 1–30,
-  pct 0.1–20, book one of real / paper / futures / options, dates ISO) → the model writes the answer (≤ 400 chars) from the
+  pct 0.1–20, book one of real / paper / options, dates ISO) → the model writes the answer (≤ 400 chars) from the
   tool's result only. The tools (Python functions, no HTTP): `real_morning(day)`, `real_summary()`, `paper_summary()`,
-  `futures_summary()`, `options_summary()`, `options_days(limit)`, `trades(book, days)`, `filings(symbol, days)`,
+  `options_summary()`, `options_days(limit)`, `trades(book, days)`, `filings(symbol, days)`,
   `notes(symbol, days)`, `suggestions(status)`, `plan(day)`, `why_skipped(symbol, day)` (the plan's skips / waiting /
-  results guard for that stock), `positions_near_stop(pct)`, `backtest_f()`. Anything else → "I can only answer from the
+  results guard for that stock), `positions_near_stop(pct)`. Anything else → "I can only answer from the
   app's own data: plans, positions, trades, filings, notes, backtests." The answer check: no broker name, **every figure
   must appear in the tool's result** (or the question); one retry names the fault, a second bad answer is **rejected**
   (the row keeps `ok 0` and the reason; the reply says so). Kind `ask` is allowed at **any time** (not only 9:00–15:40) but
@@ -1920,7 +1703,7 @@ no skip, no stop, no setting. Every number in a rating comes from code.
   not an anchor; `change` says why the score moved. A calibration note built nightly from the record (hit rates by
   verdict, in results weeks, by volume-ratio band) closes the prompt.
 - **The night** (job `view:<day>`, kind `night`, queued by `run_eod` after the suggestions): tomorrow's plan (the evening
-  plan, the Real BUYs, the Paper BUYs), held names (Real, Paper, Futures; `view_rate_held`), the futures plan, the day's
+  plan, the Real BUYs, the Paper BUYs), held names (Real, Paper; `view_rate_held`), the day's
   Follow breakouts, the Screens' breakout / ready names (top 5 by score per screen), one model call per name, at most
   `view_max_per_night` (40). Then the outcomes, the calibration note and the shuffle test.
 - **Outcomes and the record**: 5 / 10 / 20 sessions on, `pct` = close(day + h) / close(day) − 1; a candidate hits at +3%
@@ -1941,8 +1724,8 @@ no skip, no stop, no setting. Every number in a rating comes from code.
 - **API**: `GET /api/ai/view?symbols=A,B` → `{views: {SYM: row + previous}}`; `GET /api/ai/view/record?weeks=`;
   `POST /api/ai/view/run` (409 while running); `GET /api/ai` → `view: {on, last_night, record_summary, switches}`;
   `PUT /api/ai/settings` and `PUT /api/config/ai` take the `view_` keys. `GET /api/plan`, `GET /api/breakout` (scan
-  buys), `GET /api/follow`, `GET /api/screens/{screen}/results`, the futures plan rows and the position rows of the Real,
-  Paper, Futures and Home summaries carry `ai_view: {score, verdict, reasons, change, levels, at, day, source,
+  buys), `GET /api/follow`, `GET /api/screens/{screen}/results` and the position rows of the Real,
+  Paper and Home summaries carry `ai_view: {score, verdict, reasons, change, levels, at, day, source,
   prev_score} | null`; the Real morning's BUYs carry `ai_view`, `qty_rule`, `qty_ai`, `size_x`, `full`.
 - **Telegram** (channel `ai`): the morning dry run shows "· 🤖 AI 82 buy · reason" under each BUY; "🌙 AI view · tonight ·
   n rated" after the night batch; "🤖 SYM · exit-watch" (only with `view_exit_watch_alert`); once a week "📊 AI view ·
@@ -1978,7 +1761,7 @@ on the API, "<i>AI ·</i>" on Telegram).
   Columns: **orders** (morning: the dry run's EXIT / BUY with qty and the AI score; session: the day's order log, sent →
   filled, failed, skipped, stops; close / evening: none), **watch** (open suggestions with their time, exit-watch held
   names, results within 2 sessions on held names, the last session's deal notes), **books** (the day summary's Real /
-  Paper / Futures / Options value and today's P&L). **Actions** are labels only: "Skip SYM" opens the Real page's confirm
+  Paper / Options value and today's P&L). **Actions** are labels only: "Skip SYM" opens the Real page's confirm
   and calls the existing `POST /api/real/skip`; "Open the dry run"; "Suggestions (n)". Nothing fires by itself.
 - **Overnight** (`view.overnight(day)`): every ok AI view of the day that has a previous view: yesterday's and today's
   score and verdict, the delta, the model's `change` text (tagged), and the level by code ("support 1 1,261 held |
@@ -1993,7 +1776,7 @@ on the API, "<i>AI ·</i>" on Telegram).
   `testing` (within 0.5% of the pivot or support 1) · `quiet`; `pos` = where the price sits between the stop and the zone
   top (clipped 0–1). Sorted broken → testing → above → quiet → skipped.
 - **The Week page** (`backend/engine/week.py`): one ISO week, Mon–Fri, by code from the trade tables (Real, Paper E+,
-  Futures, Options, the signal track's closed rows) and the equity tables: the headline ("+₹6,900 · 9 trades · 5 won ·
+  Options) and the equity tables: the headline ("+₹6,900 · 9 trades · 5 won ·
   beat NIFTY by 1.2 pts"), totals, by day, the curve (the books' equity summed and normalised to the week's start against
   NIFTY 50; NIFTY from the daily candles, else the close the equity rows keep), by book, best / worst with the AI score
   at entry, the suggestions made / accepted / helped, the AI view's buy hit vs the plan baseline that week, the
@@ -2087,8 +1870,8 @@ chat only):
 | 🔕 Quiet today | (live guard alerts) no more live alerts on that stock today |
 
 Commands: `/login`, `/status`, `/top` (next session's plan), `/watch [SYM]` (list or add), `/unwatch SYM`,
-`/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` / `full SYM` (today's real BUYs; `full` restores the rule size when the locked AI view size-by-score is on), `fut skip SYM` / `fut hold`
-(the futures plan), `opt` / `opt close` / `opt hold` (the options book), `ai` / `ai stop` / `ai start` / `ai rerun` (the local AI).
+`/mute SYM`, `/chart SYM`, `/help`; `skip SYM` / `unskip SYM` / `hold` / `full SYM` (today's real BUYs; `full` restores the rule size when the locked AI view size-by-score is on),
+`opt` / `opt close` / `opt hold` (the options book), `ai` / `ai stop` / `ai start` / `ai rerun` (the local AI).
 
 **Automatic jobs** (`backend/alerts/jobs.py`, a background thread; times are IST and editable in Alerts → Timing)
 
@@ -2119,7 +1902,7 @@ Personal use only: send alerts to your own chat. Broadcasting signals to others 
 
 A standalone module (`backend/tips/`): it reads a Telegram channel's posts, decodes the trade calls ("hints"), plans
 each one, lets you take it into a **Tips paper book** of its own, and scores every hint (taken or not) from stored
-quotes. It is **not connected** to E+, VCP, the AI view, the options or futures books or any other rule; nothing else
+quotes. It is **not connected** to E+, VCP, the AI view, the options book or any other rule; nothing else
 reads its tables. Every number comes from code (quotes); the channel's "target done" words never set a price or a P&L.
 
 **Setup (once)**
@@ -2428,7 +2211,6 @@ Interactive docs: http://localhost:8000/docs
 | GET | `/api/positions` · PUT `/api/positions/{symbol}` `{stop}` | positions the guard follows (with `live` price and guard state while the market is open); change a stop |
 | GET | `/api/today` · `/api/today/sparks` | the Today page: market strip, live positions, plan and near-pivot names with the entry checklist; today's 5-minute closes |
 | GET | `/api/breakout` · `/api/breakout/trades?scenario=normal\|stress&limit=&offset=` · `/api/breakout/scan` · POST `/api/breakout/run` | Trend Breakout: the latest run (splits, years, robustness, curves), its trades, the evening scan; re-run |
-| GET | `/api/futures/backtest` · `/api/futures/backtest/trades?side=long\|short&limit=&offset=` · `/api/futures/backtest/csv?side=` · POST `/api/futures/backtest/run` | Backtest F (E+ long / E− short on stock futures): the latest run, its trades, CSV; re-run. `PUT /api/config/futures {short_real: true}` is 400 until the short verdict passes |
 | GET | `/api/plan` | the newest saved plan (ranked setups) |
 | GET | `/api/changes?screen=vcp` | what changed since the last close for a screen (`bases` default) |
 | GET | `/api/alerts/status` | bot token set?, chat ID, ready, today's trading status, upcoming holidays |
@@ -3613,3 +3395,29 @@ Runs on Oracle Cloud Always Free with Tailscale HTTPS, nightly backups and a run
   longer names the broker.
 - Tests: `tests/test_real_confirm.py` (35); adapted: the stop / edit tests confirm their fills first (`confirm_all`),
   the hand-built states carry `confirmed`, the init flags list.
+
+### 2026-11-20: Intraday Flow and Futures removed (20 Nov 2026)
+- The ⚡ Intraday Flow (signals / paper intraday, the canvas, the live 1-minute feed, the flow backtest, the journey)
+  and the 📐 stock futures book (data layer, Backtest F, the four accounts, the real sender) are gone:
+  `backend/intraday/`, `backend/futures/`, `backend/tools/probe_futures.py`, the Flow / Futures pages
+  (`FlowPage`, `FlowBacktest`, `FlowStrategy`, `JourneyPanel`, `FuturesPage`, `FuturesBacktest`), `/api/flow*`,
+  `/api/futures*`, the stream topics `flow`, `journey`, `flow_live`, `backtest`, `futures`, `futures_morning`, the
+  scheduler hooks (the feed tick, `futures_data` in the evening job, the futures preview / send / stops / roll and the
+  Backtest F re-run), the Telegram `fut skip / fut hold` commands and the flow / futures messages, `FlowConfig` /
+  `FuturesConfig`, `TRADETRON_FUTURES_TOKEN`, the futures / flow lines of the day summary, Home, Portfolio, the Week
+  page, the attention dots, the health rows (1-minute candles, futures contracts / candles, F&O ban) and the AI's
+  facts, tools (`futures_summary`, `backtest_f`) and suggestion kinds (`roll_or_exit`, `backtest`).
+- Moved, not removed: `resample` and `from_kite` → `backend/options/candles_util.py`; `sessions_to_expiry` →
+  `backend/options/instruments.py` (the options book's NIFTY-future VWAP and expiry count are unchanged). The
+  breakout "⚡ intraday heads-up" (`backend/alerts/intraday.py`, `intraday_flags`, the `intraday` / `close_check`
+  jobs) is a different feature and stays.
+- **Kept, never dropped**: the downloaded tables `candles_intraday`, `futures_contracts`, `candles_fut_daily`, `fo_ban`
+  (no longer refreshed) and the book tables `flow_runs`, `flow_signals`, `flow_positions`, `flow_backtests`,
+  `futures_runs`, `futures_state`, `futures_orders`, `futures_trades`, `futures_equity` (no code reads or writes them).
+  The saved `config.flow` / `config.futures` sections and the `flow.*` / `futures.*` app settings stay in
+  `app_settings`; `load_config` ignores them. `_migrate_capital_300k` no longer touches `flow.nodes` / `flow.setups`.
+- Home: the Futures card, the intraday rows / strip items and the "Intraday loss limit" are gone; the "Today · all
+  books" card reads swing · options; `overview.feed` is always "close". Strategies: the Trend Breakout panel only.
+- Tests: `test_flow*.py` and `test_futures_*.py` deleted; the shared tests adapted (the kept tables are seeded and
+  shown not to be read); new: the saved flow / futures sections load and the kept tables survive `init_db`, old
+  futures suggestion rows stay history only.

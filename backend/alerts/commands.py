@@ -8,7 +8,6 @@
   filled SYM / unfilled SYM / yes   💰 Real fill confirmation: filled confirms a booked BUY (its stop is then watched
                                  and may send an EXIT); unfilled asks first and removes it from tracking on `yes`
                                  within 10 min (nothing is ever sent by either)
-  fut skip SYM / fut unskip SYM / fut hold   the same for the futures book's plan (paper fill and real send)
   opt / opt close / opt hold   the options book: today's status and the open spread; close the spread now; no new
                                entries today
   ai / ai stop / ai start      🤖 the local AI: one status line; the full stop (unload, empty the queue); clear it
@@ -100,8 +99,6 @@ class BotCommands:
                 if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
                     handled += int(self._say(notifier, self.fills(w0, parts[1].upper() if len(parts) > 1 else "")))
                 continue
-            if parts[0].lower() == "fut" and len(parts) > 1 and parts[1].lower() in MORNING_WORDS:   # "fut skip NRL" / "fut hold"
-                parts = ["/fut" + parts[1].lower()] + parts[2:]
             if parts[0].lower() in ("opt", "/opt"):                                                # "opt" / "opt close" / "opt hold"
                 parts = ["/opt" + (parts[1].lower() if len(parts) > 1 and parts[1].lower() in OPTIONS_WORDS else "")] + parts[2:]
             if parts[0].lower() in ("ai", "/ai"):                                                  # "ai" / "ai stop" / "ai start"
@@ -269,27 +266,6 @@ class BotCommands:
         return (f"✗ <b>{msg.escape(ask['symbol'])}</b> removed from tracking · never filled · cash {msg.rs(res['cash'])} · "
                 "nothing was sent")
 
-    def futures(self, command: str, arg: str) -> str:
-        """fut skip SYM / fut unskip SYM / fut hold: the futures plan changed for this morning only (the paper fill
-        and the real send of that side both honour it), then the dry run listed again."""
-        from backend.alerts.jobs import hm
-        from backend.futures import book
-        cfg, now = self.state.config, self.clock()
-        if now.time() >= hm(cfg.real.send_until):
-            return f"Too late: today's futures orders went out at {ampm(cfg.real.send_time)} (the window closed at {ampm(cfg.real.send_until)})."
-        if command in ("/futskip", "/futunskip") and not arg:
-            return f"Which stock? fut {command[4:]} SYMBOL"
-        try:
-            if command == "/futhold":
-                m = book.hold_today(cfg, "hold all (Telegram)", now)
-            else:
-                m = book.skip_order(cfg, arg, command == "/futskip", "Telegram", now)
-        except ValueError as exc:
-            return f"Not changed: {msg.escape(str(exc))}"
-        head = {"/futskip": f"⏸ {msg.escape(arg)} skipped today (futures).", "/futunskip": f"▶️ {msg.escape(arg)} goes out again (futures).",
-                "/futhold": "⏸ Every futures entry held today; the EXITs still go out."}[command]
-        return head + "\n" + msg.futures_preview(m, cfg.real.send_time)
-
     def options(self, command: str) -> str:
         """opt: today's status and the open spread · opt close: close the open spread now (the result) · opt hold: no
         new entries today (an open spread keeps its exits). Paper only, like the book."""
@@ -424,8 +400,6 @@ class BotCommands:
             return self._say(notifier, self.suggestions(command, arg))
         if command in ("/skip", "/unskip", "/hold", "/full"):
             return self._say(notifier, self.morning(command, arg, notifier))
-        if command in ("/futskip", "/futunskip", "/futhold"):
-            return self._say(notifier, self.futures(command, arg))
         if command in ("/opt", "/optclose", "/opthold"):
             return self._say(notifier, self.options(command))
         if command == "/login":
@@ -460,6 +434,6 @@ class BotCommands:
         if command in ("/start", "/help"):
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
-                                       "BUYs, before the send) · filled SYM / unfilled SYM (a real BUY's fill: confirm it, or remove it with yes) · fut skip SYM / fut hold (the futures plan) · opt / opt close / opt hold (the options "
+                                       "BUYs, before the send) · filled SYM / unfilled SYM (a real BUY's fill: confirm it, or remove it with yes) · opt / opt close / opt hold (the options "
                                        "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

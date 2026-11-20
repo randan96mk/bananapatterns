@@ -1,5 +1,5 @@
-"""📖 The Week page (Portfolio › Week): one ISO week, Monday to Friday, by code from the trade tables (Real, Paper E+,
-Futures, Options and the signal track's closed rows) and the equity tables. The only model text is the week's
+"""📖 The Week page (Portfolio › Week): one ISO week, Monday to Friday, by code from the trade tables (Real, Paper E+
+and Options) and the equity tables. The only model text is the week's
 observations (`backend/ai/week_story.py`, one `ai_notes` row of kind "week"), each tagged `ai: true`.
 
   week(week_iso, today)      the page's payload (GET /api/week?week=2026-W46)
@@ -16,10 +16,9 @@ from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("engine")
 
-BOOKS = ("real", "paper", "futures", "options", "signal")
-BOOK_ICON = {"real": "💰", "paper": "📝", "futures": "📐", "options": "🧩", "signal": "⚡"}
-EQUITY = (("real", "real_equity", None), ("paper", "paper_equity", "E"), ("futures", "futures_equity", "*"),
-          ("options", "options_equity", None))
+BOOKS = ("real", "paper", "options")
+BOOK_ICON = {"real": "💰", "paper": "📝", "options": "🧩"}
+EQUITY = (("real", "real_equity", None), ("paper", "paper_equity", "E"), ("options", "options_equity", None))
 INDEX = "NIFTY 50"
 PAPER_ACCOUNT = "E"                                    # the E+ paper account (the only swing variant)
 
@@ -69,11 +68,6 @@ def trades(frm: str, to: str) -> list[dict]:
     for t in why._rows("paper_trades", " WHERE account = ?", (PAPER_ACCOUNT,)):
         if frm <= str(t.get("out") or "") <= to:
             out.append(why._cash(t, "paper"))
-    for t in why._rows("futures_trades"):
-        if frm <= str(t.get("out") or "") <= to:
-            out.append({"book": "futures", "key": f"futures:{t['id']}", "symbol": t.get("symbol"), "side": t.get("side") or "long",
-                        "qty": t.get("qty"), "entry": t.get("entry"), "exit": t.get("exit"), "net": t.get("net"), "why": t.get("why"),
-                        "in": t.get("in"), "out": t.get("out"), "days": t.get("days")})
     with get_db() as conn:
         opts = [{**json.loads(r["payload"]), "id": r["id"], "day": r["day"]} for r in conn.execute(
             "SELECT id, day, payload FROM options_trades WHERE day >= ? AND day <= ? ORDER BY id", (frm, to))]
@@ -81,14 +75,6 @@ def trades(frm: str, to: str) -> list[dict]:
         out.append({"book": "options", "key": f"options:{t['id']}", "symbol": "NIFTY", "side": t.get("bias"), "qty": t.get("qty"),
                     "entry": t.get("credit"), "exit": t.get("cost"), "net": t.get("net"), "why": t.get("label") or t.get("why"),
                     "in": t["day"], "out": t["day"], "days": 0})          # the payload's in / out are clock times
-    with get_db() as conn:
-        flows = conn.execute("SELECT id, day, payload FROM flow_positions WHERE status = 'closed' AND day >= ? AND day <= ? ORDER BY id",
-                             (frm, to)).fetchall()
-    for r in flows:
-        t = json.loads(r["payload"])
-        out.append({"book": "signal", "key": f"signal:{r['id']}", "symbol": t.get("symbol"), "side": t.get("side"), "qty": t.get("qty"),
-                    "entry": t.get("entry"), "exit": (t.get("exits") or [{}])[-1].get("price") if t.get("exits") else t.get("exit"),
-                    "net": t.get("net"), "why": t.get("reason"), "in": r["day"], "out": r["day"], "days": 0})
     for t in out:
         t["net"] = round(_num(t.get("net")) or 0.0, 2)
         t["out"] = str(t.get("out") or "")[:10]
@@ -231,17 +217,6 @@ def _ai_view(week_iso: str) -> dict:
     return {"buy_hit": (w or {}).get("buy_hit20"), "baseline": (w or {}).get("baseline20"), "votes": (w or {}).get("votes", 0)}
 
 
-def _backtest_hint(frm: str, to: str) -> Optional[dict]:
-    """The suggest `backtest` kind's prefill when one was born that week."""
-    with get_db() as conn:
-        r = conn.execute("SELECT id, title, action FROM ai_suggestions WHERE kind = 'backtest' AND day >= ? AND day <= ? ORDER BY id DESC LIMIT 1",
-                         (frm, to)).fetchone()
-    if not r:
-        return None
-    a = json.loads(r["action"]) if r["action"] else {}
-    return {"id": r["id"], "title": r["title"], "route": a.get("route"), "prefill": a.get("prefill") or {}, "label": a.get("label")}
-
-
 def _signed_pts(x: float) -> str:
     return f"{abs(x):.1f} pts"
 
@@ -292,7 +267,7 @@ def week(week_iso: Optional[str] = None, today: Optional[str] = None) -> dict:
             "totals": {"net": net, "trades": len(ts), "won": _won(ts), "vs_nifty_pts": vs},
             "by_day": by_day, "curve": pts, "by_book": by_book,
             "best": _pick(best), "worst": _pick(worst if worst is not best else None),
-            "suggestions": _suggestions(frm, to), "ai_view": _ai_view(week_iso), "backtest_hint": _backtest_hint(frm, to),
+            "suggestions": _suggestions(frm, to), "ai_view": _ai_view(week_iso),
             "observations": (story or {}).get("observations") or [], "prev_week": prev_w, "next_week": next_w,
             "story": {"at": (story or {}).get("at"), "at_label": (story or {}).get("at_label"), "model": (story or {}).get("model"),
                       "rows_checked": (story or {}).get("rows_checked"), "running": week_story.running(week_iso)},

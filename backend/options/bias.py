@@ -9,7 +9,7 @@ Looked for on 5-minute closes inside the window only (09:45-11:00 by default).""
 from datetime import date, time
 from typing import Optional
 
-from backend.intraday.candles import resample
+from backend.options.candles_util import resample
 
 RANGE_START, RANGE_END = "09:15", "09:30"
 BULLISH, BEARISH = "BULLISH", "BEARISH"

@@ -10,14 +10,12 @@ from backend.database import models
 from backend.database.models import get_db, get_setting, set_setting
 from backend.engine import paper, real
 from backend.engine import trend_breakout as tb
-from backend.intraday import modules
 from tests.test_paper import cfg, store
 
 
 def test_defaults_are_three_lakh():
     c = AppConfig()
     assert c.breakout.capital == c.paper.capital == c.real.capital == 300_000
-    assert dict((f[0], f[3]) for f in modules.SizeRisk.fields)["capital"] == 300000
 
 
 # --- paper set_capital -------------------------------------------------------------------------------
@@ -88,6 +86,7 @@ def _seed(real_cap=200_000.0, paper_cap=200_000.0):
         set_setting(conn, "config.breakout", json.dumps({"capital": 200000.0, "max_pos": 10}))
         set_setting(conn, "config.paper", json.dumps({"capital": paper_cap, "variants": ["E"]}))
         set_setting(conn, "config.real", json.dumps({"capital": real_cap, "max_order_pct": 15.0}))
+        # old Intraday Flow settings (the flow was removed on 20 Nov 2026): left in app_settings, never touched
         set_setting(conn, "flow.nodes", json.dumps({"size": {"capital": 100000, "risk_pct": 1.0}, "orb": {"minutes": 15}}))
         set_setting(conn, "flow.setups", json.dumps({"mine": {"nodes": {"size": {"capital": 200000}}, "saved_at": "x"},
                                                      "tuned": {"nodes": {"size": {"capital": 50000}}, "saved_at": "x"}}))
@@ -114,14 +113,12 @@ def test_migration_bumps_the_old_defaults_once():
     _seed()
     with get_db() as conn:
         changed = models._migrate_capital_300k(conn)
-    assert changed == ["breakout.capital", "paper.capital", "real.capital", "flow Size & risk capital",
-                       "flow setup(s) mine", "Real account +1,00,000 deposit", "Paper E +1,00,000 deposit"]
+    assert changed == ["breakout.capital", "paper.capital", "real.capital", "Real account +1,00,000 deposit", "Paper E +1,00,000 deposit"]
     s = _settings()
     assert s["config.breakout"] == {"capital": 300000.0, "max_pos": 10}
     assert s["config.paper"]["capital"] == 300000 and s["config.real"]["capital"] == 300000
-    assert s["flow.nodes"] == {"size": {"capital": 300000.0, "risk_pct": 1.0}, "orb": {"minutes": 15}}
-    assert s["flow.setups"]["mine"]["nodes"]["size"]["capital"] == 300000
-    assert s["flow.setups"]["tuned"]["nodes"]["size"]["capital"] == 50000             # the owner's own value stays
+    assert s["flow.nodes"] == {"size": {"capital": 100000, "risk_pct": 1.0}, "orb": {"minutes": 15}}   # the removed flow: a no-op
+    assert s["flow.setups"]["mine"]["nodes"]["size"]["capital"] == 200000
     r = s["real"]
     assert r["capital"] == 300000 and r["cash"] == 150_000 and r["deposits"][0]["amount"] == 100000
     assert r["deposits"][0]["capital"] == 300000 and r["deposits"][0]["at"]
@@ -170,3 +167,38 @@ def test_migration_on_an_empty_db_only_sets_the_flag():
         assert models._migrate_capital_300k(conn) == []
         assert get_setting(conn, models.CAPITAL_DONE_KEY)
         assert conn.execute("SELECT COUNT(*) FROM app_settings WHERE key LIKE 'config.%'").fetchone()[0] == 0
+
+
+# --- after the Intraday Flow / Futures removal (20 Nov 2026) ---------------------------------------------------------
+
+def test_saved_flow_and_futures_sections_are_ignored_and_the_data_tables_stay():
+    """A database from before the removal: config.flow / config.futures (and the flow.* / futures.* keys) stay in
+    app_settings and load_config ignores them; the four downloaded tables and the nine book tables stay in the schema
+    with their rows (nothing is dropped, init_db again changes nothing)."""
+    from dataclasses import asdict
+    from backend.config import PERSISTED_SECTIONS, load_config
+    with get_db() as conn:
+        set_setting(conn, "config.flow", json.dumps({"mode": "signals", "warmup_days": 2}))
+        set_setting(conn, "config.futures", json.dumps({"capital": 500000.0, "long_real": True}))
+        set_setting(conn, "config.paper", json.dumps({"capital": 310000.0}))
+        set_setting(conn, "futures.overlap", json.dumps({"x": 1}))
+        conn.execute("INSERT INTO candles_intraday (instrument_token, day, interval, bars, n, source) VALUES (1, '2026-11-02', 1, x'00', 1, 'kite')")
+        conn.execute("INSERT INTO candles_fut_daily (underlying, date, open, high, low, close) VALUES ('X', '2026-11-02', 1, 1, 1, 1)")
+        conn.execute("INSERT INTO fo_ban (date, symbol) VALUES ('2026-11-02', 'X')")
+        conn.execute("INSERT INTO futures_trades (account, payload) VALUES ('paper_long', '{}')")
+        conn.execute("INSERT INTO flow_positions (day, symbol, status, payload) VALUES ('2026-11-02', 'X', 'closed', '{}')")
+    c = load_config(AppConfig())
+    assert not hasattr(c, "flow") and not hasattr(c, "futures") and "flow" not in PERSISTED_SECTIONS and "futures" not in PERSISTED_SECTIONS
+    assert c.paper.capital == 310000.0 and asdict(c)
+    with pytest.raises(KeyError):
+        c.section("futures")
+    models.init_db()
+    with get_db() as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        kept = {k: get_setting(conn, k) for k in ("config.flow", "config.futures", "futures.overlap")}
+        rows = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                for t in ("candles_intraday", "candles_fut_daily", "fo_ban", "futures_trades", "flow_positions")}
+    assert {"candles_intraday", "futures_contracts", "candles_fut_daily", "fo_ban"} <= tables          # downloaded data
+    assert {"flow_runs", "flow_signals", "flow_positions", "flow_backtests", "futures_runs", "futures_state", "futures_orders",
+            "futures_trades", "futures_equity"} <= tables                                                # the books' history
+    assert all(kept.values()) and rows == {t: 1 for t in rows}

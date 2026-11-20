@@ -1,5 +1,5 @@
 """🤖 The morning brief (PR 3 · C): at `ai.brief_time` on a trading day the night model reads the facts code gathered
-(the Real morning plan, the futures plan and roll queue, the options book's state and last chain line, the night's
+(the Real morning plan, the options book's state and last chain line, the night's
 high notes, results due within 3 sessions on held names, VIX, event days) and writes at most 5 lines. Code decides
 what is read and which numbers may be quoted (every figure in a line must appear in the facts, else it is stripped);
 the model writes words. The brief is one Telegram message, one `ai_notes` row (kind "brief") and nothing else: no
@@ -39,7 +39,7 @@ GEN_OPTIONS = {"temperature": 0.2, "num_predict": 400, "num_ctx": 4096, "top_p":
 SYSTEM_PROMPT = f"""You write the morning brief for a private investor from the facts below, which the app's own code
 gathered from its plans, books and filings. You read and explain; you never advise, decide or predict. Reply with JSON
 only, one object: {{"lines": ["…", "…"]}} with at most {LINES_MAX} strings, each at most {LINE_MAX} characters of plain
-text, one fact per line, the most useful first (the orders going out, then a warning, then futures, options, notes). Quote only numbers written in
+text, one fact per line, the most useful first (the orders going out, then a warning, then options, notes). Quote only numbers written in
 the facts, exactly as given; never compute, convert or estimate a number. Say nothing about a section with no facts.
 Never name a broker or a trading platform. No markdown, no emoji, no prose around the list."""
 
@@ -73,28 +73,6 @@ def _real_facts(config: AppConfig, now: datetime) -> Optional[dict]:
     skipped = [f"{o['symbol']} ({(o['skip'] or {}).get('by') or 'skipped'})" for o in m.get("orders") or [] if o.get("skip") or o.get("status") == "skipped"]
     return {"exits": _going(m, "EXIT"), "buys": _going(m, "BUY"), "cash": m.get("cash"), "free": m.get("free"), "slots": m.get("slots"),
             "skipped": skipped, "send_at": ampm(config.real.send_time), "enabled": bool(config.real.enabled), "killed": real.killed()}
-
-
-def _futures_facts(config: AppConfig, now: datetime) -> Optional[dict]:
-    """The futures plan for the open, the lots held, the roll day and the roll queue, results on held names."""
-    from backend.futures import book
-    if not book.has_account():
-        return None
-    st = book._state() or {}
-    today = now.date().isoformat()
-    plan = [o for s in ("long", "short") for o in (st.get("plan") or {}).get(s, []) if not o.get("sent")]
-    held = sorted({f"{sym} {pos['side']} {pos['lots']} lot{'s' if pos['lots'] != 1 else ''}"
-                   for a in (st.get("accounts") or {}).values() for sym, pos in (a.get("positions") or {}).items()})
-    try:
-        rq = book.roll_queue(st, config, today)["items"] if st.get("accounts") else []
-    except Exception:
-        rq = []
-    roll = [f"{i['symbol']} {i['action']} ({i['why']})" for i in rq if i.get("due")]
-    res = [f"{r['symbol']} {day_label(r['date'])} (in {r['sessions']} session{'s' if r['sessions'] != 1 else ''})"
-           for r in (st.get("warnings") or {}).get("results") or []]
-    return {"entries": [f"{o['symbol']} {o.get('side') or 'long'}" for o in plan if o["action"] != "EXIT"],
-            "exits": [o["symbol"] for o in plan if o["action"] == "EXIT"], "held": held,
-            "roll_day": day_label(st["roll_day"]) if st.get("roll_day") else None, "roll_queue": roll, "results": res}
 
 
 def _options_facts(config: AppConfig, now: datetime) -> Optional[dict]:
@@ -132,7 +110,7 @@ def _vix_close() -> Optional[float]:
 
 
 def _held_symbols() -> set:
-    """Every stock held in a cash book or the futures book (the notes' scope, "held" only)."""
+    """Every stock held in a cash book (the notes' scope, "held" only)."""
     return {s for s, v in notes.scope().items() if v["book"] == "held"}
 
 
@@ -166,13 +144,13 @@ def _safe(fn: Callable, *a):
 
 
 def facts(config: AppConfig, now: Optional[datetime] = None) -> dict:
-    """{day, at, real, futures, options, notes, results, lines, empty}: the sections and the lines handed to the model."""
+    """{day, at, real, options, notes, results, lines, empty}: the sections and the lines handed to the model."""
     now = now or datetime.now(IST)
     f = {"day": now.date().isoformat(), "at": now.strftime("%H:%M"), "real": _safe(_real_facts, config, now),
-         "futures": _safe(_futures_facts, config, now), "options": _safe(_options_facts, config, now),
+         "options": _safe(_options_facts, config, now),
          "notes": _safe(_notes_facts, config, now) or [], "results": _safe(_results_facts, now) or []}
     f["lines"] = fact_lines(f)
-    f["empty"] = not any((f["real"], f["futures"], f["options"], f["notes"], f["results"]))
+    f["empty"] = not any((f["real"], f["options"], f["notes"], f["results"]))
     return f
 
 
@@ -190,10 +168,6 @@ def fact_lines(f: dict) -> list[str]:
         cash = f" Cash after {r['cash']:,.0f}; {r['free']} free slot{'s' if r['free'] != 1 else ''} of {r['slots']}." if r["cash"] is not None else ""
         out.append(f"Real: {n} order{'s' if n != 1 else ''} at {r['send_at']}{state}: EXIT {_join(r['exits'])}; BUY {_join(r['buys'])}.{cash} "
                    f"Skipped: {_join(r['skipped'])}.")
-    fu = f.get("futures")
-    if fu:
-        out.append(f"Futures: held {_join(fu['held'])}; entries at the open {_join(fu['entries'])}; exits {_join(fu['exits'])}; "
-                   f"roll day {fu['roll_day'] or 'none'}; roll queue {_join(fu['roll_queue'])}; results on held names {_join(fu['results'])}.")
     o = f.get("options")
     if o:
         chain = (f"PCR {o['pcr']}, put wall {o['support']:,.0f}, call wall {o['resistance']:,.0f}"
@@ -297,7 +271,7 @@ def ask_model(config: AppConfig, lines: list[str]) -> tuple[dict, dict]:
 def save(f: dict, brief: dict, model: str, ms: int) -> Optional[int]:
     """One `ai_notes` row of kind "brief" (None when the day's brief exists: the UNIQUE guard on brief:<day>)."""
     data = {"lines": brief["lines"], "numbers_checked": brief["numbers_checked"], "at": f["at"], "alerted": False,
-            "facts": {k: f[k] for k in ("real", "futures", "options", "notes", "results", "lines")}}
+            "facts": {k: f[k] for k in ("real", "options", "notes", "results", "lines")}}
     with get_db() as conn:
         cur = conn.execute("INSERT OR IGNORE INTO ai_notes (created, day, kind, symbol, book, severity, title, text, data, model, "
                            "prompt_version, ms, source_key) VALUES (?,?,'brief',NULL,NULL,'info',?,?,?,?,?,?,?)",

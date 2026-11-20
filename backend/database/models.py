@@ -315,13 +315,17 @@ CREATE TABLE IF NOT EXISTS real_orders (
 CREATE TABLE IF NOT EXISTS real_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS real_equity (day TEXT PRIMARY KEY, equity REAL NOT NULL, gross REAL NOT NULL, nifty REAL);
 
--- ⚡ Intraday Flow (backend/intraday): 1-minute bars, one compressed row per stock per day (shrunk to 5-minute bars
--- after the retention); every run (each node's in / out / drop reasons) and every signal.
+-- Splits / bonuses found in the daily candles.
 CREATE TABLE IF NOT EXISTS corp_actions (
     instrument_token INTEGER NOT NULL, date TEXT NOT NULL, ratio REAL NOT NULL, PRIMARY KEY (instrument_token, date));
+-- Downloaded market data, kept after the Intraday Flow / Futures removal (20 Nov 2026): never dropped, no longer
+-- refreshed: candles_intraday (1-minute bars, one compressed row per stock per day) and, below, futures_contracts,
+-- candles_fut_daily, fo_ban.
 CREATE TABLE IF NOT EXISTS candles_intraday (
     instrument_token INTEGER NOT NULL, day TEXT NOT NULL, interval INTEGER NOT NULL DEFAULT 1, bars BLOB NOT NULL,
     n INTEGER NOT NULL, source TEXT NOT NULL, complete INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (instrument_token, day));
+-- kept for history after the Intraday Flow / Futures removal (20 Nov 2026): no code reads or writes them.
+-- flow_runs, flow_positions, flow_backtests, flow_signals (the Intraday Flow book's runs, paper positions, backtests, signals).
 CREATE TABLE IF NOT EXISTS flow_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, at TEXT NOT NULL, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS flow_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, symbol TEXT NOT NULL,
     status TEXT NOT NULL, payload TEXT NOT NULL);
@@ -341,8 +345,8 @@ CREATE TABLE IF NOT EXISTS breakout_runs (
     payload TEXT NOT NULL
 );
 
--- Stock futures data layer (backend/futures): NFO contracts per underlying and day (history kept: the latest as_of
--- wins), continuous daily futures candles with OI (never deleted), the MWPL F&O ban list per day.
+-- Downloaded stock futures data (kept, never dropped, no longer refreshed after the Futures removal, 20 Nov 2026): NFO
+-- contracts per underlying and day, continuous daily futures candles with OI, the MWPL F&O ban list per day.
 CREATE TABLE IF NOT EXISTS futures_contracts (
     underlying TEXT NOT NULL, month TEXT NOT NULL, tradingsymbol TEXT NOT NULL, token INTEGER NOT NULL,
     expiry TEXT NOT NULL, lot_size INTEGER NOT NULL, lot_value REAL, oi INTEGER, oi_rank INTEGER, as_of TEXT NOT NULL,
@@ -352,10 +356,9 @@ CREATE TABLE IF NOT EXISTS candles_fut_daily (
     close REAL NOT NULL, volume INTEGER NOT NULL DEFAULT 0, oi INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (underlying, date)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS fo_ban (date TEXT NOT NULL, symbol TEXT NOT NULL, PRIMARY KEY (date, symbol));
--- Backtest F runs (backend/futures/backtest.py): the latest row is the one shown.
+-- kept for history after the Intraday Flow / Futures removal (20 Nov 2026): no code reads or writes them.
+-- futures_runs (Backtest F), futures_state, futures_orders, futures_trades, futures_equity (the futures book).
 CREATE TABLE IF NOT EXISTS futures_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, ran_at TEXT NOT NULL);
--- The futures book (backend/futures/book.py): one state (four accounts: paper / real x long / short), every order
--- (sent, failed, skipped, filled on paper, rolls, hand corrections; never deleted), closed trades, equity per account.
 CREATE TABLE IF NOT EXISTS futures_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS futures_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -568,8 +571,7 @@ CAPITAL_DONE_KEY = "capital.300k.done"
 def _migrate_capital_300k(conn) -> list[str]:
     """The capital became Rs 3,00,000 everywhere (Nov 2026). Once, guarded by the app_settings key
     `capital.300k.done`: every saved setting still at the old default is set to the new one (`breakout.capital`,
-    `paper.capital` and `real.capital` at 2,00,000; the intraday Size & risk box and its saved setups at 1,00,000 or
-    2,00,000), and a running Real / Paper account that started with 2,00,000 gets +1,00,000 through the same deposit
+    `paper.capital` and `real.capital` at 2,00,000), and a running Real / Paper account that started with 2,00,000 gets +1,00,000 through the same deposit
     path as the capital box (cash moves, the deposit is recorded, never counted as profit). A value the owner already
     changed is left alone; nothing else (candles, trades, curves) is touched. Returns what changed, also printed."""
     if get_setting(conn, CAPITAL_DONE_KEY):
@@ -587,30 +589,6 @@ def _migrate_capital_300k(conn) -> list[str]:
             sec["capital"] = NEW_CAPITAL
             set_setting(conn, f"config.{name}", json.dumps(sec))
             changed.append(f"{name}.capital")
-    old_flow = (100_000.0, OLD_CAPITAL)
-
-    def bump_nodes(nodes: dict) -> bool:
-        size = nodes.get("size") if isinstance(nodes, dict) else None
-        if isinstance(size, dict) and size.get("capital") in old_flow:
-            size["capital"] = NEW_CAPITAL
-            return True
-        return False
-
-    try:
-        nodes = json.loads(get_setting(conn, "flow.nodes") or "{}")
-    except (TypeError, ValueError):
-        nodes = {}
-    if bump_nodes(nodes):
-        set_setting(conn, "flow.nodes", json.dumps(nodes))
-        changed.append("flow Size & risk capital")
-    try:
-        setups = json.loads(get_setting(conn, "flow.setups") or "{}")
-    except (TypeError, ValueError):
-        setups = {}
-    bumped = [k for k, v in setups.items() if isinstance(v, dict) and bump_nodes(v.get("nodes"))]
-    if bumped:
-        set_setting(conn, "flow.setups", json.dumps(setups))
-        changed.append("flow setup(s) " + ", ".join(bumped))
     # running accounts: +1,00,000 as a deposit (the engines' own helpers, saved on this connection)
     from backend.engine import paper, real
     r = conn.execute("SELECT payload FROM real_state WHERE id = 1").fetchone()

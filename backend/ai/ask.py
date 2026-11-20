@@ -36,7 +36,7 @@ GEN_PICK = {"temperature": 0.0, "num_predict": 120, "num_ctx": 2048}
 GEN_ANSWER = {"temperature": 0.1, "num_predict": 260, "num_ctx": 4096, "top_p": 0.9}
 REFUSAL = "I can only answer from the app's own data: plans, positions, trades, filings, notes, backtests."
 REJECTED = "The answer quoted a figure that is not in the app's data, so it is not shown. Ask again, more narrowly."
-BOOKS = ("real", "paper", "futures", "options")
+BOOKS = ("real", "paper", "options")
 DEFAULTS = {"day": None, "days": 7, "limit": 10, "status": "open", "pct": 2.0, "book": "real", "symbol": ""}
 
 
@@ -118,19 +118,6 @@ def paper_summary(config: AppConfig) -> dict:
                                              "orders": [_order(o) for o in a.get("orders") or []]} for k, a in s["accounts"].items()}}
 
 
-def futures_summary(config: AppConfig) -> dict:
-    """The futures book: cash and margin, the lots held, the plan, the roll day and queue, the held-name warnings."""
-    from backend.futures import book
-    s = book.summary(config)
-    if not s.get("started"):
-        return {"started": False}
-    return {**_pick_keys(s, ("started", "as_of", "cash", "margin_used", "margin_pct", "net", "return", "roll_day", "warnings", "next_expiry")),
-            "sides": {k: _pick_keys(v, ("paper", "real", "verdict")) for k, v in (s.get("sides") or {}).items()},
-            "positions": [_pos(p) for p in s.get("positions") or []], "plan": [_order(o) for o in s.get("plan") or []],
-            "rolls": [_pick_keys(i, ("symbol", "side", "action", "why", "sessions", "due", "book")) for i in (s.get("rolls") or {}).get("items") or []],
-            "guards": {k: v for k, v in (s.get("guards") or {}).items() if k in ("kill", "enabled", "daily_loss", "margin")}}
-
-
 def options_summary(config: AppConfig) -> dict:
     """The options book: today's state, the open spread, the guards (VIX, event day, daily loss), the chain line."""
     from backend.options import book
@@ -153,7 +140,7 @@ def options_days(config: AppConfig, limit: int) -> dict:
 
 
 def trades(config: AppConfig, book: str, days: int) -> dict:
-    """The trades closed in the last `days` days in one book (real | paper | futures | options)."""
+    """The trades closed in the last `days` days in one book (real | paper | options)."""
     keys = ("symbol", "side", "qty", "lots", "in", "out", "buy", "sell", "entry", "exit", "stop", "days", "gross", "costs", "net", "why", "account",
             "day", "bias", "pnl", "credit", "exit_why", "opened_at", "closed_at")
     if book == "real":
@@ -164,9 +151,6 @@ def trades(config: AppConfig, book: str, days: int) -> dict:
         from backend.engine import paper
         s = paper.summary(config)
         rows = [t for a in (s.get("accounts") or {}).values() for t in a.get("trades") or []] if s.get("started") else []
-    elif book == "futures":
-        from backend.futures import book as fbook
-        rows = fbook._trades()[:200]
     else:
         from backend.options import book as obook
         rows = obook.trades(100)
@@ -216,7 +200,7 @@ def plan(config: AppConfig, day: str) -> dict:
 
 def why_skipped(config: AppConfig, symbol: str, day: str) -> dict:
     """Why one stock did not go out on `day`: the Real skip (by whom, the note), the results guard, the waiting list,
-    the plan's rank, the futures skip, the paper skips."""
+    the plan's rank, the paper skips."""
     from backend.alerts import plan as pl
     from backend.engine import real
     from backend.ingest import events
@@ -226,15 +210,10 @@ def why_skipped(config: AppConfig, symbol: str, day: str) -> dict:
     waiting = [w for w in st.get("waiting_why") or [] if (w.get("symbol") if isinstance(w, dict) else str(w)) == sym or sym in str(w)]
     as_of, items = pl.latest_plan(before=(date.fromisoformat(day) + timedelta(days=1)).isoformat())
     rank = next((n for n, i in enumerate(items, start=1) if i["symbol"] == sym), None)
-    try:
-        from backend.futures import book
-        fskips = (((book._state() or {}).get("skips") or {}).get(day) or {}).get(sym)
-    except Exception:
-        fskips = None
     with get_db() as conn:
         log = [dict(r) for r in conn.execute("SELECT action, status, reason, reply FROM real_orders WHERE day = ? AND symbol = ? ORDER BY id", (day, sym))]
     return {"symbol": sym, "day": day, "real_skip": skips.get(sym), "unskipped": sym in ((st.get("unskipped") or {}).get(day) or []),
-            "waiting": waiting, "plan_rank": rank, "plan_as_of": as_of, "results": events.next_results(sym, day), "futures_skip": fskips,
+            "waiting": waiting, "plan_rank": rank, "plan_as_of": as_of, "results": events.next_results(sym, day),
             "order_log": log, "in_real_orders": any(o["symbol"] == sym for o in st.get("orders") or [])}
 
 
@@ -261,21 +240,7 @@ def positions_near_stop(config: AppConfig, pct: float) -> dict:
             add(f"paper {k}", a.get("positions") or [])
     except Exception:
         pass
-    try:
-        from backend.futures import book
-        add("futures", book.summary(config).get("positions") or [])
-    except Exception:
-        pass
     return {"pct": pct, "positions": sorted(out, key=lambda x: x["distance_pct"])}
-
-
-def backtest_f(config: AppConfig) -> dict:
-    """The latest stock-futures backtest: the verdict, when it ran, each side's headline figures (no trade lists)."""
-    from backend.futures import backtest as fb
-    s = fb.summary(config)
-    run = s.get("run") or {}
-    sides = {k: {kk: vv for kk, vv in (run.get(k) or {}).items() if not isinstance(vv, (list, dict))} for k in ("long", "short")}
-    return {"built": s["built"], "ran_at": run.get("ran_at"), "verdict": run.get("verdict"), "sides": sides}
 
 
 def levels(config: AppConfig, symbol: str) -> dict:
@@ -288,17 +253,15 @@ TOOLS: dict[str, dict] = {
     "real_morning": {"fn": real_morning, "args": {"day": str}, "help": "the Real morning plan of a day: orders, skips, cash, free slots"},
     "real_summary": {"fn": real_summary, "args": {}, "help": "the Real book: account, positions, next orders, trade tally"},
     "paper_summary": {"fn": paper_summary, "args": {}, "help": "the Paper book: account, positions, next orders"},
-    "futures_summary": {"fn": futures_summary, "args": {}, "help": "the futures book: lots held, plan, roll day and queue, margin, warnings"},
     "options_summary": {"fn": options_summary, "args": {}, "help": "the options book: today's state, the open spread, VIX, the chain line"},
     "options_days": {"fn": options_days, "args": {"limit": int}, "help": "the last N options days: status, bias, trades, P&L"},
-    "trades": {"fn": trades, "args": {"book": str, "days": int}, "help": "trades closed in the last N days in a book: real, paper, futures or options"},
+    "trades": {"fn": trades, "args": {"book": str, "days": int}, "help": "trades closed in the last N days in a book: real, paper or options"},
     "filings": {"fn": filings, "args": {"symbol": str, "days": int}, "help": "a stock's exchange filings and deals of the last N days"},
     "notes": {"fn": notes_tool, "args": {"symbol": str, "days": int}, "help": "the AI's notes on a stock (filing, deal, why) of the last N days"},
     "suggestions": {"fn": suggestions, "args": {"status": str}, "help": "the AI's suggestions by status: open, accepted, dismissed, expired"},
     "plan": {"fn": plan, "args": {"day": str}, "help": "the evening plan for a day's session, ranked"},
     "why_skipped": {"fn": why_skipped, "args": {"symbol": str, "day": str}, "help": "why a stock did not go out on a day: skips, results guard, waiting list"},
     "positions_near_stop": {"fn": positions_near_stop, "args": {"pct": float}, "help": "open positions within N percent of their stop, every book"},
-    "backtest_f": {"fn": backtest_f, "args": {}, "help": "the latest stock-futures backtest: verdict and headline figures"},
     "levels": {"fn": levels, "args": {"symbol": str}, "help": "a stock's support / resistance levels: the candidates and the AI view's picks"},
 }
 

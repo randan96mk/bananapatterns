@@ -292,8 +292,8 @@ class AlertsConfig:
     deals: bool = True                     # 🏦 funds buying / selling in bulk / block deals or raising stakes
     deal_days: int = 10
     deal_min_cr: float = 5.0               # net bulk / block value (₹ crore) a fund must trade to count
-    # 🌙 one close-of-day message across the books (Real, Paper, Futures, Options, the signal track, the AI)
-    day_summary: bool = True               # the day summary on trading days (replaces the options and flow day lines)
+    # 🌙 one close-of-day message across the books (Real, Paper, Options, the AI)
+    day_summary: bool = True               # the day summary on trading days (replaces the options day line)
     day_summary_time: str = "15:40"        # after the options book's 3:35 PM summary row
 
 
@@ -362,14 +362,6 @@ class RealConfig:
                                            # line (the "stop hit but never confirmed" alert always goes)
 
 
-@dataclass
-class FlowConfig:
-    """⚡ Intraday Flow (signals only in phase 1). Node settings are saved per node in app_settings (flow.nodes)."""
-    mode: str = "off"                      # off / signals
-    warmup_days: int = 2                   # saved sessions of 1-minute bars used to warm indicators up
-    retention_months: int = 24             # 1-minute bars kept this long (2-year backtests), then 5-minute bars
-
-
 TIME_FIELDS = ("intraday_start", "intraday_end", "job_time", "reminder_time", "login_heads_up_time", "close_check_time",
                "top_setups_time", "morning_plan_time", "gap_check_time", "day_summary_time")
 
@@ -412,34 +404,6 @@ def check_options_times(sec: "OptionsConfig") -> None:
         h, _, m = str(getattr(sec, f)).partition(":")
         if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
             raise ValueError(f"{f} {getattr(sec, f)!r} must be HH:MM")
-
-
-@dataclass
-class FuturesConfig:
-    """Stock futures book (separate from the cash books): the data layer's universe cap, the eligibility rules and the
-    guards. Long = E+ rules; short = E-. Real switches live on the Futures page (hidden in Settings); shorts cannot go
-    real until their backtest passes."""
-    capital: float = 500000.0              # the futures book's own capital (deposits like Real / Paper)
-    max_pos: int = 2                       # active futures positions at most ...
-    small_lot_value: float = 450000.0      # ... a third is allowed when every open lot is under this lot value
-    max_lot_value: float = 1000000.0       # eligibility: near-month lot value at most this (6 L starved the book: 3 of 91 breakouts in 20 sessions)
-    max_risk_pct: float = 8.0              # eligibility: 1-lot risk at the planned stop, % of capital
-    max_stop_pct: float = 4.0              # the ATR stop is capped at this % of the entry
-    top_oi: int = 100                      # eligibility: futures OI rank within the top N
-    margin_pct: float = 20.0               # margin estimate = this % of the lot value (shown as an estimate)
-    max_notional_x: float = 4.0            # guard: open notional at most this x capital
-    cash_floor: float = 150000.0           # guard: free cash after margin at least this
-    daily_loss_pct: float = 3.0            # guard: no new entries once the day's loss reaches this % of capital
-    heat_pct: float = 12.0                 # guard: sum of risk to stops at most this % of capital
-    roll_days: int = 2                     # roll (or exit) T-N sessions before expiry; never hold into expiry day
-    roll_mode: str = "always"              # at T-N: "always" roll, "never" (close instead), "winners" (roll only above entry)
-    results_guard_sessions: int = 3        # no entry with results within this many sessions
-    long_paper: bool = True                # the long side on paper
-    long_real: bool = False                # the long side for real (switch on the Futures page)
-    short_paper: bool = True               # the short side on paper
-    short_real: bool = False               # shorts for real: blocked while the short backtest verdict is False
-    universe_lot_cap: float = 1000000.0    # data layer: sync futures candles for underlyings with lot value <= this
-    history_years: int = 3                 # continuous futures history depth (Kite keeps about 3 years)
 
 
 @dataclass
@@ -502,7 +466,7 @@ class AIConfig:
     note_days: int = 3                     # how many days back the notes job reads filings and deals (the first run too)
     # 🤖 suggestions (PR 3 · A)
     max_suggestions_open: int = 6          # open suggestions at most (older ones expire on their own time)
-    suggest_muted: str = ""                # comma list of suggestion kinds never born: skip, exit, flag, hold_options, roll_or_exit, backtest
+    suggest_muted: str = ""                # comma list of suggestion kinds never born: skip, exit, flag, hold_options
     # 🤖 why (PR 3 · B)
     why: bool = True                       # the nightly "why" line under every trade closed today (and the evening message)
     # 🤖 brief
@@ -511,7 +475,7 @@ class AIConfig:
     # 🤖 ask
     ask: bool = True                       # "ask the app": the day model answers from one whitelisted read-only tool, any time
     # 🤖 AI view: a rating beside every system-suggested stock (the model rates, it never acts)
-    view_enabled: bool = True              # the nightly rating of the plan, held, futures, Follow and Screens names
+    view_enabled: bool = True              # the nightly rating of the plan, held, Follow and Screens names
     view_rate_held: bool = True            # held names re-rated nightly (hold / trim / exit-watch)
     view_rank_by_score: bool = False       # LOCKED until unlocked: plan ties (the same breakout rank) ordered by the AI score
     view_size_by_score: bool = False       # LOCKED until unlocked: BUY qty × clip(0.5 + 0.5 × (score − 40) / 40, floor, 1.0); never above 1.0×
@@ -519,7 +483,7 @@ class AIConfig:
     view_exit_watch_alert: bool = False    # LOCKED until unlocked: an alert when a held name closes under its fails_below (flag only)
     view_score_buy: int = 60               # score at or over this: buy (held: hold)
     view_score_avoid: int = 40             # score under this: avoid (held: exit-watch); between: wait (held: trim)
-    view_max_per_night: int = 40           # names rated a night at most (plan, held, futures, Follow, Screens, in that order)
+    view_max_per_night: int = 40           # names rated a night at most (plan, held, Follow, Screens, in that order)
     # 📖 the week's story: up to 3 observations about the closed week (one night-model call on Sunday evening)
     week: bool = True
     # 🤖 quiet hours: AI messages (notes, why, suggestions, ratings) are held from quiet_from to quiet_to and sent then
@@ -660,7 +624,7 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "vcp": VcpConfig, "flag": FlagConfig, "alerts": AlertsConfig,
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
-                      "flow": FlowConfig, "futures": FuturesConfig, "options": OptionsConfig, "ai": AIConfig,
+                      "options": OptionsConfig, "ai": AIConfig,
                       "tips": TipsConfig, "maintenance": MaintenanceConfig}
 
 
@@ -678,8 +642,6 @@ class AppConfig:
     breakout: BreakoutConfig = field(default_factory=BreakoutConfig)
     paper: PaperConfig = field(default_factory=PaperConfig)
     real: RealConfig = field(default_factory=RealConfig)
-    flow: FlowConfig = field(default_factory=FlowConfig)
-    futures: FuturesConfig = field(default_factory=FuturesConfig)
     options: OptionsConfig = field(default_factory=OptionsConfig)
     ai: AIConfig = field(default_factory=AIConfig)
     tips: TipsConfig = field(default_factory=TipsConfig)
@@ -735,7 +697,8 @@ def save_config(config: AppConfig) -> None:
 
 
 def load_config(config: AppConfig | None = None) -> AppConfig:
-    """Overlay persisted sections onto defaults; stale keys are ignored."""
+    """Overlay persisted sections onto defaults; stale keys are ignored, and so are saved sections that no longer
+    exist (config.flow / config.futures from before the Intraday Flow / Futures removal stay in app_settings, unread)."""
     from backend.database.models import get_db, get_setting, set_setting
     config = config or AppConfig()
     with get_db() as conn:

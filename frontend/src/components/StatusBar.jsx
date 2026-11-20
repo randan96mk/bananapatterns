@@ -18,7 +18,7 @@ export const left = (iso, now) => {
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}:${String(x).padStart(2, '0')}`;
 };
 export const istClock = (now) => new Date(now).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-const TAB = { breakout: 'Breakout', paper: 'Paper', real: 'Real', flow: 'Intraday', screens: 'Screens', plan: 'Plan' };
+const TAB = { breakout: 'Breakout', paper: 'Paper', real: 'Real', screens: 'Screens', plan: 'Plan' };
 const at12 = (iso) => new Date(iso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true });
 
 // The status bar on every page: Kite, market, the last evening run, real trading, the next job, attention, theme.

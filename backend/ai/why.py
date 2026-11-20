@@ -1,4 +1,4 @@
-"""🤖 Trade "why" notes (PR 3 · B): one line, "likely cause: …", under every trade closed today (Real, Paper, Futures,
+"""🤖 Trade "why" notes (PR 3 · B): one line, "likely cause: …", under every trade closed today (Real, Paper,
 Options) and under every held name that gapped more than 1% or hit a stop. Code assembles the evidence (the trade
 row: entry, exit, how it ended, P&L; the stock's day move; the industry's average move when the universe table knows
 the industry; NIFTY's move; the filings and deals of the last 3 days; for options the bias, the score and the exit
@@ -36,8 +36,8 @@ LINE_MAX = 180
 GAP_PCT = 1.0
 FILING_DAYS = 3
 KEY_PREFIX = "why:"
-BOOKS = ("real", "paper", "futures", "options")
-BOOK_ICON = {"real": "💰", "paper": "📝", "futures": "📐", "options": "🧩"}
+BOOKS = ("real", "paper", "options")
+BOOK_ICON = {"real": "💰", "paper": "📝", "options": "🧩"}
 GEN_OPTIONS = {"temperature": 0.1, "num_predict": 120, "num_ctx": 1536, "top_p": 0.9}
 
 SYSTEM_PROMPT = f"""You explain to a private investor why one of his trades ended the way it did, from the evidence his
@@ -71,12 +71,6 @@ def closed_today(day: str) -> list[dict]:
     for t in _rows("paper_trades"):
         if t.get("out") == day:
             out.append(_cash(t, "paper"))
-    for t in _rows("futures_trades"):
-        if t.get("out") == day:
-            out.append({"book": "futures", "key": f"futures:{t['id']}", "symbol": t["symbol"], "side": t.get("side") or "long", "qty": t.get("qty"),
-                        "entry": t.get("entry"), "exit": t.get("exit"), "net": t.get("net"), "why": t.get("why"), "label": t.get("why"),
-                        "in": t.get("in"), "out": t.get("out"), "days": t.get("days"), "stop": t.get("stop"),
-                        "extra": {"account": t.get("book"), "contract": t.get("contract"), "rolls": t.get("rolls")}})
     for t in _rows("options_trades", " WHERE day = ?", (day,)):
         sold = t.get("sold") or {}
         out.append({"book": "options", "key": f"options:{t['id']}", "symbol": "NIFTY", "side": t.get("bias"), "qty": t.get("qty"),
@@ -135,11 +129,9 @@ def day_move(symbol: str, day: str) -> Optional[dict]:
 
 
 def _stopped_today(day: str) -> set:
-    """Symbols whose stop sent an EXIT today (the real and futures order logs)."""
+    """Symbols whose stop sent an EXIT today (the real order log)."""
     with get_db() as conn:
-        a = {r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status = 'sent' AND reason LIKE 'stop%'", (day,))}
-        b = {r[0] for r in conn.execute("SELECT symbol FROM futures_orders WHERE day = ? AND status = 'sent' AND reason LIKE 'stop%'", (day,))}
-    return a | b
+        return {r[0] for r in conn.execute("SELECT symbol FROM real_orders WHERE day = ? AND status = 'sent' AND reason LIKE 'stop%'", (day,))}
 
 
 def moved_today(day: str, config: AppConfig) -> list[dict]:

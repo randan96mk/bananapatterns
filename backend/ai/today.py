@@ -23,8 +23,8 @@ logger = setup_logger("ai")
 PHASES = ("morning", "session", "close", "evening")
 SESSION_END = time(15, 40)                 # the day summary's time: the session view becomes the close view
 RESULTS_SESSIONS = 2                       # results due within this many sessions on a held name go in the watch column
-BOOK_ICON = {"real": "💰", "paper": "📝", "futures": "📐", "options": "🧩", "flow": "⚡"}
-BOOK_LABEL = {"real": "Real", "paper": "Paper", "futures": "Futures", "options": "Options", "flow": "Signal track"}
+BOOK_ICON = {"real": "💰", "paper": "📝", "options": "🧩"}
+BOOK_LABEL = {"real": "Real", "paper": "Paper", "options": "Options"}
 
 
 def _hm(s: str) -> time:
@@ -201,7 +201,7 @@ def _books(config: AppConfig, day: str) -> list[dict]:
     from backend.alerts import daysum
     parts = daysum.parts(config, day)
     out = []
-    for key in ("real", "paper", "futures", "options"):
+    for key in ("real", "paper", "options"):
         p = parts.get(key)
         for x in (p if isinstance(p, list) else [p] if p else []):
             label = BOOK_LABEL[key] + (f" {x['name']}" if key == "paper" and x.get("name") else "")

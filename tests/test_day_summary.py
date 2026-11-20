@@ -1,7 +1,7 @@
 """🌙 One close-of-day summary across the books: the due rule at alerts.day_summary_time, the message shape (one line
 per book with anything, value and the day's P&L in the same place), the facts read from each book's tables, the job
-(sent once, kind "summary" never held, recorded), the schedule row, and the two day lines it replaces (the options
-3:35 PM line and the flow day summary) no longer sent on their own while their data stays."""
+(sent once, kind "summary" never held, recorded), the schedule row, and the day line it replaces (the options
+3:35 PM line) no longer sent on its own while its data stays."""
 
 import json
 from datetime import datetime
@@ -28,9 +28,7 @@ def at(hh, mm, d=16):
 
 FULL = {"real": {"value": 308793.0, "today": -1702.0, "stops": ["LAURUSLABS"], "failed": 0, "tomorrow": {"buys": 3, "exits": 1}},
         "paper": [{"name": "E+", "value": 311153.0, "today": -1751.0, "stops": 1, "marks_at": "18:30"}],
-        "futures": {"tag": "paper", "value": 490311.0, "today": 3150.0, "lots": 2, "roll": "2026-11-19"},
         "options": {"tag": "paper", "value": 299417.0, "today": -583.0, "trades": 1, "result": "VWAP stop"},
-        "flow": {"kind": "signal", "trades": 3, "won": 1, "net": -435.0, "capital": 300000.0},
         "ai": {"ran": False, "after": "18:34", "parts": ["notes", "why", "suggestions", "ratings"]}}
 
 
@@ -72,9 +70,7 @@ def test_message_shape_every_book():
         "🌙 <b>Day summary · Mon 16 Nov</b>",
         "💰 Real · ₹3,08,793 · today −₹1,702 · 1 stop hit (LAURUSLABS) · 0 orders failed · tomorrow 3 BUYs 1 EXIT",
         "📝 Paper E+ · ₹3,11,153 · today −₹1,751 · 1 stop hit",
-        "📐 Futures · paper · ₹4,90,311 · today +₹3,150 · 2 lots · roll Thu",
         "🧩 Options · paper · ₹2,99,417 · today −₹583 · 1 trade · VWAP stop",
-        "⚡ Signal track · 3 trades · 1 won · net −₹435 on ₹3,00,000",
         "🤖 AI · tonight after 6:34 PM: notes, why, suggestions, ratings"]
 
 
@@ -112,19 +108,13 @@ def test_real_part_reads_value_today_stops_and_failed(cfg):
     assert daysum.real_part(cfg, DAY)["tomorrow"] == {"buys": 2, "exits": 1}
 
 
-def test_options_flow_and_ai_parts(cfg, monkeypatch):
+def test_options_and_ai_parts(cfg):
     with get_db() as conn:
         conn.execute("INSERT INTO options_days (day, payload) VALUES (?, ?)",
                      (DAY, json.dumps({"day": DAY, "trades": 1, "pnl": -583.0, "equity": 299417.0, "result": "VWAP stop", "why": "VWAP stop"})))
     assert daysum.options_part(cfg, DAY) == {"tag": "paper", "value": 299417.0, "today": -583.0, "trades": 1, "result": "VWAP stop", "afternoon": False}
     assert daysum.options_part(cfg, "2026-11-17") is None
-    assert daysum.flow_part(cfg, DAY) is None                                                # flow off
-    from backend.intraday import flow
-    cfg.flow.mode = "signals"
-    monkeypatch.setattr(flow, "_stats", lambda day: {"trades": 3, "won": 1, "realised": -435.0, "capital": 300000.0})
-    assert daysum.flow_part(cfg, DAY) == {"kind": "signal", "trades": 3, "won": 1, "net": -435.0, "capital": 300000.0}
-    monkeypatch.setattr(flow, "_stats", lambda day: {"trades": 0, "won": 0, "realised": 0.0, "capital": 300000.0})
-    assert daysum.flow_part(cfg, DAY) is None                                                # no trade: no line
+    assert [k for k, _ in daysum.PARTS] == ["real", "paper", "options", "ai"]                # no futures / flow part any more
     assert daysum.ai_part(cfg, DAY) is None                                                  # the AI off
     cfg.ai = AIConfig(enabled=True, why=False)
     assert daysum.ai_part(cfg, DAY) == {"ran": False, "after": "18:30", "parts": ["notes", "suggestions", "ratings"]}
@@ -136,7 +126,7 @@ def test_options_flow_and_ai_parts(cfg, monkeypatch):
 
 def test_a_failing_part_is_left_out(cfg, monkeypatch):
     seed_real()
-    monkeypatch.setattr(daysum, "PARTS", (("real", daysum.real_part), ("futures", lambda c, d: 1 / 0)))
+    monkeypatch.setattr(daysum, "PARTS", (("real", daysum.real_part), ("options", lambda c, d: 1 / 0)))
     assert set(daysum.parts(cfg, DAY)) == {"real"}
 
 
@@ -167,17 +157,6 @@ def test_nothing_to_report_sends_nothing(cfg):
     fake = FakeTG()
     out = Scheduler(st, notifier_factory=lambda c: Notifier(c, fake)).run_day_summary(at(15, 40))
     assert out["text"] is None and fake.sent == []
-
-
-def test_flow_day_summary_is_no_longer_sent_on_its_own(cfg):
-    st = LoginState()
-    st.config = cfg
-    fake = FakeTG()
-    sch = Scheduler(st, notifier_factory=lambda c: Notifier(c, fake))
-    sch._flow_alert("summary", {"trades": 3, "won": 1, "realised": -435.0, "capital": 300000.0})
-    assert fake.sent == []
-    sch._flow_alert("loss_limit", {"realised": -3000.0, "loss_limit": 3000.0})               # the other flow lines still go
-    assert len(fake.sent) == 1
 
 
 def test_schedule_row(cfg):

@@ -42,5 +42,5 @@ export function Spark({ values, h = 46, color = 'var(--ok)', dash = false }) {
     <polyline fill="none" stroke={color} strokeWidth="1.8" strokeDasharray={dash ? '4 3' : ''} vectorEffect="non-scaling-stroke" points={pts} /></svg>;
 }
 
-const ACCT_CLS = { real: 'g', intraday: 'b' };
+const ACCT_CLS = { real: 'g' };
 export const Acct = ({ book, name }) => <span className={`achip ${ACCT_CLS[book] || ''}`}>{name}</span>;
