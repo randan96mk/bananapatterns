@@ -2162,7 +2162,7 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
 - **Plan** (`plan.py`): "when comes" → wait for the zone (skipped at the time stop if it never comes, unless the channel
   later says active / cmp / enter); above / below → a trigger; otherwise at the market. Half at T1, the stop to cost,
   the rest at T2 (or riding target to target with the stop one behind once "trail" is on); option buys close at the
-  time stop (3:20 PM; MCX 11:20 PM); "Target 0" sells are held to expiry. After-hours / holiday hints are planned for
+  time stop (3:14 PM; MCX 11:20 PM); "Target 0" sells are held to expiry. After-hours / holiday hints are planned for
   the next open.
 - **Track** (`track.py`): the option contracts from the instruments dumps (NFO, BFO for SENSEX, **MCX for CRUDE**), once
   a day per exchange into `tips_instruments`; quotes every 5 s while a hint is open or waiting (60 s otherwise) into
@@ -2243,7 +2243,7 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   entry (strike / level changed → cancelled and logged; auto re-arms it). A stop revised before the entry ("210 revise
   sl 193") updates the plan's stop, and the stop placed on the fill uses it. "add more near 440" / "add 5 lots at 560"
   is never an order in any mode ("add-on ignored (never averaged)").
-- **Time stop**: a Kite position (click or auto) still open at the plan's time stop (`intraday_time_stop`, 3:20 PM) is
+- **Time stop**: a Kite position (click or auto) still open at the plan's time stop (`intraday_time_stop`, 3:14 PM) is
   exited at market by the sync, its resting stop / targets cancelled first; a hold-to-expiry sell (target 0) is not.
 - **Mode `auto`** (`backend/tips/kite_auto.py`): a hint that becomes placeable (a complete plan, a contract, a lot
   size; the post's lots else `tips.lots`, capped by `kite_max_lots`) is armed by the app with the same guards, plus
@@ -2340,7 +2340,7 @@ stays the morning dry-run skip.
 | `push_hints` | on | Every new hint pushed to Telegram at once (and "entry reached" for hints you have not taken). |
 | `push_followups` | on | Each channel follow-up pushed as one line. |
 | `auto_follow_channel_exit` | on | The paper book follows the channel's exit / SL hit / SL change / trail / partial booking for hints you took (you are told; not after you override). |
-| `intraday_time_stop` | 15:20 | Option buys still open are closed here (HH:MM; shown 12-hour); waiting hints that never filled are "no fill". |
+| `intraday_time_stop` | 15:14 | Option buys still open are closed here (HH:MM; shown 12-hour); waiting hints that never filled are "no fill". |
 | `partial_at_t1` | on | Half the position is booked at target 1 (the rest at target 2 or the trail). |
 | `trail_to_cost_after_t1` | on | After target 1 the stop moves to the entry price. |
 | `model_classify` | on | The local 3B model sorts the posts code could not place (hint / follow-up / chatter); it never sets a number. |

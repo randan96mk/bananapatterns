@@ -19,8 +19,8 @@ def mk(text, posted=None, exchange="NFO", expiry="2026-11-25", cfg=None):
 
 def test_plan_text_zone_when_comes():
     _, p = mk(BN12)
-    assert p["ok"] and p["wait"] and p["partial_at_t1"] and p["time_stop"] == "15:20" and p["day"] == "2026-11-17"
-    assert p["text"] == "wait for the zone · half out at 320, SL to cost, rest to 350 / trail · time stop 3:20 PM · skipped if the zone never comes"
+    assert p["ok"] and p["wait"] and p["partial_at_t1"] and p["time_stop"] == "15:14" and p["day"] == "2026-11-17"
+    assert p["text"] == "wait for the zone · half out at 320, SL to cost, rest to 350 / trail · time stop 3:14 PM · skipped if the zone never comes"
 
 
 def test_zone_waits_then_fills_at_the_quote():
@@ -35,7 +35,7 @@ def test_zone_never_comes_is_no_fill_at_the_time_stop():
     _, p = mk(BN12)
     run = pl.new_run(p)
     pl.step(run, p, 300, at("10:00"))
-    ev = pl.step(run, p, 310, at("15:20"))
+    ev = pl.step(run, p, 310, at("15:14"))
     assert ev[0]["kind"] == "no_fill" and run["end"] == "no_fill"
     assert pl.result(run, p, 15)["first"] == "no_fill"
 
@@ -83,7 +83,7 @@ def test_stop_and_time_stop():
     run2 = pl.new_run(p)
     pl.step(run2, p, 262, at("09:51"))
     pl.step(run2, p, 280, at("15:00"))
-    ev = pl.step(run2, p, 281, at("15:20"))
+    ev = pl.step(run2, p, 281, at("15:14"))
     assert ev[0]["kind"] == "time" and run2["exit_px"] == 281
 
 

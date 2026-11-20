@@ -82,7 +82,7 @@ def test_record_maths_and_thinning():
     tr.poll(c, w, at("10:31"))
     w.prices[KEY12] = 360.0
     tr.poll(c, w, at("10:40"))
-    tr.poll(c, w, at("15:20"))
+    tr.poll(c, w, at("15:14"))
     ha, hb, hs = bk.load(a), bk.load(b), bk.load(s)
     assert ha["score"]["first"] == "t1" and ha["ended"] == "t2"
     assert hb["score"]["first"] == "no_fill" and hb["ended"] == "no_fill"

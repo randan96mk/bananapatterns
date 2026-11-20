@@ -545,7 +545,7 @@ class TipsConfig:
     push_hints: bool = True                # every new hint pushed to Telegram at once
     push_followups: bool = True            # each channel follow-up pushed as one line
     auto_follow_channel_exit: bool = True  # the paper book follows the channel's own exit / SL hit / SL change (you are told)
-    intraday_time_stop: str = "15:20"      # option buys: anything still open is closed here (HH:MM; shown 12-hour)
+    intraday_time_stop: str = "15:14"      # option buys: anything still open is closed here (HH:MM; shown 12-hour); 3:14 PM, ahead of the 3:15 broker square-off window
     partial_at_t1: bool = True             # half the position booked at target 1
     trail_to_cost_after_t1: bool = True    # after target 1 the stop moves to the entry price
     model_classify: bool = True            # the local 3B model sorts the posts code could not place (hint / follow-up / chatter)
