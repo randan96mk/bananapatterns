@@ -9,16 +9,15 @@ def test_stream_once(monkeypatch):
     monkeypatch.setenv("BP_NO_SCHEDULER", "1")
     from backend import main
     with TestClient(main.app) as tc:
-        r = tc.get("/api/stream?topics=schedule,attention,kite,flow,flow_live,backtest,nope&once=1")
+        r = tc.get("/api/stream?topics=schedule,attention,kite,flow,flow_live,backtest,futures,nope&once=1")   # removed topics: ignored
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
         events = {}
         for block in r.text.split("\n\n"):
             lines = dict(x.split(": ", 1) for x in block.splitlines() if x.startswith(("event: ", "data: ")))
             if "event" in lines:
                 events[lines["event"]] = json.loads(lines["data"])
-        assert set(events) == {"schedule", "attention", "kite", "flow", "flow_live", "backtest"}
-        assert "jobs" in events["schedule"] and "nodes" in events["flow"] and "rows" in events["flow_live"]
-        assert events["backtest"]["state"] == "idle" and "has_token" in events["kite"]
+        assert set(events) == {"schedule", "attention", "kite"}
+        assert "jobs" in events["schedule"] and "has_token" in events["kite"]
 
 
 def test_overview_and_portfolio(monkeypatch):
@@ -28,7 +27,9 @@ def test_overview_and_portfolio(monkeypatch):
     from backend import main
     with TestClient(main.app) as tc:
         o = tc.get("/api/overview").json()
-        assert "intraday" in o["accounts"] and o["positions"] == [] and "today" in o
+        assert "intraday" not in o["accounts"] and "futures" not in o["accounts"] and o["positions"] == [] and "today" in o
+        assert o["feed"] == "close"
+        assert tc.get("/api/flow").status_code == 404 and tc.get("/api/futures").status_code == 404
         p = tc.get("/api/portfolio").json()
         assert set(p) == {"positions", "trades", "orders", "daily", "curves", "names"}
 
@@ -47,7 +48,7 @@ def test_overview_unifies_the_accounts(monkeypatch):
     sm = paper.summary(c)["accounts"]
     n_pos = sum(len(a["positions"]) for a in sm.values())
     assert len(o["positions"]) == n_pos and {p["book"] for p in o["positions"]} <= {"paper_E"}
-    assert set(o["accounts"]) >= {"paper_E", "intraday"} and o["accounts"]["paper_E"]["name"] == "Paper E+"
+    assert set(o["accounts"]) >= {"paper_E"} and "intraday" not in o["accounts"] and o["accounts"]["paper_E"]["name"] == "Paper E+"
     assert "paper_A" not in o["accounts"] and "paper_A" not in ov.NAMES and "A" not in ov.STRATEGY
     p = ov.portfolio(c, days=3650)
     assert len(p["trades"]) == sum(a["closed"] for a in sm.values()) and p["trades"][0]["closed"] >= p["trades"][-1]["closed"]

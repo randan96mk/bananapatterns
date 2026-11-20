@@ -5,7 +5,7 @@ later and the scorecard. The model writes ONLY the one-line `why` (≤ 180 chars
 note: no figure that is not in the evidence, no broker name. Nothing is ever acted on by the model: an accept runs the
 SAME code path as the hand action (the route's function, never HTTP) and only when the owner taps or replies.
 
-  candidates(config, now)        the rules: skip, exit, flag, hold_options, roll_or_exit, backtest (Sunday only)
+  candidates(config, now)        the rules: skip, exit, flag, hold_options
   enqueue_tonight(config, now)   one night job "suggest:<day>" through the queue (after the notes, FIFO)
   run_night(config, now)         outcomes scored, candidates born (the model's why per candidate), the evening list
   expire_open(now)               every scheduler tick: past expires_at -> expired (no tap)
@@ -33,10 +33,9 @@ logger = setup_logger("ai")
 
 PROMPT_V = "sugg-v1"
 WHY_MAX = 180
-KINDS = ("skip", "exit", "flag", "hold_options", "roll_or_exit", "backtest")
-ICON = {"skip": "⏸", "exit": "🚪", "flag": "🚩", "hold_options": "🧩", "roll_or_exit": "📐", "backtest": "🧪"}
-LABEL = {"skip": "skip", "exit": "exit", "flag": "flag", "hold_options": "hold options", "roll_or_exit": "roll or exit",
-         "backtest": "backtest"}
+KINDS = ("skip", "exit", "flag", "hold_options")
+ICON = {"skip": "⏸", "exit": "🚪", "flag": "🚩", "hold_options": "🧩"}
+LABEL = {"skip": "skip", "exit": "exit", "flag": "flag", "hold_options": "hold options"}
 CONFIDENCES = ("low", "medium", "high")
 REASONS = ("wrong", "knew", "later", "none")
 STATUSES = ("open", "accepted", "dismissed", "expired")
@@ -46,9 +45,6 @@ LATER_HOURS = 4
 OUTCOME_SESSIONS = 5
 DEAL_DISCOUNT = -3.0                             # a block / bulk deal this far under the close flags a planned name
 RESULTS_SESSIONS = 3
-THIN_OI = 0.2                                    # next month's OI under this share of the near month's = thin
-BACKTEST_OF, BACKTEST_MIN = 12, 8                # ≥ 8 of the last 12 stops hit within 1% and recovered -> "backtest stop cap +1%"
-STOP_NEAR_PCT, RECOVER_SESSIONS = 1.0, 5
 KEY_PREFIX = "suggest:"
 GEN_OPTIONS = {"temperature": 0.1, "num_predict": 120, "num_ctx": 1536, "top_p": 0.9}
 HIGH_CATEGORIES = ("pledge", "legal", "rating")  # a high note of these kinds: confidence high on a skip
@@ -168,7 +164,7 @@ def _paper_plan() -> dict[str, dict]:
 
 
 def _held() -> dict[str, dict]:
-    """{symbol: {book, qty, last, entry}} of every held name: Real, Paper, the cash guard, Futures. Real wins."""
+    """{symbol: {book, qty, last, entry}} of every held name: Real, Paper, the cash guard. Real wins."""
     out: dict[str, dict] = {}
     try:
         from backend.engine import real
@@ -189,14 +185,6 @@ def _held() -> dict[str, dict]:
             out.setdefault(p["symbol"], {"book": "paper", "qty": p.get("qty"), "last": p.get("last") or p.get("avg_price"), "entry": p.get("avg_price")})
     except Exception:
         logger.exception("suggest: guard positions")
-    try:
-        from backend.futures import book
-        for a in ((book._state() or {}).get("accounts") or {}).values():
-            for s, p in (a.get("positions") or {}).items():
-                out.setdefault(s, {"book": "futures", "qty": p["lots"] * p["lot_size"], "last": p.get("last") or p["entry"], "entry": p["entry"],
-                                   "side": p.get("side")})
-    except Exception:
-        logger.exception("suggest: futures positions")
     return out
 
 
@@ -229,10 +217,10 @@ def _skip_candidates(config: AppConfig, day: str, tomorrow: str, tonight: list[d
 
 
 def _exit_candidates(config: AppConfig, day: str, tomorrow: str, tonight: list[dict]) -> list[dict]:
-    """2 · `exit`: a held name (Real / Paper / Futures) with a high negative note tonight. The action navigates to the
+    """2 · `exit`: a held name (Real / Paper) with a high negative note tonight. The action navigates to the
     book's page (the exit is the row's own button; the AI never lowers a stop or sends an order)."""
     held = _held()
-    route = {"real": "portfolio/real", "paper": "portfolio/paper", "futures": "portfolio/futures"}
+    route = {"real": "portfolio/real", "paper": "portfolio/paper"}
     out = []
     for n in tonight:
         s = n["symbol"]
@@ -325,81 +313,6 @@ def _hold_options_candidates(config: AppConfig, day: str, tomorrow: str) -> list
              "confidence": "medium", "expires_at": _at(tomorrow, config.options.window_end), "note_id": None, "value": None, "for_day": tomorrow}]
 
 
-def _roll_candidates(config: AppConfig, day: str, tomorrow: str) -> list[dict]:
-    """5 · `roll_or_exit`: a futures lot due to roll tomorrow whose next month's OI is thin (< 20% of the near month),
-    or that trades below its entry. Note-only, with the roll queue line."""
-    from backend.futures import book, instruments
-    st = book._state()
-    if not st:
-        return []
-    out = []
-    for it in book.roll_queue(st, config, tomorrow)["items"]:
-        if not it.get("due"):
-            continue
-        s = it["symbol"]
-        pos = st["accounts"][it["account"]]["positions"][s]
-        c = instruments.contracts(s)
-        near_oi, next_oi = ((c.get("near") or {}).get("oi") or 0), ((c.get("next") or {}).get("oi") or 0)
-        thin = bool(near_oi) and next_oi < THIN_OI * near_oi
-        last, entry = book._last(pos), pos["entry"]
-        under = (last < entry) if pos["side"] == "long" else (last > entry)
-        if not (thin or under):
-            continue
-        ev = [{"icon": "📐", "text": f"roll queue: {it['action']} {s} {it['side']} ({it['why']}), {it['sessions']} session(s) to expiry, est. cost {it['est_cost']:,.0f}"}]
-        if thin:
-            ev.append({"icon": "📊", "text": f"next month OI {next_oi:,} vs near {near_oi:,}: thin"})
-        if under:
-            ev.append({"icon": "📉", "text": f"last {last:,.2f} vs entry {entry:,.2f}: {'below' if pos['side'] == 'long' else 'above'} entry"})
-        out.append({"kind": "roll_or_exit", "symbol": s, "book": "futures", "title": f"Roll or exit {s} tomorrow", "evidence": ev, "action": None,
-                    "confidence": "medium", "expires_at": _at(tomorrow, "09:20"), "note_id": None,
-                    "value": round(book._qty(pos) * last, 2), "for_day": tomorrow})
-    return out
-
-
-def _stop_trades(limit: int = BACKTEST_OF) -> list[dict]:
-    """The last `limit` stop exits of the futures and real books, newest first: {symbol, out, exit, stop, side}."""
-    rows = []
-    with get_db() as conn:
-        for table in ("futures_trades", "real_trades"):
-            for r in conn.execute(f"SELECT payload FROM {table} ORDER BY id DESC LIMIT 60"):
-                t = json.loads(r[0])
-                if str(t.get("why") or "").lower().startswith("stop"):
-                    rows.append({"symbol": t["symbol"], "out": t["out"], "exit": t.get("exit") or t.get("sell"), "stop": t.get("stop"),
-                                 "side": t.get("side") or "long"})
-    return sorted(rows, key=lambda t: t["out"], reverse=True)[:limit]
-
-
-def _recovered(t: dict) -> Optional[bool]:
-    """Stop hit within 1% of the stop, then the close 5 sessions later back past the exit (a stop that was too tight)."""
-    if not t.get("stop") or not t.get("exit") or abs(t["exit"] / t["stop"] - 1) * 100 > STOP_NEAR_PCT:
-        return False
-    bars = _close_series(t["symbol"], t["out"], RECOVER_SESSIONS + 1)
-    if len(bars) < RECOVER_SESSIONS + 1:
-        return None
-    later = bars[RECOVER_SESSIONS]["close"]
-    return later > t["exit"] if t["side"] == "long" else later < t["exit"]
-
-
-def _backtest_candidates(config: AppConfig, day: str, now: datetime) -> list[dict]:
-    """6 · `backtest` (Sunday night only): ≥ 8 of the last 12 stops hit within 1% then recovered within 5 sessions
-    -> "backtest stop cap +1%" with a prefill for the futures strategy page. No expiry, confidence low."""
-    if now.weekday() != 6:
-        return []
-    trades = _stop_trades()
-    flags = [_recovered(t) for t in trades]
-    n = sum(1 for f in flags if f)
-    if len(trades) < BACKTEST_OF or n < BACKTEST_MIN:
-        return []
-    cap = round(float(config.futures.max_stop_pct) + 1.0, 1)
-    ev = [{"icon": "🧪", "text": f"{n} of the last {len(trades)} stops were hit within {STOP_NEAR_PCT:g}% of the stop and recovered within {RECOVER_SESSIONS} sessions"},
-          {"icon": "⚙️", "text": f"stop cap now {config.futures.max_stop_pct:g}%, roll mode {config.futures.roll_mode}"}]
-    return [{"kind": "backtest", "symbol": "", "book": "futures", "title": f"Backtest a stop cap of {cap:g}%", "evidence": ev,
-             "action": {"label": "Open the futures strategy", "path": "ui", "route": "strategies/futures",
-                        "prefill": {"max_stop_pct": cap, "roll_mode": config.futures.roll_mode},
-                        "confirm_text": "Open the futures strategy page with the stop cap prefilled; nothing changes until you run the backtest."},
-             "confidence": "low", "expires_at": None, "note_id": None, "value": None, "for_day": None}]
-
-
 def candidates(config: AppConfig, now: Optional[datetime] = None) -> list[dict]:
     """Every candidate of the night in kind order, muted kinds left out, one per symbol (the first kind wins)."""
     from backend.engine import real
@@ -412,9 +325,7 @@ def candidates(config: AppConfig, now: Optional[datetime] = None) -> list[dict]:
     for kind, fn in (("skip", lambda: _skip_candidates(config, day, tomorrow, tonight)),
                      ("exit", lambda: _exit_candidates(config, day, tomorrow, tonight)),
                      ("flag", lambda: _flag_candidates(config, day, tomorrow, tonight)),
-                     ("hold_options", lambda: _hold_options_candidates(config, day, tomorrow)),
-                     ("roll_or_exit", lambda: _roll_candidates(config, day, tomorrow)),
-                     ("backtest", lambda: _backtest_candidates(config, day, now))):
+                     ("hold_options", lambda: _hold_options_candidates(config, day, tomorrow))):
         if kind in muted:
             continue
         try:
@@ -746,11 +657,11 @@ def _nifty_range(day: str) -> Optional[float]:
 def outcome_for(s: dict, today: Optional[str] = None) -> Optional[dict]:
     """{at, pct_move, helped, rs, note} five sessions after `day`, or None while the bars are not there yet.
     pct_move = close(day + 5 sessions) / close(day) − 1. helped: skip / exit / flag when the stock fell ≥ 1%;
-    hold_options when NIFTY's range on the target day was > 1.5%; roll_or_exit when the underlying moved against the
-    lot; backtest: null. rs = the move × the planned / held value, signed so that a positive rupee figure means the
+    hold_options when NIFTY's range on the target day was > 1.5%; a kind no longer made (the futures roll_or_exit and
+    backtest): no market outcome. rs = the move × the planned / held value, signed so that a positive rupee figure means the
     suggestion would have saved money."""
     kind, sym = s["kind"], s["symbol"]
-    if kind == "backtest":
+    if kind not in KINDS:
         return {"at": now_ist(), "pct_move": None, "helped": None, "rs": None, "note": "a settings idea: no market outcome"}
     if kind == "hold_options":
         rng = _nifty_range(s["for_day"] or s["day"])
@@ -762,12 +673,6 @@ def outcome_for(s: dict, today: Optional[str] = None) -> Optional[dict]:
         return None
     pct = round((bars[OUTCOME_SESSIONS]["close"] / bars[0]["close"] - 1) * 100, 2)
     value = s.get("value") or 0.0
-    if kind == "roll_or_exit":
-        side = ((s.get("evidence") or [{}])[0].get("text") or "").split()
-        short = " short " in f" {' '.join(side)} "
-        against = pct > 0 if short else pct < 0
-        return {"at": now_ist(), "pct_move": pct, "helped": against, "rs": round((pct if short else -pct) / 100 * value, 2) if value else None,
-                "note": f"{sym} moved {pct:+.2f}% in {OUTCOME_SESSIONS} sessions"}
     return {"at": now_ist(), "pct_move": pct, "helped": pct <= -1.0, "rs": round(-pct / 100 * value, 2) if value else None,
             "note": f"{sym} moved {pct:+.2f}% in {OUTCOME_SESSIONS} sessions"}
 
@@ -812,7 +717,8 @@ def list_suggestions(status: Optional[str] = None, limit: int = 50, kind: Option
 
 
 def open_suggestions() -> list[dict]:
-    return list_suggestions("open", 100)
+    """The open suggestions of the kinds still made (an old futures roll_or_exit / backtest row stays as history)."""
+    return [s for s in list_suggestions("open", 100) if s["kind"] in KINDS]
 
 
 def open_flags(day: str) -> dict[str, str]:
@@ -847,6 +753,8 @@ def scorecard(month: Optional[str] = None, config: Optional[AppConfig] = None) -
     tot = {"month": month, "made": 0, "accepted": 0, "dismissed": 0, "expired": 0, "accepted_outcome_rs": 0.0, "dismissed_outcome_rs": 0.0,
            "best_kind": None}
     for s in rows:
+        if s["kind"] not in kinds:                 # a kind no longer made (futures roll_or_exit / backtest)
+            continue
         k = kinds[s["kind"]]
         k["made"] += 1
         k[s["status"]] += 1
@@ -871,6 +779,6 @@ def scorecard(month: Optional[str] = None, config: Optional[AppConfig] = None) -
 
 def attention_items(config: AppConfig) -> list[tuple[str, str]]:
     """The "ai" tab: every open high-confidence suggestion as a warn line."""
-    return [("warn", f"🤖 #{s['id']} {LABEL[s['kind']]} {s['symbol']} · {s['title']}".replace("  ", " ")) for s in open_suggestions()
+    return [("warn", f"🤖 #{s['id']} {LABEL.get(s['kind'], s['kind'])} {s['symbol']} · {s['title']}".replace("  ", " ")) for s in open_suggestions()
             if s["confidence"] == "high"]
 

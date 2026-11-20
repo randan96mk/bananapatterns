@@ -159,7 +159,7 @@ export function AiViewRecord({ view, phone, onChanged }) {
   const unlocked = !!(g(rec, 'unlocked') ?? RS.unlocked ?? (sw.locked === false));
   const act = (key, p) => { setBusy(key); p.then(() => { setErr(''); setTick((t) => t + 1); onChanged && onChanged(); }).catch((e) => setErr(e.message)).finally(() => setBusy('')); };
   const flip = (k, label, on) => { if (window.confirm(on ? `Switch "${label}" on?\n\nIt changes nothing until the next plan; the stop and the trail stay as the rules set them. You can switch it off any time.` : `Switch "${label}" off?\n\nThe plan goes back to the rules alone.`)) act(k, api.putAiSettings({ [k]: on })); };
-  const run = () => { if (window.confirm("Rate tonight's names now?\n\nThe plan, held, futures, Follow and Screens names go into the AI queue (one model call each, ~10 s a name). The guard still decides when each runs; nothing is sent or changed.")) act('run', api.aiViewRun()); };
+  const run = () => { if (window.confirm("Rate tonight's names now?\n\nThe plan, held, Follow and Screens names go into the AI queue (one model call each, ~10 s a name). The guard still decides when each runs; nothing is sent or changed.")) act('run', api.aiViewRun()); };
   const byV = g(rec, 'by_verdict', 'verdicts') || {};
   const vrow = (k) => (Array.isArray(byV) ? byV.find((x) => x.verdict === k) : byV[k]);
   const base = g(rec, 'baseline', 'plan_baseline') || {};
@@ -205,7 +205,7 @@ export function AiViewRecord({ view, phone, onChanged }) {
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ ...LN, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={last ? `tonight ${last.n ?? 0} rated` : undefined}>{last ? <>tonight: <b className="mono">{last.n ?? 0}</b> rated{last.by_verdict ? ` · ${Object.entries(last.by_verdict).map(([k, n]) => `${n} ${k}`).join(' · ')}` : ''}{last.ms_total ? ` · ${Math.round(last.ms_total / 1000)} s` : ''}{last.at ? ` · ${stamp(last.at)}` : ''}</>
-          : <span className="muted">no ratings yet · the night job rates the plan, held, futures, Follow and Screens names after the suggestions</span>}</div>
+          : <span className="muted">no ratings yet · the night job rates the plan, held, Follow and Screens names after the suggestions</span>}</div>
         {SW.map(([k, label, what]) => { const on = !!(sw[k] ?? sw[k.replace('view_', '')]); const locked = !unlocked && !on;
           return <div key={k} style={{ display: 'flex', gap: 10, alignItems: 'center', ...LN }}>
             <Switch on={on} disabled={!!busy || locked} title={locked ? `locked until the record unlocks it: ${unlockText}` : on ? 'on · click to switch off' : 'click to switch on'} onChange={(x) => flip(k, label, x)} />

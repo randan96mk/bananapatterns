@@ -90,7 +90,7 @@ def test_stops_orders_login_and_plain_filings_at_2_am_are_not_held(cfg, clock):
     fake = FakeTG()
     n = notifier(cfg, fake)
     assert n.send("stop", "real", "🛡️ stop hit") and n.send("login", "login", "🔑 log in") and n.send("sys", "system", "Kite login needed")
-    assert n.send("fil", "filing", "📊 a filing") and n.send("flow", "flow", "⚡ exit")
+    assert n.send("fil", "filing", "📊 a filing") and n.send("tip", "tips", "💡 a tip")
     assert len(fake.sent) == 5 and outbox() == []
     assert n.send("sum", "summary", "🌙 day", quiet=True) and outbox() == []               # a never-held kind wins over the flag
 

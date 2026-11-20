@@ -26,12 +26,12 @@ const pretty = (name) => { const m = /^qwen(\d(?:\.\d)?):(\d+)b/i.exec(name || '
 const STATUS_TAG = { done: 'ok', failed: 'bad', running: 'a', queued: '', skipped: 'w' };
 const SEV_TAG = { high: 'bad', medium: 'w' };                                    // low / info stay muted
 const KIND_ICON = { filing: '📰', deal: '💬', why: '🧾', brief: '☀️' };
-const BOOKN = { real: 'Real', paper: 'Paper', futures: 'Futures', options: 'Options' };
+const BOOKN = { real: 'Real', paper: 'Paper', options: 'Options' };
 // 🤖 suggestions: the kinds as the backend names them (backend/ai/suggest.py KINDS / ICON) with the scorecard's words
 const SKINDS = [['skip', '⏸', 'Skip a planned name', 'pledge, deal, results miss'], ['exit', '🚪', 'Exit a held name early', 'bad filing'], ['flag', '🚩', 'Flag on the dry run', 'deal, results near'],
-  ['hold_options', '🧩', 'Hold the options book', 'event day, VIX jump'], ['roll_or_exit', '📐', 'Roll vs exit at T-2', 'thin next month, basis, below entry'], ['backtest', '🧪', 'Backtest a setting', 'Sunday night, from the week\'s stops']];
+  ['hold_options', '🧩', 'Hold the options book', 'event day, VIX jump']];
 const SLABEL = Object.fromEntries(SKINDS.map(([k, , l]) => [k, l]));
-const HOW = [['A note is written (filing, deal, results, trade why, roll check)', 'from rows already stored · the night model · tagged AI'],
+const HOW = [['A note is written (filing, deal, results, trade why)', 'from rows already stored · the night model · tagged AI'],
   ['Code asks: does this note touch a planned, held or watched name, or a rule?', 'no match → stays a note only'],
   ['A suggestion template is filled: kind, action, expiry, the evidence rows', 'the model writes only the "why" sentence'],
   ['It appears on Home, in the AI chip, on Telegram', 'tap ✓ → the existing confirm dialog · ✗ → recorded with a reason'],
@@ -326,7 +326,7 @@ export default function AiPage() {
         <Panel id="ask" title="Ask the app" meta={phone ? 'read-only' : `answers from your data · ${pretty(st.day_model)} · read-only`} right={d.asks?.today ? <Meta>{d.asks.today} asked today</Meta> : null}>
           <div style={{ display: 'flex', gap: 8, padding: '10px 14px 4px', alignItems: 'center', minWidth: 0 }}>
             <input className="input" style={{ flex: 1, minWidth: 0 }} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !busy && !askOff) ask(); }} disabled={!!askOff}
-              placeholder={askOff || 'why did we skip NMDC on Thursday? · what is near its stop? · how did futures do this week?'} aria-label="ask the app" />
+              placeholder={askOff || 'why did we skip NMDC on Thursday? · what is near its stop? · how did options do this week?'} aria-label="ask the app" />
             <button type="button" className="btn primary small" disabled={!!busy || !!askOff || !q.trim()} onClick={ask} title={askOff || 'one question → one read-only tool → the answer · up to 60 s'}>{busy === 'ask' ? 'Thinking…' : 'Ask'}</button></div>
           {ans && <AskRow a={ans} big />}
           {!ans && !asks.length && <p className="muted small rempty">Nothing asked yet · it answers from the app's own data: plans, positions, trades, filings, notes, backtests.</p>}

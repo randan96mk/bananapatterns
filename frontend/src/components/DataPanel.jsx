@@ -167,7 +167,7 @@ export default function DataPanel({ hasToken, onDataChanged }) {
       </Panel>
       {h && <Panel title="Storage">
         <KV pairs={[['Database', disk?.detail?.replace(/^database /, '') || '—'], ['Free disk', disk?.state || '—'],
-          ['Daily candles', chk('candles')?.detail || '—'], ['1-minute candles', chk('intraday')?.state || '—'], ['Splits / bonuses', chk('corp')?.state || '—']]} />
+          ['Daily candles', chk('candles')?.detail || '—'], ['Splits / bonuses', chk('corp')?.state || '—']]} />
       </Panel>}
     </div></div>
   </div>;

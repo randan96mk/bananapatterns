@@ -78,7 +78,8 @@ def bars(sym, prev_close, open_, close, token=None, industry=None):
 
 
 def seed_books():
-    """One trade closed today in each book (and one real trade closed earlier), the bars and a filing."""
+    """One trade closed today in each book (and one real trade closed earlier), the bars and a filing; plus a row in
+    the kept futures_trades table (history after the Futures removal: never read)."""
     ids = {"real": trade("real_trades", {"symbol": "RT", "qty": 10, "in": "2026-11-03", "out": DAY, "buy": 1000.0, "sell": 940.0, "stop": 940.0, "days": 10,
                                          "gross": -600.0, "costs": 20.0, "net": -620.0, "why": "stop hit", "best": 1050.0}),
            "old": trade("real_trades", {"symbol": "OLD", "qty": 5, "in": "2026-10-03", "out": PREV, "buy": 100.0, "sell": 110.0, "stop": 95.0, "days": 30,
@@ -107,15 +108,13 @@ def seed_books():
 
 # --- what closed, what moved ------------------------------------------------------------------------------------------------------
 
-def test_closed_today_normalises_the_four_books():
+def test_closed_today_normalises_the_three_books():
     ids = seed_books()
     rows = {t["book"]: t for t in why.closed_today(DAY)}
-    assert set(rows) == {"real", "paper", "futures", "options"}
+    assert set(rows) == {"real", "paper", "options"}                                            # the kept futures_trades row is not read
     r = rows["real"]
     assert (r["key"], r["symbol"], r["entry"], r["exit"], r["net"], r["label"], r["stop"]) == (f"real:{ids['real']}", "RT", 1000.0, 940.0, -620.0, "stop hit", 940.0)
     assert rows["paper"]["key"] == f"paper:{ids['paper']}" and rows["paper"]["why"] == "close under SMA50" and rows["paper"]["side"] == "long"
-    f = rows["futures"]
-    assert f["side"] == "short" and f["extra"] == {"account": "paper", "contract": "FT26NOVFUT", "rolls": 0} and f["qty"] == 500
     o = rows["options"]
     assert o["symbol"] == "NIFTY" and o["extra"]["bias"] == "bear" and o["extra"]["strike"] == 25500 and o["label"] == "premium stop" and o["out"] == "11:20 AM"
     assert why.closed_today("2026-11-10") == []
@@ -152,15 +151,13 @@ def test_evidence_lines_for_a_cash_trade(cfg):
     assert "Quote only the numbers above" in why.prompt(t, why.evidence(t, DAY, cfg)) and "Trade: RT · real · stop hit" in why.prompt(t, [])
 
 
-def test_evidence_for_options_and_futures_and_the_ai_note_title(cfg):
+def test_evidence_for_options_and_the_ai_note_title(cfg):
     seed_books()
     rows = {t["book"]: t for t in why.closed_today(DAY)}
     ev = [e["text"] for e in why.evidence(rows["options"], DAY, cfg)]
     assert ev[0] == ("options spread: bear bias, score 2, sold 25,500 CE; credit 60.0, bought back at 92.0; ended: premium stop at 11:20 AM; net -2,450; "
                      "spot 25,400 -> 25,620")
     assert ev[1] == "NIFTY closed +2.40% today" and len(ev) == 2                               # no stock lines for an index spread
-    ev = [e["text"] for e in why.evidence(rows["futures"], DAY, cfg)]
-    assert ev[0].startswith("futures trade short: 500 from 200.00 (2026-11-12) to 206.00") and ev[1] == "FT today: opened +1.50% vs the previous close, closed +3.00%"
     with get_db() as conn:                                                                      # a filing with an AI note: the note's title stands in
         conn.execute("INSERT INTO ai_notes (created, day, kind, symbol, severity, title, text, data, prompt_version, source_key) VALUES (?, ?, 'filing', 'RT', 'high', "
                      "'Q2 loss widens', 'l', '{}', ?, '77')", (now_ist(), PREV, notes.PROMPT_V))
@@ -190,9 +187,9 @@ def test_run_night_writes_rows_and_the_evening_message_once(ollama, cfg):
     bars("GAP", 100.0, 97.5, 99.0)
     fake = FakeTG()
     out = why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
-    assert out == {"tokens": 45, "note": "5 why line(s) · 0 failed"} and len(ollama.calls) == 5
+    assert out == {"tokens": 36, "note": "4 why line(s) · 0 failed"} and len(ollama.calls) == 4
     rows = notes.list_notes(kind="why")["rows"]
-    assert rows and {r["symbol"] for r in rows} == {"RT", "PT", "FT", "NIFTY", "GAP"} and all(r["severity"] == "info" and r["prompt_version"] == "why-v1" for r in rows)
+    assert rows and {r["symbol"] for r in rows} == {"RT", "PT", "NIFTY", "GAP"} and all(r["severity"] == "info" and r["prompt_version"] == "why-v1" for r in rows)
     r = next(x for x in rows if x["symbol"] == "RT")
     assert r["title"] == "RT · stop hit" and r["text"].startswith("likely cause: the stock gapped -2.10%") and r["source_key"] == f"real:{ids['real']}"
     assert r["numbers_checked"] is True and r["book"] == "real" and r["alerted"] is True and r["day"] == DAY
@@ -203,7 +200,7 @@ def test_run_night_writes_rows_and_the_evening_message_once(ollama, cfg):
     assert len(fake.sent) == 1
     text = fake.sent[0][1]
     assert text.startswith("🧾 <b>[AI] Today's exits, explained</b> · Tue 17 Nov") and "💰 <b>RT</b> · stop hit · −₹620\n   🤖 <i>AI ·</i> <i>likely cause:" in text
-    assert "🧩 <b>NIFTY</b> · premium stop · −₹2,450" in text and "📐 <b>FT</b>" in text and "GAP" not in text and "no action taken" in text
+    assert "🧩 <b>NIFTY</b> · premium stop · −₹2,450" in text and "<b>FT</b>" not in text and "GAP" not in text and "no action taken" in text
     assert no_brokers(text)
     assert why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake)) == {"skip": f"nothing closed or moved on {DAY}"} and len(fake.sent) == 1
     assert why.run_night(cfg, datetime(2026, 11, 10, 21, 0, tzinfo=IST))["skip"].startswith("nothing closed")
@@ -211,10 +208,10 @@ def test_run_night_writes_rows_and_the_evening_message_once(ollama, cfg):
 
 def test_run_night_skips_an_item_the_model_cannot_explain(ollama, cfg):
     seed_books()
-    ollama.reply = ["bad", "bad", LINE, LINE, LINE, LINE]                                        # the first item: invalid twice -> skipped
+    ollama.reply = ["bad", "bad", LINE, LINE, LINE]                                              # the first item: invalid twice -> skipped
     fake = FakeTG()
     out = why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
-    assert out["note"] == "3 why line(s) · 1 failed" and len(notes.list_notes(kind="why")["rows"]) == 3 and len(fake.sent) == 1
+    assert out["note"] == "2 why line(s) · 1 failed" and len(notes.list_notes(kind="why")["rows"]) == 2 and len(fake.sent) == 1
     assert "<b>RT</b>" not in fake.sent[0][1]
 
 
@@ -235,7 +232,7 @@ def test_evening_message_without_the_switch_still_writes_rows(ollama, cfg):
     cfg.ai.why = False
     fake = FakeTG()
     why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))                                      # the job was queued before the switch went off
-    assert len(notes.list_notes(kind="why")["rows"]) == 4 and fake.sent == []
+    assert len(notes.list_notes(kind="why")["rows"]) == 3 and fake.sent == []
 
 
 # --- on the pages ---------------------------------------------------------------------------------------------------------------------------------
@@ -253,16 +250,14 @@ def test_attach_on_the_trade_tables(ollama, cfg):
     assert by[ids["real"]]["ai_why"]["text"].startswith("likely cause:") and by[ids["old"]]["ai_why"] is None
     from backend.options import book as obook
     assert obook.trades(5)[0]["id"] == ids["options"] and obook._ai_why(obook.trades(5))[0]["ai_why"]["text"].startswith("likely cause:")
-    from backend.futures import book as fbook
-    assert fbook._ai_why(fbook._trades())[0]["ai_why"]["text"].startswith("likely cause:")
 
 
 def test_evening_message_text():
     rows = [{"book": "paper", "symbol": "PT", "text": "likely cause: <b>x</b>", "trade": {"label": "close under SMA50", "net": 390.0}},
-            {"book": "futures", "symbol": "FT", "text": "likely cause: y", "data": {"trade": {"label": "stop hit", "net": -3100.0}}}]
+            {"book": "options", "symbol": "NIFTY", "text": "likely cause: y", "data": {"trade": {"label": "premium stop", "net": -2450.0}}}]
     text = msg.ai_why_evening(rows, "2026-11-17")
     assert text.split("\n") == ["🧾 <b>[AI] Today's exits, explained</b> · Tue 17 Nov", "📝 <b>PT</b> · close under SMA50 · +₹390", "   🤖 <i>AI ·</i> <i>likely cause: &lt;b&gt;x&lt;/b&gt;</i>",
-                                "📐 <b>FT</b> · stop hit · −₹3,100", "   🤖 <i>AI ·</i> <i>likely cause: y</i>",
+                                "🧩 <b>NIFTY</b> · premium stop · −₹2,450", "   🤖 <i>AI ·</i> <i>likely cause: y</i>",
                                 "<i>written from the trade rows, the day's bars and the filings · no action taken</i>"]
 
 

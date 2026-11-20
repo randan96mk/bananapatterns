@@ -1,5 +1,5 @@
 // 📡 One live connection for the whole page (GET /api/stream, server-sent events) and one shared store: every
-// panel showing the same data (schedule, attention, Kite, the flow, live prices, backtest progress) reads it from
+// panel showing the same data (schedule, attention, Kite, the overview, the books, live prices) reads it from
 // here, instead of each polling on its own timer. The connection carries only the topics on screen, and the server
 // sends a topic only when it changes. If the connection drops, the browser reconnects by itself.
 import { useEffect, useState } from 'react';

@@ -74,10 +74,10 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['real', 'paper', 'futures', 'options', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest', 'maintenance'];
-const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', futures: 'Stock futures', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest', maintenance: '🧹 Archive' };
+const SECTIONS = ['real', 'paper', 'options', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest', 'maintenance'];
+const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest', maintenance: '🧹 Archive' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
-const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], futures: ['long_real', 'short_real', 'roll_mode'], options: ['real'], ai: ['enabled'] };
+const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], options: ['real'], ai: ['enabled'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
   max_buys_per_day: 'New BUYs per day at most', results_guard_sessions: 'Pre-skip a BUY whose results fall within this many sessions (0 = off)', max_pos: 'Max open positions · position size = value ÷ this',
   // 💰 fill confirmation (after the 18 Nov incident): no EXIT is ever sent for a BUY whose fill is not confirmed
@@ -109,13 +109,13 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   notes_per_night: 'Filing / deal notes a night at most (held names first, then the plan, then the watchlist)', note_days: 'How many days back the notes job reads filings and deals (the first run too)',
   // 🤖 PR 3: suggestions, the trade "why" line, the morning brief, ask the app
   max_suggestions_open: 'Open suggestions at most (1-50); beyond it the night keeps its candidates for another night · each open one expires on its own time',
-  suggest_muted: 'Suggestion kinds never born, comma-separated: skip, exit, flag, hold_options, roll_or_exit, backtest (the switches on System → AI → Scorecard set the same list)',
-  why: 'The nightly "why" line under every trade closed today (Real, Paper, Futures, Options) and the evening "exits, explained" message (true/false)',
+  suggest_muted: 'Suggestion kinds never born, comma-separated: skip, exit, flag, hold_options (the switches on System → AI → Scorecard set the same list)',
+  why: 'The nightly "why" line under every trade closed today (Real, Paper, Options) and the evening "exits, explained" message (true/false)',
   brief: 'The morning brief on trading days: ≤ 5 lines from the plans, the books and the night\'s notes; one Telegram message, kept as a note (true/false)',
   brief_time: 'When the brief is written (24-hour HH:MM, IST); its window runs to 9:15 AM (before the 9:16 send), the night model, one call',
   ask: '"Ask the app": the day model picks one read-only tool, code runs it, the model answers from its result · any time of day, never on the trading path (true/false)',
   // 🤖 the AI view: a rating beside every system-suggested stock (it rates and explains, never acts)
-  view_enabled: 'Rate the plan, held, futures plan, Follow and Screens names every evening with the night model (true/false)',
+  view_enabled: 'Rate the plan, held, Follow and Screens names every evening with the night model (true/false)',
   view_rate_held: 'Also re-rate the held names: hold / trim / exit-watch (true/false)',
   view_rank_by_score: 'Ties in the plan (same breakout rank) ordered by the AI score · locked until the record beats the plan baseline 4 weeks in a row (true/false)',
   view_size_by_score: 'BUY qty = rule qty × 0.5–1.0 by the AI score, never above the rule size, never a skip · locked the same way (true/false)',
@@ -123,13 +123,13 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
   view_exit_watch_alert: 'An alert when a held name closes under the model\'s "setup fails below" level · a flag only, never an exit · locked the same way (true/false)',
   view_score_buy: 'Verdict buy at or above this score (hold for a held name); set by code from the score, not by the model',
   view_score_avoid: 'Verdict avoid under this score (exit-watch for a held name); in between = wait / trim',
-  view_max_per_night: 'Names rated a night at most (plan first, then held, futures, Follow, Screens; ~10 s a name)',
+  view_max_per_night: 'Names rated a night at most (plan first, then held, Follow, Screens; ~10 s a name)',
   // 🤖 quiet hours on Telegram: AI messages inside the window are held and sent together at its end (or with the brief)
   quiet_from: 'AI messages on Telegram are held from here (24-hour HH:MM, IST; "" = never held) · stops, orders, Kite login and the brief are never held',
   quiet_to: '… until here; the held AI messages then go out in order, after one "held overnight · n messages" line' };
 // 🌙 the one close-of-day Telegram summary across all the books (alerts section)
 Object.assign(HELP_AI, {
-  day_summary: 'One close-of-day Telegram summary across all the books (Real, Paper E+, Futures, Options, Signal track, AI) on trading days; replaces the separate options and signal-track day lines (true/false)',
+  day_summary: 'One close-of-day Telegram summary across all the books (Real, Paper E+, Options, AI) on trading days; replaces the separate options day line (true/false)',
   day_summary_time: 'When the day summary is sent (24-hour HH:MM, IST)' });
 // 📖 the Week story page (Portfolio › Week)
 Object.assign(HELP_AI, {

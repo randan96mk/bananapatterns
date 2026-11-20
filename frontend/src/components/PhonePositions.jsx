@@ -5,13 +5,13 @@ import AiDot from './AiDot';
 import { viewOf, AiView, aiChanged, tone } from './AiView';
 
 // 📱 Home's open positions on a phone (≤ 760 px): one scrollable chip line (filter + sort) and a book picker, a
-// "net · worst case" line, one 44 px fold row per book (Real open by default, Paper E+ and Intraday folded; the
+// "net · worst case" line, one 44 px fold row per book (Real open by default, Paper E+ and Options folded; the
 // fold state is remembered), and inside it one fixed 46 px row per stock: name + "qty · now" | P&L + % | a 56 px
 // stop meter + distance. 10 rows then "show n more"; tapping a row opens a details block (entry, stop, days, trail,
 // results) with chart / ✎ edit (Real) / page buttons. Styles are inline: nothing here depends on a number's length.
-const BOOKS = [['real', 'Real', 'real'], ['paper_E', 'Paper E+', 'paper'], ['futures', 'Futures', 'futures'], ['options', 'Options', 'options'], ['intraday', 'Intraday', 'flow']];
+const BOOKS = [['real', 'Real', 'real'], ['paper_E', 'Paper E+', 'paper'], ['options', 'Options', 'options']];
 const FOLDS = 'bp.home.folds';
-const readFolds = () => { try { return { real: true, paper_E: false, intraday: false, ...JSON.parse(localStorage.getItem(FOLDS) || '{}') }; } catch { return { real: true, paper_E: false, intraday: false }; } };
+const readFolds = () => { try { return { real: true, paper_E: false, ...JSON.parse(localStorage.getItem(FOLDS) || '{}') }; } catch { return { real: true, paper_E: false }; } };
 const dayName = (s) => (s ? new Date(s.length > 10 ? s : `${s}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—');
 const daysSince = (s) => (s ? Math.max(0, Math.round((Date.now() - new Date(`${s.slice(0, 10)}T00:00:00`)) / 86400000)) : null);
 const ELL = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 };
@@ -67,7 +67,7 @@ export default function PhonePositions({ positions, groups, counts, filter, setF
     {BOOKS.map(([b, name]) => { const ps = byBook[b] || [], every = all(b), on = !!folds[b], shown = more[b] ? ps : ps.slice(0, 10);
       const bookNet = every.reduce((a, p) => a + (p.pnl || 0), 0), inUse = every.reduce((a, p) => a + (p.entry || 0) * (p.qty || 0), 0);
       const near = every.filter((p) => p.stop_dist != null && p.stop_dist < 2).length;
-      const sub = b === 'intraday' ? (every.length ? `${every.length} open · out by 3:15 pm` : 'out by 3:15 pm') : b === 'options' ? (every.length ? `${every.length} legs · out by 3:10 pm` : 'out by 3:10 pm') : near ? `${near} near stop` : b === 'paper_E' && every.length && every.every((p) => !differs(p)) ? 'same names as Real' : every.length ? 'none near a stop' : 'nothing open';
+      const sub = b === 'options' ? (every.length ? `${every.length} legs · out by 3:10 pm` : 'out by 3:10 pm') : near ? `${near} near stop` : b === 'paper_E' && every.length && every.every((p) => !differs(p)) ? 'same names as Real' : every.length ? 'none near a stop' : 'nothing open';
       return <div key={b}>
         <div className="pfold" data-book={b} data-open={on ? '1' : '0'} role="button" onClick={() => setFolds(b)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', height: 44, borderBottom: '1px solid var(--rowline)', cursor: 'pointer' }}>
           <span style={{ width: 12, color: 'var(--muted)' }}>{on ? '▾' : '▸'}</span><b style={{ fontSize: 13 }}>{name}</b>

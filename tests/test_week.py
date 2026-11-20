@@ -1,6 +1,6 @@
 """📖 The Week page and the week's story: the week's bounds, the aggregation across the books (Real, Paper E+,
-Futures, Options, the signal track), by day, by book, the curve normalised to the week's start against NIFTY, best /
-worst with the AI score at entry, suggestions, the AI view record, the backtest hint, a week with no trades; the
+Options; the kept futures_trades / flow_positions rows are never read), by day, by book, the curve normalised to the
+week's start against NIFTY, best / worst with the AI score at entry, suggestions, the AI view record, a week with no trades; the
 observations' validation (a figure not in the facts stripped, an empty line dropped, ≤ 3, no broker), the ONE ai_notes
 row and its UNIQUE guard, the Sunday job and the guard's Sunday window, the catch-up after the ratings, "Write now"
 (409 while running), the Telegram message (AI marker, 12-hour), the API shapes. Fake Ollama; no network."""
@@ -74,7 +74,8 @@ def cash(table, sym, buy, sell, net, d_in, d_out, why="stop", account=None):
 
 
 def seed_trades():
-    """Five trades in W46 across the books, one Paper trade of another account and one trade the week after (both out)."""
+    """Four trades in W46 across the books, one Paper trade of another account and one trade the week after (both out),
+    plus rows in the kept futures_trades / flow_positions tables (history after the removal: never read)."""
     cash("real_trades", "TCS", 4000, 4400, 4000.0, "2026-11-06", WED, "target")
     cash("real_trades", "INFY", 1500, 1350, -1500.0, TUE, FRI, "stop")
     cash("paper_trades", "TCS", 4000, 4300, 2500.0, "2026-11-06", WED, "trail", account="E")
@@ -111,18 +112,17 @@ def test_week_bounds_and_parse():
 def test_aggregation_across_books():
     seed_trades()
     p = wk.week(W, TODAY)
-    assert p["totals"]["net"] == 6100.0 and p["totals"]["trades"] == 6 and p["totals"]["won"] == 4
+    assert p["totals"]["net"] == 6200.0 and p["totals"]["trades"] == 4 and p["totals"]["won"] == 3
     books = {b["book"]: (b["net"], b["trades"], b["won"], b["icon"]) for b in p["by_book"]}
-    assert books == {"real": (2500.0, 2, 1, "💰"), "paper": (2500.0, 1, 1, "📝"), "futures": (-400.0, 1, 0, "📐"),
-                     "options": (1200.0, 1, 1, "🧩"), "signal": (300.0, 1, 1, "⚡")}
-    assert [b["book"] for b in p["by_book"]] == ["real", "paper", "futures", "options", "signal"]
+    assert books == {"real": (2500.0, 2, 1, "💰"), "paper": (2500.0, 1, 1, "📝"), "options": (1200.0, 1, 1, "🧩")}
+    assert [b["book"] for b in p["by_book"]] == ["real", "paper", "options"] and wk.BOOKS == ("real", "paper", "options")
 
 
 def test_by_day_mon_to_fri():
     seed_trades()
     bd = wk.week(W, TODAY)["by_day"]
     assert [d["day"] for d in bd] == [MON, TUE, WED, THU, FRI]
-    assert [(d["net"], d["trades"], d["won"]) for d in bd] == [(300.0, 1, 1), (-400.0, 1, 0), (6500.0, 2, 2), (1200.0, 1, 1), (-1500.0, 1, 0)]
+    assert [(d["net"], d["trades"], d["won"]) for d in bd] == [(0.0, 0, 0), (0.0, 0, 0), (6500.0, 2, 2), (1200.0, 1, 1), (-1500.0, 1, 0)]
 
 
 def test_curve_normalised_to_the_week_start_and_nifty():
@@ -152,7 +152,7 @@ def test_nifty_from_the_equity_rows_without_index_candles():
 def test_headline():
     seed_trades()
     seed_curve()
-    assert wk.week(W, TODAY)["headline"] == "+₹6,100 · 6 trades · 4 won · beat NIFTY by 1.2 pts"
+    assert wk.week(W, TODAY)["headline"] == "+₹6,200 · 4 trades · 3 won · beat NIFTY by 1.2 pts"
     assert wk.headline(-900.0, 2, 0, -0.4) == "−₹900 · 2 trades · 0 won · trailed NIFTY by 0.4 pts"
     assert wk.headline(0.0, 0, 0, None) == "no closed trades"
 
@@ -165,20 +165,15 @@ def test_best_worst_with_the_ai_score_at_entry():
     assert p["worst"]["symbol"] == "INFY" and p["worst"]["net"] == -1500.0 and p["worst"]["score"] is None
 
 
-def test_suggestions_ai_view_and_backtest_hint():
+def test_suggestions_and_ai_view():
     for st, oc in (("accepted", {"helped": True}), ("accepted", {"helped": False}), ("dismissed", None), ("open", None)):
         _ins("INSERT INTO ai_suggestions (created, day, kind, symbol, title, status, outcome) VALUES (?,?,?,?,?,?,?)",
              now_ist(), TUE, "skip", f"S{st}{oc}", "t", st, json.dumps(oc) if oc else None)
-    _ins("INSERT INTO ai_suggestions (created, day, kind, symbol, title, status, action) VALUES (?,?,?,?,?,?,?)", now_ist(), "2026-11-15", "backtest", "",
-         "Backtest a stop cap of 4%", "open", json.dumps({"route": "strategies/futures", "prefill": {"max_stop_pct": 4.0}, "label": "Open"}))
-    _ins("INSERT INTO ai_suggestions (created, day, kind, symbol, title, status, action) VALUES (?,?,?,?,?,?,?)", now_ist(), WED, "backtest", "",
-         "Backtest a stop cap of 4%", "open", json.dumps({"route": "strategies/futures", "prefill": {"max_stop_pct": 4.0}, "label": "Open"}))
     view_row("B1", TUE, "buy", 75, h20=True)
     view_row("B2", TUE, "buy", 75, h20=False)
     view_row("P1", TUE, "wait", 50, source="plan", h20=False)
     p = wk.week(W, TODAY)
-    assert p["suggestions"] == {"made": 5, "accepted": 2, "helped": 1}
-    assert p["backtest_hint"]["route"] == "strategies/futures" and p["backtest_hint"]["prefill"] == {"max_stop_pct": 4.0}
+    assert p["suggestions"] == {"made": 4, "accepted": 2, "helped": 1} and "backtest_hint" not in p
     assert p["ai_view"]["buy_hit"] == 50.0 and p["ai_view"]["baseline"] == 33.3
 
 
@@ -190,8 +185,8 @@ def test_week_with_no_trades_and_the_nav():
     cur = wk.week(None, TODAY)
     assert cur["week"] == wk.iso_week(datetime.fromisoformat(TODAY).date()) and cur["next_week"] is None
     keys = {"week", "from", "to", "headline", "totals", "by_day", "curve", "by_book", "best", "worst", "suggestions", "ai_view",
-            "backtest_hint", "observations", "prev_week", "next_week"}
-    assert keys <= set(p) and p["backtest_hint"] is None and p["suggestions"] == {"made": 0, "accepted": 0, "helped": 0}
+            "observations", "prev_week", "next_week"}
+    assert keys <= set(p) and p["suggestions"] == {"made": 0, "accepted": 0, "helped": 0}
 
 
 # --- the observations -----------------------------------------------------------------------------------------------------------
@@ -227,7 +222,7 @@ def test_facts_lines(cfg):
     seed_curve()
     p, lines = week_story.facts(W, TODAY)
     text = "\n".join(lines)
-    assert lines[0] == "Week 46: Mon 9 Nov to Fri 13 Nov" and "net +₹6,100; 6 trades; 4 won" in lines[1] and "(+1.2 pts)" in lines[1]
+    assert lines[0] == "Week 46: Mon 9 Nov to Fri 13 Nov" and "net +₹6,200; 4 trades; 3 won" in lines[1] and "(+1.2 pts)" in lines[1]
     assert "Trade: TCS · real · entry 4,000 · exit 4,400 · net +₹4,000 · ended Wed 11 Nov (target) · held 3 days" in text
     assert "Wed 11 Nov: net +₹6,500; 2 trades; 2 won" in text and no_brokers(text)
 
@@ -389,7 +384,7 @@ def test_routes_week_and_write_now(api, monkeypatch):
     tc = api
     seed_trades()
     d = tc.get(f"/api/week?week={W}").json()
-    assert d["week"] == W and d["totals"]["trades"] == 6 and d["story"]["at"] is None and no_brokers(json.dumps(d, ensure_ascii=False))
+    assert d["week"] == W and d["totals"]["trades"] == 4 and d["story"]["at"] is None and no_brokers(json.dumps(d, ensure_ascii=False))
     assert tc.get("/api/week?week=bad").status_code == 400
     assert tc.get("/api/week").json()["week"] == wk.iso_week(datetime.fromisoformat(TODAY).date())
     assert tc.post("/api/week/write?week=2099-W01").status_code == 400                                   # not over yet
@@ -407,7 +402,7 @@ def test_routes_week_and_write_now(api, monkeypatch):
     assert q.wait(r.json()["id"], 10)["status"] == "done"
     assert tc.post(f"/api/week/write?week={W}").status_code == 409                                       # written: 409
     d = tc.get(f"/api/week?week={W}").json()
-    assert len(d["observations"]) == 3 and d["story"]["rows_checked"] == 6 and d["story"]["at_label"]
+    assert len(d["observations"]) == 3 and d["story"]["rows_checked"] == 4 and d["story"]["at_label"]
 
 
 def test_settings_week_key(api):

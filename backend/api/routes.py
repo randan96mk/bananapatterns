@@ -263,12 +263,6 @@ def put_config(section: str, values: dict):
         raise HTTPException(404, f"Unknown section; have {list(PERSISTED_SECTIONS)}")
     from dataclasses import asdict
     before = asdict(S().config.section(section))
-    if section == "futures" and _truthy(values.get("short_real")) and not before.get("short_real"):
-        from backend.futures import backtest as fb
-        if not fb.short_passed():                    # shorts stay paper-only until Backtest F passes them
-            raise HTTPException(400, "short side backtest has not passed")
-    if section == "futures" and "roll_mode" in values and values["roll_mode"] not in ("always", "never", "winners"):
-        raise HTTPException(422, "roll_mode must be always, never or winners")
     if section == "options" and _truthy(values.get("real")):
         raise HTTPException(400, "not wired")             # the options Real switch: no webhook yet, stays off
     if section == "ai":                                    # 🤖 AI view: the locked switches and the bounds
@@ -796,160 +790,6 @@ def breakout_scan():
     return tb.saved_scan() or {}
 
 
-# --- ⚡ Intraday Flow (signals only) ---
-
-class FlowMode(BaseModel):
-    mode: str
-
-
-@router.get("/flow")
-def flow_view():
-    """The canvas: every box (settings, schema, live state), today's signals, the feed."""
-    from backend.intraday import flow
-    return flow.state(S().config)
-
-
-@router.put("/flow/node/{nid}")
-def flow_node(nid: str, values: dict):
-    """Change one box's settings (applies from the next candle)."""
-    from backend.intraday import flow
-    try:
-        return flow.set_node(nid, values)
-    except KeyError:
-        raise HTTPException(404, f"No box {nid}")
-
-
-@router.post("/flow/mode")
-def flow_mode(req: FlowMode):
-    if req.mode not in ("off", "signals", "paper"):
-        raise HTTPException(422, "mode must be off, signals or paper")
-    st = S()
-    st.config.flow.mode = req.mode
-    save_config(st.config)
-    return {"mode": req.mode}
-
-
-def _flow_runner():
-    from backend.intraday import feed
-    if feed.RUNNER is None:
-        feed.RUNNER = feed.Runner(S())
-    return feed.RUNNER
-
-
-def _flow_notify():
-    sch = S().scheduler
-    return sch._flow_alert if sch else None
-
-
-@router.post("/flow/stop")
-def flow_stop():
-    """⏹ Stop all intraday activity: paper positions squared off at the last price, live feed closed, no runs or
-    signals until ▶ start (kept across restarts and days)."""
-    return _flow_runner().stop_all(datetime.now(IST), _flow_notify())
-
-
-@router.post("/flow/start")
-def flow_start():
-    _flow_runner().start_all(_flow_notify())
-    return {"stopped": False}
-
-
-def _costs(slip, gov, brk_pct, brk_rs, capital):
-    if brk_pct is None and brk_rs is None and not capital and slip and gov:
-        return None
-    return {"slip": slip, "gov": gov, "brk_pct": max(0.0, brk_pct or 0), "brk_rs": max(0.0, brk_rs or 0),
-            "capital": capital if capital and capital >= 1000 else None}
-
-
-@router.get("/flow/backtest/csv")
-def flow_backtest_csv(setup: str, period: str, slip: bool = True, gov: bool = True, brk_pct: Optional[float] = None,
-                      brk_rs: Optional[float] = None, capital: Optional[float] = None):
-    """⬇ Every trade of a result as CSV (one row a trade, partial and final exits, each cost apart)."""
-    import csv
-    import io
-    from fastapi.responses import Response
-    from backend.intraday import backtest as bt
-    rows, m = bt.csv_rows(setup, period, _costs(slip, gov, brk_pct, brk_rs, capital))
-    if not m:
-        raise HTTPException(404, "No saved result for that setup and period (re-run it)")
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow([f"# {setup} · {period} · capital {m['capital']:.0f} · slippage {'on' if m['slip'] else 'off'} · brokerage "
-                f"{m['brk_pct']}% / Rs {m['brk_rs']} per order · govt charges {'on' if m['gov'] else 'off'}"])
-    w.writerow(bt.CSV_COLS)
-    w.writerows(rows)
-    name = "".join(ch if ch.isalnum() else "_" for ch in setup).strip("_")[:40] or "setup"
-    return Response(buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="backtest_{name}_{period}.csv"'})
-
-
-@router.get("/flow/backtest")
-def flow_backtest(period: Optional[str] = None, slip: bool = True, gov: bool = True, brk_pct: Optional[float] = None,
-                  brk_rs: Optional[float] = None, capital: Optional[float] = None):
-    """🧪 Saved setups, the latest result of each (setup, period) under the chosen costs (slippage on / off,
-    brokerage % and / or ₹ per order, government charges on / off), and the running job's progress."""
-    from backend.intraday import backtest as bt
-    costs = _costs(slip, gov, brk_pct, brk_rs, capital)
-    return {"status": bt.status(), "setups": {bt.CANVAS: None, **bt.all_setups()}, "periods": list(bt.PERIODS),
-            "results": bt.results(period, costs), "saved": bt.saved(), "default_costs": bt.DEFAULT_COSTS}
-
-
-@router.post("/flow/backtest/stop")
-def flow_backtest_stop():
-    """⏹ Stop the running backtest now (nothing is saved)."""
-    from backend.intraday import backtest as bt
-    return bt.cancel()
-
-
-@router.post("/flow/backtest")
-def flow_backtest_run(req: dict):
-    from backend.intraday import backtest as bt
-    st = S()
-    return bt.start(st.config, st.client, list(req.get("setups") or []), str(req.get("period") or "1y"))
-
-
-@router.post("/flow/setups")
-def flow_setup_save(req: dict):
-    from backend.intraday import backtest as bt
-    try:
-        return bt.save_setup(str(req.get("name") or ""))
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-
-
-@router.post("/flow/setups/load")
-def flow_setup_load(req: dict):
-    from backend.intraday import backtest as bt
-    try:
-        bt.load_setup(str(req.get("name")))
-    except KeyError:
-        raise HTTPException(404, "No such setup")
-    return {"loaded": req.get("name")}
-
-
-@router.post("/flow/setups/delete")
-def flow_setup_delete(req: dict):
-    from backend.intraday import backtest as bt
-    try:
-        bt.delete_setup(str(req.get("name")))
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-    return {"deleted": req.get("name")}
-
-
-@router.get("/flow/live")
-def flow_live():
-    """Today's signals with the live price and the paper trade's P&L (polled every few seconds)."""
-    from backend.intraday import flow
-    return flow.live()
-
-
-@router.get("/flow/strategy")
-def flow_strategy():
-    """📜 The strategy running now in plain words (one text to copy), and the last changes to the boxes."""
-    from backend.intraday import strategy
-    mode = S().config.flow.mode
-    return {"text": strategy.text(mode), "mode": mode, "changes": strategy.changes()}
 @router.get("/stock/{symbol}/everywhere")
 def stock_everywhere(symbol: str):
     """One stock across the app: its stage on each screen (latest scan), open positions and past trades in every
@@ -981,7 +821,7 @@ def stock_everywhere(symbol: str):
 
 @router.get("/export/trades.csv")
 def export_trades(days: int = Query(3650, ge=1)):
-    """⬇ Every closed trade of every book (Real, Paper E+, Intraday) as one CSV."""
+    """⬇ Every closed trade of every book (Real, Paper E+) as one CSV."""
     import csv
     import io
     from backend.engine import overview
@@ -1048,248 +888,6 @@ def health():
         follow_as_of = get_setting(conn, "follow.as_of")
     cs = hl.checks(st.config, st.token_valid(), follow_as_of)
     return {"at": now_ist(), "checks": cs, "red": sum(not c["ok"] for c in cs), "amber": sum(c["warn"] and c["ok"] for c in cs)}
-
-
-@router.get("/futures/data")
-def futures_data():
-    """Stock futures data layer: contracts (as_of), continuous candles (to), the ban list and the eligible universe."""
-    from backend.futures import data as fdata
-    return fdata.summary(S().config)
-
-
-@router.post("/futures/data/refresh")
-def futures_data_refresh(force: bool = False):
-    """Run the futures data step now (contracts, candles, ban list), in the background like the other jobs."""
-    _require_token()
-    st = S()
-
-    def work():
-        try:
-            if st.scheduler is not None:
-                st.scheduler.run_futures_data(datetime.now(IST).date(), force=force)
-            else:
-                from backend.futures import data as fdata
-                fdata.run(st.client, st.config, datetime.now(IST).date(), force=force)
-        except Exception:
-            logger.exception("Futures data refresh failed")
-
-    threading.Thread(target=work, name="futures-data", daemon=True).start()
-    return {"status": "started", "job": "futures_data"}
-
-
-# --- Stock futures: Backtest F ---
-
-@router.get("/futures/backtest")
-def futures_backtest():
-    """Backtest F (E+ long / E- short on stock futures): the latest run without its trade lists, the progress, the rules."""
-    from backend.futures import backtest as fb
-    return fb.summary(S().config)
-
-
-@router.post("/futures/backtest/run")
-def futures_backtest_run():
-    """Re-run Backtest F in the background (stored cash and futures candles only)."""
-    from backend.futures import backtest as fb
-    st = S()
-    if fb.status()["state"] != "idle":
-        raise HTTPException(409, "Backtest F is already running")
-    threading.Thread(target=fb.run, args=(st.config,), name="futures-backtest", daemon=True).start()
-    return {"status": "started"}
-
-
-def _fut_side(side: str) -> str:
-    if side not in ("long", "short"):
-        raise HTTPException(422, "side must be long or short")
-    return side
-
-
-@router.get("/futures/backtest/trades")
-def futures_backtest_trades(side: str = "long", limit: int = 200, offset: int = 0):
-    """One side's trades, newest first."""
-    from backend.futures import backtest as fb
-    rs = fb.trades(_fut_side(side))
-    return {"total": len(rs), "rows": rs[offset:offset + max(1, min(limit, 1000))]}
-
-
-@router.get("/futures/backtest/csv")
-def futures_backtest_csv(side: str = "long"):
-    import csv
-    from io import StringIO
-    from backend.futures import backtest as fb
-    side = _fut_side(side)
-    buf = StringIO()
-    w = csv.writer(buf)
-    w.writerow(fb.CSV_COLUMNS)
-    w.writerows(fb.csv_rows(side))
-    return Response(buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="backtest_f_{side}.csv"'})
-
-
-# --- 📐 the futures book -------------------------------------------------------------------------------------
-
-class FuturesSettings(BaseModel):
-    long_paper: Optional[bool] = None
-    long_real: Optional[bool] = None
-    short_paper: Optional[bool] = None
-    short_real: Optional[bool] = None
-    enabled: Optional[bool] = None
-
-
-class FuturesSkip(BaseModel):
-    symbol: str
-    on: bool = True
-    note: str = ""
-
-
-class FuturesPositionEdit(BaseModel):
-    lots: Optional[float] = None
-    entry: Optional[float] = None
-    stop: Optional[float] = None
-    note: str = ""
-    account: Optional[str] = None
-
-
-class FuturesPositionRemove(BaseModel):
-    note: str = ""
-    account: Optional[str] = None
-
-
-class FuturesPositionAdd(BaseModel):
-    symbol: str
-    lots: float
-    entry: float
-    day: str
-    side: str = "long"
-    book: str = "paper"
-    stop: Optional[float] = None
-    note: str = ""
-
-
-@router.get("/futures")
-def futures_summary():
-    """📐 The futures book: switches, guards, margin, positions (paper and real of both sides), the plan, the waiting
-    signals, the roll queue, the short paper book, deposits, the order log."""
-    from backend.futures import book
-    return book.summary(S().config)
-
-
-@router.post("/futures/settings")
-def futures_settings(req: FuturesSettings):
-    """The side switches (Paper / Real per side) and the enable switch. short_real is refused (400) while the
-    short backtest verdict is False."""
-    from backend.futures import book
-    try:
-        return book.set_switches(S().config, **req.model_dump(exclude_none=True))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@router.post("/futures/kill")
-def futures_kill(on: bool = True):
-    """The futures kill switch: with a real side on, the sender is asked for kill_switch=1 once."""
-    from backend.futures import book
-    return book.set_killed(on, S().config)
-
-
-class FuturesCapital(BaseModel):
-    capital: float
-
-
-@router.post("/futures/capital")
-def futures_capital(req: FuturesCapital):
-    """The futures capital; after the start the change is money added / withdrawn on every account."""
-    from backend.futures import book
-    if req.capital < 10_000:
-        raise HTTPException(422, "capital must be at least Rs 10,000")
-    st = S()
-    try:
-        res = book.set_capital(st.config, req.capital)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
-    save_config(st.config)
-    return {**res, "replan": book.replan(st.config)}
-
-
-@router.post("/futures/replan")
-def futures_replan():
-    """↻ Re-evaluate the next open's futures plan from the evening's data and the accounts as they are now."""
-    from backend.futures import book
-    return book.replan(S().config)
-
-
-@router.get("/futures/morning")
-def futures_morning():
-    """☀️ The futures dry run: today's plan with lots, margin, skips and sent state (read-only)."""
-    from backend.futures import book
-    return book.morning(S().config)
-
-
-@router.post("/futures/skip")
-def futures_skip(req: FuturesSkip):
-    from backend.futures import book
-    try:
-        return book.skip_order(S().config, req.symbol, req.on, req.note)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@router.post("/futures/hold")
-def futures_hold():
-    from backend.futures import book
-    try:
-        return book.hold_today(S().config)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@router.post("/futures/position/{symbol}")
-def futures_position_edit(symbol: str, req: FuturesPositionEdit, dry: bool = False):
-    """✎ Correct an open lot's lots / entry / stop; `?dry=1` returns the effects without saving."""
-    from backend.futures import book
-    try:
-        return book.edit_position(S().config, symbol.upper(), req.lots, req.entry, req.stop, req.note, dry=dry, account=req.account)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@router.delete("/futures/position/{symbol}")
-def futures_position_remove(symbol: str, req: Optional[FuturesPositionRemove] = None):
-    from backend.futures import book
-    try:
-        return book.remove_position(S().config, symbol.upper(), (req.note if req else ""), account=(req.account if req else None))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@router.post("/futures/position")
-def futures_position_add(req: FuturesPositionAdd):
-    from backend.futures import book
-    try:
-        return book.add_position(S().config, req.symbol, req.lots, req.entry, req.day, req.side, req.book, req.stop, req.note)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-
-@router.get("/futures/orders")
-def futures_orders(limit: int = Query(200, le=1000)):
-    from backend.futures import book
-    return {"rows": book.orders_log(limit)}
-
-
-@router.get("/futures/trades")
-def futures_trades(account: Optional[str] = None):
-    from backend.futures import book
-    if account is not None and account not in book.ACCOUNTS:
-        raise HTTPException(422, f"account must be one of {', '.join(book.ACCOUNTS)}")
-    return {"rows": book._trades(account)}
-
-
-@router.post("/futures/roll")
-def futures_roll_now():
-    """Run the roll now (the roll day's job by hand; nothing rolls before T-2)."""
-    from backend.futures import book
-    st = S()
-    return book.roll(st.config, st.client, datetime.now(IST).date().isoformat())
 
 
 # --- 🧩 the options book (paper only) ----------------------------------------------------------------------------
@@ -1749,72 +1347,6 @@ def follow_settings(req: dict):
         except (TypeError, ValueError):
             raise HTTPException(400, "per_position must be a number")
     return out
-
-
-@router.get("/flow/journey")
-def flow_journey():
-    """🧭 The latest candle's run explained: each box's in → out and reasons, why (no) trade, the stocks closest to the
-    trigger, and the rules in plain words."""
-    from backend.intraday import journey
-    return journey.summary()
-
-
-@router.get("/flow/journey/node/{nid}")
-def flow_journey_node(nid: str):
-    """Who came into a box, who passed (values, where each is now), who dropped and why."""
-    from backend.intraday import journey
-    return journey.node_stocks(nid)
-
-
-@router.post("/flow/journey/rerun/{nid}")
-def flow_journey_rerun(nid: str):
-    """↻ Re-run a box and everything after it on the latest candle with the current settings (dry run: no alert, no
-    paper trade)."""
-    from backend.intraday import journey
-    res = journey.rerun(nid)
-    if res.get("error") == "no such box":
-        raise HTTPException(404, res["error"])
-    return res
-
-
-@router.get("/flow/journey/check")
-def flow_journey_check(symbol: str):
-    """One stock through every box on the latest candle."""
-    from backend.intraday import journey
-    return journey.check(symbol)
-
-
-@router.post("/flow/reset")
-def flow_reset_nodes():
-    """↺ Every box back to its default settings (applies from the next candle)."""
-    from backend.intraday import flow
-    flow.reset_nodes()
-    return {"reset": True}
-
-
-@router.put("/flow/layout")
-def flow_layout(pos: dict):
-    """Save box positions dragged on the canvas: {node: [x, y]}; an empty body resets to the template's layout."""
-    from backend.intraday import flow
-    if not pos:
-        flow.reset_layout()
-        return {}
-    return flow.set_layout(pos)
-
-
-@router.get("/flow/journal")
-def flow_journal(days: int = 30):
-    """Closed paper trades: totals, by side / setup / time of day, the daily curve."""
-    from backend.intraday import flow
-    return flow.journal(max(1, min(days, 365)))
-
-
-@router.post("/flow/run")
-def flow_run():
-    """Run the flow once now on whatever bars there are (live feed if running), e.g. to try settings."""
-    from backend.intraday import feed, flow
-    r = feed.RUNNER
-    return flow.run_now(S().config, r.feed if r else None)
 
 
 # --- ⏱ schedule and the status bar ---
@@ -2468,7 +2000,7 @@ def jobs_list(limit: int = Query(50, le=500)):
 def jobs_run(job: str):
     sch = S().scheduler
     if sch is None or job not in ("eod", "intraday", "close_check", "weekly", "reminder", "login_check", "top_setups",
-                                    "morning_plan", "gap_check", "guard", "futures_preview", "futures_stops", "futures_roll", "options_tick"):
+                                    "morning_plan", "gap_check", "guard", "options_tick"):
         raise HTTPException(404, "Unknown job or scheduler not running")
     now = datetime.now(IST)
     forced = {"eod": lambda: sch.run_eod(now, force=True), "top_setups": lambda: sch.run_top_setups(now, force=True),
@@ -2923,24 +2455,13 @@ def tips_test_post(req: TipsTestPost):
 def _stream_topics() -> dict:
     """topic -> (producer, seconds until the next look given the last value). Read-only, the same data as the
     matching GET endpoints."""
-    from backend.intraday import backtest as bt
-    from backend.intraday import flow
-    live_feed = lambda d: (d or {}).get("feed", {}).get("state") == "live" if isinstance((d or {}).get("feed"), dict) \
-        else (d or {}).get("feed") == "live"
     return {
         "schedule": (schedule_view, lambda d: 20),
         "attention": (attention, lambda d: 30),
         "kite": (lambda: kite_status(False), lambda d: 60),
-        "flow": (lambda: flow.state(S().config), lambda d: 3 if live_feed(d) or (d or {}).get("running") else 15),
-        "journey": (lambda: __import__("backend.intraday.journey", fromlist=["summary"]).summary(),
-                    lambda d: 10 if (d or {}).get("at") else 30),
-        "flow_live": (flow.live, lambda d: 3 if live_feed(d) else 30),
-        "overview": (overview_view, lambda d: 5 if (d or {}).get("feed") == "live" else 30),
-        "backtest": (bt.status, lambda d: 2 if (d or {}).get("state") == "running" else 5),
+        "overview": (overview_view, lambda d: 30),
         "real_morning": (lambda: __import__("backend.engine.real", fromlist=["morning"]).morning(S().config),
                          lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
-        "futures": (futures_summary, lambda d: 30 if __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
-        "futures_morning": (futures_morning, lambda d: 30 if (d or {}).get("visible") and (d or {}).get("phase") != "after" else 120),
         "options": (options_summary, lambda d: 15 if (d or {}).get("open") or __import__("backend.engine.overview", fromlist=["market_open"]).market_open() else 120),
         "today_card": (today_card_view, lambda d: 60),
         "plan_heat": (plan_heat_view, lambda d: 60 if (d or {}).get("market_open") else 600),
@@ -2953,7 +2474,7 @@ def _stream_topics() -> dict:
 @router.get("/stream")
 async def stream(request: Request, topics: str = "schedule,attention,kite", once: bool = False):
     """Server-sent events: `event: <topic>` with its JSON, whenever it changes (checked on each topic's own
-    interval: faster while the live feed or a backtest runs). One connection replaces the pages' timers. once=1:
+    interval: faster while a book is open). One connection replaces the pages' timers. once=1:
     every topic once, then the stream ends (tests)."""
     import asyncio
     import time as _t

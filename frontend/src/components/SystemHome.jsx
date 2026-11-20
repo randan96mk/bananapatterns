@@ -20,7 +20,6 @@ const Conn = ({ title, ok, warn, state, pairs, children }) => (
 export default function SystemHome({ onGo, onKite }) {
   const kite = useLive('kite');
   const sch = useLive('schedule');
-  const flow = useLive('flow');
   const [real, setReal] = useState(null);
   const [tg, setTg] = useState(null);
   const [h, setH] = useState(null);
@@ -29,7 +28,6 @@ export default function SystemHome({ onGo, onKite }) {
     api.getReal().then(setReal).catch(() => {}); api.alertsStatus().then(setTg).catch(() => {}); api.health().then(setH).catch(() => {});
   }, []);
   const eod = (sch?.jobs || []).find((j) => j.key === 'eod');
-  const f = flow?.feed || {};
   const realOn = real ? real.token_set && real.enabled && !real.killed : null;
   return <div className="rd">
     <Head title="System · Connections">
@@ -50,10 +48,6 @@ export default function SystemHome({ onGo, onKite }) {
         pairs={tg ? [['Alerts', tg.enabled ? 'on' : 'off'], ['Scheduler', tg.scheduler_running ? 'running' : 'stopped'],
           ['Today', tg.trading_day ? 'trading day' : `no trading · ${tg.holiday_today || 'weekend'}`]] : [['Status', '…']]}>
         <button className="btn ghost" onClick={() => onGo('alerts')}>Alerts & schedule</button></Conn>
-      <Conn title="Intraday live feed" ok={f.state ? f.state === 'live' || f.state === 'off' : null} state={f.state || '…'}
-        pairs={[['Instruments', f.state === 'live' ? f.tokens : '—'], ['Last tick', f.last_tick ? clock(f.last_tick, true) : '—'],
-          ['Starts', '9:10 AM']]}>
-        <button className="btn ghost" onClick={() => onGo('flow')}>Intraday Flow</button></Conn>
       <Conn title="Evening sync + scan" ok={!eod?.last || eod.last.status === 'ok'} state={eod?.last ? (eod.last.status === 'ok' ? 'ok' : eod.last.status) : 'not run yet'}
         pairs={[['Last run', eod?.last?.at ? stamp(eod.last.at) : 'never'], ['Next', eod?.at ? stamp(eod.at) : '—'],
           ['Does', 'candles · scans · orders']]}>

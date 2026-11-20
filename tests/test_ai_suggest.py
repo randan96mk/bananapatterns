@@ -198,103 +198,13 @@ def test_hold_options_rule_event_day_and_vix(cfg):
     assert out and out[0]["evidence"][0]["text"].startswith("event day tomorrow: RBI monetary policy") and out[0]["symbol"] == "NIFTY"
 
 
-def test_roll_or_exit_rule_thin_oi_or_under_entry(cfg, monkeypatch):
-    from backend.futures import book, instruments
-    pos = lambda sym, entry, last, side="long": {"symbol": sym, "side": side, "lots": 1, "lot_size": 100, "entry": entry, "last": last, "stop": entry * 0.95, "d": DAY}
-    st = {"accounts": {"paper_long": {"positions": {"R1": pos("R1", 500.0, 520.0), "R2": pos("R2", 500.0, 480.0), "R3": pos("R3", 500.0, 520.0)}}}}
-    monkeypatch.setattr(book, "_state", lambda: st)
-    item = lambda s, due=True: {"account": "paper_long", "symbol": s, "side": "long", "action": "roll", "why": "rule holds", "sessions": 2, "est_cost": 310.0, "due": due}
-    monkeypatch.setattr(book, "roll_queue", lambda st_, c, day: {"day": day, "items": [item("R1"), item("R2"), item("R3", due=False)]})
-    oi = {"R1": {"near": {"oi": 100000}, "next": {"oi": 5000}}, "R2": {"near": {"oi": 100000}, "next": {"oi": 60000}}, "R3": {"near": {"oi": 100000}, "next": {"oi": 100}}}
-    monkeypatch.setattr(instruments, "contracts", lambda s: oi[s])
-    out = {c["symbol"]: c for c in suggest._roll_candidates(cfg, DAY, TOMORROW)}
-    assert set(out) == {"R1", "R2"}                                                             # R1 thin OI, R2 under entry, R3 not due
-    assert "thin" in out["R1"]["evidence"][1]["text"] and "below entry" in out["R2"]["evidence"][1]["text"]
-    assert out["R1"]["action"] is None and out["R1"]["expires_at"] == f"{TOMORROW}T09:20:00+05:30" and out["R2"]["value"] == 100 * 480.0
-
-
-def test_backtest_rule_sunday_only(cfg):
-    sunday = datetime(2026, 11, 22, 21, 0, tzinfo=IST)
-    with get_db() as conn:
-        for i in range(12):
-            t = {"symbol": f"B{i}", "side": "long", "out": "2026-11-02", "entry": 100.0, "exit": 94.5, "stop": 94.0, "why": "stop hit", "net": -550.0}
-            conn.execute("INSERT INTO futures_trades (account, payload) VALUES ('paper_long', ?)", (json.dumps(t),))
-    for i in range(12):
-        candles(f"B{i}", [94.5, 95, 96, 97, 98, 99 if i < 9 else 90], start="2026-11-02")   # 9 of 12 recovered
-    assert suggest._backtest_candidates(cfg, DAY, NIGHT) == []                                   # a Tuesday: never
-    out = suggest._backtest_candidates(cfg, DAY, sunday)
-    assert len(out) == 1 and out[0]["confidence"] == "low" and out[0]["expires_at"] is None and out[0]["symbol"] == ""
-    assert out[0]["action"]["prefill"] == {"max_stop_pct": 5.0, "roll_mode": "always"} and out[0]["action"]["route"] == "strategies/futures"
-    assert out[0]["evidence"][0]["text"].startswith("9 of the last 12 stops")
-    cfg.ai.suggest_muted = "backtest"
-    assert suggest.candidates(cfg, sunday) == []                                                 # muted: never born
-
-
-# --- the model's why -------------------------------------------------------------------------------------------------------------
-
-def test_validate_why_numbers_and_brokers():
-    ev = "high note · pledge 4.43% · BUY 40 at ~500.00"
-    v = suggest.validate_why(json.dumps({"why": "Pledge of 4.43% tonight; the plan buys 40 shares."}), ev)
-    assert v == {"why": "Pledge of 4.43% tonight; the plan buys 40 shares.", "numbers_checked": True}
-    v = suggest.validate_why(json.dumps({"why": "Pledge of 4.43% tonight, worth 12.5 crore."}), ev)
-    assert v["numbers_checked"] is False and "12.5" not in v["why"] and "4.43%" in v["why"]
-    assert len(suggest.validate_why(json.dumps({"why": "x" * 400}), ev)["why"]) == suggest.WHY_MAX
-    for bad in ("not json", "[1]", json.dumps({"why": ""}), json.dumps({"why": "Buy it on " + "Zerodha"})):
-        with pytest.raises(suggest.SuggestInvalid):
-            suggest.validate_why(bad, ev)
-
-
-def test_birth_through_the_fake_model_with_cap_and_fallback(ollama, cfg):
-    real_state(buys=("PLAN1", "PLAN2", "PLAN3"))
-    for s in ("PLAN1", "PLAN2", "PLAN3"):
-        note(s)
-    cfg.ai.max_suggestions_open = 2
-    ollama.reply = [WHY, "garbage", "still garbage"]                                            # #2: invalid twice -> the evidence line stands in
-    res = suggest.birth(cfg, NIGHT)
-    assert len(res["born"]) == 2 and res["capped"] == 1 and res["failed"] == 1 and res["tokens"] == 9
-    rows = suggest.list_suggestions("open")
-    assert [r["symbol"] for r in rows] == ["PLAN2", "PLAN3"] and rows[1]["why_source"] == "model" and rows[0]["why_source"] == "code"   # newest note first
-    assert rows[1]["why"].startswith("The promoter pledged 4.43%") and rows[1]["model"] == "qwen2.5:7b-instruct" and rows[1]["prompt_version"] == "sugg-v1"
-    assert rows[0]["why"].startswith("high note · Promoter pledge up")
-    body = ollama.calls[0][2]
-    assert body["model"] == "qwen2.5:7b-instruct" and body["format"] == "json" and "Quote only the numbers above" in body["prompt"]
-    assert "pledge 4.43%" not in body["system"] and "never advise" in body["system"]
-    ollama.reply = WHY
-    assert suggest.birth(cfg, NIGHT)["born"] == [] and suggest.open_count() == 2                 # born already / over the cap: nothing new
-
-
-def test_run_night_sends_the_evening_list_once(ollama, cfg):
-    real_state(buys=("PLAN1",))
-    note("PLAN1")
-    fake = FakeTG()
-    out = suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
-    assert out["note"].startswith("1 suggestion(s) born") and len(fake.sent) == 1
-    text = fake.sent[0][1]
-    assert text.startswith("🤖 <b>[AI] 1 suggestion</b> for Wednesday") and "<b>#1</b> ⏸ <b>Skip PLAN1 tomorrow</b> · high" in text
-    assert "until 9:16 AM" in text and "accept N" in text and no_brokers(text)          # ", 18 Nov" only while 18 Nov is not today (clock)
-    suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
-    assert len(fake.sent) == 1                                                                   # the same key: once a day
-    job = suggest.enqueue_tonight(cfg, NIGHT)
-    assert job["key"] == f"suggest:{DAY}" and job["dedup"] is False and suggest.enqueue_tonight(cfg, NIGHT)["dedup"] is True
-    q.wait(job["id"], 10)
-
-
-def test_scorecard_line_on_the_first_night_of_a_month(ollama, cfg):
-    seed_sugg(day="2026-10-20", status="accepted")
-    fake = FakeTG()
-    suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))                                   # no births; October had suggestions
-    assert len(fake.sent) == 1 and fake.sent[0][1].startswith("🤖 <b>Suggestions · October 2026</b> · 1 made · 1 accepted")
-    suggest.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
-    assert len(fake.sent) == 1
-
-
 # --- expiry, accept, dismiss, later ------------------------------------------------------------------------------------------------
 
 def test_expiry_on_the_scheduler_tick(monkeypatch):
     from backend.alerts import jobs
     a = seed_sugg("skip", "A", expires=f"{TOMORROW}T09:16:00+05:30")
     b = seed_sugg("flag", "B", expires=f"{TOMORROW}T09:00:00+05:30")
-    c = seed_sugg("backtest", "", expires=None)
+    c = seed_sugg("flag", "C", expires=None)
     st = LoginState()
     sch = Scheduler(st, notifier_factory=lambda cfg_: Notifier(cfg_, FakeTG()))
     monkeypatch.setattr(jobs, "due_jobs", lambda *a_, **k: [])
@@ -353,7 +263,7 @@ def test_dismiss_reasons_and_later_once():
     assert s["expires_at"] == f"{TOMORROW}T13:16:00+05:30" and s["later"] is True
     with pytest.raises(suggest.SuggestionState, match="already pushed once"):
         suggest.later(sid2, now)
-    sid3 = seed_sugg("backtest", "", expires=None)
+    sid3 = seed_sugg("flag", "F3", expires=None)
     assert suggest.later(sid3, now)["expires_at"] == "2026-11-18T12:00:00+05:30"               # no expiry: 4 h from now
     with pytest.raises(suggest.SuggestionState, match="no such"):
         suggest.dismiss(999)
@@ -366,12 +276,11 @@ def test_outcome_scoring_math():
     a = seed_sugg("skip", "DOWN", day="2026-11-02", value=20000.0, status="accepted")
     b = seed_sugg("exit", "UP", day="2026-11-02", value=10000.0, status="dismissed")
     h = seed_sugg("hold_options", "NIFTY", day="2026-11-02", for_day="2026-11-03", status="expired")
-    r = seed_sugg("roll_or_exit", "RL", day="2026-11-02", value=50000.0, status="expired")
+    r = seed_sugg("roll_or_exit", "RL", day="2026-11-02", value=50000.0, status="expired")          # kinds no longer made (Futures removed)
     bt = seed_sugg("backtest", "", day="2026-11-02", status="dismissed", expires=None)
     late = seed_sugg("skip", "LATE", day="2026-11-02", value=1000.0, status="expired")
     candles("DOWN", [100, 99, 98, 98, 97.5, 97], start="2026-11-02")                             # -3% after 5 sessions
     candles("UP", [200, 201, 202, 203, 204, 205], start="2026-11-02")                            # +2.5%
-    candles("RL", [100, 100, 99, 99, 98, 98], start="2026-11-02")                                # -2%: against the long lot
     candles("LATE", [100, 101, 102], start="2026-11-02")                                         # not enough bars yet
     with get_db() as conn:
         conn.executemany("INSERT INTO candles_daily (instrument_token, date, open, high, low, close, volume) VALUES (?,?,?,?,?,?,0)",
@@ -384,7 +293,7 @@ def test_outcome_scoring_math():
     o = suggest.get(h)["outcome"]
     assert (o["pct_move"], o["helped"]) == (2.0, True) and o["rs"] is None                       # NIFTY range 500 / 25000
     o = suggest.get(r)["outcome"]
-    assert (o["pct_move"], o["helped"], o["rs"]) == (-2.0, True, 1000.0)
+    assert (o["pct_move"], o["helped"], o["rs"]) == (None, None, None)                          # an old futures row: no market outcome
     assert suggest.get(bt)["outcome"]["helped"] is None and suggest.get(late)["outcome"] is None
     assert suggest.score_outcomes(datetime(2026, 11, 10, 21, 0, tzinfo=IST)) == 0                # scored once
 
@@ -398,7 +307,7 @@ def test_scorecard_and_mute(cfg):
     sc = suggest.scorecard("2026-11", cfg)
     k = sc["kinds"]
     assert k["skip"] == {"made": 2, "open": 0, "accepted": 1, "dismissed": 1, "expired": 0, "helped_when_accepted": 1, "would_have_helped": 1, "scored": 2, "muted": False}
-    assert k["exit"]["expired"] == 1 and k["exit"]["would_have_helped"] == 0 and k["flag"]["open"] == 1 and k["backtest"]["made"] == 0
+    assert k["exit"]["expired"] == 1 and k["exit"]["would_have_helped"] == 0 and k["flag"]["open"] == 1 and "backtest" not in k
     assert sc["totals"] == {"month": "2026-11", "made": 4, "accepted": 1, "dismissed": 1, "expired": 1, "accepted_outcome_rs": 600.0,
                             "dismissed_outcome_rs": 300.0, "best_kind": "skip"}
     assert suggest.scorecard("2026-10")["totals"]["made"] == 1 and suggest.scorecard("2026-09")["totals"]["best_kind"] is None
@@ -550,3 +459,14 @@ def test_routes(api):
     job = tc.post("/api/ai/suggestions/run").json()
     assert job["key"] == f"suggest:{notes.night_day(datetime.now(IST), AppConfig())}" and job["dedup"] is False   # AI off on the app's config: the guard skips it
     q.wait(job["id"], 10)
+
+
+def test_old_futures_kinds_stay_as_history_only(cfg):
+    """The futures roll_or_exit / backtest kinds were removed with the Futures book: an old open row is never listed as
+    open, never counted in the scorecard, and the rules never make one."""
+    old = seed_sugg("roll_or_exit", "RL")
+    seed_sugg("backtest", "", expires=None)
+    new = seed_sugg("skip", "A")
+    assert [s["id"] for s in suggest.open_suggestions()] == [new] and suggest.get(old)["status"] == "open"
+    assert set(suggest.scorecard(DAY[:7], cfg)["kinds"]) == set(suggest.KINDS) == {"skip", "exit", "flag", "hold_options"}
+    assert suggest.scorecard(DAY[:7], cfg)["totals"]["made"] == 1

@@ -385,14 +385,13 @@ def test_calibration_note_from_outcomes(cfg, ollama):
 
 # --- the night: order, cap, outcomes, shuffle -----------------------------------------------------------------------------------------
 
-def test_scope_order_plan_held_futures_follow_screens(cfg, monkeypatch):
+def test_scope_order_plan_held_follow_screens(cfg, monkeypatch):
     monkeypatch.setattr(view, "_plan_items", lambda: [{"symbol": "P1", "source": "plan", "book": None}, {"symbol": "P2", "source": "plan", "book": "real"}])
     monkeypatch.setattr(view, "_held_items", lambda: [{"symbol": "H1", "source": "held", "book": "real", "held": {}}, {"symbol": "P1", "source": "held", "book": "paper"}])
-    monkeypatch.setattr(view, "_futures_items", lambda: [{"symbol": "F1", "source": "futures", "book": "futures"}])
     monkeypatch.setattr(view, "_follow_items", lambda d: [{"symbol": "W1", "source": "follow", "book": None}])
     monkeypatch.setattr(view, "_screen_items", lambda d: [{"symbol": "S1", "source": "screen:vcp", "book": None}])
     s = view.scope(cfg, DAY)
-    assert [(x["symbol"], x["source"], x["rank"]) for x in s] == [("P1", "plan", 1), ("P2", "plan", 2), ("H1", "held", 1), ("F1", "futures", 1),
+    assert [(x["symbol"], x["source"], x["rank"]) for x in s] == [("P1", "plan", 1), ("P2", "plan", 2), ("H1", "held", 1),
                                                                   ("W1", "follow", 1), ("S1", "screen:vcp", 1)]
     cfg.ai.view_rate_held = False
     assert "H1" not in [x["symbol"] for x in view.scope(cfg, DAY)]

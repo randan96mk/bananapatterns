@@ -3,11 +3,11 @@
 1-minute candles give the VWAP. Cached once a day in `options_contracts`; old days stay as history (the latest `as_of`
 wins). The expiry is never hard-coded: it is whatever the dump says."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from backend.database.models import get_db, now_ist
-from backend.futures.instruments import sessions_to_expiry  # noqa: F401  (the same sessions count, same holiday calendar)
+from backend.ingest.holidays import is_trading_day
 from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("options")
@@ -15,6 +15,25 @@ logger = setup_logger("options")
 NAME = "NIFTY"
 INDEX_TOKEN = 256265              # NIFTY 50 (index 1-minute candles)
 STRIKE_STEP = 50.0
+
+
+def sessions_to_expiry(expiry, today=None) -> int:
+    """Trading sessions after `today` up to and including the expiry (0 = expiry day, negative = expired), using
+    the NSE holiday calendar the app already keeps."""
+    e = date.fromisoformat(str(expiry)[:10]) if not isinstance(expiry, date) else expiry
+    t = today or date.fromisoformat(now_ist()[:10])
+    t = date.fromisoformat(t) if isinstance(t, str) else t
+    if e < t:
+        n, d = 0, e
+        while d < t:
+            d += timedelta(days=1)
+            n -= is_trading_day(d)
+        return n
+    n, d = 0, t
+    while d < e:
+        d += timedelta(days=1)
+        n += is_trading_day(d)
+    return n
 
 
 def _expiry_iso(v) -> str:

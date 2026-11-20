@@ -26,7 +26,7 @@ const wday = (d) => dLabel(d, { weekday: 'short' });
 const textOf = (x) => (x == null ? '' : typeof x === 'string' ? x : x.text || '');
 const endOf = (t) => (t?.ended == null ? null : /^\d{4}-\d\d-\d\d/.test(String(t.ended)) ? `closed ${dLabel(t.ended, { day: 'numeric', month: 'short' })}` : t.ended);
 const weekNo = (w) => (/W(\d+)/.exec(w || '') || [])[1];
-const BOOKS = { real: ['💰', 'Real'], paper: ['📝', 'Paper E+'], paper_E: ['📝', 'Paper E+'], futures: ['📐', 'Futures · paper'], options: ['🧩', 'Options · paper'], signals: ['⚡', 'Signal track'], signal: ['⚡', 'Signal track'] };
+const BOOKS = { real: ['💰', 'Real'], paper: ['📝', 'Paper E+'], paper_E: ['📝', 'Paper E+'], options: ['🧩', 'Options · paper'] };
 
 // which by_day index an observation is about (a date, a weekday name, or "week" = the last day)
 function dayIndex(o, days) {
@@ -125,7 +125,7 @@ export default function WeekPage({ onGo }) {
   };
   const prefill = () => {
     if (!B) return;
-    const route = B.route || (B.prefill?.strategy === 'breakout' ? 'strategies/breakout' : 'strategies/futures');
+    const route = B.route || 'strategies/breakout';
     const q = B.prefill ? new URLSearchParams(Object.entries(B.prefill).map(([k, v]) => [k, String(v)])).toString() : '';
     onGo && onGo(route.split('/').pop());
     if (q) window.history.replaceState(null, '', `${window.location.pathname}?${q}${window.location.hash}`);
