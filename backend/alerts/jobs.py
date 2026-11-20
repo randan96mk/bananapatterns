@@ -221,6 +221,11 @@ class Scheduler:
             jobs += kc.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
         except Exception:
             logger.exception("Tips Kite day check due failed")
+        try:                                               # 🤖 AI on Tips: the 6:35 PM reviews, Sunday 7:05 PM weekly profile
+            from backend.tips import ai4
+            jobs += ai4.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
+        except Exception:
+            logger.exception("Tips AI due check failed")
         try:                                               # 🤖 suggestions: an open one past its time expires (no tap)
             from backend.ai import suggest
             suggest.expire_open(now)
@@ -484,6 +489,34 @@ class Scheduler:
             return {"status": "failed", "error": str(exc)[:200]}
         self.record(kc.DAY_JOB, today, "ok", res["summary"], started)
         return {"status": "ok", **res}
+
+    def run_tips_ai_evening(self, now: datetime) -> dict:
+        """🤖 6:35 PM: the evening review of every Kite hint closed after the 3:35 PM day check, and the day's Telegram
+        once every review is written (backend/tips/ai4.py). Never raises; never acts on an order."""
+        from backend.tips import ai4
+        today, started = now.date(), now_ist()
+        try:
+            ids = ai4.review_day(self.state.config, now)
+            sent = ai4.send_review_day(self.state.config, today.isoformat(), now)
+        except Exception as exc:
+            logger.exception("Tips AI evening run failed")
+            self.record(ai4.EVENING_JOB, today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        self.record(ai4.EVENING_JOB, today, "ok", f"{len(ids)} review(s) queued" + (" · Telegram sent" if sent else ""), started)
+        return {"status": "ok", "queued": ids, "sent": sent}
+
+    def run_tips_ai_weekly(self, now: datetime) -> dict:
+        """🤖 Sunday 7:05 PM: the weekly channel profile per channel with a call in the week just ended. Never raises."""
+        from backend.tips import ai4
+        today, started = now.date(), now_ist()
+        try:
+            ids = ai4.weekly_due(self.state.config, now)
+        except Exception as exc:
+            logger.exception("Tips AI weekly failed")
+            self.record(ai4.WEEKLY_JOB, today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        self.record(ai4.WEEKLY_JOB, today, "ok", f"{len(ids)} channel profile(s) queued", started)
+        return {"status": "ok", "queued": ids}
 
     def run_ai_brief(self, now: datetime) -> dict:
         """🤖 brief: queue today's morning brief (kind "brief"; the guard decides at run time) and record the job so it

@@ -599,3 +599,49 @@
   .rd .tp-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { .rd .tp-dec .nowt .pulse { animation: none; } .rd .tp-dist .bar .dot { transition: none; } }
+
+/* 🤖 AI on Tips: the evening review / call grade / pre-flight read blocks, the grade chip, the weekly profile (Track) */
+.rd .tp-grade { display: inline-flex; align-items: center; gap: 5px; flex: none; border: 1px solid var(--border); border-radius: 7px; padding: 1px 8px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.rd .tp-grade b { font-size: 13.5px; }
+.rd .tp-grade.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.rd .tp-grade.w { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.rd .tp-grade.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+.rd .tp-ai { border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent); background: color-mix(in srgb, var(--blue) 6%, transparent); border-radius: 10px; padding: 8px 12px; display: grid; gap: 4px; font-size: 12.5px; min-width: 0; }
+.rd .tp-ai .t { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.rd .tp-ai .t .rtag { margin-left: 0; }
+.rd .tp-ai .t .m { font-size: 11px; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.rd .tp-ai .l { display: flex; gap: 8px; min-width: 0; }
+.rd .tp-ai .l .lk { flex: none; width: 104px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding-top: 2px; }
+.rd .tp-ai .l > div { min-width: 0; overflow-wrap: anywhere; }
+.rd .tp-ai .l > div .rtag { margin-left: 0; margin-right: 3px; }
+.rd .tp-ai .l > div.dim { color: var(--muted); }
+.rd .tp-ai .l > div.warn { color: var(--warn); }
+.rd .tp-sw { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.rd .tp-sw i { width: 26px; height: 14px; border-radius: 7px; background: var(--ok); position: relative; display: inline-block; flex: none; }
+.rd .tp-sw i::after { content: ""; position: absolute; right: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: #fff; }
+.rd .tp-tabs { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.rd .tp-trackbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-width: 0; font-size: 12.5px; }
+.rd .tp-trackbar label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.rd .tp-trackbar select { min-width: 0; max-width: 260px; }
+.rd .tp-week .ph .r { min-width: 0; }
+.rd .tp-wr { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.rd .tp-wr .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--muted); }
+.rd .tp-wr .btn { flex: none; }
+.rd .tp-week { display: grid; gap: 10px; }
+.rd .tp-wk { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; min-width: 0; }
+.rd .tp-wk .box { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; display: grid; gap: 5px; align-content: start; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.rd .tp-wk .box .h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.rd .tp-wk .box .dim { color: var(--muted); font-size: 11.5px; }
+.rd .tp-bars { display: grid; gap: 4px; min-width: 0; }
+.rd .tp-bars > div { display: grid; grid-template-columns: 96px minmax(0, 1fr) 72px; gap: 8px; align-items: center; font-size: 11.5px; height: 18px; min-width: 0; }
+.rd .tp-bars .bl, .rd .tp-bars .br { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rd .tp-bars .br { text-align: right; color: var(--muted); }
+.rd .tp-bars .bt { display: block; height: 8px; min-width: 0; }
+.rd .tp-bars i { display: block; height: 8px; border-radius: 4px; background: var(--ok); }
+.rd .tp-bars i.bad { background: var(--bad); }
+@media (max-width: 700px) {
+  .rd .tp-ai .l { flex-direction: column; gap: 1px; }
+  .rd .tp-ai .l .lk { width: auto; }
+  .rd .tp-bars > div { grid-template-columns: 76px minmax(0, 1fr) 64px; }
+  .rd .tp-wr .ell { display: none; }
+}

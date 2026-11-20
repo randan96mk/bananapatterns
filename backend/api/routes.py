@@ -2308,6 +2308,37 @@ def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
     return tt.hint_view(h, config=c)
 
 
+@router.get("/tips/ai/weekly")
+def tips_ai_weekly(week: Optional[str] = None, channel: Optional[str] = None):
+    """🤖 Research › Tips › Track: the weekly channel profile (the week picker: the last 8 weeks)."""
+    from backend.tips import ai4
+    return ai4.weekly_page(S().config, week, channel)
+
+
+class TipsWeeklyNow(BaseModel):
+    week: Optional[str] = None
+
+
+@router.post("/tips/ai/weekly/write")
+def tips_ai_weekly_write(req: Optional[TipsWeeklyNow] = None):
+    """🤖 "Write now": queue the week's profile for every channel (one per hour; 429 before that). Never acts on an order."""
+    from datetime import date as _date
+    from backend.tips import ai4
+    st = S()
+    try:
+        mon = ai4.week_of(_date.fromisoformat(req.week)) if req and req.week else None
+    except ValueError:
+        raise HTTPException(422, "week: YYYY-MM-DD")
+    if not st.config.tips.ai_weekly:
+        raise HTTPException(409, "the weekly profile is off (Settings › tips · ai_weekly)")
+    if not st.config.ai.enabled:
+        raise HTTPException(409, "the local AI is off")
+    try:
+        return ai4.weekly_now(st.config, mon)
+    except ValueError as exc:
+        raise HTTPException(429, str(exc))
+
+
 @router.get("/tips/feed")
 def tips_feed(kind: Optional[str] = None, limit: int = Query(50, ge=1, le=1000), channel: Optional[str] = None):
     from backend.tips import track as tt

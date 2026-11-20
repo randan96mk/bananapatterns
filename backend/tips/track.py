@@ -540,6 +540,12 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
     except Exception:
         logger.exception("Tips card #%s failed", h.get("id"))
         cb = {"pnl_strip": None, "now_tile": None, "dist": None, "said_next": [], "facts": None, "trade_facts": None}
+    try:                                              # 🤖 AI on Tips: the grade, the evening review, the pre-flight read
+        from backend.tips import ai4
+        cb["ai4"] = ai4.card_view(cfg, h)
+    except Exception:
+        logger.exception("Tips AI blocks #%s failed", h.get("id"))
+        cb["ai4"] = None
     kv["taken"] = (h.get("kite") or {}).get("taken") if isinstance(h.get("kite"), dict) else None
     kv["footer"] = bk.kite_taken_text(h)
     return {**cb, "id": h["id"], "channel": h["channel"], "post_id": h["post_id"], "posted_at": h["posted_at"],

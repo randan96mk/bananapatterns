@@ -42,13 +42,15 @@ TABLES = {
     "options_chain_snap": ("day", ("id",), None),
     "tips_quotes": ("t", ("hint_id", "t"), None),
     "tips_ticks": ("at", ("hint_id", "at"), None),
+    "tips_ai": ("at", ("id",), None),
     "ai_jobs": ("created", ("id",), "status IN ('queued', 'running')"),
     "job_runs": ("run_date", ("id",), "id IN (SELECT MAX(id) FROM main.job_runs GROUP BY job)"),
     "sent_alerts": ("sent_at", ("key",), "ok = 0 OR key NOT GLOB '[0-9][0-9][0-9][0-9]*'"),
 }
 
-# a table kept longer than maintenance.archive_days in the live DB (days): the Tips card's tick store, 180 days
-TABLE_DAYS = {"tips_ticks": 180}
+# a table kept longer than maintenance.archive_days in the live DB (days): the Tips card's tick store and the Tips AI
+# reads (tips_ai), 180 days
+TABLE_DAYS = {"tips_ticks": 180, "tips_ai": 180}
 
 _lock = threading.Lock()
 

@@ -82,6 +82,16 @@ def _ai_line(k: dict) -> Optional[str]:
     return lines[0] if lines else None
 
 
+def _grade(h: dict) -> Optional[dict]:
+    """🤖 the call grade chip (code; informational, auto ignores it): {g, c} or None."""
+    try:
+        from backend.tips import ai4
+        g = ai4.grade_letter(h["id"])
+    except Exception:
+        return None
+    return {"g": g, "c": ai4.GRADE_TONE.get(g, "")} if g else None
+
+
 def row(config, h: dict, now: datetime) -> dict:
     """One working Kite hint: {id, title, state, tag, tag_c, pnl, facts, detail, ai, buttons, kite (for the confirms)}."""
     v = ko.hint_kite(config, h)
@@ -94,7 +104,7 @@ def row(config, h: dict, now: datetime) -> dict:
     arm = k.get("arm") or {}
     acts = v["actions"]
     until = ampm(config.tips.kite_entry_until)
-    out = {"id": h["id"], "title": bk.title(h), "name": _short(h), "state": st, "pnl": None, "ai": _ai_line(k),
+    out = {"id": h["id"], "title": bk.title(h), "name": _short(h), "state": st, "pnl": None, "ai": _ai_line(k), "grade": _grade(h),
            "tradingsymbol": h.get("tradingsymbol"), "exchange": h.get("exchange"), "ltp": ltp, "kite": v,
            "product": config.tips.kite_product, "now": ko.now_cell(h)}
     if st == "entered":
@@ -272,7 +282,7 @@ def home_tips(config, now: Optional[datetime] = None) -> dict:
                  if m != "off" else "paper book only"},
         "channel30": {k: tot.get(k) for k in ("hints", "t1_first", "stop_first", "no_fill", "avg_r")},
         "rows": rows,
-        "today": [{"id": h["id"], "name": _short(h), "text": o[0], "c": o[1]} for h in today_h for o in [outcome(h)]],
+        "today": [{"id": h["id"], "name": _short(h), "text": o[0], "c": o[1], "grade": _grade(h)} for h in today_h for o in [outcome(h)]],
         "checks": checks(list(kite_today.values()), now) if m != "off" else {"clear": [], "at": None, "at_label": None, "items": []},
         "record": {**{k: tot.get(k) for k in ("hints", "t1_first", "stop_first", "no_fill", "avg_r")}, "took": yva.get("took"), "of": yva.get("of"),
                    "you": yours, "all": yva.get("all"),
