@@ -6,7 +6,9 @@ rejected), code first and the AI second; and the end-of-day reconciliation at 3:
            buys its entry and sells its exits), the quantity (lots × lot size, lots under the cap), the entry fill on
            the right side of the level (a buy above X fills at X·0.98 or more; a zone buy at or under its top), the
            stop trigger = the plan's stop (or a logged move), the target prices = the plan's, one entry per hint, a
-           stop resting within 60 s of the entry fill, nothing open after the time stop. {ok, items [{level red|amber,
+           stop resting within 60 s of the entry fill, no target resting on Kite (only the stop rests; the targets are watched
+           by the app), no position left without a stop (the target watch's refused re-place), nothing open after the
+           time stop. {ok, items [{level red|amber,
            text, hand}], red, at} on the hint's kite ("check"). A red item: one Telegram line "⚠️ Kite check · #6 ·
            <text> · your call" (kind tips, never held), a red line on the card and a Home "Needs a look" item naming
            the hand action. The check never places, modifies or cancels anything.
@@ -16,7 +18,7 @@ rejected), code first and the AI second; and the end-of-day reconciliation at 3:
            is dropped. Kept in ai_notes (never deleted); "AI read pending" while the model is unreachable.
   day      day_check() at 3:35 PM on trading days (backend/alerts/jobs.py): every tips_orders row of today against the
            hints: a fill with no hint, a filled entry with no stop ever resting, an open quantity after the time stop,
-           a resting order still open, the caps used. One Telegram summary and the Tips page's "Kite day check"."""
+           a resting order still open, a target resting on Kite (only the stop rests), the targets watched / hit, the caps used. One Telegram summary and the Tips page's "Kite day check"."""
 
 import json
 import re
@@ -42,8 +44,9 @@ STOP_GRACE_S = 60
 FILL_SLACK = 0.02
 SYSTEM = ("You check a trading app's broker orders against a Telegram channel's call. Write exactly 3 short lines, plain "
           "text, no markdown, at most 25 words each: 1) what the app did and why; 2) does it match what the channel meant; "
-          "3) what to look at now. Use only figures that appear in the input. Never advise buying more. Plain sentences only: "
-          "no JSON, no braces, no bullet points.")
+          "3) what to look at now. Use only figures that appear in the input. Never advise buying more. Say qty and lots "
+          "exactly as given; never call a quantity 'lots'. Only the stop rests on Kite; the app watches the targets. Plain "
+          "sentences only: no JSON, no braces, no bullet points.")
 
 
 def _now() -> datetime:
@@ -142,24 +145,23 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
             red(f"the stop trigger {pl.fmt(r['trigger'])} is not the plan's {pl.fmt(ps)} (nor a logged move)", "modify the stop on Kite")
     if ps is not None and k.get("stop_px") is not None and float(k["stop_px"]) != float(ps) and float(k["stop_px"]) in moves:
         amber(f"stop moved {pl.fmt(ps)} → {pl.fmt(k['stop_px'])} (logged)")
-    tg = (h.get("plan") or {}).get("targets") or []
-    for leg, i in (("t1", 0), ("t2", 1)):
-        for r in rows:
-            if r["leg"] == leg and r["status"] in ko.LIVE + ("complete",) and len(tg) > i and r.get("price") is not None and float(r["price"]) != float(tg[i]):
-                red(f"{ko.LEG_NAMES[leg].lower()} {pl.fmt(r['price'])} is not the plan's {pl.fmt(tg[i])}", f"cancel the resting {ko.LEG_NAMES[leg].lower()}")
+    for r in rows:
+        if r["leg"] in ("t1", "t2") and r["status"] in ko.LIVE and (r.get("order_type") or "") != "MARKET":
+            red(f"a target resting on Kite ({ko.LEG_NAMES[r['leg']].lower()} {ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))})",
+                f"cancel the resting {ko.LEG_NAMES[r['leg']].lower()} on Kite (the app watches the targets)")
     q_open = int(k.get("qty_open") or 0)
     if k["state"] == "entered" and q_open > 0:
-        for leg in ("stop", "t1", "t2"):
-            lg = k["legs"].get(leg) or {}
-            if lg.get("status") in ko.LIVE and int(lg.get("qty") or 0) > q_open:
-                red(f"the resting {ko.LEG_NAMES[leg].lower()} sells {lg.get('qty')}, only {q_open} held",
-                    "cancel the resting target" if leg != "stop" else "modify the stop's quantity on Kite")
+        lg = k["legs"].get("stop") or {}
+        if lg.get("status") in ko.LIVE and int(lg.get("qty") or 0) > q_open:
+            red(f"the resting stop sells {lg.get('qty')}, only {q_open} held", "modify the stop's quantity on Kite")
         stop_live = (k["legs"].get("stop") or {}).get("status") in ko.LIVE
+        exiting = any((k["legs"].get(x) or {}).get("status") in ko.LIVE for x in ("exit", "t1", "t2"))
         at = _dt(k.get("entry_at"))
-        if ps is None:
+        if k.get("no_stop") and not stop_live:
+            red(ko.NO_STOP)
+        elif ps is None:
             amber("spot stop: watched by the app · exit by hand when it breaks")
-        elif not stop_live and at is not None and (now - at).total_seconds() > STOP_GRACE_S \
-                and (k["legs"].get("exit") or {}).get("status") not in ko.LIVE:
+        elif not stop_live and at is not None and (now - at).total_seconds() > STOP_GRACE_S and not exiting:
             red("no stop resting", "place the SL on Kite now")
         plan = h.get("plan") or {}
         tstop = plan.get("time_stop")
@@ -193,6 +195,16 @@ def after_event(config, h: dict, now: Optional[datetime] = None, notify: bool = 
 
 # --- the AI read ------------------------------------------------------------------------------------------------------------
 
+def qty_text(h: dict, qty) -> str:
+    """'65 qty (1 lot of 65)' / '130 qty (2 lots of 65)': the model is never handed a bare 'lots' figure to misread."""
+    q = int(qty or 0)
+    lot = int(h.get("lot_size") or 0)
+    if not lot or q % lot:
+        return f"{q} qty"
+    n = q // lot
+    return f"{q} qty ({n} lot{'s' if n != 1 else ''} of {lot})"
+
+
 def ai_input(h: dict, rows: Optional[list] = None) -> str:
     """The model's input: the post, the follow-ups so far, the plan, the order rows, the code check."""
     k = ko.kstate(h)
@@ -204,10 +216,11 @@ def ai_input(h: dict, rows: Optional[list] = None) -> str:
              "Follow-ups: " + (" | ".join(x[:120] for x in fu) if fu else "none"),
              f"Plan: entry {plan.get('entry_text') or '-'} · {plan.get('stop_text') or '-'} · {plan.get('targets_text') or '-'}"
              + (f" · time stop {ampm(plan['time_stop'])}" if plan.get("time_stop") else ""),
-             f"Kite: state {k['state']} · by {k.get('by') or '-'} · {k.get('lots') or 0} lots = {k.get('qty') or 0} qty · open {k.get('qty_open') or 0}"
-             + (f" · entry fill {pl.fmt(k['entry_px'])}" if k.get("entry_px") is not None else "")]
+             f"Kite: state {k['state']} · by {k.get('by') or '-'} · {qty_text(h, k.get('qty'))} · open {qty_text(h, k.get('qty_open'))}"
+             + (f" · entry fill {pl.fmt(k['entry_px'])}" if k.get("entry_px") is not None else ""),
+             "Targets: watched by the app (never resting on Kite); only the stop rests on Kite"]
     for r in rows:
-        lines.append(f"Order {r['leg']} {r.get('side')} {r.get('qty')} {ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))} "
+        lines.append(f"Order {r['leg']} {r.get('side')} {qty_text(h, r.get('qty'))} {ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))} "
                      f"{r['status']}" + (f" at {pl.fmt(r['filled_px'])}" if r.get("filled_px") is not None else "") + f" by {r.get('by')}")
     chk = k.get("check") or {}
     lines.append("Code check: " + ("; ".join(f"{x['level']}: {x['text']}" for x in chk.get("items") or []) or "all clear"))
@@ -311,7 +324,7 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
     rows = [r for r in ko.rows_today(day) if r["leg"] != "test" and r["status"] != "voided"]
     items: list[dict] = []
     hids = sorted({r["hint_id"] for r in rows})
-    positions = opened = 0
+    positions = opened = watched = hit = 0
     for hid in hids:
         h = bk.load(hid)
         mine = [r for r in rows if r["hint_id"] == hid]
@@ -325,6 +338,13 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
         filled = any(r["leg"] == "entry" and r["status"] == "complete" for r in mine)
         if filled:
             positions += 1
+            tg = ((h.get("plan") or {}).get("targets") or [])[:2]
+            q2 = ko.split(h, int(k.get("lots") or 0) or 1)[1]
+            for leg in ("t1", "t2")[:len(tg) if q2 else 1]:
+                if (k["legs"].get(leg) or {}).get("status") == "complete":
+                    hit += 1
+                elif k["state"] == "entered":
+                    watched += 1
             if ko.premium_stop(h) is not None and not any(r["leg"] == "stop" and r["status"] in ko.LIVE + ("complete", "cancelled") for r in mine):
                 items.append({"level": "red", "text": f"{tag} entry filled, no stop ever resting", "hand": "check the position on Kite"})
         if k["state"] == "entered" and int(k.get("qty_open") or 0) > 0:
@@ -332,7 +352,11 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
             if not (h.get("plan") or {}).get("hold_to_expiry"):
                 items.append({"level": "red", "text": f"{tag} {k['qty_open']} open after the time stop", "hand": "exit on Kite now"})
         for r in mine:
-            if r["status"] in ko.LIVE:
+            if r["status"] in ko.LIVE and r["leg"] in ("t1", "t2") and (r.get("order_type") or "") != "MARKET":
+                items.append({"level": "red", "text": f"{tag} a target resting on Kite ({ko.LEG_NAMES[r['leg']].lower()} "
+                                                       f"{ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))})",
+                              "hand": f"cancel the resting {ko.LEG_NAMES[r['leg']].lower()} on Kite (the app watches the targets)"})
+            elif r["status"] in ko.LIVE:
                 items.append({"level": "red", "text": f"{tag} {ko.LEG_NAMES.get(r['leg'], r['leg']).lower()} still open on Kite "
                                                        f"({ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))})",
                               "hand": f"cancel the resting {ko.LEG_NAMES.get(r['leg'], r['leg']).lower()} on Kite"})
@@ -354,8 +378,9 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
     reds = sum(1 for x in items if x["level"] == "red")
     n = len(rows)
     summary = (f"🔎 Kite day · {n} order{'s' if n != 1 else ''} · {positions} position{'s' if positions != 1 else ''} · {opened} open · "
-               f"checks: {'all clear' if not reds else f'{reds} red'}")
+               f"targets {watched} watched · {hit} hit · checks: {'all clear' if not reds else f'{reds} red'}")
     res = {"at": now.isoformat(timespec="seconds"), "at_label": ampm(now), "day": day, "orders": n, "positions": positions, "open": opened,
+           "targets_watched": watched, "targets_hit": hit,
            "items": items, "red": reds, "caps": caps, "summary": summary,
            "caps_text": f"entries {caps['entries']} of {caps['max_entries']} · realised {ko.rupees(caps['loss'], sign=True)} of the −{ko.rupees(caps['loss_cap'])} cap"}
     with get_db() as conn:

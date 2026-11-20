@@ -44,15 +44,15 @@ def test_cards_rows_chips_checks_record_from_a_seeded_day(pushed):  # noqa: F811
     o = rows[h3]                                                          # open: P&L at the last stored quote, stop and target distance
     assert o["state"] == "entered" and o["tag"].endswith("open · 1 lot") and o["pnl"] == (330 - 306) * 20
     assert o["facts"] == "now 330 · stop 250 is −24.2 % · target 380 is +15.2 %"
-    assert o["detail"] == "entry 306 · 2:05 PM · auto · stop and T1 resting in the dry run" and o["buttons"] == ["trail", "exit"]
+    assert o["detail"] == "entry 306 · 2:05 PM · auto · stop resting in the dry run · targets watched by the app" and o["buttons"] == ["trail", "exit"]
     a = rows[h2]                                                          # armed: the distance to the level, one lot
     assert a["tag"].endswith("armed · SL-M 370 resting") and a["pnl"] is None
     assert a["facts"] == "now 337 · level 370 is 9.8 % away · 1 lot"
     assert a["detail"] == "1:52 PM · auto · the level is the trigger · wait words logged · cancels at 3:00 PM if it never trades 370"
     assert a["buttons"] == ["send_now", "cancel"] and a["send_ok"] is False
     assert {x["leg"] for x in a["kite"]["legs"]} >= {"entry", "stop"}             # what the shared confirms read
-    assert d["card"]["pnl"] == 1200.0 + 480.0 and d["card"]["line"] == "DRY · 1 open · 1 armed · 2 of 4 entries"
-    assert [(t["id"], t["text"], t["c"]) for t in d["today"]] == [(h1, "closed +₹1,200 · T1", "ok"), (h2, "armed · resting", "w"), (h3, "DRY · open", "ok")]
+    assert d["card"]["pnl"] == 1400.0 + 480.0 and d["card"]["line"] == "DRY · 1 open · 1 armed · 2 of 4 entries"      # T1 600 watched: sold at market 610
+    assert [(t["id"], t["text"], t["c"]) for t in d["today"]] == [(h1, "closed +₹1,400 · T1", "ok"), (h2, "armed · resting", "w"), (h3, "DRY · open", "ok")]
     assert d["checks"]["clear"] == [h3, h2, h1] and d["checks"]["items"] == [] and d["checks"]["at_label"] == "2:10 PM"
     assert d["record"]["hints"] == 3 and d["record"]["t1_first"] == 1 and d["record"]["day_check"] is None and d["record"]["day_check_at"] == "3:35 PM"
     assert d["channel30"]["hints"] == 3

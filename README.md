@@ -2197,17 +2197,33 @@ The paper book stays exactly as it is. On top, with `kite_mode = click`, a hint'
 own Kite Connect session; real money) **by your click**, each button through a confirm that names the contract, the
 quantity, the order type, the premium, the caps after it and the warning *"Real money on your Kite account. The app
 never averages, never re-enters after a stop, and stops for the day at the loss cap."*
-- **Legs**: entry `MARKET` (the hint's side) · stop `SL-M` at the plan's premium stop for the open quantity · T1 `LIMIT`
-  at target 1 (half, in whole lots, when the plan books half at T1 and the size is 2+ lots; else all) · T2 `LIMIT` at
-  target 2 for the rest, placed only after T1 has filled (a sell for more than you hold is refused) — or by your
-  "Place now" once T1 is done. **Targets past the second stay in the paper record only.** A spot-based stop cannot go
-  on Kite: "spot stop: watched by the app, exit by hand".
-- **Place all** = the entry now; the moment it fills the app places the stop and T1; when T1 fills it moves the stop to
-  cost (and to the remaining quantity) and places T2; when the stop or the last target fills it cancels the leftovers.
-  These are the consequences of your click (the confirm says so) and the only automatic steps. **Place rest** places
-  whatever of stop / T1 (/ T2 after T1) is missing, then follows the same way. Each leg also has its own button
-  (Place entry… / Place SL… / Place T1… / Place now… / Modify → cost / Cancel), plus **Exit on Kite now…** (cancels the
-  working stop / targets, then a `MARKET` exit) and **Re-sync with Kite**.
+- **Legs**: entry `MARKET` (the hint's side) · stop `SL-M` at the plan's premium stop for the full open quantity — **the
+  only order that rests on Kite** · T1 / T2 are **watched by the app**, never resting orders. Why: Kite nets only the
+  first pending sell against a long option; a second one counts as a naked short and is refused for margin (20 Nov,
+  #11 NIFTY 25600 CE: SL-M 175 and LIMIT 270 sent together, the LIMIT REJECTED "Insufficient funds. Margin required:
+  195887.12"). The card shows "🎯 Target 1 · SELL 32 at ≥ 270 · watched by the app · now 217 · target 270 is +24 %",
+  badge *watched* (amber) → *hit · sold 270.4* (green). **Targets past the second stay in the paper record only.** A
+  spot-based stop cannot go on Kite: "spot stop: watched by the app, exit by hand".
+- **The target watch** (every Syncer tick, 5 s while a Kite position is open; click, auto and the dry run alike, on the
+  hint's last LTP from the Tips quote poll, one quote read when it is older than 6 s): LTP ≥ the target (≤ for a sell
+  hint) → T1 with more than one lot open: cancel the resting stop → `MARKET` exit of half (whole lots, as the split
+  does) → on the fill a **new** `SL-M` for the rest at cost (never below the previous stop for a buy) → T2 watched for
+  the rest ("⚡ Kite AUTO · #11 T1 hit 270.4 · sold 65 of 130 at market · stop → cost 230 for the rest · watching T2
+  310"). One lot, or the last target: cancel the stop → `MARKET` exit of all → closed "… +₹x total". **Safety**: the
+  stop is cancelled only in the tick the market exit is sent; a refused / rejected market exit re-places the `SL-M` at
+  once (same trigger, same quantity): "⚠️ Kite · #11 target exit refused: <Kite's words> · stop re-placed · exit by
+  hand" (the watch stops for that hint). If the re-place fails too: a red line and the Home item "no stop on Kite: exit
+  by hand NOW". A target passed while the app was down is acted on at the next tick (no "missed" state).
+- **Migration**: a real hint with a resting T1 / T2 `LIMIT` from before has it cancelled on the first sync after the
+  update (the margin trap), the leg marked watched, one log + Telegram line; a rejected target leg becomes watched
+  silently.
+- **Place all** = the entry now; the confirm says "entry now · the stop rests on Kite the moment it fills · targets are
+  watched by the app (a resting target would be rejected for margin on a long option) · half at T1 then stop to cost ·
+  the rest at T2". When the stop or the last target fills the leftovers are cancelled. These are the consequences of
+  your click. **Place rest** = the stop when it is missing, and the watch. Each leg also has its own button (Place
+  entry… / Place SL… / Modify → cost / Cancel), plus **Exit on Kite now…** (cancels the working stop, then a `MARKET`
+  exit) and **Re-sync with Kite**. The order check adds a red item "a target resting on Kite" (it should never happen
+  now); the 3:35 PM day check counts the targets watched / hit.
 - **Guards** (each blocks with its text, HTTP 409): Kite logged in · market hours · entries only `kite_entry_from` –
   `kite_entry_until` · mode not off · kill switch off · entries today under `kite_max_entries_day` · lots ≤
   `kite_max_lots` · today's realised loss short of `kite_loss_cap` · a complete plan (stop + target), a contract and a
@@ -2218,10 +2234,10 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
 - **Only ours**: every order carries the tag `bptips`; the sync reads the order book once and keeps the app's own order
   ids. Holdings and other positions are never read; nothing on the broker side is deleted. Order calls are sent once
   (never retried).
-- **Sync**: its own thread, every 10 s while the market is open and an order of ours is working (else a cheap check
-  every 30 s); never on the request path. Telegram (kind `tips`): "⚡ Kite · #41 entry filled 462.10 ×40 · SL 410 + T1
-  520 ×20 placed", "⚡ Kite · #41 T1 filled 520 ×20 · stop → cost 462.10 · T2 550 ×20 placed", "⚡ Kite · #41 stop filled
-  410 ×40 · −₹2,084 · targets cancelled", "⚠️ Kite · #41 entry REJECTED · <Kite's message>". Realised P&L per hint from
+- **Sync**: its own thread, every 10 s while the market is open and an order of ours is working, 5 s while a Kite position is open (the target watch; else a cheap check
+  every 30 s); never on the request path. Telegram (kind `tips`): "⚡ Kite · #41 entry filled 462.10 ×40 · SL 410 placed · T1
+  520 watched by the app", "⚡ Kite · #41 T1 hit 520 · sold 20 of 40 at market · stop → cost 462.10 for the rest ·
+  watching T2 550", "⚡ Kite · #41 stop filled 410 ×40 · −₹2,084", "⚠️ Kite · #41 entry REJECTED · <Kite's message>". Realised P&L per hint from
   the fills (the loss cap reads it).
 - **Entry levels (PR C)**: every entry level is the option's own **premium** or the **index** (`entry.level_kind`): the
   words spot / index / the index name right before the number ("sensex above 82400", "above 82400 spot", "nifty crosses

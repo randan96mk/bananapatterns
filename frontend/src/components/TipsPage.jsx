@@ -5,12 +5,13 @@ import { clock, ampm } from '../timefmt';
 import { inr } from '../fmt';
 import { useIsPhone } from '../useMedia';
 import { Card, Cards, Panel, FixedTable, Tag, AiTag, Chip, Head, Seg, Switch } from './ui2';
-import { DRY_WARN, DRY_NOTE, KMODES, kmodeNote, hintName, modeConfirm, killConfirm, legLine, kiteTexts } from './tipsKite';
+import { DRY_WARN, DRY_NOTE, KMODES, kmodeNote, hintName, modeConfirm, killConfirm, legLine, kiteTexts, PLACE_ALL_NOTE, WATCH_NOTE } from './tipsKite';
 
 // 💡 Research › Tips: a Telegram channel's calls caught, filtered, decoded and scored. NOT linked to any strategy:
 // every take is the owner's, each through a confirm, into a separate Tips PAPER book (nothing is sent to the broker).
 // ⚡ Tips → Kite orders (tips.kite_mode click): on top of the paper book, a hint's legs go to Kite by the owner's click,
-// each through a confirm; "Place all" = the entry now, the stop + T1 the moment it fills (GET /api/tips/kite behind it).
+// each through a confirm; "Place all" = the entry now, the stop the moment it fills (GET /api/tips/kite behind it). Only
+// the stop rests on Kite: the targets are WATCHED legs (the app sells at market when the price reaches one).
 // Dry run (kite_mode dry): the same buttons and legs through a simulator that fills from live quotes; every badge, status
 // and Telegram line carries DRY and nothing reaches Kite. "Test connection…" proves the session, the static IP and the
 // order permission on the real account (one LIMIT buy at half the price, cancelled 5 s later).
@@ -79,7 +80,9 @@ function statusTag(h) {
 }
 const SRC = { channel: '📣', owner: '👤', code: '⚙', ai: '🤖', kite: '⚡' };
 
-// The decoded grid: six fixed cells (3 columns on a phone); each value ellipsizes, never wraps.
+// The decoded grid: six fixed cells (3 columns on a phone); each value ellipsizes, never wraps. An open hint (or an open
+// Kite position) gets a seventh, NOW: the strike's last price (the 5 s quote poll), bold, green / red against the fill
+// once entered (neutral before), with where it sits under it ("−5.6 % from 230" / "in the zone 191–198").
 export function Decoded({ h }) {
   const sh = h?.size_hint;
   const lotSize = h?.plan?.lot_size ?? h?.lot_size;
@@ -97,8 +100,13 @@ export function Decoded({ h }) {
     ['size', size, ['size', 'size_hint']],
     last,
   ];
-  return <div className="tp-dec">{cells.map(([k, v, f]) => <div key={k} title={typeof v === 'string' ? v : undefined}>
-    <div className="kk">{k}</div><b className={k === 'stop' && v === 'no usable stop' ? 'warn' : ''}><span className="v">{v}</span>{isAi(h, ...f) && <AiTag title="filled by the local model from the post's own text" />}</b></div>)}</div>;
+  const nw = h?.now && isNum(h.now.ltp) && (OPEN.includes(h?.status) || h?.kite?.state === 'entered' || h?.position?.state === 'open') ? h.now : null;
+  const nowCell = nw && <div key="now" className={`nowc ${nw.tone || ''}`} title={`now ${px(nw.ltp)}${nw.sub ? ` · ${nw.sub}` : ''}`}>
+    <div className="kk">now</div><b className={`nv ${nw.tone || ''}`}><span className="v">{px(nw.ltp)}</span></b>{nw.sub && <div className="ns">{nw.sub}</div>}</div>;
+  const out = cells.map(([k, v, f]) => <div key={k} title={typeof v === 'string' ? v : undefined}>
+    <div className="kk">{k}</div><b className={k === 'stop' && v === 'no usable stop' ? 'warn' : ''}><span className="v">{v}</span>{isAi(h, ...f) && <AiTag title="filled by the local model from the post's own text" />}</b></div>);
+  if (nowCell) out.splice(2, 0, nowCell);                // NOW next to ENTRY / STOP / EXPIRY
+  return <div className={`tp-dec${nowCell ? ' n7' : ''}`}>{out}</div>;
 }
 
 export function TargetBar({ h }) {
@@ -123,8 +131,8 @@ const LEG_IC = { entry: '🟢', stop: '🛑', t1: '🎯', t2: '🎯', exit: '⏏
 const LIVE_ST = ['placed', 'open'];
 const legTag = (lg) => {
   const s = lg?.status;
-  const c = s === 'complete' ? 'ok' : s === 'open' || s === 'placed' ? 'a' : s === 'armed' ? 'w' : s === 'rejected' || s === 'failed' ? 'bad' : lg?.after_t1 && s === 'none' ? 'w' : '';
-  const text = s === 'none' && lg?.after_t1 ? 'placed after T1' : s === 'placed' && lg?.leg !== 'entry' ? 'placed' : lg?.status_text || 'not placed';
+  const c = s === 'complete' ? 'ok' : s === 'open' || s === 'placed' ? 'a' : s === 'armed' || s === 'watched' ? 'w' : s === 'rejected' || s === 'failed' ? 'bad' : '';
+  const text = s === 'placed' && lg?.leg !== 'entry' ? 'placed' : lg?.status_text || 'not placed';
   return <Tag c={c} title={lg?.note || undefined}>{lg?.dry && s && s !== 'none' ? 'DRY · ' : ''}{text}</Tag>;
 };
 export const kiteCaps = (k) => {
@@ -217,11 +225,10 @@ function KiteLegs({ h, kinfo, onDone }) {
   const ew = k.needs_activation ? `armed: nothing is sent until the channel says active · then ${k.entry_what || 'at market'}` : (k.entry_what || `${L.entry?.side} at market now`);
   const tsLine = k.hold_to_expiry ? 'held to expiry (target 0): no time-stop exit' : k.time_stop ? `a Kite position still open at ${hm12(k.time_stop)} is exited at market (the time stop)` : '';
   const unfilled = k.entry_what && !/at market now/.test(k.entry_what) ? `An entry that never fills is cancelled at the end of the entry window${k.time_stop ? ` / at ${hm12(k.time_stop)}` : ''}, or when the channel says avoid.` : '';
-  const all = () => run('all', {}, `${head('Place all on Kite')}premium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\n1 · entry   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}\n2 · the moment it fills   ${stopTxt}${L.t1 ? ` · T1 ${legLine(L.t1)}` : ''}\n${L.t2 ? `3 · after T1 fills   T2 ${legLine(L.t2)} · SL moved to cost\n` : ''}caps after this   ${capsAfter}\n\nSteps 2${L.t2 ? ' and 3' : ''} are the app's, as the consequence of this click; the leftovers are cancelled when the position closes.${k.beyond_t2 ? ` Targets past the second stay in the paper record only.` : ''}${unfilled ? ` ${unfilled}` : ''}${tsLine ? `\n${tsLine}.` : ''}\n\n${W}`, `entry ${k.needs_activation || L.entry?.arm_kind === 'watch' ? 'armed' : 'sent'} · ${to} · SL + T1 on the fill`);
-  const entry = () => run('entry', {}, `${head('Place the entry on Kite')}premium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\norder   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}${tsLine ? `\n${tsLine}` : ''}\ncaps after this   ${capsAfter}\n\nOnly the entry: the stop and the targets are yours to place once it fills.\n\n${W}`, `entry sent to ${to}`);
-  const rest = () => run('rest', {}, `${head('Place the rest on Kite')}now   ${L.stop?.status && LIVE_ST.includes(L.stop.status) ? '' : `SL ${stopTxt}`}${L.t1 && !['placed', 'open', 'complete'].includes(L.t1.status) ? ` · T1 ${legLine(L.t1)}` : ''}${L.t1?.status === 'complete' && L.t2 ? ` · T2 ${legLine(L.t2)}` : ''}\n${L.t2 && L.t1?.status !== 'complete' ? `after T1 fills   T2 ${legLine(L.t2)} · SL moved to cost\n` : ''}\nWhat follows a fill is the app's, as the consequence of this click.\n\n${W}`, `the rest sent to ${to}`);
+  const all = () => run('all', {}, `${head('Place all on Kite')}${PLACE_ALL_NOTE}\n\npremium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\n1 · entry   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}\n2 · the moment it fills   ${stopTxt} rests on Kite\n${L.t1 ? `3 · watched by the app   T1 ${legLine(L.t1)}${L.t2 ? ' · then the stop to cost' : ''}\n` : ''}${L.t2 ? `4 · watched by the app   T2 ${legLine(L.t2)}\n` : ''}caps after this   ${capsAfter}\n\nThe steps after the entry are the app's, as the consequence of this click; the leftovers are cancelled when the position closes.${k.beyond_t2 ? ` Targets past the second stay in the paper record only.` : ''}${unfilled ? ` ${unfilled}` : ''}${tsLine ? `\n${tsLine}.` : ''}\n\n${W}`, `entry ${k.needs_activation || L.entry?.arm_kind === 'watch' ? 'armed' : 'sent'} · ${to} · SL on the fill · targets watched`);
+  const entry = () => run('entry', {}, `${head('Place the entry on Kite')}premium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\norder   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}${tsLine ? `\n${tsLine}` : ''}\ncaps after this   ${capsAfter}\n\nOnly the entry: the stop is yours to place once it fills (Place SL… / Place rest…); the targets are watched by the app either way.\n\n${W}`, `entry sent to ${to}`);
+  const rest = () => run('rest', {}, `${head('Place the rest on Kite')}now   SL ${stopTxt} rests on Kite\n${L.t1 && L.t1.status !== 'complete' ? `watched   T1 ${legLine(L.t1)}\n` : ''}${L.t2 && L.t2.status !== 'complete' ? `watched   T2 ${legLine(L.t2)}\n` : ''}\n${WATCH_NOTE}.\n\n${W}`, `the stop sent to ${to} · targets watched`);
   const stop = () => run('stop', {}, `${head('Place the stop on Kite')}order   ${L.stop?.side} ${stopTxt}\n\n${W}`, `stop sent to ${to}`);
-  const tgts = (which) => run('targets', {}, `${head(`Place ${which === 't2' ? 'target 2' : 'target 1'} on Kite`)}order   ${L[which]?.side} ${legLine(L[which])}${which === 't1' && isNum(L.t1?.if_filled) ? ` (${money(L.t1.if_filled)} if filled)` : ''}\n\n${W}`, `${which === 't2' ? 'T2' : 'T1'} sent to ${to}`);
   const exit = () => run('exit', {}, T.exit, `exit sent to ${to}`);
   const cancel = (leg) => run('cancel', { leg }, T.cancel(leg), `${L[leg]?.name || leg} cancelled`);
   const sendNow = () => run('send_now', {}, T.sendNow, `entry sent to ${to}`);
@@ -240,22 +247,18 @@ function KiteLegs({ h, kinfo, onDone }) {
       if (live('stop') && isNum(k.entry_px) && Number(lg.trigger) !== Number(k.entry_px) && acts.includes('modify_stop')) out.push(btn(`Modify → cost ${px(k.entry_px)}`, toCost));
       if (acts.includes('cancel:stop')) out.push(btn('Cancel', () => cancel('stop')));
       if (!live('stop') && lg.status !== 'complete' && lg.placeable !== false) out.push(btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }));
-    } else if (lg.leg === 't1') {
-      if (acts.includes('cancel:t1')) out.push(btn('Cancel', () => cancel('t1')));
-      if (!live('t1') && lg.status !== 'complete') out.push(btn('Place T1…', () => tgts('t1'), { off: !acts.includes('targets'), title: acts.includes('targets') ? undefined : 'after the entry fills on Kite' }));
-    } else if (lg.leg === 't2') {
-      if (acts.includes('cancel:t2')) out.push(btn('Cancel', () => cancel('t2')));
-      if (!live('t2') && lg.status !== 'complete') out.push(btn('Place now…', () => tgts('t2'), { off: !(acts.includes('targets') && L.t1?.status === 'complete'), title: 'after target 1 fills (a sell for more than you hold is refused)' }));
+    } else if (lg.leg === 't1' || lg.leg === 't2') {      // watched by the app: no order to place (a resting one from before can be cancelled)
+      if (acts.includes(`cancel:${lg.leg}`)) out.push(btn('Cancel', () => cancel(lg.leg)));
     }
     return out.map((x, i) => <React.Fragment key={i}>{x}</React.Fragment>);
   };
   const note = msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>
     : k.state === 'closed' ? `closed on Kite${k.reason ? ` · ${k.reason}` : ''} · ${money(k.realised)}`
-      : acts.includes('all') ? (L.entry?.arm_kind && L.entry.arm_kind !== 'market' ? `Place all = ${L.entry.arm_kind === 'watch' ? 'the app watches the index' : 'the entry rests on Kite'}${k.needs_activation ? " (after the channel's activation)" : ''}, SL and targets the moment it fills` : 'Place all = entry now, SL and targets the moment it fills · or each leg on its own')
-        : k.state === 'armed_watch' ? `armed · the app watches ${k.arm?.index || 'the index'} · buys at market on the cross${k.auto_rest ? ' · then SL + T1' : ''}`
-        : k.state === 'armed_wait' ? `armed · waiting for the channel's activation${k.auto_rest ? ' · then SL + T1' : ''}`
-        : k.state === 'armed' ? `entry ${k.arm?.kind === 'slm' || k.arm?.kind === 'limit' ? 'resting on Kite' : 'on Kite'} · waiting for the fill${k.auto_rest ? ' · then SL + T1 by the app' : ''}`
-          : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'}${k.beyond_t2 ? ' · targets past T2: paper record only' : ''}`
+      : acts.includes('all') ? (L.entry?.arm_kind && L.entry.arm_kind !== 'market' ? `Place all = ${L.entry.arm_kind === 'watch' ? 'the app watches the index' : 'the entry rests on Kite'}${k.needs_activation ? " (after the channel's activation)" : ''}, the SL the moment it fills · targets watched by the app` : 'Place all = entry now, the SL the moment it fills · targets watched by the app')
+        : k.state === 'armed_watch' ? `armed · the app watches ${k.arm?.index || 'the index'} · buys at market on the cross${k.auto_rest ? ' · then SL' : ''}`
+        : k.state === 'armed_wait' ? `armed · waiting for the channel's activation${k.auto_rest ? ' · then SL' : ''}`
+        : k.state === 'armed' ? `entry ${k.arm?.kind === 'slm' || k.arm?.kind === 'limit' ? 'resting on Kite' : 'on Kite'} · waiting for the fill${k.auto_rest ? ' · then SL by the app' : ''}`
+          : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'} · only the stop rests · targets watched by the app${k.beyond_t2 ? ' · targets past T2: paper record only' : ''}`
             : k.sim ? 'dry run · every button opens a confirm · nothing reaches Kite' : 'every button opens a confirm · the paper book stays as it is';
   return <div className="tp-kite">
     <div className="tp-legs">{legs.map((lg) => <div key={lg.leg} className={`tp-leg ${lg.status}`}>
@@ -264,7 +267,7 @@ function KiteLegs({ h, kinfo, onDone }) {
       {lg.now_text && <div className="d nw" title={lg.now_text}>{lg.now_text}</div>}
       <div className="a">{legBtns(lg)}</div></div>)}</div>
     <div className="acts tp-kacts">
-      {acts.includes('all') && <button type="button" className="btn small" disabled={busy} onClick={all}>⚡ Place all on Kite · entry + SL + targets…</button>}
+      {acts.includes('all') && <button type="button" className="btn small" disabled={busy} onClick={all}>⚡ Place all on Kite · entry + SL…</button>}
       {acts.includes('rest') && <button type="button" className="btn small" disabled={busy} onClick={rest}>⚡ Place rest…</button>}
       {acts.includes('exit') && <button type="button" className="btn ghost small tp-danger" disabled={busy} onClick={exit}>Exit on Kite now…</button>}
       <button type="button" className="btn ghost small" disabled={busy} onClick={resync}>Re-sync with Kite</button>

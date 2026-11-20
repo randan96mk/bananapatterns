@@ -129,12 +129,13 @@ def test_day_check_summary_and_panel(pushed):
     ko.place_all(c, s, h2, 1, now=t19("13:53"))
     tick(c, w, {S82200: 538.0}, "13:55")                                       # call 1 fills; call 2 still resting
     res = kc.day_check(c, t19("15:35"))
-    assert res["orders"] == 4 and res["positions"] == 1 and res["open"] == 1 and res["red"] >= 2
+    assert res["orders"] == 3 and res["positions"] == 1 and res["open"] == 1 and res["red"] >= 2
+    assert res["targets_watched"] == 1 and res["targets_hit"] == 0                # the day check counts watched targets, not orders
     texts = [x["text"] for x in res["items"]]
     assert any(t.startswith("#2 DRY entry still open on Kite") for t in texts)
     assert any("open after the time stop" in t for t in texts)
-    assert res["summary"] == f"🔎 Kite day · 4 orders · 1 position · 1 open · checks: {res['red']} red"
-    assert any(p.startswith("🔎 Kite day · 4 orders") for p in pushed)
+    assert res["summary"] == f"🔎 Kite day · 3 orders · 1 position · 1 open · targets 1 watched · 0 hit · checks: {res['red']} red"
+    assert any(p.startswith("🔎 Kite day · 3 orders") for p in pushed)
     assert kc.last_day()["summary"] == res["summary"] and ko.today(c, w, t19("15:36"))["day_check"]["summary"] == res["summary"]
     row = ko.health_row(c)
     assert "last check 3:35 PM" in row["state"] and f"{res['red']} red" in row["state"]
@@ -143,7 +144,7 @@ def test_day_check_summary_and_panel(pushed):
 def test_day_check_all_clear_and_a_fill_with_no_hint(pushed):
     c, w, s = dry_setup()
     res = kc.day_check(c, t19("15:35"))
-    assert res["summary"] == "🔎 Kite day · 0 orders · 0 positions · 0 open · checks: all clear"
+    assert res["summary"] == "🔎 Kite day · 0 orders · 0 positions · 0 open · targets 0 watched · 0 hit · checks: all clear"
     with get_db() as conn:
         conn.execute("INSERT INTO tips_orders (hint_id, leg, side, qty, order_type, status, order_id, filled_px, filled_qty, day, \"by\") "
                      "VALUES (77, 'entry', 'BUY', 20, 'MARKET', 'complete', 'X1', 300, 20, ?, 'click')", (t19("10:00").date().isoformat(),))

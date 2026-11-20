@@ -2664,7 +2664,7 @@ class TipsKiteAct(BaseModel):
     to: Optional[Union[float, str]] = None
 
 
-KITE_ACTIONS = ("entry", "stop", "targets", "all", "rest", "exit", "cancel", "modify_stop", "send_now")
+KITE_ACTIONS = ("entry", "stop", "all", "rest", "exit", "cancel", "modify_stop", "send_now")      # targets: watched by the app, never placed
 
 
 @router.get("/tips/kite")
@@ -2737,7 +2737,8 @@ def tips_kite_test():
 
 @router.post("/tips/hints/{hid}/kite/{action}")
 def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
-    """entry {lots?} · all {lots?} (entry now, the stop + T1 on the fill) · rest · stop · targets · exit · cancel {leg} ·
+    """entry {lots?} · all {lots?} (entry now, the stop on the fill, the targets watched by the app) · rest (the stop when
+    missing + the watch) · stop · exit · cancel {leg} ·
     modify_stop {to: price | "cost"}. 404 no hint · 409 a guard (its text) or Kite's refusal · 400 bad input."""
     from backend.tips import book as tb
     from backend.tips import kite_orders as ko
@@ -2757,8 +2758,6 @@ def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
             h = ko.place_rest(c, cl, hid)
         elif action == "stop":
             h = ko.place_stop(c, cl, hid)
-        elif action == "targets":
-            h = ko.place_targets(c, cl, hid)
         elif action == "exit":
             h = ko.exit_now(c, cl, hid)
         elif action == "cancel":

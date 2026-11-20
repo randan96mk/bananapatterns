@@ -59,7 +59,9 @@ def tick(c, w, prices: dict, hhmm, sec=0):
     now = t19(hhmm, sec)
     tr.poll(c, w, now)
     s = ko.sim()
+    watch = ko.watch_all(c, w, now)                           # the Syncer's order: the target watch, then the books
     out = ko.sync(c, s, now)
+    out["watch"] = watch
     out["house"] = ka.housekeep(c, s, now)
     out.update(ko.sync(c, s, t19(hhmm, sec + 1)) if out["house"] else {})
     return out
@@ -121,10 +123,12 @@ def test_click_place_all_rests_a_stop_entry_fills_in_the_sim_then_sl_and_t1(push
     r = tick(c, w, {S82300: 340.0}, "13:55")
     assert r["lines"] == [] and bk.load(hid)["kite"]["state"] == "armed"         # under the trigger: still resting
     r = tick(c, w, {S82300: 372.0}, "13:58")
-    assert r["lines"][0] == "⚡ Kite DRY · #1 entry filled 370 ×20 · SL 200 + T1 500 ×20 placed"
+    assert r["lines"][0] == "⚡ Kite DRY · #1 entry filled 370 ×20 · SL 200 placed · T1 500 watched by the app"
     assert ko.entries_today(D19.isoformat(), dry=True) == 1
     k = bk.load(hid)["kite"]
-    assert k["legs"]["stop"]["trigger"] == 200 and k["legs"]["t1"]["price"] == 500 and k["check"]["ok"]
+    assert k["legs"]["stop"]["trigger"] == 200 and "t1" not in k["legs"] and k["check"]["ok"]
+    legs = {x["leg"]: x for x in tr.hint_view(bk.load(hid), config=c)["kite"]["legs"]}
+    assert legs["t1"]["status"] == "watched" and legs["t1"]["type_text"] == "at ≥ 500" and legs["t1"]["detail"].startswith("watched by the app")
 
 
 def test_premium_level_already_passed_goes_at_market_or_is_not_chased(pushed):
@@ -153,7 +157,7 @@ def test_zone_rests_as_a_limit_at_its_top_and_fills(pushed):
     e = ko.rows_for(hid)[0]
     assert (e["order_type"], e["price"], e["status"]) == ("LIMIT", 540, "placed")
     r = tick(c, w, {S82200: 538.0}, "12:55")
-    assert r["lines"][0].startswith("⚡ Kite DRY · #1 entry filled 540 ×20 · SL 480 + T1 600")
+    assert r["lines"][0].startswith("⚡ Kite DRY · #1 entry filled 540 ×20 · SL 480 placed · T1 600 watched by the app")
 
 
 def test_spot_watch_arms_and_buys_at_market_on_the_index_cross(pushed):
@@ -316,7 +320,7 @@ def test_auto_follows_exit_trail_modify_and_partial(pushed):
     post(c, w, s, 4, "13:05", "BOOK PART & KEEP TSL AT COST FOR REST QTY")   # 4 lots: half at market
     tick(c, w, {S82200: 590.0}, "13:06")
     k = bk.load(hid)["kite"]
-    assert k["qty_open"] == 40 and k["legs"]["stop"]["qty"] == 40 and k["legs"]["t1"]["qty"] <= 40
+    assert k["qty_open"] == 40 and k["legs"]["stop"]["qty"] == 40 and "t1" not in k["legs"]
     assert any("booked part: SELL 40 of 80 MARKET" in p for p in pushed)
     post(c, w, s, 5, "13:10", "tsl gone for rest quantity")                  # SL hit: exit what is open
     tick(c, w, {S82200: 560.0}, "13:11")
