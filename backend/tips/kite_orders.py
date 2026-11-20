@@ -883,6 +883,27 @@ def _move_stop(client, h: dict, px: float, now: datetime, who: str, config=None)
     _log(k, now, f"Kite: stop moved to {pl.fmt(px)} ({who})")
 
 
+def rest_stop_to(config, client, h: dict, px: float, now: datetime, who: str) -> str:
+    """The remainder's stop to the channel's "rest sl N" after a part is booked: never lowered for a buy (raised for a
+    sell), never past the price. Returns the line's text; never raises."""
+    k = kstate(h)
+    st = k["legs"].get("stop") or {}
+    if st.get("status") not in LIVE:
+        return "no stop on Kite to move"
+    cur = st.get("trigger")
+    buy = entry_side(h) == "BUY"
+    if cur is not None and ((buy and float(px) <= float(cur)) or (not buy and float(px) >= float(cur))):
+        return f"rest stop kept at {pl.fmt(cur)}" + ("" if float(px) == float(cur) else f" (the post's {pl.fmt(px)} is {'lower' if buy else 'higher'})")
+    ltp = bk.last_ltp(h)
+    if ltp is not None and ((buy and float(px) >= ltp) or (not buy and float(px) <= ltp)):
+        return f"the rest stop {pl.fmt(px)} is past the price {pl.fmt(ltp)} · not modified · your call"
+    try:
+        _move_stop(client, h, float(px), now, who, config)
+    except TipsError as exc:
+        return f"rest stop refused: {str(exc)[:60]}"
+    return f"rest stop → {pl.fmt(px)}"
+
+
 def _resize(client, h: dict, now: datetime) -> list[str]:
     """After a part of the position is sold (a partial booking): the resting stop and targets never sell more than is
     still held (their quantity is cut to the open quantity)."""
@@ -1184,6 +1205,10 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                 rs2 = _resize(client, h, now)
                 if rs2:
                     text += f" · {k['qty_open']} left · " + ", ".join(rs2)
+                if k.get("rest_stop_after_part") is not None:              # the channel's "rest sl N" wins over "TSL at cost"
+                    text += " · " + rest_stop_to(config, client, h, float(k["rest_stop_after_part"]), now, "the channel: rest SL")
+                    k["rest_stop_after_part"] = None
+                    k["cost_after_part"] = False
                 if k.get("cost_after_part") and k.get("entry_px") is not None and (k["legs"].get("stop") or {}).get("status") in LIVE:
                     try:
                         _move_stop(client, h, float(k["entry_px"]), now, "the channel: TSL at cost", config)
@@ -1847,7 +1872,9 @@ def auto_guards(config, now: datetime) -> list[dict]:
     mx = int(getattr(config.tips, "kite_auto_max_open", 1))
     n = ka.open_count()
     bp = getattr(config.tips, "kite_auto_book_part", "channel")
-    return [_g(n < mx, f"auto: open at once {n} of {mx} · a second hint waits", "auto_open"),
+    closed = ka.day_closed(now)
+    day = [_g(False, f"auto: the channel closed the day at {closed.get('at_label')} · nothing new armed today · a new call re-opens it", "day_closed")] if closed else []
+    return day + [_g(n < mx, f"auto: open at once {n} of {mx} · a second hint waits", "auto_open"),
             _g(True, "auto: a level is the trigger · wait words alone wait for the channel's activation", "auto_act"),
             _g(True, "auto: never averages · add-ons ignored · book part with one lot: " + ("booked" if bp == "channel" else "held, stop to cost"), "auto_add")]
 
@@ -1870,10 +1897,19 @@ def lite(config, now: Optional[datetime] = None, rows: Optional[list] = None, us
     return {"mode": mode(config), "kill": killed(), "open": sum(1 for r in rows if r["status"] in LIVE),
             "caps": {"entries": n, "max_entries": int(c.kite_max_entries_day), "max_lots": int(c.kite_max_lots),
                      "loss_cap": float(c.kite_loss_cap), "used_loss": round(min(used, 0.0), 2)},
-            "window": window_text(config), "product": c.kite_product,
+            "window": window_text(config), "product": c.kite_product, "day_closed": _day_closed(now),
             "auto": {"max_open": int(getattr(c, "kite_auto_max_open", 1)), "book_part": getattr(c, "kite_auto_book_part", "channel"),
                      "line": "auto: entries armed on the level / the channel's activation · SL on the fill · targets watched by the app · the channel's exits followed · you are told"}
             if mode(config) == "auto" else None}
+
+
+def _day_closed(now: datetime) -> Optional[dict]:
+    try:
+        from backend.tips import kite_auto as ka
+        d = ka.day_closed(now)
+        return {"at": d.get("at"), "at_label": d.get("at_label"), "text": d.get("text")} if d else None
+    except Exception:
+        return None
 
 
 def health_row(config) -> dict:

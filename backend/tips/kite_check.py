@@ -84,7 +84,8 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
         items.append({"level": "amber", "text": text, "hand": None})
 
     if not rows and k["state"] not in ("armed_watch", "armed_wait", "entered"):
-        return {"ok": True, "items": [], "red": 0, "at": now.isoformat(timespec="seconds")}
+        ai_items = list(k.get("ai_fu_items") or [])
+        return {"ok": True, "items": ai_items, "red": 0, "at": now.isoformat(timespec="seconds")}
     raw = re.sub(r"[,\s]", "", (h.get("raw") or "").lower())
     st = h.get("strike")
     ts = h.get("tradingsymbol") or ""
@@ -169,6 +170,7 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
             cut = now.replace(hour=pl.hm(tstop).hour, minute=pl.hm(tstop).minute, second=0, microsecond=0)
             if now >= cut + timedelta(seconds=STOP_GRACE_S) and (at is None or at < cut):
                 red(f"{q_open} open after the time stop {ampm(tstop)}", "exit on Kite now")
+    items.extend(x for x in (k.get("ai_fu_items") or []) if x not in items)     # 🤖 the AI second opinion's "differs" (amber)
     reds = sum(1 for x in items if x["level"] == "red")
     return {"ok": reds == 0, "items": items, "red": reds, "at": now.isoformat(timespec="seconds")}
 
@@ -413,9 +415,209 @@ def attention_items(now: Optional[datetime] = None) -> list[tuple[str, str]]:
         for x in (k.get("check") or {}).get("items") or []:
             if x["level"] == "red":
                 out.append(("warn", f"⚡ Kite #{h['id']} · {x['text']}" + (f" → {x['hand']}" if x.get("hand") else "")))
+    for h in bk.rows("kite IS NOT NULL AND json_extract(kite, '$.ai_fu_items') IS NOT NULL", order="id"):
+        k = ko.kstate(h)
+        if k.get("day") != now.date().isoformat() or k["state"] not in ko.WORKING:
+            continue
+        for x in (k.get("ai_fu_items") or [])[-1:]:          # 🤖 the AI second opinion differs: worth a look, never loud
+            out.append(("info", f"⚡ {x['text']}"))
     d = last_day()
     if d and d.get("day") == now.date().isoformat():
         for x in d.get("items") or []:
             if x["level"] == "red" and not any(x["text"].split(" ", 1)[-1] in t for _, t in out):
                 out.append(("warn", f"⚡ Kite day check · {x['text']}" + (f" → {x['hand']}" if x.get("hand") else "")))
     return out[:8]
+
+
+# --- the AI second opinion on a channel follow-up (informational: never places, modifies or cancels anything) -----------------
+
+FU_KIND = "tips_followup"
+FU_PROMPT_V = "followup-v1"
+FU_SYSTEM = ("You read one follow-up post from a Telegram trading channel about a trade that is open or armed, and compare it "
+             "with what a trading app did. Reply with ONE line, plain text, no markdown: 'reads as: <book now | book part | "
+             "move stop to N | exit | trail | nothing>' then ' · ' then 'agrees' or 'differs: <why in at most 20 words>'. "
+             "Use only figures that appear in the input. A note that is conditional on the lots held applies to the lots given.")
+READS = ("book now", "book part", "move stop to", "exit", "trail", "nothing")
+_FU_RE = re.compile(r"reads\s*as\s*:?\s*(book now|book part|move stop to\s*\d[\d,]*(?:\.\d+)?|exit|trail|nothing)\b(.*)", re.I)
+
+
+def fu_skip(text: str, act: Optional[dict]) -> Optional[str]:
+    """Why a follow-up gets no AI read: a bare price ("476"), chatter, an add-on. None when it is read."""
+    a = (act or {}).get("action")
+    t = (text or "").strip()
+    if a == "price" or re.fullmatch(r"[\d\s.,+\-/₹%()]*\W*", t):
+        return "a bare price"
+    if a == "add":
+        return "an add-on (never averaged)"
+    if not re.search(r"[A-Za-z]{3}", t):
+        return "chatter"
+    return None
+
+
+def did_text(act: Optional[dict], line: Optional[str]) -> str:
+    """What the app did with the follow-up, in a few words ('the app moved the stop to 440')."""
+    a = (act or {}).get("action")
+    ln = (line or "").lower()
+    if ln.startswith("not followed") or "not modified" in ln or "not booked" in ln:
+        return "the app did not follow it (" + (line or "")[:60] + ")"
+    if a == "stop" and (act or {}).get("value") is not None:
+        return f"the app moved the stop to {pl.fmt(act['value'])}"
+    if a == "partial":
+        if "one lot" in ln and "booked" in ln:
+            return "the app booked the one lot at market"
+        if "kept for the target" in ln:
+            return "the app kept the one lot for the target" + (f" · rest stop {pl.fmt(act['rest_stop'])}" if act.get("rest_stop") is not None else "")
+        return "the app booked part" + (f" · rest stop {pl.fmt(act['rest_stop'])}" if act.get("rest_stop") is not None else
+                                        " · stop to cost" if act.get("cost") else "")
+    if a in ("exit", "sl_hit"):
+        return "the app exited at market"
+    if a == "trail":
+        return "the app trailed the stop to cost"
+    if a == "avoid":
+        return "the app cancelled the unfilled entry"
+    if a == "active":
+        return "the app sent the entry"
+    if a == "targets":
+        return "the app noted the targets"
+    return "the app took no action"
+
+
+def fu_input(h: dict, text: str, act: Optional[dict], line: Optional[str], ltp: Optional[float] = None) -> str:
+    """The model's input: the post, the hint's one-line state (qty open, lots, entry, stop, targets, live price), the
+    action the code took."""
+    k = ko.kstate(h)
+    plan = h.get("plan") or {}
+    ltp = ltp if ltp is not None else bk.last_ltp(h)
+    stop = k.get("stop_px") if k.get("stop_px") is not None else ((k["legs"].get("stop") or {}).get("trigger") or ko.premium_stop(h))
+    tg = plan.get("targets") or []
+    entry = k.get("entry_px") if k.get("entry_px") is not None else ((h.get("entry") or {}).get("lo") or (h.get("entry") or {}).get("hi"))
+    state = (f"open {qty_text(h, k.get('qty_open'))}" if k["state"] == "entered" else f"armed {qty_text(h, k.get('qty'))} (not filled)")
+    post = " / ".join(x.strip() for x in (text or "").split("\n") if x.strip())[:600]
+    a = dict(act or {})
+    code = a.get("action") or "note"
+    if a.get("value") is not None:
+        code += f" {pl.fmt(a['value'])}"
+    if a.get("rest_stop") is not None:
+        code += f" · rest stop {pl.fmt(a['rest_stop'])}"
+    if a.get("cost"):
+        code += " · cost"
+    return "\n".join([
+        f"Hint #{h['id']}: {bk.title(h)} · lot {h.get('lot_size') or '-'}",
+        f"State: {state} · {int(k.get('lots') or 0)} lot{'s' if int(k.get('lots') or 0) != 1 else ''} · entry {pl.fmt(entry)} · stop {pl.fmt(stop)}"
+        f" · targets {'/'.join(pl.fmt(t) for t in tg) or '-'} · live {pl.fmt(ltp)}",
+        f"Post: {post}",
+        f"The app read it as: {code}",
+        f"The app did: {did_text(act, line)}" + (f" ({line[:120]})" if line else ""),
+    ])
+
+
+def fu_parse(raw: str, src: str) -> Optional[dict]:
+    """{reads, agrees, why, line} from the model's one line, or None (no such line, or a figure not in the input)."""
+    from backend.ai import notes
+    allowed = notes.typed_tokens(src)
+    for ln in (raw or "").split("\n"):
+        t = re.sub(r"^\s*(?:[-*•]|\d[.)]|\[?AI\]?:?)\s*", "", ln).strip().strip("*").strip()
+        m = _FU_RE.search(t)
+        if not m:
+            continue
+        reads = re.sub(r"\s+", " ", m.group(1).lower()).replace(",", "")
+        rest = m.group(2) or ""
+        dm = re.search(r"\bdiffers?\b\s*:?\s*(.*)", rest, re.I)
+        agrees = dm is None and bool(re.search(r"\bagrees?\b", rest, re.I))
+        if dm is None and not agrees:
+            return None
+        why = (dm.group(1).strip(" .·-") if dm else "")
+        why = " ".join(why.split()[:20])
+        if not _figures_ok(t[:300], allowed):
+            return None
+        return {"reads": reads, "agrees": agrees, "why": why, "line": t[:240]}
+    return None
+
+
+def followup_read(config, hid: int, post_key: str, text: str, act: Optional[dict], line: Optional[str],
+                  generate: Optional[Callable[[str, str], str]] = None, now: Optional[datetime] = None, notify: bool = True) -> dict:
+    """One AI read of a follow-up (the queue's job, kind tips_followup). Agrees: "[AI] agrees" on the card, no push.
+    Differs: ONE Telegram line + an amber item on the card and Home. A line with a figure not in the input is dropped.
+    Never places, modifies or cancels anything."""
+    now = now or _now()
+    h = bk.load(hid)
+    if not h:
+        return {"skip": "no hint"}
+    src = fu_input(h, text, act, line)
+    tokens, model = None, getattr(config.ai, "day_model", None)
+    if generate is None:
+        from backend.ai import client
+        r = client.generate(config.ai.day_model, src + "\n\nWrite the one line now, plain text:", system=FU_SYSTEM, json_mode=False,
+                            timeout=float(config.ai.timeout_s), keep_alive=config.ai.keep_alive, options={"temperature": 0, "num_predict": 80})
+        raw, tokens, model = r.get("text") or "", r.get("tokens"), r.get("model") or model
+    else:
+        raw = generate(FU_SYSTEM, src)
+        model = "fake"
+    res = fu_parse(raw, src)
+    quote = (text or "").strip().replace("\n", " ")[:50]
+    did = did_text(act, line)
+    msg = None
+    with ko._LOCK:
+        h = bk.load(hid) or h
+        k = ko.kstate(h)
+        fu = dict(k.get("ai_fu") or {})
+        done = list(fu.get("done") or [])
+        if post_key not in done:
+            done.append(post_key)
+        fu["done"] = done[-40:]
+        if res is None:
+            fu["last"] = {"state": "dropped", "at": now.isoformat(timespec="seconds"), "post": quote}
+            ko._log(k, now, f'[AI] second opinion on "{quote}" dropped (no usable line)')
+        elif res["agrees"]:
+            fu["last"] = {"state": "agrees", "reads": res["reads"], "at": now.isoformat(timespec="seconds"), "post": quote}
+            ko._log(k, now, f'[AI] agrees · reads "{quote}" as {res["reads"]}')
+        else:
+            msg = f'[AI] #{hid} reads "{quote}" as {res["reads"]} · {did} · your call'
+            fu["last"] = {"state": "differs", "reads": res["reads"], "why": res["why"], "at": now.isoformat(timespec="seconds"), "post": quote}
+            items = list(k.get("ai_fu_items") or [])
+            item = {"level": "amber", "text": msg + (f" ({res['why']})" if res["why"] else ""), "hand": None, "ai": True}
+            if item["text"] not in [x["text"] for x in items]:
+                items.append(item)
+            k["ai_fu_items"] = items[-5:]
+            chk = dict(k.get("check") or {"ok": True, "items": [], "red": 0, "at": now.isoformat(timespec="seconds")})
+            chk["items"] = [x for x in (chk.get("items") or []) if not x.get("ai")] + k["ai_fu_items"]
+            k["check"] = chk
+            ko._log(k, now, msg + (f" · {res['why']}" if res["why"] else ""))
+        k["ai_fu"] = fu
+        ko.save_kite(h)
+    if msg and notify:
+        bk.push(config, f"tips|kite|aifu|{hid}|{post_key}", msg)
+    with get_db() as conn:
+        conn.execute("INSERT INTO ai_notes (created, day, kind, symbol, book, severity, title, text, data, model, prompt_version, ms) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (now_ist(), now.date().isoformat(), FU_KIND, h.get("tradingsymbol") or h.get("symbol"), "tips",
+                      "warn" if msg else "info", f"Follow-up #{hid}",
+                      (res or {}).get("line") or "[AI] nothing usable from the model (the app's reading stands)",
+                      json.dumps({"hint_id": hid, "post": post_key, "raw": raw[:1000], "input": src[:2000], "result": res}),
+                      model, FU_PROMPT_V, None))
+    return {"result": res, "pushed": bool(msg and notify), "tokens": tokens, "note": f"tips follow-up #{hid}"}
+
+
+def enqueue_followup(config, hid: int, post_key, text: str, act: Optional[dict], line: Optional[str], notify: bool = True) -> Optional[dict]:
+    """Queue the second opinion after a follow-up linked to a hint with an open or armed Kite position (any mode but
+    off): at most one per follow-up; never for a bare price or chatter. The AI guard / quiet hours hold it as any job."""
+    if not getattr(config.ai, "enabled", False) or ko.mode(config) == "off":
+        return None
+    if fu_skip(text, act):
+        return None
+    h = bk.load(hid)
+    if not h:
+        return None
+    k = ko.kstate(h)
+    if k["state"] not in ko.WORKING or (k["state"] == "entered" and int(k.get("qty_open") or 0) <= 0):
+        return None
+    key = str(post_key)
+    if key in ((k.get("ai_fu") or {}).get("done") or []):
+        return None
+    try:
+        from backend.ai import queue as q
+        return q.enqueue(config, FU_KIND, f"tips_followup:{hid}:{key}", lambda: followup_read(config, hid, key, text, act, line, notify=notify),
+                         model=config.ai.day_model, note=f"Follow-up #{hid}")
+    except Exception as exc:
+        logger.info("Tips follow-up AI read not queued: %s", str(exc)[:120])
+        return None

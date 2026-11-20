@@ -177,7 +177,8 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
     <span className="sp" />
     {mode === 'off' ? <span className="cap">paper book only · nothing reaches Kite</span>
       : <><span className="cap" title={kiteCaps(k)}>{dry ? 'dry · ' : ''}{kiteCaps(k)}{k?.window ? ` · entries ${k.window}` : ''}</span>
-        <span className={`cap note ${dry ? 'dry' : ''}`} title={dry ? DRY_NOTE : undefined}>{note}</span></>}
+        <span className={`cap note ${dry ? 'dry' : ''}`} title={dry ? DRY_NOTE : undefined}>{note}</span>
+        {k?.day_closed && <span className="cap warn" title={`the channel closed the day${k.day_closed.text ? `: "${k.day_closed.text}"` : ''} · auto arms nothing new today · open positions and stops untouched · a new call re-opens it`}>📕 day closed {k.day_closed.at_label}</span>}</>}
     {mode !== 'off' && <button type="button" className="btn ghost small" disabled={testing} title="one LIMIT buy at half the price on your real Kite account, cancelled 5 s later" onClick={test}>{testing ? 'Testing… ~6 s' : 'Test connection…'}</button>}
     {dry && <button type="button" className="btn small" onClick={rehearse} title="a made-up NIFTY CE hint to press Place all on · nothing reaches Kite">+ Rehearsal hint…</button>}
     {dry && <button type="button" className="btn ghost small" onClick={clearDry} title="void today's dry orders and rehearse again">Clear dry run…</button>}
