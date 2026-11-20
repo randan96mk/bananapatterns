@@ -9,7 +9,10 @@ const plural = (n, w) => `${n} ${w}${Number(n) === 1 ? '' : 's'}`;
 export const KITE_WARN = 'Real money on your Kite account. The app never averages, never re-enters after a stop, and stops for the day at the loss cap.';
 export const DRY_WARN = 'DRY RUN · nothing reaches Kite. A simulator fills from live quotes; the caps count the dry run only.';
 export const DRY_NOTE = 'dry run: same buttons, same legs · a simulator fills from live quotes · nothing reaches Kite';
-export const KMODES = [['off', 'Off', 'paper book only · nothing reaches Kite'], ['dry', 'Dry run', DRY_NOTE], ['click', 'By my click', 'you press every button · each one confirms first'], ['auto', 'Auto', "auto: entries armed on the level / the channel's activation · SL + T1 on the fill · the channel's exits followed · you are told"]];
+export const KMODES = [['off', 'Off', 'paper book only · nothing reaches Kite'], ['dry', 'Dry run', DRY_NOTE], ['click', 'By my click', 'you press every button · each one confirms first'], ['auto', 'Auto', "auto: entries armed on the level / the channel's activation · SL on the fill · targets watched by the app · the channel's exits followed · you are told"]];
+// Only the stop rests on Kite: a second resting sell on one long option counts as a naked short and is refused for margin.
+export const PLACE_ALL_NOTE = 'entry now · the stop rests on Kite the moment it fills · targets are watched by the app (a resting target would be rejected for margin on a long option) · half at T1 then stop to cost · the rest at T2';
+export const WATCH_NOTE = 'the targets are watched by the app: when the price reaches one, the stop is cancelled and that part is sold at market (half at T1, then a new stop at cost for the rest; the rest at T2) · a refused exit re-places the stop at once';
 export const kmodeNote = (m) => (KMODES.find((x) => x[0] === m) || KMODES[0])[2];
 export const hintName = (h) => h?.title || [h?.side, h?.symbol, h?.strike, h?.opt_type].filter((x) => x != null && x !== '').join(' ') || h?.tradingsymbol || 'hint';
 
@@ -17,9 +20,9 @@ export const hintName = (h) => h?.title || [h?.side, h?.symbol, h?.strike, h?.op
 export function modeConfirm(m) {
   const label = (KMODES.find((x) => x[0] === m) || [])[1] || m;
   const why = m === 'off' ? 'Nothing more is sent to Kite from the Tips. Orders already on Kite stay there: exit or cancel them from the cards.'
-    : m === 'auto' ? "The app arms every placeable hint by itself: a level rests on Kite (SL-M trigger / LIMIT) or is watched (an index level); wait words alone wait for the channel's activation. SL + T1 go on the fill; the channel's exit / SL / trail / book part are followed on the app's own positions; one Telegram line each. Never averages; one Kite position at a time (kite_auto_max_open). The kill switch, the caps, the window and the loss cap hold as always."
+    : m === 'auto' ? "The app arms every placeable hint by itself: a level rests on Kite (SL-M trigger / LIMIT) or is watched (an index level); wait words alone wait for the channel's activation. SL on the fill (only the stop rests on Kite; the app watches the targets and sells at market when one is reached); the channel's exit / SL / trail / book part are followed on the app's own positions; one Telegram line each. Never averages; one Kite position at a time (kite_auto_max_open). The kill switch, the caps, the window and the loss cap hold as always."
       : m === 'dry' ? 'A rehearsal: the same buttons and legs, each through its confirm, but a simulator fills them from live quotes (outside market hours a MARKET order fills at the last price). The caps count the dry run only. A hint you trade dry is not traded real the same day.'
-        : 'The cards get Kite legs: every order is your click, each through a confirm. Place all = entry now, the stop and T1 the moment it fills.';
+        : 'The cards get Kite legs: every order is your click, each through a confirm. Place all = entry now, the stop the moment it fills; the targets are watched by the app (never resting on Kite).';
   return `Kite orders: ${label}?\n\n${why}\n\n${m === 'dry' ? DRY_WARN : KITE_WARN}`;
 }
 
@@ -27,7 +30,7 @@ export function modeConfirm(m) {
 export const killConfirm = (on) => (on ? 'Turn the Kite kill switch ON?\n\nEvery working Tips order on Kite is cancelled and every open quantity is exited at market now. No new order until you turn it off.'
   : 'Turn the Kite kill switch off?\n\nNew Tips orders are allowed again (each still your click). Nothing is placed by turning it off.');
 
-export const legLine = (lg) => (lg ? `${lg.type_text} ×${px(lg.qty)}` : '');
+export const legLine = (lg) => (lg ? (lg.watched ? `${lg.side} ${px(lg.qty)} at ${lg.side === 'BUY' ? '≤' : '≥'} ${px(lg.price)} (watched)` : `${lg.type_text} ×${px(lg.qty)}`) : '');
 
 // One hint's Kite confirms: exit, cancel a leg, send an armed entry now, move the stop (to cost or a price).
 // `h` carries id, title, tradingsymbol, exchange, ltp and kite (GET /api/tips or GET /api/home/tips); `kinfo` the product.
@@ -42,7 +45,7 @@ export function kiteTexts(h, kinfo) {
   const head = (t) => `${k.sim ? 'DRY RUN · ' : ''}⚡ ${t} · #${id} ${name}\n\ncontract   ${contract}\n`;
   return {
     W, to, L, id, name, contract, head,
-    exit: `⚡ Exit #${id} ${name} on Kite now?\n\n${k.state === 'armed' ? 'The entry has not filled: it is cancelled.' : `The working stop and targets are cancelled, then ${L.stop?.side || 'SELL'} ${px(k.qty_open)} MARKET.`}\n\n${W}`,
+    exit: `⚡ Exit #${id} ${name} on Kite now?\n\n${k.state === 'armed' ? 'The entry has not filled: it is cancelled.' : `The working stop is cancelled (the targets are only watched), then ${L.stop?.side || 'SELL'} ${px(k.qty_open)} MARKET.`}\n\n${W}`,
     cancel: (leg) => `Cancel the ${L[leg]?.name || leg} of #${id} on Kite?\n\norder ${L[leg]?.order_id || '—'} · ${legLine(L[leg])}\n\nNothing else changes.`,
     sendNow: `${head('Send the armed entry now')}order   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'}\n\nSkips the channel's activation: the entry goes to Kite now (every guard is checked again).\n\n${W}`,
     moveStop: (dest) => (dest === 'cost' ? `Move the Kite stop of #${id} to cost?\n\nSL-M ${px(L.stop?.trigger)} → ${px(k.entry_px)} (the entry fill) ×${px(L.stop?.qty)}\n\n${W}`

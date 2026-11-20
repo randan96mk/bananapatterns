@@ -124,15 +124,18 @@ def test_dry_place_all_whole_flow_with_dry_in_every_line(pushed):
     e = ko.rows_for(hid)[0]
     assert e["by"] == "dry" and e["order_id"] == "DRY-1" and e["leg"] == "entry"
     r = ko.sync(c, s, at("10:00", sec=10))
-    assert r["lines"] == ["⚡ Kite DRY · #1 entry filled 262 ×30 · SL 190 + T1 320 ×15 placed"]
+    assert r["lines"] == ["⚡ Kite DRY · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
     quote(c, b, 325.0, "10:20")
+    ko.watch_all(c, b, at("10:20", sec=1))                                 # the Syncer's tick: the target watch, then the sync
     r = ko.sync(c, s, at("10:20", sec=5))
-    assert r["lines"] == ["⚡ Kite DRY · #1 T1 filled 320 ×15 · stop → cost 262 · T2 350 ×15 placed"]
+    assert r["lines"] == ["⚡ Kite DRY · #1 T1 hit 325 · sold 15 of 30 at market · stop → cost 262 for the rest · watching T2 350"]
     quote(c, b, 351.0, "10:40")
+    ko.watch_all(c, b, at("10:40", sec=1))
     r = ko.sync(c, s, at("10:40", sec=5))
-    assert r["lines"][0].startswith("⚡ Kite DRY · #1 T2 filled 350 ×15 · +₹1,320 · stop cancelled · closed +₹2,190 total")
+    assert r["lines"][0] == "⚡ Kite DRY · #1 T2 hit 351 · sold 15 at market · +₹1,335 · closed +₹2,280 total"
     k = bk.load(hid)["kite"]
-    assert k["state"] == "closed" and k["realised"] == 2190.0
+    assert k["state"] == "closed" and k["realised"] == 2280.0
+    assert not [o for o in s.orders() if o["order_type"] == "LIMIT" and o["transaction_type"] == "SELL"]   # no resting target, dry too
     kp = [p for p in pushed if "Kite" in p]
     assert len(kp) == 4 and all(p.startswith("⚡ Kite DRY · #1 ") for p in kp)
     assert all(x["text"].startswith("Kite DRY:") for x in k["log"])
@@ -141,10 +144,10 @@ def test_dry_place_all_whole_flow_with_dry_in_every_line(pushed):
     assert v["dry"] and all(x["dry"] for x in v["legs"] if x["status"] != "none")
     t = ko.today(c, b, at("10:41"))
     assert t["dry"] and t["warning"].startswith("DRY RUN · nothing reaches Kite")
-    assert t["orders"] and all(o["dry"] for o in t["orders"]) and t["net"] == 2190.0
+    assert t["orders"] and all(o["dry"] for o in t["orders"]) and t["net"] == 2280.0
     g = {x["key"]: x for x in t["guards"]}
     assert g["login"]["ok"] and g["login"]["text"] == "dry run · no login needed"
-    assert ko.realised_today("2026-11-17") == 0.0 and ko.realised_today("2026-11-17", dry=True) == 2190.0
+    assert ko.realised_today("2026-11-17") == 0.0 and ko.realised_today("2026-11-17", dry=True) == 2280.0
 
 
 def test_dry_run_ignores_hours_and_window_but_not_the_caps(pushed):
@@ -202,9 +205,9 @@ def test_clear_dry_run_voids_never_deletes(pushed):
     ko.place_all(c, s, hid, 2, now=at("10:00"))
     ko.sync(c, s, at("10:00", sec=10))
     n = len(ko.rows_for(hid))
-    assert n == 3
+    assert n == 2                                                          # the entry and the stop: the targets are watched
     out = ko.clear_dry(c, at("10:10"))
-    assert out == {"voided": 3, "sim_orders": 3, "hints": 1}
+    assert out == {"voided": 2, "sim_orders": 2, "hints": 1}
     rows = ko.rows_for(hid)
     assert len(rows) == n and {r["status"] for r in rows} == {"voided"}       # kept, voided
     k = bk.load(hid)["kite"]
@@ -212,7 +215,7 @@ def test_clear_dry_run_voids_never_deletes(pushed):
     assert s.orders() == [] and ko.today(c, b, at("10:11"))["orders"] == []
     assert ko.entries_today("2026-11-17", dry=True) == 0
     ko.place_entry(c, s, hid, 1, now=at("10:12"))                            # rehearse again
-    assert ko.rows_for(hid)[-1]["order_id"] == "DRY-4"
+    assert ko.rows_for(hid)[-1]["order_id"] == "DRY-3"
     c.tips.kite_mode = "click"
     ko.clear_dry(c, at("10:13"))
     with pytest.raises(TipsError, match=re.escape("already traded on Kite (dry)")):   # still not real the same day
@@ -353,15 +356,15 @@ def test_routes(fake_kite, make_client, monkeypatch, pushed):
         assert r.status_code == 200
         k = r.json()["kite"]
         assert k["dry"] and k["state"] == "entered"                             # the simulator filled at once
-        assert {x["leg"]: x["status"] for x in k["legs"]} == {"entry": "complete", "stop": "placed", "t1": "placed", "t2": "none"}
+        assert {x["leg"]: x["status"] for x in k["legs"]} == {"entry": "complete", "stop": "placed", "t1": "watched", "t2": "watched"}
         assert b.placed == []
         r = api.post("/api/tips/kite/resync").json()
-        assert [o["dry"] for o in r["orders"]] == [True, True, True]
+        assert [o["dry"] for o in r["orders"]] == [True, True]
         r = api.post("/api/tips/kite/test").json()
         assert r["result"]["passed"] and b.placed[-1]["tag"] == "bptest"
         assert api.post("/api/tips/kite/test").status_code == 409               # one per 5 minutes
         r = api.post("/api/tips/kite/dry/clear").json()
-        assert r["voided"] == 3 and [o["leg"] for o in r["orders"]] == ["test"]
+        assert r["voided"] == 2 and [o["leg"] for o in r["orders"]] == ["test"]
         assert api.get("/api/tips/hints/1").json()["kite"]["state"] == "none"
 
 

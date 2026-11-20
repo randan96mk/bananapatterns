@@ -552,8 +552,9 @@ class TipsConfig:
     preview_fallback: bool = True          # the public preview page every 30 s while the reader is down
     # ⚡ Tips → Kite orders (real money, Kite Connect): off | dry (a rehearsal: the same buttons and legs, a simulator
     # fills from live quotes, nothing reaches Kite) | click (every leg by your click, each through a confirm; Place all =
-    # entry now, the stop + T1 the moment it fills) | auto (entries armed on the level / the channel's activation, SL +
-    # T1 on the fill, the channel's exits followed, you are told)
+    # entry now, the stop the moment it fills; only the stop rests on Kite, the targets are watched by the app) | auto
+    # (entries armed on the level / the channel's activation, SL on the fill, targets watched, the channel's exits
+    # followed, you are told)
     kite_mode: str = "off"
     kite_product: str = "NRML"             # NRML | MIS
     kite_market_protection: float = 5.0    # % market protection on MARKET / SL-M orders (the exchange rule for API orders: never 0)

@@ -12,7 +12,7 @@ SUMMARY_KEYS = {"enabled", "reader", "channels", "cards", "hints", "feed", "reco
 HINT_KEYS = {"id", "channel", "post_id", "posted_at", "time", "day", "day_label", "raw", "title", "symbol", "side", "instrument", "strike",
              "opt_type", "expiry", "expiry_label", "expiry_src", "tradingsymbol", "exchange", "lot_size", "entry", "entry_text", "stop",
              "stop_text", "targets", "targets_hit", "targets_text", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
-             "lots", "entry_px", "exit_px", "pnl", "ltp", "events", "tracked", "untracked_why", "score", "position", "actions", "telegram", "source", "kite", "shot"}
+             "lots", "entry_px", "exit_px", "pnl", "ltp", "events", "tracked", "untracked_why", "score", "position", "actions", "telegram", "source", "kite", "shot", "now"}
 
 
 @pytest.fixture

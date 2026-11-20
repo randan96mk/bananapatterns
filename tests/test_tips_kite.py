@@ -82,35 +82,43 @@ def setup(mode="click", text=BN12, **cfgkw):
     return c, b, hid
 
 
-def test_whole_flow_entry_stop_t1_cost_t2(pushed):
+def test_whole_flow_entry_stop_watched_t1_cost_t2(pushed):
     c, b, hid = setup()
     h = ko.place_all(c, b, hid, 2, now=at("10:00"))
     e = b.last(transaction_type="BUY")
-    assert e["order_type"] == "LIMIT" and e["price"] == 270 and e["quantity"] == 30   # PR C: a zone rests as a LIMIT at its top and e["product"] == "NRML" and e["tag"] == "bptips"
-    assert e["exchange"] == "NFO" and e["tradingsymbol"] == "BANKNIFTY26NOV50300PE"
+    assert e["order_type"] == "LIMIT" and e["price"] == 270 and e["quantity"] == 30   # PR C: a zone rests as a LIMIT at its top
+    assert e["exchange"] == "NFO" and e["tradingsymbol"] == "BANKNIFTY26NOV50300PE" and e["product"] == "NRML" and e["tag"] == "bptips"
     assert h["kite"]["state"] == "armed" and h["kite"]["auto_rest"]
     b.fill(e["order_id"], 262.0)
     r = ko.sync(c, b, at("10:00", sec=10))
-    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 · SL 190 + T1 320 ×15 placed"]
-    sl, t1 = b.last(order_type="SL-M"), b.last(order_type="LIMIT")
+    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
+    sl = b.last(order_type="SL-M")
     assert sl["trigger_price"] == 190.0 and sl["quantity"] == 30 and sl["transaction_type"] == "SELL"
-    assert t1["price"] == 320.0 and t1["quantity"] == 15
+    assert len(b.placed) == 2                                  # only the stop rests on Kite
     rows = {x["leg"]: x for x in ko.rows_for(hid)}
     assert rows["stop"]["by"] == "app" and rows["entry"]["by"] == "click" and rows["entry"]["status"] == "complete"
-    b.fill(t1["order_id"], 320.0)
-    r = ko.sync(c, b, at("10:20"))
-    assert r["lines"] == ["⚡ Kite · #1 T1 filled 320 ×15 · stop → cost 262 · T2 350 ×15 placed"]
-    assert b.modified[-1] == (sl["order_id"], {"trigger_price": 262.0, "quantity": 15})
-    t2 = b.last(price=350.0)
-    assert t2["quantity"] == 15
-    b.fill(t2["order_id"], 350.0)
-    r = ko.sync(c, b, at("11:00"))
-    assert r["lines"][0].startswith("⚡ Kite · #1 T2 filled 350 ×15 · +₹1,320 · stop cancelled · closed +₹2,190 total")
-    assert sl["order_id"] in b.cancelled
+    b.prices[KEY12] = 321.0
+    tr.poll(c, b, at("10:20"))
+    ko.watch_all(c, b, at("10:20"))
+    m1 = b.placed[-1]
+    assert sl["order_id"] in b.cancelled and (m1["order_type"], m1["quantity"], m1["transaction_type"]) == ("MARKET", 15, "SELL")
+    b.fill(m1["order_id"], 321.0)
+    r = ko.sync(c, b, at("10:20", sec=5))
+    assert r["lines"] == ["⚡ Kite · #1 T1 hit 321 · sold 15 of 30 at market · stop → cost 262 for the rest · watching T2 350"]
+    sl2 = b.placed[-1]
+    assert (sl2["order_type"], sl2["trigger_price"], sl2["quantity"]) == ("SL-M", 262.0, 15)
+    b.prices[KEY12] = 351.0
+    tr.poll(c, b, at("11:00"))
+    ko.watch_all(c, b, at("11:00"))
+    m2 = b.placed[-1]
+    assert sl2["order_id"] in b.cancelled and (m2["order_type"], m2["quantity"]) == ("MARKET", 15)
+    b.fill(m2["order_id"], 351.0)
+    r = ko.sync(c, b, at("11:00", sec=5))
+    assert r["lines"][0] == "⚡ Kite · #1 T2 hit 351 · sold 15 at market · +₹1,335 · closed +₹2,220 total"
     k = bk.load(hid)["kite"]
-    assert k["state"] == "closed" and k["qty_open"] == 0 and k["realised"] == 2190.0
-    assert ko.realised_today("2026-11-17") == 2190.0
-    assert len(pushed) == 4                                    # entry placed + the three fills
+    assert k["state"] == "closed" and k["qty_open"] == 0 and k["realised"] == 2220.0
+    assert ko.realised_today("2026-11-17") == 2220.0
+    assert not [p for p in b.placed if p["order_type"] == "LIMIT" and p["transaction_type"] == "SELL"]   # never a resting target
     with pytest.raises(TipsError, match="never re-entered"):   # one position per hint, never again
         ko.place_entry(c, b, hid, 1, now=at("11:05"))
     assert "999" not in {o["order_id"] for o in ko.today(c, b, at("11:05"))["orders"]}   # only ours
@@ -122,11 +130,11 @@ def test_stop_fill_cancels_targets_and_counts_the_loss(pushed):
     ko.place_all(c, b, hid, 2, now=at("10:00"))
     b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     ko.sync(c, b, at("10:01"))
-    sl, t1 = b.last(order_type="SL-M"), b.last(order_type="LIMIT")
+    sl = b.last(order_type="SL-M")
     b.fill(sl["order_id"], 190.0)
     r = ko.sync(c, b, at("10:30"))
-    assert r["lines"] == ["⚡ Kite · #1 stop filled 190 ×30 · −₹2,160 · targets cancelled"]
-    assert t1["order_id"] in b.cancelled and bk.load(hid)["kite"]["state"] == "closed"
+    assert r["lines"] == ["⚡ Kite · #1 stop filled 190 ×30 · −₹2,160"]
+    assert bk.load(hid)["kite"]["state"] == "closed"
     t = ko.today(c, b, at("10:31"))
     assert t["caps"]["used_loss"] == -2160.0 and t["net"] == -2160.0
     hid2 = seed(c, b, BN12.replace("50300", "51000"), "10:30", 2)["hint_id"]
@@ -155,13 +163,13 @@ def test_kill_switch_cancels_and_exits(pushed):
     ko.place_all(c, b, hid, 2, now=at("10:00"))
     b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
     ko.sync(c, b, at("10:01"))
-    sl, t1 = b.last(order_type="SL-M"), b.last(order_type="LIMIT")
+    sl = b.last(order_type="SL-M")
     out = ko.set_kill(c, b, True, at("10:05"))
-    assert out == {"kill": True, "cancelled": 2, "exits": 1, "errors": []}
-    assert {sl["order_id"], t1["order_id"]} <= set(b.cancelled)
+    assert out == {"kill": True, "cancelled": 1, "exits": 1, "errors": []}
+    assert sl["order_id"] in b.cancelled
     ex = b.placed[-1]
     assert ex["order_type"] == "MARKET" and ex["transaction_type"] == "SELL" and ex["quantity"] == 30
-    assert pushed[-1].startswith("⛔ Kite · kill switch ON · 2 orders cancelled · 1 exits at market")
+    assert pushed[-1].startswith("⛔ Kite · kill switch ON · 1 orders cancelled · 1 exits at market")
     hid2 = seed(c, b, BN12.replace("50300", "51000"), "10:30", 2)["hint_id"]
     with pytest.raises(TipsError, match="kill switch ON"):
         ko.place_entry(c, b, hid2, 1, now=at("10:40"))
@@ -203,10 +211,11 @@ def test_every_guard(pushed):
     h = bk.load(hid2)
     h["status"] = "closed"
     assert not texts(at("10:40"), h=h)["open"]["ok"]
-    with pytest.raises(TipsError, match="needs a filled entry"):     # stop / targets need a filled entry
+    with pytest.raises(TipsError, match="needs a filled entry"):     # the stop / the rest need a filled entry
         ko.place_stop(c, b, hid, now=at("10:02"))
     with pytest.raises(TipsError, match="needs a filled entry"):
-        ko.place_targets(c, b, hid, now=at("10:02"))
+        ko.place_rest(c, b, hid, now=at("10:02"))
+    assert not hasattr(ko, "place_targets") and not hasattr(ko, "_place_t1")      # the resting-target path is gone
 
 
 def test_click_legs_one_by_one_spot_stop_modify_cancel_exit(pushed):
@@ -217,19 +226,17 @@ def test_click_legs_one_by_one_spot_stop_modify_cancel_exit(pushed):
     assert ko.sync(c, b, at("10:01"))["lines"] == ["⚡ Kite · #1 entry filled 262 ×30"]   # no Place all: nothing more
     assert b.last(transaction_type="BUY")["quantity"] == 30 and len(b.placed) == 1
     v = tr.hint_view(bk.load(hid), config=c)["kite"]
-    assert {"rest", "stop", "targets", "exit"} <= set(v["actions"])
-    with pytest.raises(TipsError, match="after target 1 fills"):
-        ko._place_t2(c, b, bk.load(hid), at("10:02"), "click")
+    assert {"rest", "stop", "exit"} <= set(v["actions"]) and "targets" not in v["actions"]
     ko.place_stop(c, b, hid, now=at("10:02"))
-    ko.place_targets(c, b, hid, now=at("10:02"))
+    assert "rest" not in tr.hint_view(bk.load(hid), config=c)["kite"]["actions"]
     b.prices[KEY12] = 280.0
     tr.poll(c, b, at("10:03"))                                  # the quote the stop is checked against
     with pytest.raises(TipsError, match="wrong side"):
         ko.modify_stop(c, b, hid, 300, now=at("10:03"))
     h = ko.modify_stop(c, b, hid, "cost", now=at("10:03"))
     assert h["kite"]["stop_px"] == 262.0 and b.modified[-1][1] == {"trigger_price": 262.0}
-    ko.cancel(c, b, hid, "t1", now=at("10:04"))
-    assert bk.load(hid)["kite"]["legs"]["t1"]["status"] == "cancelled"
+    with pytest.raises(TipsError, match="no target 1 working"):     # a watched target has no order to cancel
+        ko.cancel(c, b, hid, "t1", now=at("10:04"))
     h = ko.exit_now(c, b, hid, now=at("10:05"))
     assert b.placed[-1]["order_type"] == "MARKET" and b.placed[-1]["quantity"] == 30
     assert h["kite"]["legs"]["stop"]["status"] == "cancelled" and h["kite"]["legs"]["exit"]["status"] == "placed"
@@ -246,7 +253,7 @@ def test_one_lot_is_not_split_and_views_are_12_hour(pushed):
     c, b, hid = setup()
     v = tr.hint_view(bk.load(hid), config=c)["kite"]
     legs = {x["leg"]: x for x in v["legs"]}
-    assert set(legs) == {"entry", "stop", "t1"} and legs["t1"]["qty"] == 15 and legs["t1"]["detail"].startswith("all")
+    assert set(legs) == {"entry", "stop", "t1"} and legs["t1"]["qty"] == 15 and legs["t1"]["detail"].startswith("watched by the app · all")
     assert legs["stop"]["detail"] == "max loss −₹1,200" and legs["entry"]["detail"] == "1 lot · NRML · ≈ ₹4,050"   # no quote yet: the zone top
     assert v["beyond_t2"] == 1 and v["actions"] == ["all", "entry"]
     ko.place_entry(c, b, hid, 2, now=at("10:07", sec=14))
@@ -293,13 +300,14 @@ def test_routes(fake_kite, make_client, monkeypatch, pushed):
         assert api.post("/api/tips/hints/1/kite/modify_stop", json={}).status_code in (400, 409)
         b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
         r = api.post("/api/tips/kite/resync").json()
-        assert r["changed"] == 1 and [o["leg"] for o in r["orders"]] == ["t1", "stop", "entry"]
+        assert r["changed"] == 1 and [o["leg"] for o in r["orders"]] == ["stop", "entry"]
         h = api.get("/api/tips/hints/1").json()
-        assert {x["leg"]: x["status"] for x in h["kite"]["legs"]} == {"entry": "complete", "stop": "placed", "t1": "placed", "t2": "none"}
+        assert {x["leg"]: x["status"] for x in h["kite"]["legs"]} == {"entry": "complete", "stop": "placed", "t1": "watched", "t2": "watched"}
+        assert api.post("/api/tips/hints/1/kite/targets").status_code == 404           # no resting-target action any more
         assert api.post("/api/tips/hints/1/kite/modify_stop", json={"to": "cost"}).json()["kite"]["stop_px"] == 262.0
         assert api.post("/api/tips/hints/1/kite/cancel", json={"leg": "x"}).status_code == 400
         k = api.post("/api/tips/kite/kill", json={"on": True}).json()
-        assert k["kill"] and k["exits"] == 1 and k["cancelled"] == 2
+        assert k["kill"] and k["exits"] == 1 and k["cancelled"] == 1           # the stop only: the targets are watched
         assert api.get("/api/tips").json()["kite"]["kill"] is True
     rows = {r["key"]: r for r in health.checks(AppConfig(), has_token=False)}
     assert rows["tips_kite"]["state"].startswith("off · kill switch ON · ")

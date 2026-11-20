@@ -515,7 +515,7 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
                           "charges": pos.get("charges"), "ended": pos.get("ended"), "override": pos.get("override"),
                           "booked": pos.get("booked") or [], "who": pos.get("who"), "size_src": pos.get("size_src")} if pos else None),
             "actions": acts, "telegram": f"take {h['id']} · take {h['id']} 2 · skip {h['id']}", "source": h.get("source"),
-            "kite": ko.hint_kite(config or _app_config(), h), "shot": vs.shot_view(h)}
+            "kite": ko.hint_kite(config or _app_config(), h), "shot": vs.shot_view(h), "now": ko.now_cell(h)}
 
 
 def feed_rows(kind: Optional[str] = None, limit: int = 50, channel: Optional[str] = None) -> list[dict]:

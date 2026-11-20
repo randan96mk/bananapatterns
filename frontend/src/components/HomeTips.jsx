@@ -36,6 +36,15 @@ export function TipsKiteCards({ d, onGo }) {
   </>;
 }
 
+// "now 217 · stop 175 is −19 %": the "now 217" bold, green / red against the fill (neutral before the fill).
+function Facts({ r }) {
+  const f = String(r.facts || '');
+  const m = /^now ([^·]+?)(?= ·|$)/.exec(f);
+  if (!m) return f;
+  const tone = r.now?.tone || '';
+  return <><b className={`nowv ${tone}`} title={r.now?.sub || undefined}>now {m[1]}</b>{f.slice(m[0].length)}</>;
+}
+
 function Row({ r, reload, setMsg }) {
   const [busy, setBusy] = useState(false);
   const [trail, setTrail] = useState(null);           // null = closed, else the field's text
@@ -54,7 +63,7 @@ function Row({ r, reload, setMsg }) {
   const b = r.buttons || [];
   return <div className="hk-row">
     <div className="l"><span className="id">#{r.id}</span><b>{r.title}</b><Tag c={r.tag_c}>{r.tag}</Tag>
-      {r.pnl != null && <span className={`pnl ${cls(r.pnl)}`}>{kiteMoney(r.pnl)}</span>}{r.facts ? <span className="f"> · {r.facts}</span> : null}</div>
+      {r.pnl != null && <span className={`pnl ${cls(r.pnl)}`}>{kiteMoney(r.pnl)}</span>}{r.facts ? <span className="f"> · <Facts r={r} /></span> : null}</div>
     <div className="m" title={[r.detail, r.ai ? `[AI] ${r.ai}` : ''].filter(Boolean).join(' · ')}>{r.detail}{r.ai && <> · <AiTag title="the AI read of these orders · every figure checked by code" /> {r.ai}</>}</div>
     <div className="a">
       {b.includes('trail') && (trail == null ? <button type="button" className="btn ghost small" disabled={busy} onClick={() => setTrail('')}>Trail SL…</button>

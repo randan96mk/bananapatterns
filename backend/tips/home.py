@@ -96,7 +96,7 @@ def row(config, h: dict, now: datetime) -> dict:
     until = ampm(config.tips.kite_entry_until)
     out = {"id": h["id"], "title": bk.title(h), "name": _short(h), "state": st, "pnl": None, "ai": _ai_line(k),
            "tradingsymbol": h.get("tradingsymbol"), "exchange": h.get("exchange"), "ltp": ltp, "kite": v,
-           "product": config.tips.kite_product}
+           "product": config.tips.kite_product, "now": ko.now_cell(h)}
     if st == "entered":
         out["tag"], out["tag_c"] = f"{dry}open · {_lots(lots)}", "ok"
         out["pnl"] = open_pnl(h)
@@ -110,10 +110,11 @@ def row(config, h: dict, now: datetime) -> dict:
         if nxt and nxt.get("price") is not None:
             parts.append(_strip_now(nxt.get("now_text")) or f"target {pl.fmt(nxt['price'])}")
         out["facts"] = " · ".join(p for p in parts if p)
-        resting = [ko.LEG_NAMES[x] if x == "stop" else x.upper() for x in ("stop", "t1", "t2")
-                   if (k["legs"].get(x) or {}).get("status") in ko.LIVE]
-        rest = (" and ".join([r.lower() if r == "Stop" else r for r in resting]) + (" resting in the dry run" if k.get("dry") else " resting on Kite")) \
-            if resting else ("no stop resting" if ko.premium_stop(h) is not None else "spot stop: exit by hand")
+        stop_on = (k["legs"].get("stop") or {}).get("status") in ko.LIVE
+        rest = ("stop resting in the dry run" if k.get("dry") else "stop resting on Kite") if stop_on else \
+            ("no stop resting" if ko.premium_stop(h) is not None else "spot stop: exit by hand")
+        if nxt:
+            rest += " · targets watched by the app"
         out["detail"] = " · ".join(x for x in (f"entry {pl.fmt(k.get('entry_px'))}", _when(k.get("entry_at"), now), _by(k), rest) if x)
         out["buttons"] = [b for b, ok in (("trail", "modify_stop" in acts), ("exit", "exit" in acts)) if ok]
     else:
