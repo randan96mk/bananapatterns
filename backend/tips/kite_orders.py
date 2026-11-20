@@ -638,6 +638,11 @@ def place_entry(config, client, hid: int, lots: Optional[int] = None, by: str = 
         ep = entry_plan(h, bk.last_ltp(h))
         if ep.get("refuse"):
             raise TipsError(409, ep["refuse"])
+        try:                                            # 🤖 the pre-flight read (tips.ai_preflight): queued, the arm goes on at once
+            from backend.tips import ai4
+            ai4.preflight(config, h, ep, n, qty, now)
+        except Exception:
+            logger.exception("Tips pre-flight read not queued")
         k["dry"] = is_dry(client)
         for leg in ("entry", "stop", "t1", "t2", "exit"):
             k["legs"].pop(leg, None)

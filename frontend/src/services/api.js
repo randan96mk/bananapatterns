@@ -189,6 +189,9 @@ export const tipsKiteDryClear = () => req('POST', '/api/tips/kite/dry/clear', {}
 export const tipsKiteRehearse = () => req('POST', '/api/tips/kite/dry/rehearse', {}); // a made-up hint to rehearse on (dry run)
 export const tipsKiteDayCheck = () => req('POST', '/api/tips/kite/daycheck', {});     // the Kite day check now (3:35 PM by itself)
 export const tipsTestPost = (text) => req('POST', '/api/tips/test-post', { text });
+// 🤖 AI on Tips: the weekly channel profile (Research › Tips › Track); Write now is one per hour (429 before that)
+export const getTipsWeekly = (week) => req('GET', `/api/tips/ai/weekly${week ? `?week=${encodeURIComponent(week)}` : ''}`);
+export const tipsWeeklyWrite = (week) => req('POST', '/api/tips/ai/weekly/write', week ? { week } : {});
 export const tipsLogin = (phone) => req('POST', '/api/tips/login', { phone });
 export const tipsLoginCode = (code, password) => req('POST', '/api/tips/login/code', password ? { code, password } : { code });
 // The Telegram HTML export (one or more .html files) as multipart; onProgress(0..1) follows the upload.

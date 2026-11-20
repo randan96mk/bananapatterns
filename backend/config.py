@@ -537,6 +537,12 @@ class TipsConfig:
     # ↗ relay: every new channel post forwarded as-is from your own Telegram account (the reader's client) to these people
     relay: bool = False
     relay_to: str = ""                     # one per line / ';': @username, a phone in international form (+91…, in your contacts) or a numeric id
+    # 🤖 AI on Tips (backend/tips/ai4.py): the local model writes sentences only, every number comes from code, nothing
+    # here places, modifies, cancels, holds or blocks an order. Each off = nothing queued, no block, no line.
+    ai_review: bool = True                 # the evening review of every hint with a Kite position today (3:35 PM / 6:35 PM)
+    ai_grade: bool = True                  # the call grade A–D by code (the channel's record + the shape) and one [AI] read line
+    ai_preflight: bool = False             # a pre-flight read of the post vs the decoded plan as a hint is armed (never delays the arm)
+    ai_weekly: bool = True                 # the weekly channel profile, Sunday 7:05 PM (Research › Tips › Track)
 
 
 TIPS_KITE_MODES = ("off", "dry", "click", "auto")

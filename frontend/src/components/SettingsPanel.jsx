@@ -167,6 +167,10 @@ const HELP_TIPS = {
   kite_auto_book_part: 'Auto, "book part" with ONE lot open: "channel" = book it at market (the channel\'s "you can book now") · "hold" = keep it for the target and move the stop to cost',
   relay: '↗ Forward every new channel post from your own Telegram account to the people in relay_to (true/false)',
   relay_to: 'forwards go out as you, the moment a post arrives · exactly as posted · @username, phone or id, one per line · a phone number must be in your contacts',
+  ai_review: '🤖 The evening review: at the 3:35 PM day check (and 6:35 PM for later closes) the local model writes 5 [AI] lines on each closed Kite hint from numbers code gave it; one Telegram summary a day (true/false). Nothing here acts on an order',
+  ai_grade: '🤖 The call grade A–D, computed by code from the channel\'s record for calls like this and the plan\'s shape, with one [AI] read line. Informational: auto ignores it (true/false)',
+  ai_preflight: '🤖 The pre-flight read: as a hint is armed, the local model compares the post with the decoded plan (2 [AI] lines). The arm is never held: a "differs" is told on Telegram and Home, never blocks (true/false; off by default)',
+  ai_weekly: '🤖 The weekly channel profile, Sunday 7:05 PM: the week\'s numbers by code and 4 [AI] lines (Research › Tips › Track; Telegram) (true/false)',
 };
 // 🧹 archive and vacuum (section-scoped: enabled / day / time are generic names)
 const HELP_MAINT = {

@@ -62,7 +62,7 @@ function Row({ r, reload, setMsg }) {
   };
   const b = r.buttons || [];
   return <div className="hk-row">
-    <div className="l"><span className="id">#{r.id}</span><b>{r.title}</b><Tag c={r.tag_c}>{r.tag}</Tag>
+    <div className="l"><span className="id">#{r.id}</span><b>{r.title}</b><Tag c={r.tag_c}>{r.tag}</Tag>{r.grade && <Tag c={r.grade.c} title="call grade by code · informational: auto ignores it">grade {r.grade.g}</Tag>}
       {r.pnl != null && <span className={`pnl ${cls(r.pnl)}`}>{kiteMoney(r.pnl)}</span>}{r.facts ? <span className="f"> · <Facts r={r} /></span> : null}</div>
     <div className="m" title={[r.detail, r.ai ? `[AI] ${r.ai}` : ''].filter(Boolean).join(' · ')}>{r.detail}{r.ai && <> · <AiTag title="the AI read of these orders · every figure checked by code" /> {r.ai}</>}</div>
     <div className="a">
@@ -110,7 +110,7 @@ export function TipsKiteBlock({ d, onGo, reload }) {
     {msg && <div className={`hk-msg ${msg.startsWith('⚠') ? 'down' : 'up'}`}>{msg}</div>}
     {!off && rows.map((r) => <Row key={r.id} r={r} reload={reload} setMsg={setMsg} />)}
     {!off && today.length > 0 && <div className="hk-today"><span className="dim">today</span>
-      {today.map((t) => <span key={t.id} className="hk-call" title={`#${t.id} ${t.name} · ${t.text}`}><span className="id">#{t.id}</span><span className="nm">{t.name}</span><Tag c={t.c}>{t.text}</Tag></span>)}</div>}
+      {today.map((t) => <span key={t.id} className="hk-call" title={`#${t.id} ${t.name} · ${t.text}`}><span className="id">#{t.id}</span><span className="nm">{t.name}</span>{t.grade && <Tag c={t.grade.c} title="call grade by code · informational">{t.grade.g}</Tag>}<Tag c={t.c}>{t.text}</Tag></span>)}</div>}
     {!off && (clear.length > 0 || items.length > 0) && <div className="hk-checks">
       {clear.length > 0 && <div className="ck"><span className="gi up">✓</span><span>order check · all clear on {ids(clear)}{ck.at_label ? ` · ${ck.at_label}` : ''}</span></div>}
       {items.map((x, i) => <div key={i} className={`ck ${x.level === 'red' ? 'red' : 'amber'}`}><span className="gi">{x.level === 'red' ? '⛔' : '⚠'}</span>

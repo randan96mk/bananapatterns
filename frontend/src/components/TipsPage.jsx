@@ -358,6 +358,110 @@ function KiteCheck({ k }) {
   </div>;
 }
 
+// 🤖 AI on Tips (the server computes every number; the model wrote only the [AI]-tagged lines; nothing here acts).
+const GRADE_C = { ok: 'ok', w: 'w', bad: 'bad' };
+function GradeChip({ g }) {
+  if (!g) return null;
+  return <span className={`tp-grade ${GRADE_C[g.tone] || ''}`} title={`call grade ${g.grade} by code · ${g.why || ''} · informational: never changes the plan`}>
+    grade <b>{g.grade}</b>{g.at_label ? ` · at ${g.at_label}` : ''}</span>;
+}
+const aiLine = (x, i, tone) => <div key={i} className="l"><span className="lk">{x.label}</span><div className={tone || ''}><AiTag title="written by the local model · every figure checked against the numbers code gave it" /> {x.text}</div></div>;
+function AiState({ v }) {
+  if (!v || v.state === 'done') return null;
+  return <div className="l"><span className="lk">read</span><div className="dim"><AiTag title="the local model's read" /> {v.state === 'empty' ? 'no usable read' : v.text || 'the read waits for the local model'}</div></div>;
+}
+export function ReviewBlock({ r }) {
+  if (!r) return null;
+  return <div className="tp-ai">
+    <div className="t"><AiTag title="the evening review, written by the local model" /><b>Evening review{r.dry ? ' · DRY' : ''}</b>
+      <span className="m">{r.state === 'pending' ? 'waits for the local model' : `written ${r.at_label || ''}`} from the stored ticks, orders and posts · the model wrote only the tagged lines · nothing here acts</span></div>
+    {arr(r.lines).map((x, i) => aiLine(x, i))}
+    <AiState v={r} />
+    {r.numbers && <div className="l"><span className="lk">numbers</span><div className="dim">{r.numbers}</div></div>}
+  </div>;
+}
+export function GradeBlock({ g }) {
+  if (!g) return null;
+  return <div className="tp-ai">
+    <div className="t"><AiTag title="the read line is the local model's; the grade is code" /><b>Call grade {g.grade}</b>
+      <span className="m">from the channel's own record for calls like this · computed by code, worded by the model · never changes the plan{g.regraded ? ' · re-graded after the plan changed' : ''}</span></div>
+    <div className="l"><span className="lk">record</span><div>{g.record || '—'}</div></div>
+    <div className="l"><span className="lk">shape</span><div>{g.shape || '—'}</div></div>
+    {arr(g.read?.lines).map((x, i) => aiLine(x, i))}
+    <AiState v={g.read} />
+  </div>;
+}
+export function PreflightBlock({ p }) {
+  if (!p) return null;
+  const lines = arr(p.lines);
+  return <div className="tp-ai">
+    <div className="t"><AiTag title="the pre-flight read, written by the local model" /><b>Pre-flight read</b><span className="tp-sw" aria-label="switch on"><i />{p.switch}</span>
+      <span className="m">{p.at_label}{isNum(p.ms) ? ` · ${(Number(p.ms) / 1000).toFixed(1)} s` : ''} · queued before arming · a mismatch is told, never blocks</span></div>
+    {lines.map((x, i) => aiLine(x, i, x.label === 'flag' && p.flag ? 'warn' : x.label === 'plan vs post' ? (p.agrees === false ? 'warn' : '') : ''))}
+    {lines.length > 0 && p.agrees != null && <div className="l"><span className="lk">verdict</span><div className={p.agrees ? 'up' : 'warn'}>{p.agrees ? 'agrees' : `differs${p.why ? ` · ${p.why}` : ''} · armed anyway`}</div></div>}
+    <AiState v={p} />
+  </div>;
+}
+
+// 📊 the weekly channel profile (Research › Tips › Track): the four boxes with bars (widths from the numbers) and the
+// four [AI] lines; a week picker for the last 8 weeks; "Write now" one per hour.
+function Bars({ rows, right }) {
+  const r = arr(rows);
+  if (!r.length) return <div className="dim">none</div>;
+  return <div className="tp-bars">{r.map((b) => <div key={b.label} title={`${b.label} · ${right(b)}`}><span className="bl">{b.label}</span>
+    <span className="bt"><i className={b.tone === 'bad' ? 'bad' : ''} style={{ width: `${Math.max(0, Math.min(100, Number(b.w) || 0))}%` }} /></span><span className="br">{right(b)}</span></div>)}</div>;
+}
+function WeeklyPanel({ p, onWrite, busy, next }) {
+  const n = p?.numbers || {};
+  const tw = n.this_week || {}, f4 = n.four_weeks || {};
+  const ai = p?.ai || {};
+  const mins = (v) => (isNum(v) ? `${px(v)} min` : '—');
+  return <Panel className="tp-week" title={`📊 Channel profile · ${p?.label || ''}`} meta={p?.channel}
+    right={<span className="tp-wr"><span className="ell">{p?.written ? `${p.written} · from the record, ticks and orders · the model wrote only the tagged lines` : 'not written yet · Sunday 7:05 PM'}</span>
+      {onWrite && <button type="button" className="btn ghost small" disabled={busy || !!next} title={next ? `one Write now per hour · next at ${next}` : 'write the profile now (one per hour)'} onClick={onWrite}>Write now</button>}</span>}>
+    <div className="tp-wk">
+      <div className="box"><b className="h">this week</b>
+        <div><b>{plural(px(tw.calls), 'call')}</b> · T1 first {px(tw.t1_first)} · stop first {px(tw.stop_first)} · no fill {px(tw.no_fill)} · avg <b className={tone(tw.avg_r)}>{isNum(tw.avg_r) ? `${avgR(tw.avg_r)} R` : '—'}</b></div>
+        <div>you took <b>{px(tw.took)}</b>{tw.dry ? ` (${px(tw.dry)} dry)` : ''} · yours <b className={tone(tw.yours)}>{money(tw.yours)}</b> · all calls 1 lot <b className={tone(tw.all_1lot)}>{money(tw.all_1lot)}</b></div>
+        <div className="dim">4 weeks: {px(f4.calls)} calls · T1 first {isNum(f4.t1_pct) ? `${px(f4.t1_pct)} %` : '—'} · avg {isNum(f4.avg_r) ? `${avgR(f4.avg_r)} R` : '—'}</div></div>
+      <div className="box"><b className="h">by index</b><Bars rows={n.by_index} right={(b) => `${px(b.n)} · ${px(b.won)} won`} /></div>
+      <div className="box"><b className="h">by hour posted</b><Bars rows={n.by_hour} right={(b) => `${px(b.n)} · ${px(b.won)} won`} /></div>
+      <div className="box"><b className="h">how calls end</b><Bars rows={n.ends} right={(b) => px(b.n)} />
+        <div className="dim">median to T1 {mins(n.median_t1_min)} · to the stop {mins(n.median_stop_min)}</div></div>
+    </div>
+    <div className="tp-ai">
+      <div className="t"><AiTag title="written by the local model from the numbers above" /><b>What the week says</b>
+        <span className="m">{ai.state === 'done' ? `written ${ai.at_label || ''}` : ai.state === 'pending' ? 'waits for the local model' : ai.state === 'empty' ? 'no usable read' : 'not written yet'}</span></div>
+      {arr(ai.lines).map((x, i) => aiLine(x, i))}
+      {ai.state !== 'done' && <div className="l"><span className="lk">read</span><div className="dim">{ai.state === 'empty' ? <><AiTag title="the local model's read" /> no usable read</> : ai.text || 'not written yet'}</div></div>}
+      <div className="l"><span className="lk">numbers</span><div className="dim">every figure above is from code · the model only wrote the sentences{arr(n.hand_exits).length ? ` · your hand exits: yours ${money(arr(n.hand_exits).reduce((a, x) => a + (Number(x.yours) || 0), 0))} · the watch ${money(arr(n.hand_exits).reduce((a, x) => a + (Number(x.watch) || 0), 0))}` : ''} · follow-ups {px(n.followups?.count)} · AI second opinions {px(n.followups?.read)} · agreed {px(n.followups?.agree)}</div></div>
+    </div>
+  </Panel>;
+}
+function TrackTab({ record, channel }) {
+  const [w, setW] = useState(null);
+  const [week, setWeek] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const load = (wk) => api.getTipsWeekly(wk).then((r) => setW(r && typeof r === 'object' ? r : null)).catch((e) => setMsg(`⚠ ${e.message}`));
+  useEffect(() => { load(week); }, [week]);
+  const write = () => {
+    if (!window.confirm('Write the channel profile for this week now?\n\nThe local model writes 4 sentences from numbers code computed. One per hour. Nothing here acts on an order.')) return;
+    setBusy(true); setMsg('');
+    api.tipsWeeklyWrite(w?.week).then(() => { setMsg('queued for the local model'); load(week); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false));
+  };
+  const panels = arr(w?.panels);
+  return <>
+    <div className="tp-trackbar"><label className="small">week <select className="tp-in" aria-label="week" value={week || w?.week || ''} onChange={(e) => setWeek(e.target.value)}>
+      {arr(w?.weeks).map((x) => <option key={x.week} value={x.week}>{x.label}</option>)}</select></label>
+      {msg && <span className={msg.startsWith('⚠') ? 'down small' : 'up small'}>{msg}</span>}
+      {w && !w.on && <span className="small dim">the weekly profile is off · Settings › tips · ai_weekly</span>}</div>
+    {panels.length ? panels.map((p) => <WeeklyPanel key={p.channel} p={p} onWrite={w?.on ? write : null} busy={busy} next={w?.write_next} />)
+      : <Panel title="📊 Channel profile"><p className="muted small rempty">{w ? 'No calls in this week.' : 'Loading…'}</p></Panel>}
+    <Record record={record} channel={channel} />
+  </>;
+}
+
 // 📷 the channel's screenshot read on the server (RapidOCR, rules only): agrees (quiet), a strike mismatch (red, two
 // buttons: the owner picks), resolved, or "screenshot not read: <why>" (dim). Nothing when the post had no image.
 function shotTag(s) {
@@ -502,12 +606,16 @@ function HintCard({ h, defLots, onDone, kinfo }) {
       {h?.kite?.needs_activation && open && <Tag c="w" title="wait words and no level: the entry waits for the channel's active / activated">needs activation</Tag>}
       {h?.kite?.auto && <Tag c={h.kite.auto.state === 'not_armed' ? 'bad' : h.kite.auto.state === 'waiting' ? 'w' : 'ok'} title={h.kite.auto.text}><span className="tp-adot">●</span> {h.kite.auto.text}</Tag>}
       {shotTag(shot)}
+      <GradeChip g={h?.ai4?.grade} />
       {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px' }} title="the post named no index: pick it after looking at the channel's screenshot">
         <option value="">{h?.symbol ? 'change index…' : 'set index…'}</option>{['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].map((x) => <option key={x} value={x}>{x}</option>)}</select>}
       <span className="who">{[h?.channel, when(h?.created ?? h?.posted_at)].filter(Boolean).join(' · ')}</span></div>
     <PnlStrip s={h?.pnl_strip} />
+    <ReviewBlock r={h?.ai4?.review} />
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
     <Decoded h={h} />
+    <GradeBlock g={h?.ai4?.grade} />
+    <PreflightBlock p={h?.ai4?.preflight} />
     <DistBar d={h?.dist} />
     <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />
@@ -728,6 +836,8 @@ export default function TipsPage() {
   const [dlg, setDlg] = useState(null);
   const [tryOpen, setTryOpen] = useState(false);
   const [older, setOlder] = useState(false);
+  const [view, setView0] = useState(() => (/^#\/?research\/tips\/track/.test(window.location.hash) ? 'track' : 'calls'));   // 📊 Calls · Track
+  const setView = (v) => { setView0(v); try { window.history.replaceState(null, '', `#/research/tips${v === 'track' ? '/track' : ''}`); } catch { /* ignore */ } };
   const [msg, setMsg] = useState('');
   const topRef = useRef(null);
   const data = d && typeof d === 'object' && !d.error ? d : null;
@@ -784,6 +894,8 @@ export default function TipsPage() {
       <KiteTest t={ktest.err ? null : kd?.test} err={ktest.err} onClose={() => setKtest({ busy: false, err: '', hidden: kd?.test?.at || null })} />}
     {data.enabled === false && <div className="rbanner warn tp-banner"><span>💡 Tips is <b>off</b>: nothing is read or pushed. {reader.state === 'logged_out' ? 'Log the reader in below first, then turn it on.' : ''}</span>
       <button type="button" className="btn small" onClick={enable}>Turn on…</button></div>}
+    <div className="tp-tabs"><Seg opts={[['calls', 'Calls'], ['track', 'Track', 'the weekly channel profile and the record']]} v={view} set={setView} /></div>
+    {view === 'track' ? <TrackTab record={data.record} channel={chans.split(' · ')[0]} /> : <>
     <Cards n={4}>
       <Card unit="n" label="Open hints" value={`${nAct} active · ${nNew} new`} num={nAct * 100 + nNew} live={openH.length > 0}
         sub={O.line || firstOpen || 'none open'} fact={<>today <b>{px(O.today?.hints ?? O.today_hints ?? 0)}</b> hints · {px(O.today?.posts ?? O.today_posts ?? 0)} posts · {px(O.today?.chatter ?? O.today_chatter ?? 0)} chatter</>} />
@@ -813,6 +925,7 @@ export default function TipsPage() {
     </div>
     {((data.kite?.mode || 'off') !== 'off' || arr(kd?.orders).length > 0) && <KiteOrders kd={kd} onDone={reload} />}
     {((data.kite?.mode || 'off') !== 'off' || arr(kd?.orders).length > 0) && <KiteDayCheck kd={kd} onDone={reload} />}
+    </>}
     {dlg === 'channels' && <ChannelsDialog current={chans} onClose={() => setDlg(null)} onSaved={() => { setMsg('channels saved'); reload(); }} />}
     {dlg === 'import' && <ImportDialog onClose={() => setDlg(null)} onDone={reload} />}
     {phone && <span className="tp-phone-pad" />}

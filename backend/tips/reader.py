@@ -194,6 +194,8 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             if out.get(key):
                 bk.push(config, out[key][0], out[key][1])
         if out.get("new") and source in ("live", "preview"):
+            from backend.tips import ai4                  # 🤖 the call grade (code) before any arming; never acts
+            ai4.on_post(config, out)
             kite_after(config, client, out, push)
         return out
     channel = channel.lstrip("@").lower()

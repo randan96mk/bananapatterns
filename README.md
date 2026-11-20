@@ -2267,6 +2267,66 @@ has / had a position on the hint; a paper-only hint keeps its old look.
 `test_tips_reader.py` (9: fake Telethon client, preview, import, login), `test_tips_api.py` (5),
 `test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes), `test_tips_vision.py` (18: OCR facts on hand-written line sets, a fake engine, mismatch / report vs check / the 2-day rule; one real-engine test when installed). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
 
+
+### 🤖 AI on Tips · evening review, call grade, pre-flight read, weekly channel profile
+
+`backend/tips/ai4.py`, table `tips_ai`. The rules: **every number comes from code**; the local model (the queue in
+`backend/ai/queue.py`) writes sentences only and every sentence it wrote carries the **[AI]** tag (on the card, Home and
+Telegram); nothing leaves the server; model output is never deleted (the archive job MOVES `tips_ai` rows older than
+180 days to `data/archive.db`, like `tips_ticks`); and **nothing here places, modifies, cancels, holds or blocks an order**
+(auto ignores the grade; the pre-flight read never delays the arm).
+
+| Switch (Settings › tips) | Default | What |
+|---|---|---|
+| `ai_review` | on | **Evening review** of each closed Kite hint of the day |
+| `ai_grade` | on | **Call grade** A–D by code + one [AI] "read" line |
+| `ai_preflight` | **off** | **Pre-flight read** of the post vs the decoded plan as a hint is armed |
+| `ai_weekly` | on | **Weekly channel profile**, Sunday 7:05 PM |
+
+Each switch off = nothing queued, no block on the card, no Telegram line. Every read goes through the AI queue (kind
+`tips_ai_<kind>`, json_mode off; the AI guard and the quiet hours apply as for the order read): the reply is split into
+lines, each must start with its label and pass the figure check against the input (typed tokens: a % stays a %, a ₹ a
+₹); a failing line is dropped; zero good lines → "[AI] no usable read" (the raw reply stays in `lines_json`). The
+night model writes the review and the weekly profile, the day model the grade's read and the pre-flight read. Cost:
+one review per closed hint a day, one grade per hint (re-graded once when the plan changes before the entry), one
+pre-flight read per arm, one weekly profile per channel a week (plus "Write now", one per hour).
+
+- **Evening review** (kind `review`): queued by the 3:35 PM Kite day check for every hint that had a Kite position today
+  and is closed (a dry run is labelled DRY; paper-only hints are skipped), and by the 6:35 PM evening run
+  (`tips_ai_evening`) for a hint closed after that. The input (code): the trade facts, the ticks (best / worst with
+  times, the nearest the stop came, the low / high after each follow-up), every order row, every follow-up with the
+  action taken and the AI second opinion, the channel's own result, the plan. 5 lines: entry / management / exit /
+  channel / one thing (≤ 30 words). The card's "Evening review" block sits under the P&L strip with a dim "numbers"
+  line (from code). Telegram (kind tips, once a day, after the last review of the day; hidden when nothing was taken):
+  `💡 Tips · evening review · Fri 20 Nov`, per hint `#11 NIFTY 25600 CE · +₹1,141 · your exit` + `[AI] <one thing>`,
+  `day: 2 taken · +₹1,133 · all calls 1 lot +₹1,805`, `grades today: #11 B · #12 C · #13 skipped (D)`.
+- **Call grade** (kind `grade`): at ingest of a new call (after the plan, before any arming). The **grade is code**
+  (`ai4.GRADE`, one dict): the channel's record for calls like this (same symbol + side + hour band 9:15–10:30 /
+  10:30–12 / 12–2 PM / after 2 PM over 60 days, falling back to the symbol, then all, and it says which; fewer than 3
+  calls → "–" "too few calls like this"), the shape (reward / risk = (target − entry) / (entry − stop)) and the wording
+  (Btst / carry, "if comes", stop missing). A = win ≥ 60 % and R/R ≥ 1.5; B = win ≥ 50 % or R/R ≥ 1.2; C = otherwise
+  with ≥ 3 calls; D = the record negative (avg R < 0) or the stop missing. The model writes ONE "read:" line. Card:
+  the header chip "grade B" (green A/B, amber C, red D, grey –) and a block with record (code), shape (code), read
+  ([AI]), subtitle "never changes the plan". Home Tips rows and today's calls carry the chip.
+- **Pre-flight read** (kind `preflight`, `ai_preflight` off by default): in `kite_orders.place_entry` (any mode but
+  off, click or auto) once every guard passed and BEFORE the order, the raw post, the decoded plan (symbol, strike,
+  type, expiry, entry, stop, targets, lots / qty, time stop) and the contract are queued; the arm goes on at once (told,
+  never blocked). 2 lines: "plan vs post: … agrees | differs: <why>" and "flag: … | none". "differs" → one Telegram
+  line `[AI] #14 pre-flight: plan differs from the post · <why> · armed anyway · check` and an amber Home item; a flag →
+  an amber line on the card only.
+- **Weekly channel profile** (kind `weekly`): Sunday 7:05 PM (`tips_ai_weekly`) per channel with ≥ 1 call in the Mon–Fri
+  just ended, and the Track tab's **Write now** (one per hour, else 429). Code numbers (stored in `input_json`): this
+  week (calls, T1 first, stop first, no fill, avg R, you took, yours ₹, all calls 1 lot ₹, the 4-week line), by index
+  and by hour band (calls, won; the bars' CSS widths from the numbers), how calls end (target, booked early, stop, time
+  stop, median minutes to T1 / to the stop), your hand exits vs what the watch would have given, follow-ups (count, AI
+  second opinions and how many agreed). 4 [AI] lines: works / fails / your exits / follow-ups (≤ 35 words). Panel on
+  Research › Tips › **Track** (`#/research/tips/track`) with a week picker (the last 8 weeks). Telegram:
+  `📊 Tips · channel profile · week 47`, the headline numbers, the 4 [AI] lines, `you: n of m · ₹x · all: ₹y`,
+  `full profile: Research › Tips › Track`.
+- **API**: `GET /api/tips` hints carry `ai4 {grade, review, preflight}`; `GET /api/tips/ai/weekly?week=&channel=` (the
+  picker + one panel per channel); `POST /api/tips/ai/weekly/write {week?}` (429 within the hour, 409 when off).
+  Tests: `tests/test_tips_ai4.py` (fake model).
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs

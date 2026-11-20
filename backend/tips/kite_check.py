@@ -397,6 +397,11 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
         res["facts"] = fx.day_facts(config, now)
     except Exception:
         logger.exception("Tips day facts failed")
+    try:                                               # 🤖 the evening review of every closed Kite hint (tips.ai_review)
+        from backend.tips import ai4
+        res["reviews"] = ai4.review_day(config, now, notify=notify)
+    except Exception:
+        logger.exception("Tips evening reviews not queued")
     if notify:
         lines = [summary] + [f"⛔ {x['text']}" + (f" · {x['hand']}" if x.get("hand") else "") for x in items if x["level"] == "red"][:6]
         bk.push(config, f"tips|kite|day|{day}", "\n".join(lines))
@@ -431,6 +436,11 @@ def attention_items(now: Optional[datetime] = None) -> list[tuple[str, str]]:
             continue
         for x in (k.get("ai_fu_items") or [])[-1:]:          # 🤖 the AI second opinion differs: worth a look, never loud
             out.append(("info", f"⚡ {x['text']}"))
+    try:                                              # 🤖 a pre-flight read that said "differs": worth a look, never loud
+        from backend.tips import ai4
+        out += ai4.attention_items(now)
+    except Exception:
+        logger.exception("Tips pre-flight Home items failed")
     d = last_day()
     if d and d.get("day") == now.date().isoformat():
         for x in d.get("items") or []:

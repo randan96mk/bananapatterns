@@ -438,6 +438,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_tips_ticks_hint_at ON tips_ticks(hint_id, 
 -- 💡 one row per trading day, written by the 3:35 PM Kite day check: calls, taken, won / lost, realised, net, the cap
 -- used, the slowest fill, the reader's down minutes, AI disagreements, how the positions closed (JSON).
 CREATE TABLE IF NOT EXISTS tips_day_facts (day TEXT PRIMARY KEY, json TEXT NOT NULL);
+-- 🤖 AI on Tips (backend/tips/ai4.py): the evening review, the call grade, the pre-flight read and the weekly channel
+-- profile. input_json = the numbers code gave the model (and the code grade); lines_json = the labelled lines kept, the
+-- dropped ones and the raw reply. ok NULL = pending. Never deleted: the archive job MOVES rows older than 180 days.
+CREATE TABLE IF NOT EXISTS tips_ai (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('review', 'grade', 'preflight', 'weekly')), day TEXT NOT NULL, at TEXT NOT NULL,
+    model TEXT, prompt_v TEXT, input_json TEXT NOT NULL, lines_json TEXT, ok INTEGER NULL, ms INTEGER);
+CREATE INDEX IF NOT EXISTS idx_tips_ai_hint ON tips_ai(hint_id, kind);
+CREATE INDEX IF NOT EXISTS idx_tips_ai_day ON tips_ai(kind, day);
 
 -- 🤖 Local AI (backend/ai): every job the queue ran (queued / running / done / failed / skipped) and the notes the
 -- model wrote (filled from PR 2). Nothing here is ever deleted.
