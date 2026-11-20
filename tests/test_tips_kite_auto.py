@@ -114,11 +114,11 @@ def test_click_place_all_rests_a_stop_entry_fills_in_the_sim_then_sl_and_t1(push
     k = h["kite"]
     assert k["state"] == "armed" and k["arm"]["kind"] == "slm"
     e = ko.rows_for(hid)[0]
-    assert (e["order_type"], e["trigger"], e["side"], e["qty"], e["status"]) == ("SL-M", 370, "BUY", 20, "placed")
+    assert (e["order_type"], e["trigger"], e["side"], e["qty"], e["status"]) == ("SL", 370, "BUY", 20, "placed")
     assert e["tradingsymbol"] == "SENSEX26NOV82300CE"
     legs = {x["leg"]: x for x in tr.hint_view(bk.load(hid), config=c)["kite"]["legs"]}
-    assert legs["entry"]["type_text"] == "SL-M trigger 370" and legs["entry"]["status_text"] == "resting (dry)"
-    assert any("entry placed BUY 20 SL-M trigger 370 · resting on Kite" in p for p in pushed)
+    assert legs["entry"]["type_text"] == "SL trigger 370" and legs["entry"]["status_text"] == "resting (dry)"
+    assert any("entry placed BUY 20 SL trigger 370 · resting on Kite" in p for p in pushed)
     assert ko.entries_today(D19.isoformat(), dry=True) == 0                     # resting: not an entry yet
     r = tick(c, w, {S82300: 340.0}, "13:55")
     assert r["lines"] == [] and bk.load(hid)["kite"]["state"] == "armed"         # under the trigger: still resting
@@ -253,9 +253,9 @@ def test_auto_arms_a_placeable_hint_with_one_telegram_line(pushed):
     r = post(c, w, s, 1, "13:52", CALL2)
     k = bk.load(r["hint_id"])["kite"]
     assert k["state"] == "armed" and k["by"] == "auto" and k["arm"]["kind"] == "slm" and k["auto_rest"]
-    assert ko.rows_for(r["hint_id"])[0]["order_type"] == "SL-M"            # NOT gated by "WAIT FOR ACTIVATION"
+    assert ko.rows_for(r["hint_id"])[0]["order_type"] == "SL"            # NOT gated by "WAIT FOR ACTIVATION"
     line = [p for p in pushed if "armed" in p]
-    assert line == ["🤖 Kite AUTO DRY · #1 armed · BUY 20 SENSEX 82300 CE · SL-M trigger 370 · resting on Kite · activation words: the level decides"]
+    assert line == ["🤖 Kite AUTO DRY · #1 armed · BUY 20 SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
     v = tr.hint_view(bk.load(r["hint_id"]), config=c)["kite"]
     assert v["auto"] == {"state": "armed", "text": "auto · armed"}
 
@@ -392,7 +392,7 @@ def test_19_nov_three_calls_end_to_end(pushed):
     # call 2 · 1:52 PM · ONLY ABOVE 370 + WAIT FOR ACTIVATION -> SL-M 370 rests (not gated) and fills on the cross
     h2 = post(c, w, s, 105, "13:52", CALL2)["hint_id"]
     e2 = ko.rows_for(h2)[0]
-    assert (e2["order_type"], e2["trigger"]) == ("SL-M", 370)
+    assert (e2["order_type"], e2["trigger"]) == ("SL", 370)
     post(c, w, s, 106, "13:55", "ADD MORE IF COMES NEAR 440")
     tick(c, w, {S82300: 455.0}, "14:00")                                          # 370 -> 455, no "activated" ever posted
     k2 = bk.load(h2)["kite"]
@@ -512,3 +512,22 @@ def test_a_stop_revised_before_the_entry_updates_the_plan_and_the_armed_entry(pu
     tick(c, w, {N25400: 197.0}, "11:05")
     k = bk.load(hid)["kite"]
     assert k["state"] == "entered" and k["legs"]["stop"]["trigger"] == 193        # the stop placed on the fill is the revised one
+
+
+def test_a_partial_booking_cuts_the_stop_before_the_second_sell(pushed):
+    """20 Nov: a market sell beside the resting stop for the full quantity is refused for margin; the stop is cut to the
+    rest first (one modify, no new sell), then the part is sold."""
+    c, w, s = auto_setup(kite_auto_max_open=5, kite_max_lots=4)
+    w.prices.update({S82200: 538.0})
+    hid = post(c, w, s, 1, "12:50", CALL1 + "\n4 lots")["hint_id"]
+    tick(c, w, {S82200: 538.0}, "12:51")
+    k = bk.load(hid)["kite"]
+    assert k["qty_open"] == 80 and k["legs"]["stop"]["qty"] == 80 and k["legs"]["stop"]["type"] == "SL" and k["legs"]["stop"]["price"] is not None
+    tick(c, w, {S82200: 590.0}, "13:00")
+    n_before = len(s.orders())
+    post(c, w, s, 2, "13:01", "BOOK PART & KEEP TSL AT COST FOR REST QTY")
+    book = s.orders()
+    stop = next(o for o in book if o["order_id"] == k["legs"]["stop"]["order_id"])
+    sells = [o for o in book[n_before:] if o["transaction_type"] == "SELL" and o["order_type"] == "MARKET"]
+    assert int(stop["quantity"]) == 40 and len(sells) == 1 and int(sells[0]["quantity"]) == 40     # the stop was cut, one sell
+    assert any("stop cut to 40 first" in p for p in pushed)

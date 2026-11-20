@@ -154,6 +154,7 @@ const HELP_TIPS = {
   preview_fallback: 'When the account reader is down, read the channel\'s public preview page every 30 s (true/false)',
   kite_mode: '⚡ Tips → Kite orders: "off" (paper book only), "dry" (a rehearsal: same buttons, a simulator fills from live quotes, nothing reaches Kite), "click" (each leg by your click, each through a confirm), "auto" (entries armed on the level / the channel\'s activation, SL on the fill, the channel\'s exits followed, you are told). Only the stop rests on Kite; the targets are watched by the app (half at T1 at market, then a new stop at cost; the rest at T2). Real money',
   kite_product: 'The Kite product of these orders: "NRML" (carry forward) or "MIS" (intraday)',
+  kite_sl_buffer_pct: 'Stops go to Kite as SL orders (trigger + limit): the limit sits this % past the trigger (default 1.5). Options allow no SL-M; a trigger-only change was refused on 20 Nov',
   kite_market_protection: 'Market protection in % on MARKET and SL-M orders (0.5 … 20, default 5): API orders at market must carry one, the exchange rejects 0',
   kite_max_entries_day: 'Kite entry orders a day at most (a rejected one does not count)',
   kite_max_lots: 'Lots per Kite entry order at most',

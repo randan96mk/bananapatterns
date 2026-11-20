@@ -2197,7 +2197,7 @@ The paper book stays exactly as it is. On top, with `kite_mode = click`, a hint'
 own Kite Connect session; real money) **by your click**, each button through a confirm that names the contract, the
 quantity, the order type, the premium, the caps after it and the warning *"Real money on your Kite account. The app
 never averages, never re-enters after a stop, and stops for the day at the loss cap."*
-- **Legs**: entry `MARKET` (the hint's side) · stop `SL-M` at the plan's premium stop for the full open quantity — **the
+- **Legs**: entry `MARKET` (the hint's side) · stop `SL` (trigger + a limit `kite_sl_buffer_pct` past it; options allow no SL-M) at the plan's premium stop for the full open quantity — **the
   only order that rests on Kite** · T1 / T2 are **watched by the app**, never resting orders. Why: Kite nets only the
   first pending sell against a long option; a second one counts as a naked short and is refused for margin (20 Nov,
   #11 NIFTY 25600 CE: SL-M 175 and LIMIT 270 sent together, the LIMIT REJECTED "Insufficient funds. Margin required:
@@ -2207,10 +2207,10 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
 - **The target watch** (every Syncer tick, 5 s while a Kite position is open; click, auto and the dry run alike, on the
   hint's last LTP from the Tips quote poll, one quote read when it is older than 6 s): LTP ≥ the target (≤ for a sell
   hint) → T1 with more than one lot open: cancel the resting stop → `MARKET` exit of half (whole lots, as the split
-  does) → on the fill a **new** `SL-M` for the rest at cost (never below the previous stop for a buy) → T2 watched for
+  does) → on the fill a **new** `SL` for the rest at cost (never below the previous stop for a buy) → T2 watched for
   the rest ("⚡ Kite AUTO · #11 T1 hit 270.4 · sold 65 of 130 at market · stop → cost 230 for the rest · watching T2
   310"). One lot, or the last target: cancel the stop → `MARKET` exit of all → closed "… +₹x total". **Safety**: the
-  stop is cancelled only in the tick the market exit is sent; a refused / rejected market exit re-places the `SL-M` at
+  stop is cancelled only in the tick the market exit is sent; a refused / rejected market exit re-places the `SL` at
   once (same trigger, same quantity): "⚠️ Kite · #11 target exit refused: <Kite's words> · stop re-placed · exit by
   hand" (the watch stops for that hint). If the re-place fails too: a red line and the Home item "no stop on Kite: exit
   by hand NOW". A target passed while the app was down is acted on at the next tick (no "missed" state).
@@ -2245,11 +2245,11 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   strike ("BUY nifty 25400 ce 191-198", "buy 82000 ce 460") is a zone / an at-price entry. The card shows "above 370
   (premium)" / "SENSEX above 82,400 (index)".
 - **The level is the trigger.** An entry with a level is never sent at market at once: a premium "above X" buy (a
-  "below X" sell) rests on Kite as an `SL-M` with trigger X; "at X" / a zone rests as a `LIMIT` (the zone's top for a
+  "below X" sell) rests on Kite as an `SL` with trigger X (and a limit past it); "at X" / a zone rests as a `LIMIT` (the zone's top for a
   buy, its bottom for a sell); an index level cannot rest on Kite, so the app arms it (`armed_watch`) and buys at
   `MARKET` when the index quote (the tracker's spot) crosses it. A premium level already passed by up to 10 % goes at
   market; further than that it is not chased. **Activation words never gate an entry that has a level** ("ONLY ABOVE
-  370 … WAIT FOR ACTIVATION" rests an SL-M at 370; the words are logged). Wait words with no level (an at / zone /
+  370 … WAIT FOR ACTIVATION" rests an SL at 370; the words are logged). Wait words with no level (an at / zone /
   market entry) arm it (`armed_wait`): nothing is sent until the channel says active / activated / enter now, or you
   press **Send now…**. "activated" before a resting level order fills cancels it and sends `MARKET`; after the fill it
   changes nothing.
@@ -2265,7 +2265,7 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   size; the post's lots else `tips.lots`, capped by `kite_max_lots`) is armed by the app with the same guards, plus
   `kite_auto_max_open` (Kite hints open at once; a second one waits and is armed when the first closes) and "already
   traded on Kite" (the same contract the same day). A failing guard is logged on the card ("● auto · not armed: <why>")
-  and pushed once per hint per cause. Telegram: "🤖 Kite AUTO · #6 armed · BUY 20 SENSEX 82300 CE · SL-M trigger 370 ·
+  and pushed once per hint per cause. Telegram: "🤖 Kite AUTO · #6 armed · BUY 20 SENSEX 82300 CE · SL trigger 370 ·
   resting on Kite". On its own open position auto follows the channel: exit / SL hit / book full → resting orders
   cancelled + `MARKET` exit; trail / TSL at cost → the stop to cost (never lower for a buy); "modify SL to N", "REST
   STOPLOSS 530", "REVISE SL 298", "sl now 298" → the stop's trigger; book part → half the open lots at market (one lot
@@ -2296,7 +2296,7 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
 - **Dry run** (`kite_mode = dry`, the second choice on the bar): a rehearsal with the same buttons, the same legs and
   the same follow-on orders, through a simulator (`backend/tips/kite_sim.py`) that fills from live quotes: a `MARKET`
   order at once at the hint's last price (also outside market hours, so you can rehearse in the evening — the bar says
-  so), a `LIMIT` sell when the price reaches it (a buy when it falls to it), an `SL-M` sell at its trigger when the
+  so), a `LIMIT` sell when the price reaches it (a buy when it falls to it), an `SL` sell at its trigger when the
   price falls to it (a buy when it rises to it). Nothing reaches Kite and no login is needed ("dry run · no login
   needed"); the market-hours and entry-window guards do not block, the caps do. The simulator's book lives in
   `app_settings` `tips.kite.sim` (it survives a restart); order ids are `DRY-n`, entry rows carry `by = dry` and the
@@ -2363,6 +2363,7 @@ stays the morning dry-run skip.
 | `preview_fallback` | on | While the reader is down, the channel's public page is read every 30 s (no login). |
 | `kite_mode` | off | ⚡ `off` (paper only) · `dry` (a rehearsal: same buttons, a simulator fills from live quotes, nothing reaches Kite) · `click` (each Kite leg by your click, through a confirm) · `auto` (next update; works as click for now). Real money except `dry`. |
 | `kite_product` | NRML | The Kite product of these orders: `NRML` or `MIS`. |
+| `kite_sl_buffer_pct` | 1.5 | Stops go as SL orders (trigger + limit); the limit sits this % past the trigger. Options allow no SL-M: a trigger-only modify was refused on 20 Nov. |
 | `kite_market_protection` | 5 | Market protection in % on MARKET and SL-M orders (0.5 … 20). API orders at market must carry one; the exchange rejects 0. |
 | `kite_max_entries_day` | 4 | Kite entry orders a day at most (a rejected one does not count). |
 | `kite_max_lots` | 2 | Lots per Kite entry order at most. |

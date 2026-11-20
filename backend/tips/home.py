@@ -121,7 +121,7 @@ def row(config, h: dict, now: datetime) -> dict:
         kind = arm.get("kind")
         if st == "armed" and kind in ("slm", "limit"):
             lvl = arm.get("trigger") if kind == "slm" else arm.get("price")
-            out["tag"] = f"{dry}armed · {arm.get('order_type') or 'SL-M'} {pl.fmt(lvl)} resting"
+            out["tag"] = f"{dry}armed · SL {pl.fmt(lvl)} resting"
         elif st == "armed_watch":
             out["tag"] = f"{dry}armed · watching {arm.get('index') or ko.index_name(h)}"
         elif st == "armed_wait":

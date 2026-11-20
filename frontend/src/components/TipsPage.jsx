@@ -71,7 +71,7 @@ const zeroTarget = (h) => arr(h?.targets).length === 1 && Number(h.targets[0]) =
 function statusTag(h) {
   const s = h?.status;
   if (s === 'new' || s === 'waiting') return <Tag c="w">{s === 'new' ? 'new · waiting' : 'waiting'}</Tag>;
-  if (s === 'active') return <Tag c="ok">active</Tag>;
+  if (s === 'active') return h?.kite?.state === 'closed' ? <Tag c="w" title="your Kite position is closed; the channel's call is still scored for its record until its target, stop or time stop">record · active</Tag> : <Tag c="ok">active</Tag>;
   if (s === 'paused') return <Tag c="w">paused</Tag>;
   if (s === 'skipped') return <Tag>skipped · scored</Tag>;
   if (s === 'expired') return <Tag>expired{h.ended ? ` · ${h.ended.replace('_', ' ')}` : ''}</Tag>;

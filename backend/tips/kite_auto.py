@@ -253,7 +253,7 @@ def _to_cost(config, cl, h: dict, now: datetime, why: str) -> str:
     ltp = bk.last_ltp(h)
     if ltp is not None and ((buy and ltp <= px) or (not buy and ltp >= px)):
         return f"the price {pl.fmt(ltp)} is not past cost {pl.fmt(px)} · stop kept at {pl.fmt(cur)}"
-    ko._move_stop(cl, h, float(px), now, why)
+    ko._move_stop(cl, h, float(px), now, why, config)
     return f"stop → cost {pl.fmt(px)}"
 
 
@@ -287,7 +287,7 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
             if ltp is not None and ((buy and px >= ltp) or (not buy and px <= ltp)):
                 out = f"the new stop {pl.fmt(px)} is past the price {pl.fmt(ltp)} · not modified · your call"
             else:
-                ko._move_stop(cl, h, px, now, "auto: the channel's SL")
+                ko._move_stop(cl, h, px, now, "auto: the channel's SL", config)
                 out = f"stop → {pl.fmt(px)}"
         ko.save_kite(h)
         _line(config, h, now, f'followed the channel "{quote}" · {out}', notify, "stop")
@@ -301,8 +301,22 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
             if (k["legs"].get("exit") or {}).get("status") in ko.LIVE:
                 return None
             k["cost_after_part"] = bool(act.get("cost"))
+            # margin: a second sell beside the resting stop is refused (20 Nov) → the stop is cut to the rest FIRST
+            st = k["legs"].get("stop") or {}
+            rest = int(k["qty_open"]) - q
+            if st.get("status") in ko.LIVE and int(st.get("qty") or 0) > rest:
+                try:
+                    kw = ko._stop_kw(config, h, float(st.get("trigger") or k.get("stop_px")), rest)
+                    cl.modify_order(st["order_id"], **kw)
+                    ko._update(st["row"], qty=rest, price=kw["price"], order_type="SL")
+                    st.update(qty=rest, price=kw["price"], type="SL")
+                except Exception as exc:
+                    out = f"not booked: the stop could not be cut to {rest} first (a second sell beside it would be refused for margin) · Kite: {str(exc)[:100]}"
+                    ko.save_kite(h)
+                    _line(config, h, now, f'the channel "{quote}" · {out}', notify, "part")
+                    return out
             ko._place(config, cl, h, "exit", ko.exit_side(h), q, "MARKET", now, "auto")
-            out = f"booked part: {ko.exit_side(h)} {q} of {k['qty_open']} MARKET" + (" · the stop to cost on the fill" if act.get("cost") else "")
+            out = f"booked part: {ko.exit_side(h)} {q} of {k['qty_open']} MARKET · stop cut to {rest} first" + (" · the stop to cost on the fill" if act.get("cost") else "")
             ko.save_kite(h)
             _line(config, h, now, f'followed the channel "{quote}" · {out}', notify, "part")
             ko.after_event(config, h, now, notify)

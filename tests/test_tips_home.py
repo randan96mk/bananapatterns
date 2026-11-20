@@ -46,7 +46,7 @@ def test_cards_rows_chips_checks_record_from_a_seeded_day(pushed):  # noqa: F811
     assert o["facts"] == "now 330 · stop 250 is −24.2 % · target 380 is +15.2 %"
     assert o["detail"] == "entry 306 · 2:05 PM · auto · stop resting in the dry run · targets watched by the app" and o["buttons"] == ["trail", "exit"]
     a = rows[h2]                                                          # armed: the distance to the level, one lot
-    assert a["tag"].endswith("armed · SL-M 370 resting") and a["pnl"] is None
+    assert a["tag"].endswith("armed · SL 370 resting") and a["pnl"] is None
     assert a["facts"] == "now 337 · level 370 is 9.8 % away · 1 lot"
     assert a["detail"] == "1:52 PM · auto · the level is the trigger · wait words logged · cancels at 3:00 PM if it never trades 370"
     assert a["buttons"] == ["send_now", "cancel"] and a["send_ok"] is False
