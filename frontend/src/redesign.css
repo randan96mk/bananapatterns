@@ -344,6 +344,11 @@
 .rd .tp-tgt .rtag { margin-left: 0; }
 .rd .tp-tl { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--muted); min-width: 0; }
 .rd .tp-tl > div { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.rd .tp-tl > div[hidden] { display: none; }
+.rd .tp-tl .tp-tlt { flex: none; height: 22px; line-height: 20px; padding: 0 8px; align-self: flex-start; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: inherit; font-size: 11px; color: var(--muted); background: transparent; border: 1px dashed var(--border); border-radius: 6px; cursor: pointer; }
+.rd .tp-tl .tp-tlt:hover { color: var(--text); border-style: solid; background: var(--hover); }
+.rd .tp-tl .tp-tlt:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 .rd .tp-tl .tt { font-family: var(--num-font, ui-monospace), ui-monospace, Menlo, monospace; color: color-mix(in srgb, var(--muted) 75%, transparent); flex: none; width: 92px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rd .tp-tl .src { flex: none; }
 .rd .tp-tl .tx { min-width: 0; overflow-wrap: anywhere; }

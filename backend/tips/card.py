@@ -176,12 +176,16 @@ def channel_vs_you(h: dict, f: Optional[dict]) -> Optional[dict]:
     channel by ₹x" when you did. None while the record has no result."""
     k = _k(h)
     cr = fx.channel_result(h)
-    mine = _num(k.get("exit_px"))
-    if not cr or cr.get("exit_px") is None or mine is None:
+    if not cr:
         return None
+    if cr.get("exit_px") is None:                     # the record closed without a price (no fill / expired)
+        return {"text": str(cr["outcome"]).replace("_", " "), "note": "", "tone": ""} if cr.get("closed") else None
+    what = f"{cr['outcome']} at {pl.fmt(cr['exit_px'])}"
+    mine = _num(k.get("exit_px"))
+    if mine is None:                                  # the record has its result; your exit price is not stored
+        return {"text": what, "note": "", "tone": ""}
     qty = int(k.get("qty") or 0)
     diff = round((float(cr["exit_px"]) - mine) * qty * _sign(h), 2)
-    what = f"{cr['outcome']} at {pl.fmt(cr['exit_px'])}"
     if diff > 0:
         return {"text": what, "left": diff, "note": f"left {bk.inr(diff)}", "tone": "down"}
     if diff < 0:
@@ -209,8 +213,10 @@ def now_tile(h: dict) -> Optional[dict]:
     ltp = _num(bk.last_ltp(h))
     if st == "closed" and k.get("entry_px") is not None:
         ex = _num(k.get("exit_px"))
-        return {"state": "exit", "label": "now · at exit", "value": ex if ex is not None else ltp,
-                "value_text": pl.fmt(ex if ex is not None else ltp), "tone": "", "pulse": False,
+        if ex is None:                                # no exit fill stored: the last price, never called the exit fill
+            return {"state": "exit", "label": "now · after exit", "value": ltp, "value_text": pl.fmt(ltp), "tone": "", "pulse": False,
+                    "sub": "last price · exit fill not stored"} if ltp is not None else None
+        return {"state": "exit", "label": "now · at exit", "value": ex, "value_text": pl.fmt(ex), "tone": "", "pulse": False,
                 "sub": f"exit fill{f' · now {pl.fmt(ltp)}' if ltp is not None else ''}"}
     if ltp is None:
         return None
@@ -409,8 +415,26 @@ def facts_row(h: dict, f: Optional[dict]) -> Optional[list[dict]]:
             {"k": "exit by", "v": ex}]
 
 
+# --- the event log's default fold --------------------------------------------------------------------------------------------------
+
+LOG_OPEN_STATUS = ("new", "waiting", "active", "paused")
+LOG_OPEN_KITE = ("armed", "armed_watch", "armed_wait", "entered")
+
+
+def log_open(h: dict, now: datetime) -> bool:
+    """The card's event log open by default: only while the hint is working today (armed / open on Kite, or a paper take
+    still open). Closed, skipped, record-only and older hints start folded to their last lines (the page remembers a
+    card you opened or folded)."""
+    k = _k(h)
+    posted = fx._dt(h.get("posted_at"))
+    today = (posted is not None and posted.date() == now.date()) or k.get("day") == now.date().isoformat()
+    if not today:
+        return False
+    return k.get("state") in LOG_OPEN_KITE or (bool(h.get("taken")) and h.get("status") in LOG_OPEN_STATUS)
+
+
 def blocks(config, h: dict, now: datetime) -> dict:
-    """Every block for hint_view: {pnl_strip, now_tile, dist, said_next, facts, trade_facts}."""
+    """Every block for hint_view: {pnl_strip, now_tile, dist, said_next, facts, trade_facts, log_open}."""
     f = fx.for_hint(h, now) if has_position(h) else None
     return {"pnl_strip": pnl_strip(config, h, f, now), "now_tile": now_tile(h), "dist": dist(h, f), "said_next": said_next(h, f),
-            "facts": facts_row(h, f), "trade_facts": f}
+            "facts": facts_row(h, f), "trade_facts": f, "log_open": log_open(h, now)}
