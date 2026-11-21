@@ -402,6 +402,7 @@ export function GradeBlock({ g }) {
       <span className="m">from the channel's own record for calls like this · computed by code, worded by the model · never changes the plan{g.regraded ? ' · re-graded after the plan changed' : ''}</span></div>
     <div className="l"><span className="lk">record</span><div>{g.record || '—'}</div></div>
     <div className="l"><span className="lk">shape</span><div>{g.shape || '—'}</div></div>
+    {g.market && <div className="l"><span className="lk">market</span><div>{g.market}</div></div>}
     {arr(g.read?.lines).map((x, i) => aiLine(x, i))}
     <AiState v={g.read} />
   </div>;
@@ -416,6 +417,108 @@ export function PreflightBlock({ p }) {
     {lines.length > 0 && p.agrees != null && <div className="l"><span className="lk">verdict</span><div className={p.agrees ? 'up' : 'warn'}>{p.agrees ? 'agrees' : `differs${p.why ? ` · ${p.why}` : ''} · armed anyway`}</div></div>}
     <AiState v={p} />
   </div>;
+}
+
+// 📈 the market read: code tiles (trend, levels, pattern, volatility) always; the candle model's numbers only when the
+// server's gate says cards (shadow: the chip only); the local model's sentences carry the AI tag; nothing here acts.
+const MK_IDX = ['NIFTY', 'BANKNIFTY', 'SENSEX'];
+function MkTile({ t }) {
+  if (!t) return <div />;
+  const bar = t.state === 'shown' && isNum(t.p_up);
+  return <div title={[t.label, t.head, t.chg, t.sub].filter(Boolean).join(' · ')}>
+    <div className="k">{t.label}</div>
+    <div className={`h ${t.tone || ''}`}>{t.head}{t.chg && <span className={`c ${t.tone || ''}`}>{t.chg}</span>}</div>
+    {bar && <div className="mk-pbar" style={{ '--p': `${Math.round(Number(t.p_up) * 100)}%` }} />}
+    <div className="s">{t.sub}</div></div>;
+}
+function mkLine(x, i) {
+  const v = x.verdict;
+  const body = v && String(x.text).endsWith(v) ? String(x.text).slice(0, -v.length) : x.text;
+  return <div key={i} className="l"><span className="lk">{x.label}</span><div className="mk-cl" title={x.text}><AiTag title="written by the local model · every figure checked against the numbers code gave it" /> {body}
+    {v && String(x.text).endsWith(v) && <span className={`vd ${v.startsWith('supports') ? 'up' : v.startsWith('against') ? 'down' : 'w'}`}>{v}</span>}</div></div>;
+}
+function MkWords({ v, label = 'read' }) {
+  if (!v || v.state === 'done' || v.state === 'none') return null;
+  return <div className="l"><span className="lk">{label}</span><div className="dim mk-one"><AiTag title="the local model's words" /> {v.state === 'empty' ? 'no usable read' : v.text || 'the words wait for the local model'}</div></div>;
+}
+function MkFan({ f }) {
+  const hist = arr(f?.history).map(Number).filter((x) => !Number.isNaN(x));
+  const q10 = arr(f?.q10).map(Number), q50 = arr(f?.q50).map(Number), q90 = arr(f?.q90).map(Number);
+  if (!q50.length) return null;
+  const marks = [f.stop, f.t1].filter(isNum).map(Number);
+  const all = [...hist, ...q10, ...q90, ...marks];
+  const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1;
+  const y = (v) => (64 - ((v - lo) / span) * 58).toFixed(1);
+  const hx = (i) => (hist.length > 1 ? (i / (hist.length - 1)) * 200 : 200).toFixed(1);
+  const fx = (i) => (200 + ((i + 1) / q50.length) * 200).toFixed(1);
+  const last = isNum(f.last) ? Number(f.last) : hist[hist.length - 1];
+  const band = (a, b) => `200,${y(last)} ${a.map((v, i) => `${fx(i)},${y(v)}`).join(' ')} ${[...b].reverse().map((v, i) => `${fx(b.length - 1 - i)},${y(v)}`).join(' ')}`;
+  return <div className="mk-fan" title="the candle model's sampled paths: the middle 80 % (q10–q90) and the median, after the premium's own last hour">
+    <svg viewBox="0 0 400 70" preserveAspectRatio="none" aria-label="paths fan">
+      {hist.length > 1 && <polyline fill="none" stroke="var(--muted)" strokeWidth="1.2" points={hist.map((v, i) => `${hx(i)},${y(v)}`).join(' ')} />}
+      <polygon fill="color-mix(in srgb, var(--ok) 16%, transparent)" points={band(q90, q10)} />
+      <polyline fill="none" stroke="var(--ok)" strokeWidth="1.4" strokeDasharray="4 3" points={`200,${y(last)} ${q50.map((v, i) => `${fx(i)},${y(v)}`).join(' ')}`} />
+      <line x1="200" y1="0" x2="200" y2="70" stroke="var(--border)" />
+      {isNum(f.stop) && <line x1="0" x2="400" y1={y(Number(f.stop))} y2={y(Number(f.stop))} stroke="var(--bad)" strokeDasharray="3 3" />}
+      {isNum(f.t1) && <line x1="0" x2="400" y1={y(Number(f.t1))} y2={y(Number(f.t1))} stroke="var(--ok)" strokeDasharray="3 3" />}
+    </svg>
+    {isNum(f.stop) && <span className="fl down" style={{ top: `${Math.max(0, Number(y(Number(f.stop))) - 12)}px` }}>stop {px(f.stop)}</span>}
+    {isNum(f.t1) && <span className="fl up" style={{ top: `${Math.min(56, Number(y(Number(f.t1))) + 1)}px` }}>T1 {px(f.t1)}</span>}
+    <span className="fl now">now {f.at_label} · next {f.horizon} min</span></div>;
+}
+export function MarketBlock({ m }) {
+  if (!m) return null;
+  const t = m.tiles;
+  return <div className="tp-ai mk-card">
+    <div className="t"><AiTag title="the tagged lines are the local model's; every number is code or the candle model (with its version)" /><b>Market read</b>
+      <span className={`mk-shadow ${m.cards ? 'on' : ''}`} title="the candle model's numbers show only while its scorecard earns it (Settings › market)">{m.chip}</span>
+      <span className="m">{m.at_label ? `${m.at_label} · ` : ''}code: trend, levels, patterns · model: next-15-min odds{m.cards ? '' : ' (stored, not shown)'} · the local model wrote only the tagged lines · nothing here acts</span></div>
+    {t ? <div className="mk-tiles">{['index', 'levels', 'pattern', 'model'].map((k) => <MkTile key={k} t={t[k]} />)}</div> : <div className="mk-empty">{m.empty || 'no index candles yet'}</div>}
+    {m.fan && <MkFan f={m.fan} />}
+    {arr(m.lines).map(mkLine)}
+    {t && <MkWords v={{ state: m.state, text: m.words_text }} />}
+    {m.numbers && <div className="l"><span className="lk">numbers</span><div className="dim mk-one" title={m.numbers}>{m.numbers}</div></div>}
+  </div>;
+}
+export function EntryTiming({ e }) {
+  if (!e) return null;
+  return <div className="tp-ai mk-entry">
+    <div className="t"><AiTag title="the pullback line is the local model's; the odds line is code" /><b>Entry timing</b><span className="m">{e.note}</span></div>
+    <div className="l"><span className="lk">odds</span><div className="mk-one" title={e.code}>{e.code}</div></div>
+    {arr(e.lines).map(mkLine)}
+    <MkWords v={{ state: e.state, text: e.text }} label="pullback" />
+  </div>;
+}
+function MarketPanel() {
+  const [idx, setIdx] = useState(() => { try { return MK_IDX.includes(localStorage.getItem('bp.mkt.idx')) ? localStorage.getItem('bp.mkt.idx') : 'NIFTY'; } catch { return 'NIFTY'; } });
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let live = true;
+    const load = () => api.getMarketNow(idx).then((r) => { if (live) { setD(r && typeof r === 'object' ? r : null); setErr(''); } }).catch((e) => { if (live) setErr(e.message); });
+    load();
+    const t = setInterval(load, 30000);
+    return () => { live = false; clearInterval(t); };
+  }, [idx]);
+  const pick = (v) => { setIdx(v); try { localStorage.setItem('bp.mkt.idx', v); } catch { /* private mode */ } };
+  const tl = d?.symbol === idx ? d?.tiles : null;
+  const bd = d?.symbol === idx ? d?.backdrop : null;
+  const src = `code: candles + levels · model: Kronos-mini (4 M, on this server)${d?.worker?.state ? ` · ${d.worker.state}` : ''} · words: the local model · every ${isNum(d?.interval_s) ? d.interval_s : 60} s${d?.login && d?.tiles ? ` · ${d.login}` : ''}`;
+  return <Panel className="mk-panel" title={`Market now · ${idx}`} right={d?.refreshed ? `refreshed ${d.refreshed}` : null}>
+    <div className="mk-body">
+      <div className="mk-bar0"><Seg small opts={MK_IDX.map((x) => [x, x])} v={idx} set={pick} />
+        <span className={`mk-shadow ${d?.cards ? 'on' : ''}`} title={d?.gate || ''}>{d?.chip || 'candle model'}</span>
+        <span className="mk-src" title={src}>{src}</span></div>
+      {tl ? <div className="mk-tiles">{['trend', 'levels', 'volatility', 'model'].map((k) => <MkTile key={k} t={tl[k]} />)}</div>
+        : <div className="mk-empty">{d?.off || d?.empty || d?.login || err || 'Loading…'}</div>}
+      <div className="tp-ai">
+        <div className="t"><AiTag title="the read and for-calls lines are the local model's; the numbers line is code" /><b>Backdrop</b><span className="m">three lines · nothing here acts</span></div>
+        {arr(bd?.lines).map(mkLine)}
+        {(!bd || bd.state !== 'done') && <div className="l"><span className="lk">read</span><div className="dim mk-one"><AiTag title="the local model's words" /> {bd?.state === 'empty' ? 'no usable read' : bd?.text || (tl ? 'the words wait for the local model' : 'no candles to read yet')}</div></div>}
+        <div className="l"><span className="lk">numbers</span><div className="dim mk-one" title={bd?.numbers || ''}>{bd?.numbers || '—'}</div></div>
+      </div>
+    </div>
+  </Panel>;
 }
 
 // 📊 the weekly channel profile (Research › Tips › Track): the four boxes with bars (widths from the numbers) and the
@@ -449,7 +552,7 @@ function WeeklyPanel({ p, onWrite, busy, next }) {
         <span className="m">{ai.state === 'done' ? `written ${ai.at_label || ''}` : ai.state === 'pending' ? 'waits for the local model' : ai.state === 'empty' ? 'no usable read' : 'not written yet'}</span></div>
       {arr(ai.lines).map((x, i) => aiLine(x, i))}
       {ai.state !== 'done' && <div className="l"><span className="lk">read</span><div className="dim">{ai.state === 'empty' ? <><AiTag title="the local model's read" /> no usable read</> : ai.text || 'not written yet'}</div></div>}
-      <div className="l"><span className="lk">numbers</span><div className="dim">every figure above is from code · the model only wrote the sentences{arr(n.hand_exits).length ? ` · your hand exits: yours ${money(arr(n.hand_exits).reduce((a, x) => a + (Number(x.yours) || 0), 0))} · the watch ${money(arr(n.hand_exits).reduce((a, x) => a + (Number(x.watch) || 0), 0))}` : ''} · follow-ups {px(n.followups?.count)} · AI second opinions {px(n.followups?.read)} · agreed {px(n.followups?.agree)}</div></div>
+      <div className="l"><span className="lk">numbers</span><div className="dim">every figure above is from code · the model only wrote the sentences{arr(n.hand_exits).length ? ` · your hand exits: yours ${money(arr(n.hand_exits).reduce((a, x) => a + (Number(x.yours) || 0), 0))} · the watch ${money(arr(n.hand_exits).reduce((a, x) => a + (Number(x.watch) || 0), 0))}` : ''} · follow-ups {px(n.followups?.count)} · AI second opinions {px(n.followups?.read)} · agreed {px(n.followups?.agree)}{p?.model ? ` · ${p.model}` : ''}</div></div>
     </div>
   </Panel>;
 }
@@ -631,6 +734,8 @@ function HintCard({ h, defLots, onDone, kinfo }) {
     <Decoded h={h} />
     <GradeBlock g={h?.ai4?.grade} />
     <PreflightBlock p={h?.ai4?.preflight} />
+    <MarketBlock m={h?.market} />
+    <EntryTiming e={h?.market?.entry} />
     <DistBar d={h?.dist} />
     <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />
@@ -911,6 +1016,7 @@ export default function TipsPage() {
       <button type="button" className="btn small" onClick={enable}>Turn on…</button></div>}
     <div className="tp-tabs"><Seg opts={[['calls', 'Calls'], ['track', 'Track', 'the weekly channel profile and the record']]} v={view} set={setView} /></div>
     {view === 'track' ? <TrackTab record={data.record} channel={chans.split(' · ')[0]} /> : <>
+    <MarketPanel />
     <Cards n={4}>
       <Card unit="n" label="Open hints" value={`${nAct} active · ${nNew} new`} num={nAct * 100 + nNew} live={openH.length > 0}
         sub={O.line || firstOpen || 'none open'} fact={<>today <b>{px(O.today?.hints ?? O.today_hints ?? 0)}</b> hints · {px(O.today?.posts ?? O.today_posts ?? 0)} posts · {px(O.today?.chatter ?? O.today_chatter ?? 0)} chatter</>} />

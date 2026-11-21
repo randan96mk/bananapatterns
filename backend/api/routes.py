@@ -2315,6 +2315,29 @@ def tips_ai_weekly(week: Optional[str] = None, channel: Optional[str] = None):
     return ai4.weekly_page(S().config, week, channel)
 
 
+@router.get("/market/now")
+def market_now(index: str = "NIFTY"):
+    """📈 Research › Tips (Calls): the "Market now" panel for one index (code tiles, the candle model gated, the [AI]
+    backdrop). Read-only; never acts on an order."""
+    from backend.market import view as mv
+    st = S()
+    return mv.panel(st.config, index, client=st.client)
+
+
+@router.get("/market/scorecard")
+def market_scorecard():
+    """📈 Settings › market / ai: the candle model's scorecard, the cards gate, the switches and the [AI] read."""
+    from dataclasses import asdict
+    from backend.market import reads as mr
+    from backend.market import words as mw
+    st = S()
+    sc = mr.scorecard()
+    return {"rows": sc, "gate": mr.gate(st.config, sc), "settings": {k: v for k, v in asdict(st.config.market).items()
+            if k in ("kronos", "kronos_show", "interval_s", "horizon_min", "samples")}, "ai": mw.score_view(),
+            "worker": mr.health(st.config, 0.3) if mr.on(st.config) else {"state": "off"}, "version": mr.VERSION,
+            "gate_rule": f"cards only when NIFTY and BANKNIFTY 30-min direction ≥ {mr.GATE_PCT:g} % over {mr.GATE_READS}+ scored reads"}
+
+
 class TipsWeeklyNow(BaseModel):
     week: Optional[str] = None
 

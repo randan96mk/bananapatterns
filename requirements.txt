@@ -21,6 +21,14 @@ telethon==1.45.0
 # (all have linux/arm64 wheels). opencv-python needs libgl1 + libglib2.0-0 on a slim image (Dockerfile).
 rapidocr-onnxruntime==1.2.3
 
+# 📈 the market read's candle model worker (backend/market/kronos_worker.py, its own process). torch itself is NOT listed
+# here: a plain `pip install torch` pulls the CUDA build on x86; the Dockerfile installs the CPU wheel from
+# https://download.pytorch.org/whl/cpu (linux/amd64 and linux/arm64). Without torch the app runs and the cards say
+# "no model read".
+einops==0.8.2
+safetensors>=0.4
+huggingface_hub>=0.23
+
 # Chart images for Telegram alerts
 matplotlib>=3.8
 

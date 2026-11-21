@@ -1175,6 +1175,11 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                     text += f" · T1 {pl.fmt(tg[0])} watched by the app"
             _log(k, now, text.replace(f"{P}#{hid} ", "Kite: "))
             lines.append(text)
+            try:                                        # 📈 the market read on the fill: put on its own queue, never waited on
+                from backend.market import reads as mr
+                mr.queue_hint(config, hid, "fill")
+            except Exception:
+                logger.exception("Market read on the fill not queued")
             continue
         # an exit-side fill
         before = int(k["qty_open"])

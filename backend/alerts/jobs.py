@@ -226,6 +226,11 @@ class Scheduler:
             jobs += ai4.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
         except Exception:
             logger.exception("Tips AI due check failed")
+        try:                                               # 📈 the market read: the 6:40 PM scoring of the candle model's reads
+            from backend.market import reads as mr
+            jobs += mr.due(now, self.state.config, self.done_today(today), hol.is_trading_day(today))
+        except Exception:
+            logger.exception("Market read scoring due check failed")
         try:                                               # 🤖 suggestions: an open one past its time expires (no tap)
             from backend.ai import suggest
             suggest.expire_open(now)
@@ -504,6 +509,22 @@ class Scheduler:
             return {"status": "failed", "error": str(exc)[:200]}
         self.record(ai4.EVENING_JOB, today, "ok", f"{len(ids)} review(s) queued" + (" · Telegram sent" if sent else ""), started)
         return {"status": "ok", "queued": ids, "sent": sent}
+
+    def run_market_score(self, now: datetime) -> dict:
+        """📈 6:40 PM: every candle-model read whose horizon has passed is scored against the stored candles / ticks;
+        the scorecard's [AI] read is queued. Never raises; never acts on an order."""
+        from backend.market import reads as mr
+        from backend.market import words as mw
+        today, started = now.date(), now_ist()
+        try:
+            res = mr.score(now)
+            mw.score_words(self.state.config, mr.scorecard(), now)
+        except Exception as exc:
+            logger.exception("Market read scoring failed")
+            self.record(mr.SCORE_JOB, today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        self.record(mr.SCORE_JOB, today, "ok", f"{res['scored']} read(s) scored · {res['missing']} missing · {res['waiting']} waiting", started)
+        return {"status": "ok", **res}
 
     def run_tips_ai_weekly(self, now: datetime) -> dict:
         """🤖 Sunday 7:05 PM: the weekly channel profile per channel with a call in the week just ended. Never raises."""

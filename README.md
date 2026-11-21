@@ -40,6 +40,7 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 18. [Red flags and fund buying](#red-flags-and-fund-buying)
 19. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
 19a. [💡 Tips · a Telegram channel's calls](#-tips--a-telegram-channels-calls-decoded-tracked-and-scored)
+19b. [📈 Market read](#-market-read--code-chart-facts--the-kronos-candle-model--the-local-models-words)
 20. [REST API](#rest-api)
 21. [CLI](#cli)
 22. [Configuration](#configuration)
@@ -2326,6 +2327,70 @@ pre-flight read per arm, one weekly profile per channel a week (plus "Write now"
 - **API**: `GET /api/tips` hints carry `ai4 {grade, review, preflight}`; `GET /api/tips/ai/weekly?week=&channel=` (the
   picker + one panel per channel); `POST /api/tips/ai/weekly/write {week?}` (429 within the hour, 409 when off).
   Tests: `tests/test_tips_ai4.py` (fake model).
+
+## 📈 Market read · code chart facts + the Kronos candle model + the local model's words
+
+On Research › Tips (Calls) a **Market now** panel sits at the top (NIFTY / BANKNIFTY / SENSEX picker) and every NIFTY /
+BANKNIFTY / SENSEX hint card gets a **Market read** block (and, for a zone / level entry not filled yet, an **Entry
+timing** block). Settings › market and Settings › ai show the candle model's **scorecard**. Code: `backend/market/`.
+
+**What is code** (`backend/market/chart.py`, pure functions over 1-minute candles; these tiles ALWAYS show):
+trend (above / below VWAP — an index has no volume, so equal weights —, the 20 vs 50 average on 5-minute closes built
+from the 1-minute ones, higher highs / lower lows over 12 five-minute bars, the opening range 9:15–9:30 AM and the time
+it broke), levels (previous session high / low / close, today's high / low, swing support / resistance from the last
+2 sessions' 5-minute pivots, round numbers), patterns on 5 minutes (engulfing, pin bar, inside bar, 3 soldiers / crows,
+doji at a level, flag = 3+ small inside bars after a breakout bar) each with the time it formed, ATR(14) on 5 minutes
+and the expected range = ATR × sqrt(horizon / 5). VIX from the index quote. The verdict ("supports the call" /
+"against the call" / "mixed") is decided by code: the trend with the call and — only when the model is shown — its
+p_up ≥ 55 % / ≤ 45 %.
+
+**Data.** Index 1-minute candles from Kite historical (minute): the day in progress + the last 2 sessions at the first
+fetch, then the day in progress every `market.interval_s` (one call per index), stored in `candles_intraday` (one
+compressed row per index per day; a fetch merges, rows are never deleted). Logged out of Kite: nothing is fetched and
+the panel says "candles need the Kite login". An option's premium candles are built from `tips_ticks` (the 5 s poll).
+
+**What is the model.** Kronos-mini (4.1 M parameters, MIT, github.com/shiyu-coder/Kronos; its `model/` package is
+vendored under `backend/market/kronos/` with the licence) runs in its **own process**,
+`python -m backend.market.kronos_worker --port 8765`, listening on 127.0.0.1 only, started by the app, at nice 10 with
+2 torch threads. `POST /read` takes the last 120 one-minute candles and returns `p_up`, `exp_range`, the q10 / q50 /
+q90 path per step, `touch` (for each level, the share of sampled paths where it is the first level crossed) and
+`version` "kronos-mini-v1". Index reads: every `interval_s` 9:15 AM–3:30 PM on trading days, horizons 15 and 30 (one
+call; the 15 is the same paths cut earlier). Hint reads: at ingest (after the plan and after any arm), on the entry fill
+and every interval while armed / open on Kite — the premium's candles when ≥ 60 bars, else the index; horizons 10 and
+15; the stop and T1 as touch levels ("stop touched first" / "T1 first"). Every read is a `market_reads` row with its
+version (never deleted; the archive moves rows older than 180 days). **6:40 PM** (`market_score`): each read whose
+horizon passed is scored from the stored candles / ticks (close side, range, level touched first); the scorecard per
+index / option premium × horizon: reads, direction %, first-level calls %, average confidence, since.
+
+**The shadow gate.** `market.kronos_show` = `shadow` (default): the reads are stored and scored, and the cards / panel
+show only the chip "candle model · shadow · hit rate x % over n reads"; the model's numbers are not even in the text
+model's input. `cards`: the model tile, the paths fan, the stop-first / T1-first odds and the pullback % show only while
+NIFTY **and** BANKNIFTY 30-minute direction are each ≥ 55 % over ≥ 100 scored reads (otherwise the reason shows). The
+grade (A–D) takes "with / against the market" as one more code input: one step up / down at most, only in `cards`; in
+shadow it is stored and the grade is unchanged. The evening review gets the market at the entry; the weekly profile's
+numbers line gets the model's hit rate on that channel's calls.
+
+**The words.** The local text model (AI queue kind `market`, prompt `market-v1`, `json_mode` False, the figure check)
+writes sentences only, each with the **[AI]** tag: the card's 4 lines trend / levels / stop / verdict (≤ 30 words; at
+ingest and once more on the fill; the verdict's ending is replaced by the code verdict), the entry-timing line, the
+panel's read / for calls (the numbers line is code), the scorecard's read. Stored in `tips_ai` kind `market`.
+
+**The speed guarantee.** The arm / order path never calls the worker or waits on a read: ingest and the fill only put
+the hint on the market read's own queue after the order row exists; reads run on background threads with a 6 s
+timeout; a worker that is down or slow → no `market_reads` row, the card / panel say "no model read", nothing else
+changes; the index loop skips a tick while the previous pass still runs. Nothing here places, modifies, cancels, holds
+or blocks an order, and nothing leaves the server (`tests/test_market_read.py` proves it with a 5 s stub worker).
+
+**Settings › market:** `kronos` (on), `kronos_show` (shadow | cards), `interval_s` (60, at least 30), `horizon_min`
+(30: the headline horizon; 15 and 30 are both computed), `samples` (10 paths), `port` (8765).
+
+**Install / ARM note.** The worker needs torch (CPU), einops, safetensors and huggingface_hub; the app runs without them
+(the cards then say "no model read"). The Dockerfile installs torch from the CPU index
+(`pip install torch --index-url https://download.pytorch.org/whl/cpu`, which publishes linux/aarch64 CPU wheels for
+torch 2.x) and pre-downloads the Kronos-mini weights (~31 MB with the tokenizer) to `/app/models/kronos`, so the
+container starts offline; at first run they are vendored to `data/ai/kronos/` (git-ignored, kept forever). Measured
+here (x86, 2 threads, 10 paths): load 1.4–1.6 s, an index read (30 min, 10 paths, 120 candles) 1.7–2.1 s, a hint read (15 min) 0.5–0.9 s; the server is ARM (aarch64), expect 2–3× slower.
+Kronos-small was too slow for live reads.
 
 ## REST API
 

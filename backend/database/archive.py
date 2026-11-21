@@ -43,6 +43,7 @@ TABLES = {
     "tips_quotes": ("t", ("hint_id", "t"), None),
     "tips_ticks": ("at", ("hint_id", "at"), None),
     "tips_ai": ("at", ("id",), None),
+    "market_reads": ("at", ("id",), None),
     "ai_jobs": ("created", ("id",), "status IN ('queued', 'running')"),
     "job_runs": ("run_date", ("id",), "id IN (SELECT MAX(id) FROM main.job_runs GROUP BY job)"),
     "sent_alerts": ("sent_at", ("key",), "ok = 0 OR key NOT GLOB '[0-9][0-9][0-9][0-9]*'"),
@@ -50,7 +51,10 @@ TABLES = {
 
 # a table kept longer than maintenance.archive_days in the live DB (days): the Tips card's tick store and the Tips AI
 # reads (tips_ai), 180 days
-TABLE_DAYS = {"tips_ticks": 180, "tips_ai": 180}
+TABLE_DAYS = {"tips_ticks": 180, "tips_ai": 180, "market_reads": 180}
+# 📈 an archive copy made before a live CHECK widened (tips_ai kind 'market'): rebuilt in the archive with the live shape
+# (renamed, created, copied, the old copy dropped only once every row is across) so the move never skips a row
+WIDENED = {"tips_ai": "'market'"}
 
 _lock = threading.Lock()
 
@@ -85,6 +89,17 @@ def _ensure_table(conn, table: str) -> list[str]:
         return []
     create = re.sub(r"^\s*CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?[\"`\[]?\w+[\"`\]]?",
                     f"CREATE TABLE IF NOT EXISTS a.{table}", sql[0], count=1, flags=re.I)
+    old = conn.execute("SELECT sql FROM a.sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+    mark = WIDENED.get(table)
+    if old and mark and mark in sql[0] and mark not in (old[0] or ""):
+        cols = [r[1] for r in conn.execute(f"PRAGMA a.table_info({table})")]
+        conn.execute(f"DROP INDEX IF EXISTS a.idx_arch_{table}_{TABLES[table][0]}")
+        conn.execute(f"ALTER TABLE a.{table} RENAME TO {table}_pre_widen")
+        conn.execute(create)
+        names = ", ".join(f'"{c}"' for c in cols)
+        conn.execute(f"INSERT INTO a.{table} ({names}) SELECT {names} FROM a.{table}_pre_widen")
+        if conn.execute(f"SELECT COUNT(*) FROM a.{table}").fetchone()[0] >= conn.execute(f"SELECT COUNT(*) FROM a.{table}_pre_widen").fetchone()[0]:
+            conn.execute(f"DROP TABLE a.{table}_pre_widen")
     conn.execute(create)
     col = TABLES[table][0]
     conn.execute(f"CREATE INDEX IF NOT EXISTS a.idx_arch_{table}_{col} ON {table}({col})")
