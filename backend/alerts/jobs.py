@@ -518,6 +518,12 @@ class Scheduler:
         today, started = now.date(), now_ist()
         try:
             res = mr.score(now)
+            try:                                   # 📈 the Real positions' rows (the 9:20 AM reads, the daily reads due)
+                from backend.market import real_reads as rr
+                rres = rr.score(now, self.state.client)
+                res = {k: res[k] + rres[k] for k in res}
+            except Exception:
+                logger.exception("Real read scoring failed")
             mw.score_words(self.state.config, mr.scorecard(), now)
         except Exception as exc:
             logger.exception("Market read scoring failed")
@@ -615,6 +621,11 @@ class Scheduler:
             sent["real"] = self.run_real_evening()
         except Exception:
             logger.exception("Real trading evening update failed")
+        try:                                       # 📈 the candle model on the Real positions (its own thread; never an order)
+            from backend.market import real_reads as rr
+            rr.start_nightly(st.config)
+        except Exception:
+            logger.exception("Real positions nightly read failed to start")
         try:                                       # 📈 Follow: the blind book's buys and sells at the next open
             from backend.engine import follow
             line = follow.evening_line(as_of)
@@ -1121,6 +1132,11 @@ class Scheduler:
         from backend.alerts import daysum
         today, started = now.date(), now_ist()
         try:
+            try:                                   # 📈 today's 9:20 AM reads on the Real positions scored for the candle-model line
+                from backend.market import real_reads as rr
+                rr.score(now, self.state.client)
+            except Exception:
+                logger.exception("Day summary: the Real read scoring failed")
             text = msg.day_summary(daysum.parts(self.state.config, today.isoformat()), today.isoformat())
             sent = bool(text) and self.notifier().send(f"{today}|day-summary", "summary", text)
         except Exception as exc:

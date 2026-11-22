@@ -1089,11 +1089,13 @@ def options_alert(a: dict) -> Optional[str]:
 
 # --- 🤖 brief ---------------------------------------------------------------------------------------------------------------
 
-def ai_brief(day: str, at: str, lines: list[str]) -> str:
-    """☀️ [AI] The morning brief: the day and time, the model's lines (≤ 5, each marked "<i>AI ·</i>"), the footer that
-    says where it came from."""
+def ai_brief(day: str, at: str, lines: list[str], code_lines: Optional[list[str]] = None) -> str:
+    """☀️ [AI] The morning brief: the day and time, the model's lines (≤ 5, each marked "<i>AI ·</i>"), then the code
+    lines (no AI mark: numbers from code / the candle model, e.g. the Real positions' candle-model line), the footer
+    that says where it came from."""
     head = f"☀️ <b>{AI_HEAD}Morning brief · {escape(_day_label(day))} · {ampm(at)}</b>"
-    return "\n".join([head, *(AI_MARK + escape(ln, quote=False) for ln in lines), "<i>written from the plans and filings · no action taken</i>"])
+    code = [f"📈 {escape(x, quote=False)}" for x in code_lines or [] if x]
+    return "\n".join([head, *(AI_MARK + escape(ln, quote=False) for ln in lines), *code, "<i>written from the plans and filings · no action taken</i>"])
 
 
 # --- 🤖 ask ------------------------------------------------------------------------------------------------------------------
@@ -1343,7 +1345,12 @@ def _sum_ai(a: dict) -> str:
     return f"🤖 AI · tonight after {ampm(a.get('after') or '18:30')}: {', '.join(a.get('parts') or ['notes'])}"
 
 
-DAY_SUMMARY_ORDER = (("real", _sum_real), ("paper", _sum_paper), ("options", _sum_options), ("ai", _sum_ai))
+def _sum_kronos(k: dict) -> str:
+    """📈 the candle model on the Real positions: numbers only (no model sentence)."""
+    return f"📈 {escape(k['line'], quote=False)}"
+
+
+DAY_SUMMARY_ORDER = (("real", _sum_real), ("kronos", _sum_kronos), ("paper", _sum_paper), ("options", _sum_options), ("ai", _sum_ai))
 
 
 def day_summary(parts: dict, day: str) -> Optional[str]:

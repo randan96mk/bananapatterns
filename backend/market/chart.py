@@ -260,3 +260,82 @@ def summary(bars: list[dict], symbol: Optional[str] = None) -> Optional[dict]:
     a = atr(b5)
     return {"symbol": symbol, "trend": tr, "levels": lv, "patterns": pats[-5:], "pattern": pats[-1] if pats else None, "atr": a,
             "exp_range": {"15": expected_range(a, 15), "30": expected_range(a, 30)}, "bars": len(bars), "bars5": len(b5), "day": today}
+
+
+# --- daily candles: the Real positions' code read (backend/market/real_reads.py) --------------------------------------------
+
+# every threshold of the daily code read and its one-line verdict, in one place
+DAILY = {
+    "avg_n": 20,                  # the 20-day average of the closes (and of the volume, before today)
+    "swing_n": 10,                # higher lows / lower highs and the range: the last 10 sessions (two blocks of 5)
+    "atr_n": 10,                  # the 1-day range: the mean high − low of the last 10 sessions
+    "gap_pct": 0.5,               # |today's open − the previous close| ≥ this % = a gap
+    "vol_low": 0.7,               # today's volume ≤ this × its 20-day average: "low volume"
+    "vol_high": 1.5,              # ≥ this ×: "high volume"
+    "stop_days": 1.0,             # last − stop ≤ this × the 1-day range: "stop within 1-day range"
+    "ratio": 3.0,                 # target-first ≥ this × stop-first: "target before stop 3:1" (only while the model shows)
+    "coin": (45.0, 55.0),         # up · 3 d inside this band (%): "coin flip" (only while the model shows)
+}
+
+
+def _px(v: float) -> str:
+    return f"{v:,.0f}" if abs(v) >= 1000 else f"{v:,.2f}".rstrip("0").rstrip(".")
+
+
+def daily_read(candles: list[dict], stop: Optional[float] = None, target: Optional[float] = None,
+               model: Optional[dict] = None, th: Optional[dict] = None) -> Optional[dict]:
+    """The code read of one held name on its daily candles [{date, open, high, low, close, volume}] (oldest first):
+    trend (above / below the 20-day average, higher lows / lower highs over 10 sessions), the 10-day range, today's
+    gap, volume vs its 20-day average, the 1-day range, a short head ("up · higher lows") and ONE verdict from the
+    thresholds in DAILY. `model` {stop_first, target_first, up} (%, only while the model's numbers show) adds the two
+    model verdicts ("target before stop 3:1", "coin flip"); without it the verdict is code only. Pure."""
+    th = {**DAILY, **(th or {})}
+    if len(candles) < 2:
+        return None
+    c = [float(x["close"]) for x in candles]
+    last, prev = c[-1], c[-2]
+    n = int(th["avg_n"])
+    avg = round(sum(c[-n:]) / n, 2) if len(c) >= n else None
+    w = candles[-int(th["swing_n"]):]
+    half = len(w) // 2
+    a, b = w[:half], w[half:]
+    hl = bool(a and b and min(x["low"] for x in b) > min(x["low"] for x in a))
+    lh = bool(a and b and max(x["high"] for x in b) < max(x["high"] for x in a))
+    above = None if avg is None else last > avg
+    side = "up" if above and hl else "down" if above is False and lh else "sideways"
+    lo, hi = min(x["low"] for x in w), max(x["high"] for x in w)
+    before = candles[-int(th["swing_n"]) - 1:-1] or candles[:-1]
+    plo, phi = min(x["low"] for x in before), max(x["high"] for x in before)
+    gap = round((float(candles[-1]["open"]) / prev - 1) * 100, 2) if prev else None
+    vols = [float(x.get("volume") or 0) for x in candles[-n - 1:-1]]
+    vavg = sum(vols) / len(vols) if vols else 0
+    vol_x = round(float(candles[-1].get("volume") or 0) / vavg, 2) if vavg > 0 else None
+    rng = candles[-int(th["atr_n"]):]
+    atr1 = round(sum(x["high"] - x["low"] for x in rng) / len(rng), 2)
+    bits = [side]
+    if side == "sideways":
+        bits.append(f"{_px(lo)}–{_px(hi)}")
+    elif side == "up":
+        bits.append("higher lows" if hl else "above 20-day")
+    else:
+        bits.append("lower highs" if lh else "below 20-day")
+    if gap is not None and abs(gap) >= th["gap_pct"]:
+        bits.append(f"gap {'up' if gap > 0 else 'down'} {abs(gap):.1f} %")
+    elif vol_x is not None and vol_x <= th["vol_low"]:
+        bits.append("low volume")
+    elif vol_x is not None and vol_x >= th["vol_high"]:
+        bits.append("high volume")
+    verdict = None
+    if stop is not None and last - float(stop) <= th["stop_days"] * atr1:
+        verdict = "stop within 1-day range"
+    elif model:
+        sf, tf, up = model.get("stop_first"), model.get("target_first"), model.get("up")
+        if target is not None and sf and tf is not None and tf >= th["ratio"] * sf:
+            verdict = f"target before stop {int(tf // sf)}:1"
+        elif up is not None and th["coin"][0] <= up <= th["coin"][1]:
+            verdict = "coin flip"
+    if verdict is None:
+        verdict = "above the 10-day range" if last > phi else "below the 10-day range" if last < plo else "inside the range"
+    return {"asof": str(candles[-1]["date"])[:10], "last": round(last, 2), "side": side, "avg20": avg, "above_avg20": above,
+            "higher_lows": hl, "lower_highs": lh, "range": {"lo": round(lo, 2), "hi": round(hi, 2)}, "gap_pct": gap, "vol_x": vol_x,
+            "atr1": atr1, "head": " · ".join(bits), "verdict": verdict}

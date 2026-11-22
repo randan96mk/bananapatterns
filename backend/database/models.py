@@ -532,6 +532,8 @@ def init_db(path: Optional[str] = None) -> None:
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _migrate_ai_notes(conn)
         _add_column(conn, "tips_orders", "tradingsymbol", "TEXT")    # ⚡ PR C: the contract each order went out on (the order check)
+        _add_column(conn, "market_reads", "book", "TEXT NULL")       # 📈 "real": a read on a Real position (NULL: Tips / index rows)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_market_reads_book ON market_reads(book, interval, symbol, at)")
         _drop_track_record(conn)
         n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
         if n:

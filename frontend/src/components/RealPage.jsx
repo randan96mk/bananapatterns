@@ -34,6 +34,26 @@ const Trail = ({ x }) => (x.trail_active || x.trailed ? <Tag c="ok" title={`E+ l
   : x.best ? <Tag title="best close so far">best {rs(x.best)}</Tag> : null);
 const scrollTo = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+// 📈 the candle model on the open positions (GET /api/real/kronos): two model cells (the amber "shadow" chip until the
+// Real scorecard earns them, or market.kronos_show = cards) and the code read on daily candles (hidden on phones).
+// Numbers come from code or the model with its version; nothing here changes a stop or sends an order.
+const KCOLS = [{ h: 'Stop first · 3 d', w: 124, title: 'share of the sampled 3-session paths that touch the stop (before the target where the book has one)' },
+  { h: 'Up · 3 d', w: 124, title: 'share of the sampled paths closing above the last close after 3 sessions' },
+  { h: 'Code read · daily', w: 230, lo: true, ell: true, title: 'trend and range on the daily candles, by code' }];
+const KBar = ({ p, red }) => <span className={`kbar ${red ? 'r' : ''}`} style={{ '--p': `${Math.max(0, Math.min(100, p))}%` }} />;
+const kSort = (ps, k) => (k?.order ? [...ps].sort((a, b) => { const i = k.order.indexOf(a.symbol), j = k.order.indexOf(b.symbol); return (i < 0 ? 999 : i) - (j < 0 ? 999 : j); }) : ps);
+function kCells(k, sym) {
+  const r = k.rows?.[sym];
+  const sh = <Tag c="w" title={k.why}>shadow</Tag>;
+  const none = <span className="muted" title="no read yet: the first comes after the evening update">—</span>;
+  const c = r?.code;
+  const code = c ? `${c.head} · ${c.verdict}` : 'no daily candles stored';
+  const tip = [code, r?.gap?.text, r?.asof && `daily candles to ${day(r.asof)}`, r?.version].filter(Boolean).join(' · ');
+  return [!r || r.shadow ? sh : r.stop_first == null ? none : <><KBar p={r.stop_first} red /><b className={r.stop_first >= 50 ? 'down' : ''}>{r.stop_first} %</b></>,
+    !r || r.shadow ? sh : r.up == null ? none : <><KBar p={r.up} /><b className={r.up >= 55 ? 'up' : r.up <= 45 ? 'down' : ''}>{r.up} %</b></>,
+    <span title={tip}>{c ? <>{c.head} <span className="muted">· {c.verdict}</span></> : <span className="muted">{code}</span>}</span>];
+}
+
 // 💰 Real trading: the Trend Breakout orders sent by webhook (BUY / EXIT), tracked like paper. Every switch and
 // confirm() is kept as it was: nothing here trades on its own.
 function PaperVsReal() {
@@ -326,6 +346,7 @@ export default function RealPage() {
   const [cap, setCap] = useState('');
   const [rp, setRp] = useState(null);                      // the last ↻ Re-evaluate report (shown under the orders)
   const [replanning, setReplanning] = useState(false);
+  const [k, setK] = useState(null);                        // 📈 GET /api/real/kronos
   const reload = () => setTick((t) => t + 1);
   // ↻ Re-evaluate: the plan rebuilt from the evening's data and the account as it is now; with n, max open is saved first
   const replan = (n) => {
@@ -336,6 +357,7 @@ export default function RealPage() {
   useEffect(() => {
     api.getReal().then((x) => { setD(x); setErr(''); setCap(String(x.started ? x.account.capital : x.settings.capital)); })
       .catch((e) => setErr(e.message));
+    api.realKronos().then(setK).catch(() => setK(null));      // 📈 the candle model on the open positions (read-only)
   }, [tick]);
   const saveCap = () => {
     const v = Number(cap);
@@ -390,12 +412,13 @@ export default function RealPage() {
   const unconf = fills.gate ? (d.positions || []).filter((x) => !x.confirmed) : [];
   const checkFills = () => { setChecking(true); api.realCheckFills().then((r) => { if (r.status === 'error') setErr(`Fill check: ${r.error}`); reload(); }).catch((e) => setErr(e.message)).finally(() => setChecking(false)); };
   const lastCheck = fills.last ? `last check ${stamp(fills.last.at)} · ${fills.last.status === 'ok' ? `${fills.last.n_confirmed} of ${fills.last.total} confirmed${fills.last.extra?.length ? ` · extra on the webhook side: ${fills.last.extra.join(', ')}` : ''}` : fills.last.status}` : 'not checked yet';
+  const kOn = !!(k && k.on);                                 // 📈 kronos off: no model columns at all
   // Strategy is the short tag at 60 px; under 1440 px % and Days are dropped (nw: the row title keeps them) so Stock keeps 140 px+
-  const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 160 : 196, ell: true }, { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag only; the stop and the trail stay as the rules set them' }, { h: '', w: 50, key: 'edit' }];
-  const posRows = (d.positions || []).flatMap((x) => [{ key: x.symbol, title: `${pct(x.buy ? (x.last / x.buy - 1) * 100 : null)} · ${x.days ?? '—'} days · bought ${day(x.in)} · before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.px_orig != null && x.px_orig !== x.buy ? ` · first entry ${rs(x.px_orig)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}`,
+  const posCols = [{ h: 'Stock', ell: true }, { h: 'Strat.', w: 60, lo: true }, { h: 'Qty', w: 56, n: true, lo: true }, { h: 'Entry', w: 90, n: true, lo: true }, { h: 'Now', w: 90, n: true }, { h: 'After costs', w: 100, n: true }, { h: '%', w: 64, n: true, lo: true, nw: true }, { h: 'Stop · distance', w: narrow ? 160 : 196, ell: true }, ...(kOn ? KCOLS : []), { h: 'Days · bought', w: 112, n: true, lo: true, nw: true }, { h: 'AI view', w: 114, title: 'the AI view of the held name: hold / trim / exit-watch · a flag only; the stop and the trail stay as the rules set them' }, { h: '', w: 50, key: 'edit' }];
+  const posRows = kSort(d.positions || [], k).flatMap((x) => [{ key: x.symbol, title: `${pct(x.buy ? (x.last / x.buy - 1) * 100 : null)} · ${x.days ?? '—'} days · bought ${day(x.in)} · before costs ${signed(x.gross)} · costs ${inr(x.costs)}${x.best ? ` · best close ${rs(x.best)}` : ''}${x.px_orig != null && x.px_orig !== x.buy ? ` · first entry ${rs(x.px_orig)}` : ''}${x.manual_stop ? ' · stop set by you (the trail may only raise it)' : ''}`,
     cells: [<>{!x.confirmed && fills.gate && <span className={x.gate?.day === todayIst ? 'down' : 'warn'} style={{ marginRight: 4 }} title={x.gate?.day === todayIst ? 'stop held: the buy was never confirmed, no EXIT sent' : 'fill not confirmed: no EXIT goes out until it is'}>{x.gate?.day === todayIst ? '⚠' : '⏳'}</span>}<b>{x.symbol}</b><AiDot note={x.ai_note} />{x.est && <Tag c="w" title="estimated: the price seen when sending, corrected to the day's open in the evening · ✎ to set the real fill">est. entry</Tag>}<Edited edits={x.edits} />{x.manual && <Tag c="a" title="placed by hand, tracked and exited by the app's rules">by hand</Tag>}{x.last && x.stop && (x.last / x.stop - 1) * 100 < 2 && <Tag c="w">near stop</Tag>}</>,
       <span className={`v${x.variant}`}>{x.variant === 'E' ? 'E+' : x.variant}</span>, x.qty, rs(x.buy), rs(x.last), <b className={cls(x.net)}>{signed(x.net)}</b>, <span className={cls(x.gross)}>{pct(x.buy ? (x.last / x.buy - 1) * 100 : null)}</span>,
-      <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, <>{x.days ?? '—'} · {day(x.in)}</>,
+      <><StopMeter last={x.last} stop={x.stop} /> <span className="mono">{rs(x.stop)}</span><Trail x={x} /></>, ...(kOn ? kCells(k, x.symbol) : []), <>{x.days ?? '—'} · {day(x.in)}</>,
       <AiView compact v={viewOf(x, views)} note={aiChanged(viewOf(x, views))} />,
       <button type="button" className={`btn ${edit === x.symbol ? 'primary' : 'ghost'}`} style={PEN} title="correct qty / entry / stop · remove from tracking" onClick={() => { setEdit(edit === x.symbol ? null : x.symbol); setAdding(false); }}>✎</button>] },
   ...(!x.confirmed && fills.gate ? [{ key: `${x.symbol}-fill`, span: <FillLine x={x} onDone={done} onErr={setErr} /> }] : []),     // ✓ filled / ✗ never filled
@@ -470,17 +493,9 @@ export default function RealPage() {
       </Panel>
     </div>
 
-    {d.started ? <div className="two">
-      <div className="rd" style={COL}>
-        <MorningPanel live={live} onReplan={() => replan()} replanning={replanning} onErr={setErr} onChanged={reload} />
-        <Panel title="Orders for the next open" meta={(d.orders || []).length} right={<><Meta>decided {day(d.decided)} · sent {ampm(s.send_time)} · {live ? <b className="up">sending</b> : <b className="down">not sending</b>}</Meta>
-          <button type="button" className="btn primary small" disabled={replanning} onClick={() => replan()} title="rebuild the plan from the evening's data and the account as it is now · nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button></>}>
-          <FixedTable cols={orderCols} rows={orderRows} empty="None." />
-          {d.waiting > 0 && <div className="rnote">{d.waiting} more breakout(s) without a free slot / over the daily limit{d.waiting_why?.length ? `: ${d.waiting_why.slice(0, 6).map((w) => `${w.symbol} (${w.why})`).join(' · ')}${d.waiting_why.length > 6 ? ' · …' : ''}` : ''}.</div>}
-        </Panel>
-        <ReplanPanel r={rp} send={s} busy={replanning} onRaise={(n) => replan(n)} onKeep={() => setRp(null)} />
-        <Panel title="Open positions" meta={`${d.positions.length} of ${d.allowed ? d.cap : d.max_pos}`} right={<><Meta>stop check every {s.stop_check_min} min · at risk <b className="mono down">{inr(risk)}</b></Meta>
-          <button type="button" className={`btn small ${adding ? 'primary' : ''}`} title="track a trade placed by hand · nothing is sent" onClick={() => { setAdding(!adding); setEdit(null); }}>+ Add a position</button></>}>
+    {d.started && <div className="rd" style={COL}>
+        <Panel title="Open positions" meta={`${d.positions.length} of ${d.allowed ? d.cap : d.max_pos}`} right={<><Meta>{kOn && <Tag c="w" title={k.why}>{k.chip}</Tag>}{kOn && ' '}stop check every {s.stop_check_min} min · at risk <b className="mono down">{inr(risk)}</b></Meta>
+          <button type="button" className={`btn small ${adding ? 'primary' : ''}`} style={{ flex: 'none', whiteSpace: 'nowrap' }} title="track a trade placed by hand · nothing is sent" onClick={() => { setAdding(!adding); setEdit(null); }}>+ Add a position</button></>}>
           {adding && <AddPosition d={d} onDone={done} onErr={setErr} />}
           <FixedTable cols={posCols} rows={posRows} empty="None." />
           {fills.gate && <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 14px', fontSize: 12, borderTop: '1px solid var(--rowline)' }}>
@@ -491,7 +506,18 @@ export default function RealPage() {
           {d.notes?.length > 0 && <div className="rnote">{d.notes.map((n) => `📌 ${n.day}: ${n.text}`).join(' · ')}</div>}
           <div className="rnote">E+ positions: once the best close is +100% over the entry, the stop is raised to 25% under it after the close (never lowered) and watched from the next session like any stop; a stop sent with the BUY is not moved.
             {' '}No stop-loss orders: the app checks live prices every {s.stop_check_min} min and sends EXIT when a stop is reached (needs the daily Kite login). Prices are what the app saw when sending (est.), corrected to the day's open in the evening; your broker's fills may differ: ✎ sets the real fill, quantity or stop (every rule then follows the new values), "Remove from tracking…" drops an order that never filled, "+ Add a position" tracks a trade placed by hand. Nothing here sends an order.</div>
+          {kOn && <div className="rnote">📈 candle model: read nightly on the daily candles + 9:20 AM on the day's candles · scored against the next closes · never changes a stop or sends an exit{k.order ? ' · sorted by stop-first' : ''} · {k.footer}</div>}
         </Panel>
+    </div>}
+    {d.started ? <div className="two">
+      <div className="rd" style={COL}>
+        <MorningPanel live={live} onReplan={() => replan()} replanning={replanning} onErr={setErr} onChanged={reload} />
+        <Panel title="Orders for the next open" meta={(d.orders || []).length} right={<><Meta>decided {day(d.decided)} · sent {ampm(s.send_time)} · {live ? <b className="up">sending</b> : <b className="down">not sending</b>}</Meta>
+          <button type="button" className="btn primary small" disabled={replanning} onClick={() => replan()} title="rebuild the plan from the evening's data and the account as it is now · nothing is sent">{replanning ? 'Planning…' : '↻ Re-evaluate plan'}</button></>}>
+          <FixedTable cols={orderCols} rows={orderRows} empty="None." />
+          {d.waiting > 0 && <div className="rnote">{d.waiting} more breakout(s) without a free slot / over the daily limit{d.waiting_why?.length ? `: ${d.waiting_why.slice(0, 6).map((w) => `${w.symbol} (${w.why})`).join(' · ')}${d.waiting_why.length > 6 ? ' · …' : ''}` : ''}.</div>}
+        </Panel>
+        <ReplanPanel r={rp} send={s} busy={replanning} onRaise={(n) => replan(n)} onKeep={() => setRp(null)} />
         <Panel id="tradelog" title="Trade log" meta={(d.trades || []).length} right={<><Meta>{d.voided ? `${d.voided} never filled · not counted` : ''}</Meta>
           <button type="button" className={`btn small ${addingTrade ? 'primary' : ''}`} title="a closed trade the app never saw · nothing is sent" onClick={() => { setAddingTrade(!addingTrade); setTedit(null); }}>+ Add a closed trade</button></>}>
           {addingTrade && <AddTrade onDone={done} onErr={setErr} />}

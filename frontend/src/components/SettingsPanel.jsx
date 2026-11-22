@@ -200,7 +200,7 @@ export function Scorecard() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => { api.getMarketScorecard().then(setD).catch((e) => setErr(e.message)); }, []);
-  const rows = (d?.rows || []).map((x) => ({ key: `${x.name}|${x.horizon}`, cells: [`${x.name} · ${x.horizon} min`, x.reads,
+  const rows = (d?.rows || []).map((x) => ({ key: `${x.name}|${x.horizon}`, cells: [x.name === 'Real · daily' ? `${x.name} · ${x.horizon} d` : x.name === 'Real · 9:20 AM' ? x.name : `${x.name} · ${x.horizon} min`, x.reads,
     <span className={x.direction_pct == null ? '' : x.direction_pct >= 55 ? 'up' : x.direction_pct < 50 ? 'down' : ''}>{pctC(x.direction_pct)}</span>,
     pctC(x.touch_pct), pctC(x.avg_conf), sinceC(x.since)] }));
   const ai = d?.ai || {};

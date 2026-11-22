@@ -1381,6 +1381,14 @@ def real_summary():
     return real.summary(S().config)
 
 
+@router.get("/real/kronos")
+def real_kronos():
+    """📈 Portfolio › Real: the candle model on the open positions (stop first · 3 d, up · 3 d while the gate shows them,
+    else "shadow"), the code read on daily candles, the chip and the footer. Read-only; never acts on an order."""
+    from backend.market import real_reads as rr
+    return rr.table(S().config)
+
+
 @router.post("/real/settings")
 def real_settings(req: RealSettings):
     """Turn real trading on / off; saved with the settings. `variant` is kept for compatibility: only "E" (E+, the
