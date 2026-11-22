@@ -2382,6 +2382,26 @@ timeout; a worker that is down or slow → no `market_reads` row, the card / pan
 changes; the index loop skips a tick while the previous pass still runs. Nothing here places, modifies, cancels, holds
 or blocks an order, and nothing leaves the server (`tests/test_market_read.py` proves it with a 5 s stub worker).
 
+**Real positions** (`backend/market/real_reads.py`). The held names are the Real book's own records in the app DB
+(never the broker's holdings or positions); a closed position is not read. **Nightly**, after the evening update
+(and once at app start for a name whose latest daily candle has no read yet), each open name is read on its last 120
+**daily** candles: horizons 1, 3 and 5 sessions, `market.samples` paths, the book's stop (and target, where the book
+has one) as touch levels → p_up per horizon, the expected range, stop-first / target-first over 3 sessions. At **9:20 AM**
+(only while Kite is logged in) the held names' 1-minute candles are fetched (one call each, `candles_intraday`) and
+read up to 9:20 AM toward 3:30 PM (on 5-minute bars built from them), with the gap facts by code (gap % vs the previous
+close, filled or held by 9:20 AM). Rows are `market_reads` with `book` = "real" (interval "1d" / "1m", hint_id NULL).
+The 6:40 PM job scores the 9:20 rows from the day's 1-minute candles and the nightly step scores the daily rows whose
+sessions are stored; the scorecard gets **Real · daily · 1 d / 3 d / 5 d** and **Real · 9:20 AM**. Portfolio › Real's
+open positions table shows **stop first · 3 d** and **up · 3 d** only when Real · daily 3 d direction is ≥ 55 % over
+≥ 100 scored reads, or `market.kronos_show = cards` (else the amber "shadow" chip), sorted by stop-first while they
+show; the **code read · daily** column (trend vs the 20-day average, higher lows / lower highs over 10 sessions, the
+10-day range, the gap, volume vs its 20-day average and one verdict from the thresholds in `chart.DAILY`) always shows
+(not on phones). Home "Needs a look" names a held stock whose stop-first is ≥ 50 % (cards only; informational: the stop
+check decides as always). Telegram: the 9:00 AM brief gets "candle model (shadow|cards): k of n lean down over 3 d ·
+worst stop-first · best up" and the 3:40 PM summary "candle model: 9:20 AM read was right on a of b · scorecard x % (n)"
+— numbers only, no model sentence. The 9:16 AM orders and the stop check never import or wait on any of this; nothing
+here changes a stop or sends an order. `GET /api/real/kronos`.
+
 **Settings › market:** `kronos` (on), `kronos_show` (shadow | cards), `interval_s` (60, at least 30), `horizon_min`
 (30: the headline horizon; 15 and 30 are both computed), `samples` (10 paths), `port` (8765).
 

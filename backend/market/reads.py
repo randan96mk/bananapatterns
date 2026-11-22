@@ -138,15 +138,18 @@ def _row(r) -> dict:
     return d
 
 
-def store(at: datetime, symbol: str, res: dict, one: dict, extra: dict, hint_id: Optional[int] = None) -> int:
+def store(at: datetime, symbol: str, res: dict, one: dict, extra: dict, hint_id: Optional[int] = None, book: Optional[str] = None,
+          interval: Optional[str] = None) -> int:
+    """One market_reads row per horizon. `book` "real" marks a read on a Real position (backend/market/real_reads.py);
+    `interval` overrides the worker's echo (the Real reads say "1d" / "1m" by the candles they came from)."""
     paths = {**(one.get("paths_summary") or {}), "last": res.get("last"), "samples": one.get("samples"), "context": res.get("context"),
              "touch_any": one.get("touch_any") or {}, **extra}
     with get_db() as conn:
-        return conn.execute("INSERT INTO market_reads (at, symbol, interval, horizon, p_up, exp_range, touch_json, paths_json, version, ms, hint_id) "
-                            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                            (at.isoformat(timespec="seconds"), symbol, res.get("interval") or "1m", int(one["horizon"]), one.get("p_up"),
+        return conn.execute("INSERT INTO market_reads (at, symbol, interval, horizon, p_up, exp_range, touch_json, paths_json, version, ms, hint_id, book) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (at.isoformat(timespec="seconds"), symbol, interval or res.get("interval") or "1m", int(one["horizon"]), one.get("p_up"),
                              one.get("exp_range"), json.dumps(one.get("touch") or {}), json.dumps(paths), res.get("version") or VERSION,
-                             res.get("ms"), hint_id)).lastrowid
+                             res.get("ms"), hint_id, book)).lastrowid
 
 
 def rows(where: str = "1", args: tuple = (), order: str = "id") -> list[dict]:
@@ -155,7 +158,7 @@ def rows(where: str = "1", args: tuple = (), order: str = "id") -> list[dict]:
 
 
 def latest(symbol: str, horizon: int, hint_id: Optional[int] = None, since: Optional[str] = None) -> Optional[dict]:
-    q, a = "symbol = ? AND horizon = ?", [symbol, horizon]
+    q, a = "symbol = ? AND horizon = ? AND book IS NULL", [symbol, horizon]
     q += " AND hint_id = ?" if hint_id is not None else " AND hint_id IS NULL"
     if hint_id is not None:
         a.append(hint_id)
@@ -395,6 +398,11 @@ class MarketService:
         self.ensure_worker()
         self._thread = threading.Thread(target=self._loop, name="market-read", daemon=True)
         self._thread.start()
+        try:                                              # 📈 the Real positions: a held name whose latest daily candle has no read yet
+            from backend.market import real_reads as rr
+            rr.start_nightly(self.state.config, wait_ready=True)
+        except Exception:
+            logger.exception("Real positions start-up read failed")
 
     def stop(self) -> None:
         self._stop.set()
@@ -446,6 +454,12 @@ class MarketService:
             self.proc = None
             self.ensure_worker()
         fetched = {}
+        real920 = False
+        try:
+            from backend.market import real_reads as rr
+            real920 = rr.due_920(config, client, now)          # 📈 the Real positions' 9:20 AM read (once a day, logged in)
+        except Exception:
+            logger.exception("Real 9:20 check failed")
         try:
             if cd.logged_in(client):
                 for s in cd.INDICES:
@@ -458,13 +472,13 @@ class MarketService:
         except Exception:
             self._busy.release()
             raise
-        t = threading.Thread(target=self._pass, args=(config, now), name="market-read-pass", daemon=True)
+        t = threading.Thread(target=self._pass, args=(config, now, client if real920 else None), name="market-read-pass", daemon=True)
         t.start()
         if wait:
             t.join()
         return {"why": None, "fetched": fetched}
 
-    def _pass(self, config, now: datetime) -> None:
+    def _pass(self, config, now: datetime, real920_client=None) -> None:
         try:
             from backend.market import words
             for s in cd.INDICES:
@@ -475,6 +489,12 @@ class MarketService:
                 words.panel(config, s, now)
         except Exception:
             logger.exception("Market read pass failed")
+        try:
+            if real920_client is not None:                # 📈 the Real positions' 9:20 AM read (fetch + read, this thread)
+                from backend.market import real_reads as rr
+                rr.run_920(config, real920_client, now)
+        except Exception:
+            logger.exception("Real 9:20 read failed")
         finally:
             self._busy.release()
 
@@ -528,7 +548,7 @@ def score(now: Optional[datetime] = None) -> dict:
     now = now or _now()
     out = {"scored": 0, "missing": 0, "waiting": 0}
     cache: dict = {}
-    for r in rows("scored_at IS NULL"):
+    for r in rows("scored_at IS NULL AND book IS NULL"):           # the Real rows: real_reads.score (same job)
         at = datetime.fromisoformat(r["at"])
         if at.tzinfo is None:
             at = at.replace(tzinfo=IST)
@@ -552,10 +572,24 @@ def score(now: Optional[datetime] = None) -> dict:
     return out
 
 
+REAL_DAILY, REAL_920 = "Real · daily", "Real · 9:20 AM"        # the Real book's scorecard groups (real_reads.py)
+
+
 def group_of(r: dict) -> tuple[str, str, int]:
     p = r.get("paths_json") or {}
+    if r.get("book") == "real":
+        return (REAL_DAILY if (r.get("interval") or "1d") == "1d" else REAL_920), r.get("interval") or "1d", int(r["horizon"])
     name = "option premium" if p.get("basis") == "premium" else r["symbol"]
     return name, r.get("interval") or "1m", int(r["horizon"])
+
+
+def group_label(name: str, interval: str, horizon: int) -> str:
+    """'NIFTY · 30 min', 'Real · daily · 3 d', 'Real · 9:20 AM'."""
+    if name == REAL_DAILY:
+        return f"{name} · {horizon} d"
+    if name == REAL_920:
+        return name
+    return f"{name} · {horizon} min"
 
 
 def scorecard(where: str = "1", args: tuple = ()) -> list[dict]:
@@ -577,8 +611,9 @@ def scorecard(where: str = "1", args: tuple = ()) -> list[dict]:
             x["touch_n"] += 1
             x["touch_right"] += bool(o["touch_right"])
     order = {s: i for i, s in enumerate(cd.INDICES)}
+    real = {REAL_DAILY: 1, REAL_920: 2}
     out = []
-    for k in sorted(g, key=lambda k: (k[0] == "option premium", order.get(k[0], 9), k[0], -k[2])):
+    for k in sorted(g, key=lambda k: (real.get(k[0], 0), k[0] == "option premium", order.get(k[0], 9), k[0], k[2] if k[0] in real else -k[2])):
         x = g[k]
         out.append({"name": x["name"], "interval": x["interval"], "horizon": x["horizon"], "reads": x["reads"], "scored": x["scored"],
                     "direction_pct": round(100.0 * x["right"] / x["scored"], 1) if x["scored"] else None,

@@ -286,7 +286,13 @@ def send(note_id: int, f: dict, lines: list[str], config: AppConfig, notifier=No
     from backend.alerts import messages as msg
     from backend.alerts.dispatch import Notifier
     notifier = notifier or Notifier(config.alerts, ai=config.ai)
-    sent = notifier.send(f"{f['day']}|ai-brief", "system", msg.ai_brief(f["day"], f["at"], lines))
+    code = []
+    try:                                                    # 📈 the Real positions' candle-model line (numbers only, no AI mark)
+        from backend.market import real_reads as rr
+        code.append(rr.brief_line(config))
+    except Exception:
+        logger.exception("brief: the candle-model line failed")
+    sent = notifier.send(f"{f['day']}|ai-brief", "system", msg.ai_brief(f["day"], f["at"], lines, code))
     if sent:
         notes.mark_alerted(note_id)
     flush = getattr(notifier, "flush_quiet", None)          # 🤖 quiet hours: the night's held AI messages follow the brief

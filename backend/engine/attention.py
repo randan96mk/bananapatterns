@@ -14,12 +14,13 @@ from backend.engine import trend_breakout as tb
 ORDER = ("warn", "sell", "filter", "buy", "running", "info")      # 🤖 ask: "info" = worth a look, never blinks loud
 
 
-def _pack(items: list[tuple[str, str]]) -> dict:
-    levels = [lvl for lvl, _ in items]
+def _pack(items: list[tuple]) -> dict:
+    """(level, text) or (level, text, meta): meta is a small second line under the item on Home."""
+    levels = [x[0] for x in items]
     level = next((lvl for lvl in ORDER if lvl in levels), None)
     ranked = sorted(items, key=lambda x: ORDER.index(x[0]))
-    text = [t for _, t in ranked]
-    return {"level": level, "items": [{"level": lvl, "text": t} for lvl, t in ranked],
+    text = [x[1] for x in ranked]
+    return {"level": level, "items": [{"level": x[0], "text": x[1], **({"meta": x[2]} if len(x) > 2 and x[2] else {})} for x in ranked],
             "sig": hashlib.sha1("|".join(text).encode()).hexdigest()[:12] if text else ""}
 
 
@@ -181,4 +182,9 @@ def _real(config, kite: bool) -> list:
     orders = [o for o in s.get("orders", []) if not o.get("sent")]
     if orders:
         out.append(("buy", f"{len(orders)} order(s) for the next open"))
+    try:                                                  # 📈 the candle model on a held name (cards only; informational)
+        from backend.market import real_reads as rr
+        out += rr.attention_items(config)
+    except Exception:
+        pass
     return out

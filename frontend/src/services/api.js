@@ -78,6 +78,7 @@ export const backupsRun = () => req('POST', '/api/backups/run');
 export const maintenance = () => req('GET', '/api/maintenance');                    // 🧹 archive and vacuum
 export const maintenanceArchive = () => req('POST', '/api/maintenance/archive');
 export const realReconcile = (days = 30) => req('GET', `/api/real/reconcile?days=${days}`);
+export const realKronos = () => req('GET', '/api/real/kronos');                 // 📈 the candle model on the open positions
 export const corpActions = () => req('GET', '/api/corp-actions');
 export const followRebuild = () => req('POST', '/api/follow/rebuild');
 export const followSettings = (per_position) => req('PUT', '/api/follow/settings', { per_position });

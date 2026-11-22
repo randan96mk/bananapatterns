@@ -2,7 +2,8 @@
 Kronos-mini once and answers on 127.0.0.1 only. It runs at nice 10 with 2 torch threads so the app comes first.
 
   GET  /health  {state loading|ready|error, version, load_s, error}
-  POST /read    {symbol, interval, candles [{at, o, h, l, c, v}], horizon, horizons?, samples, levels?}
+  POST /read    {symbol, interval 1m|5m|1d, candles [{at, o, h, l, c, v}], horizon, horizons?, samples, levels?}
+                (the interval sets the timestamps of the steps ahead: minutes, 5 minutes or weekdays; horizons are steps)
                 -> {p_up, exp_range, paths_summary {q10, q50, q90}, touch {level: prob}, ms, version, reads [one per
                 horizon]} (the top-level keys are the longest horizon's). The sampled paths are summarised by
                 backend/market/paths.py; nothing else is computed here and nothing leaves the server.
@@ -74,7 +75,17 @@ def load() -> None:
         _state.update(state="error", error=f"{exc.__class__.__name__}: {str(exc)[:300]}")
 
 
-def sample_paths(candles: list[dict], steps: int, samples: int, seed: Optional[int] = None) -> tuple[list, list, list]:
+def future_stamps(last, steps: int, interval: str = "1m"):
+    """The timestamps of the steps ahead: 1-minute (the index / hint reads), 5-minute, or the next weekdays for daily
+    candles ("1d": the Real positions' nightly read)."""
+    import pandas as pd
+    if interval == "1d":
+        return pd.Series(pd.bdate_range(last.normalize() + pd.Timedelta(days=1), periods=steps))
+    step = {"5m": 5}.get(interval, 1)
+    return pd.Series(pd.date_range(last + pd.Timedelta(minutes=step), periods=steps, freq=f"{step}min"))
+
+
+def sample_paths(candles: list[dict], steps: int, samples: int, seed: Optional[int] = None, interval: str = "1m") -> tuple[list, list, list]:
     """Kronos sampled paths (not their mean): the vendored predictor's own normalisation and autoregressive loop
     (backend/market/kronos/kronos.py auto_regressive_inference, MIT) with the per-sample decode kept. Returns
     (closes, highs, lows), each samples × steps."""
@@ -86,7 +97,7 @@ def sample_paths(candles: list[dict], steps: int, samples: int, seed: Optional[i
     tok, model = _model["tok"], _model["model"]
     cs = candles[-CONTEXT:]
     ts = pd.Series(pd.to_datetime([c["at"] for c in cs]))
-    fut = pd.Series(pd.date_range(ts.iloc[-1] + pd.Timedelta(minutes=1), periods=steps, freq="1min"))
+    fut = future_stamps(ts.iloc[-1], steps, interval)
     x = np.array([[c["o"], c["h"], c["l"], c["c"], float(c.get("v") or 0), float(c.get("v") or 0) * c["c"]] for c in cs], dtype=np.float32)
     mean, std = x.mean(axis=0), x.std(axis=0)
     xn = np.clip((x - mean) / (std + 1e-5), -5, 5)
@@ -129,7 +140,7 @@ def read(req: dict) -> dict:
     samples = max(1, min(int(req.get("samples") or 10), 30))
     t0 = time.monotonic()
     with _lock:
-        closes, highs, lows = sample_paths(candles, steps, samples, req.get("seed"))
+        closes, highs, lows = sample_paths(candles, steps, samples, req.get("seed"), req.get("interval") or "1m")
     last = float(candles[-1]["c"])
     reads = summarise(last, closes, highs, lows, req.get("levels") or [], hs)
     ms = round((time.monotonic() - t0) * 1000)

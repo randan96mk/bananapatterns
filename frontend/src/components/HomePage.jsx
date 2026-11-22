@@ -197,7 +197,7 @@ export default function HomePage({ onGo, onStock }) {
   const flash = useFlashKeys(flashMap);
   const needs = att ? Object.entries(att).filter(([, a]) => a?.level && a.level !== 'running') : [];
   const needRows = useMemo(() => { const m = new Map();                 // one line per message, every page it belongs to
-    needs.forEach(([tab, a]) => (a.items || []).forEach((x) => { const r = m.get(x.text) || { text: x.text, level: x.level, tabs: [] }; if (!r.tabs.includes(tab)) r.tabs.push(tab); m.set(x.text, r); }));
+    needs.forEach(([tab, a]) => (a.items || []).forEach((x) => { const r = m.get(x.text) || { text: x.text, level: x.level, meta: x.meta, tabs: [] }; if (!r.tabs.includes(tab)) r.tabs.push(tab); m.set(x.text, r); }));
     return [...m.values()]; }, [att]);
   const needIds = needRows.map((x) => x.text);
   const freshNeeds = useNewIds('bp.needs', needIds, 600000);
@@ -351,7 +351,7 @@ export default function HomePage({ onGo, onStock }) {
       <div className="rd">
         <Panel title="Needs a look" meta={needIds.length || null} right={freshNeeds.length > 0 ? <span className="warn">● {freshNeeds.length} new</span> : null}>
           {needRows.length ? <div className="rbody"><div className="v2list">{needRows.map((x) => <div key={x.text} className={`it hact ${freshNeeds.includes(x.text) ? 'fresh' : ''}`}>
-            <span className={`i ${x.level === 'warn' || x.level === 'sell' ? 'warn' : ''}`}>{x.level === 'sell' ? '↓' : x.level === 'buy' ? '↑' : x.level === 'warn' ? '!' : 'i'}</span><span style={{ flex: 1 }}>{x.text}</span>
+            <span className={`i ${x.level === 'warn' || x.level === 'sell' ? 'warn' : ''}`}>{x.level === 'sell' ? '↓' : x.level === 'buy' ? '↑' : x.level === 'warn' ? '!' : 'i'}</span><span style={{ flex: 1, minWidth: 0 }}>{x.text}{x.meta && <span className="muted small" style={{ display: 'block' }}>{x.meta}</span>}</span>
             {x.tabs.map((tab) => <button key={tab} className="btn ghost small" onClick={() => onGo(tab)}>{tab}</button>)}</div>)}</div></div> : <p className="muted small rempty">Nothing right now.</p>}</Panel>
         {!R.error && <Panel title="Risk now" right="all books"><div className="rbody">
           <div className="hrisk"><div><b className="mono">{inr(R.in_use)}</b><div className="muted small">in open positions{R.capital ? ` · ${Math.round(100 * R.in_use / R.capital)}% of ${inr(R.capital)} capital` : ''}</div></div>

@@ -7,6 +7,8 @@ tables, never Kite, and a part that fails is left out (the others still go).
   paper_parts(config, day)    📝 per account: value, today's P&L once marked (the evening job), stops hit
   options_part(config, day)   🧩 the options_days row of `day` (written at 3:35 PM): equity, P&L, trades, result
   ai_part(config, day)        🤖 tonight's AI work, or what last night's run made (notes, suggestions, ratings)
+  kronos_part(config, day)    📈 the candle model on the Real positions: today's 9:20 AM reads right a of b, the
+                                 Real · daily scorecard (numbers only; backend/market/real_reads.day_line)
   parts(config, day)          all of the above, keyed by book, books with nothing left out
 """
 
@@ -101,6 +103,16 @@ def ai_part(config: AppConfig, day: str) -> Optional[dict]:
     return {"ran": False, "after": config.alerts.job_time, "parts": parts}
 
 
+def kronos_part(config: AppConfig, day: str) -> Optional[dict]:
+    """📈 {line} for the Real positions' candle-model line, or None (off, nothing held and no read today)."""
+    from datetime import date, datetime, time
+
+    from backend.config import IST
+    from backend.market import real_reads as rr
+    line = rr.day_line(config, datetime.combine(date.fromisoformat(day), time(15, 40), IST))
+    return {"line": line} if line else None
+
+
 PARTS = (("real", real_part), ("paper", paper_parts), ("options", options_part), ("ai", ai_part))
 
 
@@ -115,4 +127,10 @@ def parts(config: AppConfig, day: str) -> dict:
             continue
         if p:
             out[key] = p
+    try:                                                   # 📈 the candle-model line, printed right under Real
+        k = kronos_part(config, day)
+        if k:
+            out["kronos"] = k
+    except Exception:
+        logger.exception("Day summary: the candle-model part failed")
     return out
