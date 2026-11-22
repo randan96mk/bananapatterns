@@ -46,6 +46,17 @@ PROMPT_V = {"review": "tips-review-v1", "grade": "tips-grade-v1", "preflight": "
 LABELS = {"review": ("entry", "management", "exit", "channel", "one thing"), "grade": ("read",),
           "preflight": ("plan vs post", "flag"), "weekly": ("works", "fails", "your exits", "follow-ups")}
 WORDS = {"review": 30, "grade": 30, "preflight": 40, "weekly": 35}
+MIN_WORDS = 3                                       # a line is a sentence, not a bare value ("none", "1", "3 calls out of 9")
+MIN_CONTENT = 2                                     # … with at least two content words (not numbers, labels or fillers)
+FILLER = {"calls", "call", "none", "out", "the", "and", "total", "agreement", "fill", "with", "for", "from", "that", "this",
+          "not", "yes", "n/a", "nil"}
+SHORT_OK = {("preflight", "flag"): ("none",)}        # the one legal short answer
+
+
+def _is_sentence(text: str) -> bool:
+    words = text.split()
+    content = [w for w in (re.sub(r"[^A-Za-z-]", "", x).lower() for x in words) if len(w) >= 3 and w not in FILLER]
+    return len(words) >= MIN_WORDS and len(content) >= MIN_CONTENT
 NIGHT = ("review", "weekly")                       # the night model; grade and preflight use the day model
 SWITCH = {"review": "ai_review", "grade": "ai_grade", "preflight": "ai_preflight", "weekly": "ai_weekly"}
 QKIND = "tips_ai"
@@ -213,7 +224,8 @@ def parse(kind: str, raw: str, src: str, labels: Optional[tuple] = None, words: 
         words = text.split()
         if len(words) > cap:
             text = " ".join(words[:cap]).rstrip(",;:") + "…"
-        if lab in got or not text or not kc._figures_ok(text, allowed) or notes._blocked_word(text):
+        short = not _is_sentence(text) and text.lower().strip(".") not in SHORT_OK.get((kind, lab), ())
+        if lab in got or not text or short or not kc._figures_ok(text, allowed) or notes._blocked_word(text):
             dropped.append(t[:240])
             continue
         got[lab] = text[:400]
@@ -947,13 +959,34 @@ def weekly_write(config, channel: str, mon: date, now: Optional[datetime] = None
     return rid
 
 
+def _configured(config, ch: str) -> bool:
+    """Is `ch` (a hint's channel key) one of tips.channels today? Usernames and titles compared loosely."""
+    from backend.tips import reader as rd
+    want = [rd.norm_title(x) if hasattr(rd, "norm_title") else re.sub(r"[^a-z0-9]+", "", x.lower()) for x in rd.split_channels(getattr(config.tips, "channels", "") or "")]
+    key = re.sub(r"[^a-z0-9]+", "", (ch or "").lower())
+    return any(key and (key == w or key in w or w in key) for w in want if w)
+
+
+def weekly_channels_due(config, mon: date) -> list[str]:
+    """The channels that get a Sunday message: still in tips.channels, or 2+ calls in the week (an old channel with one
+    stray call is written for the Track page but not pushed)."""
+    out = []
+    for ch in channels_in(mon):
+        n = week_numbers(ch, mon)["this_week"]["calls"]
+        if _configured(config, ch) or n >= 2:
+            out.append(ch)
+    return out
+
+
 def weekly_due(config, now: Optional[datetime] = None, notify: bool = True) -> list[int]:
-    """Sunday 7:05 PM: every channel with ≥ 1 call in the Mon–Fri just ended."""
+    """Sunday 7:05 PM: every channel with a call in the Mon–Fri just ended is written; only the configured ones (or those
+    with 2+ calls) are pushed to Telegram."""
     now = now or _now()
     mon = last_week(now)
     out = []
+    push = set(weekly_channels_due(config, mon))
     for ch in channels_in(mon):
-        rid = weekly_write(config, ch, mon, now, notify=notify)
+        rid = weekly_write(config, ch, mon, now, notify=notify and ch in push)
         if rid:
             out.append(rid)
     return out
@@ -981,7 +1014,7 @@ def weekly_message(row: dict) -> str:
     ls = [f"📊 Tips · channel profile · week {mon.isocalendar()[1]}",
           f"{tw.get('calls', 0)} calls · T1 first {tw.get('t1_first', 0)} · stop first {tw.get('stop_first', 0)} · avg {_r(tw.get('avg_r'))}"]
     lines = (row.get("lines_json") or {}).get("lines") or []
-    ls += [f"[AI] {x['text']}" for x in lines] or [f"[AI] {NO_READ}"]
+    ls += [f"[AI] {x['text']}" for x in lines]                   # nothing usable → numbers only, no [AI] line
     ls.append(f"you: {tw.get('took', 0)} of {tw.get('calls', 0)} · {bk.inr(tw.get('yours') or 0, sign=True)} · all: {bk.inr(tw.get('all_1lot') or 0, sign=True)}")
     ls.append("full profile: Research › Tips › Track")
     return "\n".join(ls)
