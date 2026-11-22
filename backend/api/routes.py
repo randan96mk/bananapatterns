@@ -51,6 +51,7 @@ class AppState:
         self._live = None
         self.tips_tracker = None              # 💡 backend.tips.track.Tracker, set at startup
         self.tips_kite = None                 # ⚡ backend.tips.kite_orders.Syncer, set at startup
+        self.market = None                    # 📈 backend.market.reads.MarketService, set at startup
 
     @property
     def ticker(self):
@@ -2336,6 +2337,37 @@ def market_scorecard():
             if k in ("kronos", "kronos_show", "interval_s", "horizon_min", "samples")}, "ai": mw.score_view(),
             "worker": mr.health(st.config, 0.3) if mr.on(st.config) else {"state": "off"}, "version": mr.VERSION,
             "gate_rule": f"cards only when NIFTY and BANKNIFTY 30-min direction ≥ {mr.GATE_PCT:g} % over {mr.GATE_READS}+ scored reads"}
+
+
+@router.get("/market/status")
+def market_status_view():
+    """📈 System › AI · Candle model: the worker's state, the last read, today's counts, the mode and the gate, the
+    settings (read-only). Cheap: in-memory state, one count query, /health with a 1 s timeout cached 30 s."""
+    from backend.market import reads as mr
+    st = S()
+    return mr.model_status(st.config, getattr(st, "market", None))
+
+
+class MarketReadNow(BaseModel):
+    symbol: str = "NIFTY"
+
+
+@router.post("/market/read")
+def market_read_now(req: MarketReadNow):
+    """📈 System › AI "Read now": one index read through the market read service (one a minute; 409 while the model
+    is off, the worker is not ready or a pass runs). Reads stored candles and stores a market_reads row; it never
+    touches an order."""
+    from backend.market import reads as mr
+    st = S()
+    svc = getattr(st, "market", None)
+    if svc is None:
+        if not mr.on(st.config):
+            raise HTTPException(409, "the candle model is off (Settings › market · kronos)")
+        raise HTTPException(409, "the market read service is not running")
+    out = svc.read_now((req.symbol or "NIFTY").upper())
+    if not out.get("ok"):
+        raise HTTPException(out.get("code") or 409, out.get("why") or "not read")
+    return {**out, "status": mr.model_status(st.config, svc)}
 
 
 class TipsWeeklyNow(BaseModel):
