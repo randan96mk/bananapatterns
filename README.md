@@ -2333,6 +2333,7 @@ pre-flight read per arm, one weekly profile per channel a week (plus "Write now"
 On Research › Tips (Calls) a **Market now** panel sits at the top (NIFTY / BANKNIFTY / SENSEX picker) and every NIFTY /
 BANKNIFTY / SENSEX hint card gets a **Market read** block (and, for a zone / level entry not filled yet, an **Entry
 timing** block). Settings › market and Settings › ai show the candle model's **scorecard**. Code: `backend/market/`.
+System › AI shows the candle model's state and scorecard (under Local AI: the worker, the last read, today's reads, the mode and the gate, a "Read now" for NIFTY; `GET /api/market/status`, `POST /api/market/read`).
 
 **What is code** (`backend/market/chart.py`, pure functions over 1-minute candles; these tiles ALWAYS show):
 trend (above / below VWAP — an index has no volume, so equal weights —, the 20 vs 50 average on 5-minute closes built

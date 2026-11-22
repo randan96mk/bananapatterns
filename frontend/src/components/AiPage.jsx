@@ -6,6 +6,7 @@ import { inr, signed, cls } from '../fmt';
 import { Head, Chip, Switch, Tag, AiTag, Panel, FixedTable, Act, Cards, Card, Seg, Bar } from './ui2';
 import { useNarrow, useIsPhone } from '../useMedia';
 import { AiViewRecord } from './AiView';
+import { Scorecard } from './SettingsPanel';
 
 // 🤖 System › AI: a local model next to the app that reads and explains and never trades. Everything here reads
 // GET /api/ai (stream topic "ai"); the switches, the full stop, the model downloads and the test prompt act through
@@ -110,6 +111,58 @@ const Gauge = ({ a, b, total, ca = 'var(--blue)', cb = 'var(--ok)' }) => {
   return <div style={{ height: 10, borderRadius: 5, background: 'var(--hover)', overflow: 'hidden', margin: '6px 14px 0', display: 'flex' }}>
     <i style={{ display: 'block', height: '100%', width: `${p(a)}%`, background: ca }} /><i style={{ display: 'block', height: '100%', width: `${p(b)}%`, background: cb }} /></div>;
 };
+
+// 📈 The candle model (Kronos-mini, PR 153): its own worker process on this server, next to the text model above. GET
+// /api/market/status (in-memory state + one count query + the worker's /health cached 30 s), refreshed every 30 s; "Read
+// now" = POST /api/market/read (one NIFTY read, one a minute, 409 while off / down). The settings are read-only here
+// (Settings › market); the scorecard is Settings' own panel. It never touches an order.
+const KSTATE = { ready: ['ok', ''], loading: ['warn', 'warn'], down: ['bad', 'bad'] };
+function KronosBlock({ phone }) {
+  const [m, setM] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);                                          // the last Read now: {ok, text}
+  const load = () => api.getMarketStatus().then((x) => { setM(x); setErr(''); }).catch((e) => setErr(e.message));
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, []);
+  const readNow = () => {
+    setBusy(true);
+    api.marketReadNow('NIFTY').then((r) => { if (r.status) setM(r.status); setMsg({ ok: true, text: `✓ read NIFTY · ${secs(r.last_read?.ms)} · ${r.ids?.length || 0} rows stored` }); })
+      .catch((e) => setMsg({ ok: false, text: `✗ ${e.message}` })).finally(() => setBusy(false));
+  };
+  const k = m || {}, set = k.settings || {}, lr = k.last_read, g = k.gate || {};
+  const params = k.params ? `${Math.round(k.params / 1e6)} M` : '—';
+  const [dot, cc] = KSTATE[k.state] || [null, ''];
+  const stateText = !m ? '…' : k.state === 'off' ? '○ off (market.kronos off)' : k.state === 'ready' ? `ready${k.loaded_in_ms != null ? ` · loaded in ${secs(k.loaded_in_ms)}` : ''}`
+    : k.state === 'loading' ? 'loading the weights…' : `down · last error ${k.error || '—'}`;
+  const held = k.mode_set === 'cards' && !g.ok;
+  const modeText = k.mode === 'cards' ? 'cards' : k.mode === 'off' ? 'off' : `shadow · ${k.hit ? `hit rate ${Math.round(k.hit.pct)} % over ${k.hit.n} reads` : 'not scored yet'}${held ? ` · ${g.reason}` : ''}`;
+  const why = !m ? 'loading' : k.state === 'off' ? 'the candle model is off (Settings › market · kronos)' : k.state !== 'ready' ? `the worker is ${k.state}` : '';
+  const kRow = (key, value, help, sw) => <div key={key} style={ROW} title={`${key}: ${value} · read-only here · Settings › market`}>
+    {sw}<b className="mono" style={{ flex: 'none' }}>{key}</b><span className="mono" style={{ flex: 'none' }}>{value}</span><Meta><span className="muted">{help}</span></Meta></div>;
+  return <>
+    <Head title={phone ? '📈 Candle model' : '📈 Candle model · reads the index candles · never trades'}>
+      <Chip title={`${k.model || 'Kronos-mini'} · ${k.version || 'kronos-mini-v1'} · its own process on 127.0.0.1:${set.port ?? '—'}`}><b>{k.model || 'Kronos-mini'}</b> · {params} · on this server · {k.licence || 'MIT'}</Chip>
+      <Chip dot={k.state === 'off' ? null : dot} c={cc} title={k.state === 'down' ? k.error || '' : k.state === 'off' ? 'Settings › market · kronos' : `worker ${k.state || '—'}`}>{stateText}</Chip>
+      <Chip title={lr ? `${stamp(lr.at)} · ${lr.symbol} · ${secs(lr.ms)}` : 'no read stored yet'}>{lr ? <>last read <b className="mono">{clock(lr.at)}</b> · {lr.symbol} · {secs(lr.ms)}</> : 'no read yet'}</Chip>
+      <Chip title="today's stored reads (index and hints) · scored at 6:40 PM">reads today <b className="mono">{n0(k.reads_today ?? 0)}</b> · scored <b className="mono">{n0(k.scored_today ?? 0)}</b></Chip>
+      {m && <Chip c={k.mode === 'cards' ? 'ok' : k.mode === 'off' ? '' : 'warn'} title={`${g.reason || ''}${k.mode_set ? ` · kronos_show ${k.mode_set}` : ''}`}>{modeText}</Chip>}
+    </Head>
+    {err && <div className="rbanner bad">{err}</div>}
+    <div className="rd">
+      <Panel id="kronos" title="Candle model" meta="read-only here" right={<a href="#/system/settings/market" title="change these in Settings › market">Settings › market</a>}>
+        {kRow('kronos', set.kronos == null ? '—' : set.kronos ? 'on' : 'off', 'reads NIFTY · BANKNIFTY · SENSEX and the open Kite hints · off = no candles fetched',
+          <Switch on={!!set.kronos} disabled title="read-only here · Settings › market · kronos" />)}
+        {kRow('kronos_show', set.kronos_show || '—', 'shadow = stored and scored, only the hit-rate chip · cards = shown once the scorecard earns it')}
+        {kRow('interval_s', set.interval_s != null ? `${set.interval_s} s` : '—', `between index reads 9:15 AM–3:30 PM · ${set.samples ?? '—'} paths a read`)}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 14px 4px', minWidth: 0 }}>
+          <button type="button" className="btn small" disabled={busy || !!why} onClick={readNow} title={why || 'one NIFTY read now from the stored candles · one a minute · never touches an order'}>{busy ? 'Reading…' : 'Read now'}</button>
+          <Meta title={msg?.text || why}>{msg ? <span className={msg.ok ? 'up' : 'down'}>{msg.text}</span> : <span className="muted">{why || 'one NIFTY read · one a minute'}</span>}</Meta></div>
+        <div className="rnote">{held ? <>cards is set but held in shadow: {g.reason} · </> : null}a separate process on this server (127.0.0.1:{set.port ?? '—'}) · if it is down the cards say "no model read" and nothing else changes · it never places, changes or holds an order</div>
+      </Panel>
+      <Scorecard />
+    </div>
+  </>;
+}
 
 export default function AiPage() {
   const live = useLive('ai');
@@ -277,6 +330,7 @@ export default function AiPage() {
         <div className="rnote">category · severity · direction against the hand labels · the severity on screen is set by code anyway</div>
       </Panel>
     </div>
+    <KronosBlock phone={phone} />
     <Cards n={6}>
       <Card unit="n" label="Notes · last night" value={LN ? n0(LN.n) : '—'} num={LN?.n || 0} k={LN?.n ? '' : 'muted'} sub={LN ? byKind || 'no notes' : 'no night yet'}
         fact={LN ? <>took <b className="mono">{Math.max(1, Math.round((LN.ms_total || 0) / 60000))} min</b> · last at {clock(LN.at)}</> : <span className="muted">the first ones come after the evening job</span>}

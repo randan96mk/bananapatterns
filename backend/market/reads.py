@@ -13,6 +13,7 @@ the chip "candle model · shadow · hit rate x % over n reads". "cards": the mod
 levels, pattern, volatility) always show."""
 
 import json
+import os
 import queue as _q
 import subprocess
 import sys
@@ -46,6 +47,10 @@ ROOT = Path(__file__).resolve().parents[2]
 # the tests' fake worker: (payload) -> dict | None. None = the real HTTP worker.
 WORKER: Optional[Callable[[dict], Optional[dict]]] = None
 _call_lock = threading.Lock()                  # one worker call at a time (the timeout covers the call, not the wait)
+# in memory (System › AI): the last stored read {at, symbol, ms} and the last failed call {at, text}; lost on a restart
+LAST: dict = {"read": None, "error": None}
+MODEL, PARAMS, LICENCE = "Kronos-mini", 4_100_000, "MIT"
+HEALTH_TTL_S, READ_NOW_GAP_S = 30.0, 60.0
 
 
 def _now() -> datetime:
@@ -81,13 +86,20 @@ def call_worker(config, payload: dict, timeout: float = WORKER_TIMEOUT_S) -> Opt
             out = WORKER(payload) if WORKER is not None else _http(config, payload, timeout)
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         logger.info("Candle model read failed: %s", str(exc)[:160])
+        _failed(str(exc))
         return None
     except Exception as exc:
         logger.warning("Candle model read failed: %s", str(exc)[:160])
+        _failed(str(exc))
         return None
     if not isinstance(out, dict) or out.get("p_up") is None or not isinstance(out.get("reads", []), list):
+        _failed("a reply without the numbers")
         return None
     return out
+
+
+def _failed(text: str) -> None:
+    LAST["error"] = {"at": _now().isoformat(timespec="seconds"), "text": text[:160]}
 
 
 def health(config, timeout: float = 1.0) -> dict:
@@ -99,6 +111,19 @@ def health(config, timeout: float = 1.0) -> dict:
             return json.loads(r.read())
     except Exception:
         return {"state": "down", "version": VERSION, "load_s": None}
+
+
+_health_cache: dict = {"t": None, "port": None, "v": None}
+
+
+def cached_health(config) -> dict:
+    """health() with a 1 s timeout, kept HEALTH_TTL_S (the System › AI status calls it on every load)."""
+    c, port = _health_cache, int(config.market.port)
+    if c["v"] is not None and c["port"] == port and _time.monotonic() - c["t"] < HEALTH_TTL_S:
+        return c["v"]
+    v = health(config, 1.0)
+    c.update(t=_time.monotonic(), port=port, v=v)
+    return v
 
 
 # --- the store (never deleted; the archive moves rows older than 180 days) ----------------------------------------------
@@ -159,7 +184,10 @@ def read_series(config, symbol: str, bars: list[dict], horizons: tuple, levels: 
     if not res:
         return []
     reads = res.get("reads") or [res]
-    return [store(now, symbol, res, one, extra, hint_id) for one in reads if int(one.get("horizon") or 0) in horizons]
+    ids = [store(now, symbol, res, one, extra, hint_id) for one in reads if int(one.get("horizon") or 0) in horizons]
+    if ids:
+        LAST["read"] = {"at": now.isoformat(timespec="seconds"), "symbol": symbol, "ms": res.get("ms")}
+    return ids
 
 
 def read_index(config, symbol: str, now: Optional[datetime] = None) -> list[int]:
@@ -327,6 +355,38 @@ class MarketService:
         self._busy = threading.Lock()
         self.proc: Optional[subprocess.Popen] = None
         self.skipped = 0
+        self.last_manual: Optional[float] = None       # monotonic time of the last "Read now" (System › AI)
+
+    def snapshot(self) -> dict:
+        """The in-memory state System › AI shows: {last_read, last_error, worker_pid, skipped}."""
+        return {"last_read": LAST["read"], "last_error": LAST["error"], "skipped": self.skipped,
+                "worker_pid": self.proc.pid if self.proc and self.proc.poll() is None else None}
+
+    def read_now(self, symbol: str = "NIFTY") -> dict:
+        """One index read by hand (System › AI "Read now"): one a minute, refused while the model is off, the worker
+        is not ready or a pass runs. Reads the stored candles only; never touches an order. {ok, ids, last_read} or
+        {ok: False, code, why}."""
+        config = self.state.config
+        if symbol not in cd.INDICES:
+            return {"ok": False, "code": 400, "why": f"unknown index {symbol}"}
+        if not on(config):
+            return {"ok": False, "code": 409, "why": "the candle model is off (Settings › market · kronos)"}
+        h = cached_health(config)
+        if h.get("state") != "ready":
+            return {"ok": False, "code": 409, "why": f"the worker is {h.get('state') or 'down'}"}
+        if self.last_manual is not None and _time.monotonic() - self.last_manual < READ_NOW_GAP_S:
+            wait = int(READ_NOW_GAP_S - (_time.monotonic() - self.last_manual)) + 1
+            return {"ok": False, "code": 429, "why": f"one read a minute · again in {wait} s"}
+        if not self._busy.acquire(blocking=False):
+            return {"ok": False, "code": 409, "why": "a read pass is running"}
+        try:
+            self.last_manual = _time.monotonic()
+            ids = read_index(config, symbol)
+        finally:
+            self._busy.release()
+        if not ids:
+            return {"ok": False, "code": 409, "why": (LAST["error"] or {}).get("text") or "no read (fewer than 30 stored candles?)"}
+        return {"ok": True, "ids": ids, "last_read": LAST["read"]}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -562,6 +622,50 @@ def chip(config, name: str = "NIFTY", horizon: int = 30, sc: Optional[list[dict]
     if not x or not x["scored"]:
         return f"candle model · {tag} · not scored yet"
     return f"candle model · {tag} · hit rate {round(x['direction_pct'])} % over {x['scored']} reads"
+
+
+_sc_cache: dict = {"key": None, "sc": None}
+
+
+def model_status(config, service=None, now: Optional[datetime] = None) -> dict:
+    """📈 System › AI · Candle model: {model, params, state off|loading|ready|down, loaded_in_ms, error, last_read {at,
+    symbol, ms}, reads_today, scored_today, mode off|shadow|cards, hit {pct, n}, gate {ok, reason}, settings}. Cheap:
+    the service's in-memory state, one count query, the worker's /health (1 s timeout, kept 30 s) only when on; the
+    scorecard is recomputed only when the number of scored reads changes."""
+    now = now or _now()
+    snap = service.snapshot() if service is not None else {"last_read": LAST["read"], "last_error": LAST["error"]}
+    day = now.date().isoformat()
+    with get_db() as conn:
+        r = conn.execute("SELECT COUNT(CASE WHEN at >= ? THEN 1 END), COUNT(CASE WHEN at >= ? AND scored_at IS NOT NULL THEN 1 END), "
+                         "COUNT(scored_at), (SELECT at || '|' || symbol || '|' || IFNULL(ms, '') FROM market_reads ORDER BY at DESC, id DESC LIMIT 1) "
+                         "FROM market_reads", (day, day)).fetchone()
+    reads_today, scored_today, scored_all, last_db = r[0] or 0, r[1] or 0, r[2] or 0, r[3]
+    key = (os.getenv("BP_DB_PATH"), scored_all)                 # only the scored reads move the gate and the hit rate
+    if _sc_cache["key"] != key or _sc_cache["sc"] is None:
+        _sc_cache.update(key=key, sc=scorecard())
+    sc = _sc_cache["sc"]
+    last = snap.get("last_read")
+    if not last and last_db:
+        at, sym, ms = (last_db.split("|") + ["", ""])[:3]
+        last = {"at": at, "symbol": sym, "ms": int(float(ms)) if ms else None}
+    err = snap.get("last_error")
+    if not on(config):
+        state, h = "off", {}
+    else:
+        h = cached_health(config)
+        state = {"ready": "ready", "loading": "loading"}.get(h.get("state"), "down")
+    g = gate(config, sc)
+    x = card_row(sc, "NIFTY", 30)
+    s = config.market
+    return {"model": MODEL, "params": PARAMS, "licence": LICENCE, "where": "this server", "version": h.get("version") or VERSION,
+            "state": state, "loaded_in_ms": round(float(h["load_s"]) * 1000) if h.get("load_s") is not None else None,
+            "error": (h.get("error") or (err or {}).get("text") or ("the worker does not answer on 127.0.0.1:%s" % s.port)) if state == "down" else None,
+            "last_error": err, "last_read": last, "reads_today": reads_today, "scored_today": scored_today,
+            "mode": g["mode"] if g["mode"] in ("off", "shadow") else ("cards" if g["cards"] else "shadow"), "mode_set": show(config),
+            "hit": {"pct": x["direction_pct"], "n": x["scored"]} if x and x["scored"] else None,
+            "gate": {"ok": bool(g["cards"]), "reason": g["why"]}, "chip": chip(config, sc=sc),
+            "settings": {"kronos": bool(s.kronos), "kronos_show": s.kronos_show, "interval_s": int(s.interval_s), "samples": int(s.samples), "port": int(s.port)},
+            "read_now_gap_s": int(READ_NOW_GAP_S)}
 
 
 def channel_hit_rate(channel: str, since: str, until: str) -> Optional[dict]:

@@ -195,7 +195,8 @@ const sinceC = (d) => { try { return new Date(`${d}T00:00:00+05:30`).toLocaleDat
 
 // 📈 the candle model's scorecard (Settings › market / ai): every read stored and scored at 6:40 PM; the model shows on
 // the cards only while this table earns it. Numbers are code; the read line is the local model's (AI tag).
-function Scorecard() {
+// Also embedded on System › AI under the Candle model block (the same component).
+export function Scorecard() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => { api.getMarketScorecard().then(setD).catch((e) => setErr(e.message)); }, []);
@@ -232,8 +233,11 @@ function useNarrow() {
 }
 
 // Generic editor for persisted config sections: a list of sections, the selected one's fields, the recent changes.
+// "#/system/settings/market" opens that section (the System › AI "Settings › market" link)
+const sectionFromHash = () => { const x = window.location.hash.replace(/^#\/?/, '').split('/')[2]; return SECTIONS.includes(x) ? x : SECTIONS[0]; };
+
 export default function SettingsPanel() {
-  const [section, setSection] = useState(SECTIONS[0]);
+  const [section, setSection] = useState(sectionFromHash);
   const [vals, setVals] = useState(null);
   const [draft, setDraft] = useState({});
   const [msg, setMsg] = useState('');

@@ -193,6 +193,9 @@ export const tipsTestPost = (text) => req('POST', '/api/tips/test-post', { text 
 // 📈 the market read: the "Market now" panel (Research › Tips) and the candle model's scorecard (Settings › market / ai)
 export const getMarketNow = (index) => req('GET', `/api/market/now?index=${encodeURIComponent(index || 'NIFTY')}`);
 export const getMarketScorecard = () => req('GET', '/api/market/scorecard');
+// 📈 System › AI · Candle model: the worker's state, today's reads, the mode and the gate; "Read now" = one NIFTY read (one a minute)
+export const getMarketStatus = () => req('GET', '/api/market/status');
+export const marketReadNow = (symbol = 'NIFTY') => req('POST', '/api/market/read', { symbol });
 export const getTipsWeekly = (week) => req('GET', `/api/tips/ai/weekly${week ? `?week=${encodeURIComponent(week)}` : ''}`);
 export const tipsWeeklyWrite = (week) => req('POST', '/api/tips/ai/weekly/write', week ? { week } : {});
 export const tipsLogin = (phone) => req('POST', '/api/tips/login', { phone });
