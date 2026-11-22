@@ -42,20 +42,41 @@ def weights_dir() -> Path:
 
 def resolve(repo: str) -> Path:
     """The local folder of one repo's weights (config.json + model.safetensors), vendored once under weights_dir()."""
-    dest = weights_dir() / repo.split("/")[-1]
+    name = repo.split("/")[-1]
+    dest = weights_dir() / name
     if (dest / "config.json").exists():
         return dest
-    dest.parent.mkdir(parents=True, exist_ok=True)
     baked = os.getenv("BP_KRONOS_BAKED")
-    if baked and (Path(baked) / repo.split("/")[-1] / "config.json").exists():
-        shutil.copytree(Path(baked) / repo.split("/")[-1], dest, dirs_exist_ok=True)
-        return dest
+    baked_dir = Path(baked) / name if baked else None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        writable = os.access(dest.parent, os.W_OK)
+    except OSError:
+        writable = False                 # e.g. data/ai owned by another user on the server (PermissionError 13)
+    if baked_dir and (baked_dir / "config.json").exists():
+        if not writable:
+            return baked_dir             # read the image's copy in place; nothing needs writing
+        try:
+            shutil.copytree(baked_dir, dest, dirs_exist_ok=True)
+            return dest
+        except OSError:
+            return baked_dir
     from huggingface_hub import snapshot_download
     try:
         src = Path(snapshot_download(repo, local_files_only=True))       # the local Hugging Face cache
-        shutil.copytree(src, dest, dirs_exist_ok=True)
     except Exception:
-        snapshot_download(repo, local_dir=str(dest))                      # once; kept forever
+        src = None
+    if src is not None:
+        if not writable:
+            return src
+        try:
+            shutil.copytree(src, dest, dirs_exist_ok=True)
+            return dest
+        except OSError:
+            return src
+    if not writable:
+        raise RuntimeError(f"no weights for {repo}: {dest.parent} is not writable and no baked copy or cache exists")
+    snapshot_download(repo, local_dir=str(dest))                          # once; kept forever
     return dest
 
 

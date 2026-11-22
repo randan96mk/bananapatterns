@@ -693,3 +693,40 @@ def test_real_worker_one_read_on_synthetic_candles(monkeypatch):
     finally:
         p.terminate()
         p.wait(10)
+
+
+def test_worker_weights_fall_back_to_the_baked_copy_when_data_is_not_writable(tmp_path, monkeypatch):
+    """On the server data/ai is owned by another user: the worker must read the image's baked weights in place
+    instead of failing with PermissionError while copying them under data/ai/kronos."""
+    import os
+    import stat
+    from backend.market import kronos_worker as kw
+    baked = tmp_path / "baked" / "Kronos-mini"
+    baked.mkdir(parents=True)
+    (baked / "config.json").write_text("{}")
+    locked = tmp_path / "data" / "ai"
+    locked.mkdir(parents=True)
+    monkeypatch.setenv("BP_KRONOS_BAKED", str(tmp_path / "baked"))
+    monkeypatch.setenv("BP_KRONOS_DIR", str(locked / "kronos"))
+    locked.chmod(stat.S_IRUSR | stat.S_IXUSR)           # no write bit: mkdir inside it fails
+    try:
+        if os.access(locked, os.W_OK):                    # root ignores the mode bits: emulate the refusal
+            monkeypatch.setattr(kw.os, "access", lambda p, m: False if Path(p) == locked / "kronos" or Path(p) == locked else os.access(p, m))
+            monkeypatch.setattr(kw.Path, "mkdir", lambda self, *a, **k: (_ for _ in ()).throw(PermissionError(13, "Permission denied", str(self))))
+        out = kw.resolve("NeoQuasar/Kronos-mini")
+    finally:
+        locked.chmod(stat.S_IRWXU)
+    assert out == baked
+    assert not (locked / "kronos").exists()
+
+
+def test_worker_weights_vendored_when_data_is_writable(tmp_path, monkeypatch):
+    from backend.market import kronos_worker as kw
+    baked = tmp_path / "baked" / "Kronos-mini"
+    baked.mkdir(parents=True)
+    (baked / "config.json").write_text("{}")
+    monkeypatch.setenv("BP_KRONOS_BAKED", str(tmp_path / "baked"))
+    monkeypatch.setenv("BP_KRONOS_DIR", str(tmp_path / "data" / "ai" / "kronos"))
+    out = kw.resolve("NeoQuasar/Kronos-mini")
+    assert out == tmp_path / "data" / "ai" / "kronos" / "Kronos-mini"
+    assert (out / "config.json").exists()
