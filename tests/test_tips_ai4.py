@@ -419,10 +419,10 @@ def test_tips_ai_rows_are_moved_by_the_archive_never_deleted():
 
 def test_parse_labels_figures_words_and_broker_names():
     src = "entry 180 · stop 100 · best +12.5 % · ₹1,650"
-    out = ai4.parse("review", "1. **Entry:** filled at 180.\n- [AI] management: best +12.5 % worth ₹1,650.\nexit - stopped at 12.5 rupees ₹12.5\n"
+    out = ai4.parse("review", "1. **Entry:** filled at 180 at the zone top.\n- [AI] management: best +12.5 % worth ₹1,650.\nexit - stopped at 12.5 rupees ₹12.5\n"
                     "Channel: the broker zerodha said so\nONE THING: " + " ".join(["word"] * 40), src)
     labs = {x["label"]: x["text"] for x in out["lines"]}
-    assert labs["entry"] == "filled at 180." and labs["management"] == "best +12.5 % worth ₹1,650."
+    assert labs["entry"] == "filled at 180 at the zone top." and labs["management"] == "best +12.5 % worth ₹1,650."
     assert "exit" not in labs and "channel" not in labs and labs["one thing"].endswith("…") and len(labs["one thing"].split()) == 30
 
 
@@ -433,3 +433,45 @@ def test_readme_has_the_ai_on_tips_section():
     for w in ("ai_review", "ai_grade", "ai_preflight", "ai_weekly", "Evening review", "Call grade", "Pre-flight read", "Weekly channel profile",
               "nothing here places, modifies, cancels, holds or blocks an order"):
         assert w in sec, w
+
+
+def test_parse_drops_bare_values_that_are_not_sentences():
+    """20 Nov's Sunday message carried "[AI] none" / "[AI] 1" / "[AI] 3 calls out of 9": a line needs MIN_WORDS words."""
+    from backend.tips import ai4
+    src = "9 calls · T1 first 4 · stop first 0 · 3 calls · 2 calls no fill · 57 follow-ups"
+    raw = "works: none\nfails: 1\nyour exits: 3 calls out of 9\nfollow-ups: 57 follow-ups were read the same way by the app and the second opinion"
+    assert not ai4._is_sentence("2 calls no fill") and not ai4._is_sentence("57 total, no AI agreement") and not ai4._is_sentence("#11 at 247.55 (10:51 AM) +₹1,141")
+    assert ai4._is_sentence("1 follow-up this week.") and ai4._is_sentence("best +12.5 % worth ₹1,650.")
+    out = ai4.parse("weekly", raw, src)
+    assert [x["label"] for x in out["lines"]] == ["follow-ups"]
+    assert len(out["dropped"]) == 3
+
+
+def test_parse_keeps_the_preflight_flag_none():
+    from backend.tips import ai4
+    out = ai4.parse("preflight", "plan vs post: the plan matches the post, buy NIFTY 25400 CE between 180 and 185 · agrees\nflag: none",
+                    "NIFTY 25400 CE 180 185")
+    assert [x["label"] for x in out["lines"]] == ["plan vs post", "flag"]
+
+
+def test_weekly_message_has_no_ai_line_when_nothing_usable():
+    from backend.tips import ai4
+    row = {"day": "2026-11-16", "id": 1, "input_json": {"channel": "x", "numbers": {"week": "2026-11-16", "this_week": {"calls": 9, "t1_first": 4, "stop_first": 0, "avg_r": 0.7, "took": 3, "yours": 832, "all_1lot": 15427}}},
+           "lines_json": {"lines": []}}
+    msg = ai4.weekly_message(row)
+    assert "[AI]" not in msg and "no usable read" not in msg
+    assert "9 calls" in msg and "you: 3 of 9" in msg
+
+
+def test_weekly_sunday_pushes_only_configured_or_busy_channels(monkeypatch):
+    from backend.tips import ai4
+    from datetime import date
+    cfg = type("C", (), {"tips": type("T", (), {"channels": "Index Options Buying with Aakanksha"})()})()
+    monkeypatch.setattr(ai4, "channels_in", lambda mon: ["aakankshatrading", "index options buying with aakanksha", "other"])
+    monkeypatch.setattr(ai4, "week_numbers", lambda ch, mon: {"this_week": {"calls": {"aakankshatrading": 1, "index options buying with aakanksha": 9, "other": 2}[ch]}})
+    assert ai4.weekly_channels_due(cfg, date(2026, 11, 16)) == ["index options buying with aakanksha", "other"]
+    sent = []
+    monkeypatch.setattr(ai4, "weekly_write", lambda config, ch, mon, now, force=False, notify=True: sent.append((ch, notify)) or 1)
+    monkeypatch.setattr(ai4, "last_week", lambda now: date(2026, 11, 16))
+    ai4.weekly_due(cfg, notify=True)
+    assert dict(sent) == {"aakankshatrading": False, "index options buying with aakanksha": True, "other": True}
