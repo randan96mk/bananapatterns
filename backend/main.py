@@ -85,6 +85,12 @@ async def lifespan(app: FastAPI):
         bot.start()                       # Telegram /login and /status
         state.tips_tracker.start()        # 💡 Tips: quotes every 5 s while a hint is open or waiting
         state.tips_kite.start()           # ⚡ Tips → Kite orders: the order sync every 10 s while an order of ours works
+        try:                              # 📈 the market read: the candle model worker (its own process) + the index loop
+            from backend.market import reads as market_reads
+            state.market = market_reads.MarketService(state)
+            state.market.start()
+        except Exception:
+            logger.exception("Market read start failed")
         try:                              # 💡 Tips: the reader starts only when tips.enabled and a session exist
             tips_reader.ensure(state)
         except Exception:
@@ -97,6 +103,8 @@ async def lifespan(app: FastAPI):
     bot.stop()
     state.tips_tracker.stop()
     state.tips_kite.stop()
+    if getattr(state, "market", None) is not None:
+        state.market.stop()
     if tips_reader.READER is not None:
         tips_reader.READER.stop()
     logger.info("Banana Patterns backend stopped")

@@ -650,3 +650,45 @@
   .rd .tp-bars > div { grid-template-columns: 76px minmax(0, 1fr) 64px; }
   .rd .tp-wr .ell { display: none; }
 }
+
+/* 📈 the market read: the "Market now" panel (Tips › Calls), the card's Market read / Entry timing blocks, the scorecard.
+   Fixed heights: every tile is 78 px, every text line one line (ellipsis, the full text in its title) or clamped. */
+.rd .mk-panel { display: grid; gap: 0; }
+.rd .mk-body { padding: 10px 14px; display: grid; gap: 10px; min-width: 0; }
+.rd .mk-bar0 { display: flex; gap: 8px; align-items: center; min-width: 0; height: 26px; }
+.rd .mk-bar0 .seg { flex: none; }
+.rd .mk-src { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.rd .mk-shadow { font-size: 11px; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 6px; padding: 1px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%; display: inline-block; box-sizing: border-box; }
+.rd .mk-shadow.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.rd .mk-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.rd .mk-tiles > div { background: var(--hover); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; height: 78px; overflow: hidden; min-width: 0; box-sizing: border-box; }
+.rd .mk-tiles .k { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 13px; line-height: 13px; }
+.rd .mk-tiles .h { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 21px; line-height: 21px; font-variant-numeric: tabular-nums; }
+.rd .mk-tiles .h .c { font-size: 11px; font-weight: 600; margin-left: 6px; }
+.rd .mk-tiles .s { font-size: 11px; color: var(--muted); line-height: 15px; height: 30px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.rd .mk-tiles .s b.up { color: var(--ok); } .rd .mk-tiles .s b.down { color: var(--bad); }
+.rd .mk-tiles .h.up { color: var(--ok); } .rd .mk-tiles .h.down { color: var(--bad); }
+.rd .mk-pbar { height: 6px; border-radius: 3px; margin: 2px 0 3px; background: linear-gradient(90deg, var(--ok) 0 var(--p), color-mix(in srgb, var(--bad) 55%, transparent) var(--p) 100%); }
+.rd .mk-pbar + .s { height: 15px; -webkit-line-clamp: 1; }
+.rd .mk-fan { height: 70px; border: 1px solid var(--border); border-radius: 8px; background: var(--hover); overflow: hidden; }
+.rd .mk-fan { position: relative; }
+.rd .mk-fan svg { width: 100%; height: 100%; display: block; }
+.rd .mk-fan .fl { position: absolute; left: 6px; font-size: 10px; line-height: 12px; white-space: nowrap; pointer-events: none; }
+.rd .mk-fan .fl.up { color: var(--ok); } .rd .mk-fan .fl.down { color: var(--bad); }
+.rd .mk-fan .fl.now { left: 51%; bottom: 2px; color: var(--muted); }
+.rd .tp-ai .l > div.mk-one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd .tp-ai .l > div.mk-cl { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rd .tp-ai .l .vd.up { color: var(--ok); } .rd .tp-ai .l .vd.down { color: var(--bad); } .rd .tp-ai .l .vd.w { color: var(--warn); }
+.rd .mk-empty { font-size: 12px; color: var(--muted); height: 78px; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border); border-radius: 8px; text-align: center; padding: 0 12px; }
+.rd .mk-score .ftab td.up { color: var(--ok); } .rd .mk-score .ftab td.down { color: var(--bad); }
+.rd .mk-score .mk-help { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.rd .mk-score .mk-help b { color: var(--text); }
+@media (max-width: 760px) {
+  .rd .mk-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rd .mk-tiles > div { height: 94px; }
+  .rd .mk-tiles .s { height: 45px; -webkit-line-clamp: 3; }
+  .rd .mk-body { padding: 10px; }
+  .rd .mk-bar0 { height: auto; flex-wrap: wrap; }
+  .rd .mk-src { flex-basis: 100%; }
+  .rd .tp-ai .l > div.mk-one { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+}

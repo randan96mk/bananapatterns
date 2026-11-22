@@ -443,10 +443,22 @@ CREATE TABLE IF NOT EXISTS tips_day_facts (day TEXT PRIMARY KEY, json TEXT NOT N
 -- dropped ones and the raw reply. ok NULL = pending. Never deleted: the archive job MOVES rows older than 180 days.
 CREATE TABLE IF NOT EXISTS tips_ai (
     id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NULL,
-    kind TEXT NOT NULL CHECK(kind IN ('review', 'grade', 'preflight', 'weekly')), day TEXT NOT NULL, at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('review', 'grade', 'preflight', 'weekly', 'market')), day TEXT NOT NULL, at TEXT NOT NULL,
     model TEXT, prompt_v TEXT, input_json TEXT NOT NULL, lines_json TEXT, ok INTEGER NULL, ms INTEGER);
 CREATE INDEX IF NOT EXISTS idx_tips_ai_hint ON tips_ai(hint_id, kind);
 CREATE INDEX IF NOT EXISTS idx_tips_ai_day ON tips_ai(kind, day);
+-- 📈 the market read (backend/market): one row per candle-model read (Kronos in its own process). symbol = the index or the
+-- option's tradingsymbol; touch_json = {level: share of sampled paths where it is the first level crossed}; paths_json =
+-- the close quantiles per step, the last price, the basis (index / premium), the named levels; outcome_json = the scoring
+-- (6:40 PM): actual close side, range, the level touched first, direction_right, touch_right. Never deleted: the archive
+-- job MOVES rows older than 180 days. tips_ai kind 'market' holds the local model's sentences about them.
+CREATE TABLE IF NOT EXISTS market_reads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, symbol TEXT NOT NULL, interval TEXT NOT NULL, horizon INTEGER NOT NULL,
+    p_up REAL, exp_range REAL, touch_json TEXT, paths_json TEXT, version TEXT NOT NULL, ms INTEGER, hint_id INTEGER NULL,
+    scored_at TEXT NULL, outcome_json TEXT NULL);
+CREATE INDEX IF NOT EXISTS idx_market_reads_at ON market_reads(symbol, horizon, at);
+CREATE INDEX IF NOT EXISTS idx_market_reads_hint ON market_reads(hint_id);
+CREATE INDEX IF NOT EXISTS idx_market_reads_unscored ON market_reads(scored_at);
 
 -- 🤖 Local AI (backend/ai): every job the queue ran (queued / running / done / failed / skipped) and the notes the
 -- model wrote (filled from PR 2). Nothing here is ever deleted.
@@ -508,9 +520,12 @@ def init_db(path: Optional[str] = None) -> None:
         dropped = _migrate_orb(conn)
         _migrate_paper(conn)
         tips_orders_old = _migrate_tips_orders(conn)
+        tips_ai_old = _migrate_tips_ai_market(conn)
         conn.executescript(SCHEMA)
         if tips_orders_old:
             _copy_tips_orders(conn)
+        if tips_ai_old:
+            _copy_tips_ai(conn)
         _migrate_drop_paper_a(conn)
         _migrate_capital_300k(conn)
         _migrate_real_confirm(conn)
@@ -716,6 +731,30 @@ def _migrate_tips_orders(conn) -> bool:
 def _copy_tips_orders(conn) -> None:
     conn.execute(f"INSERT INTO tips_orders ({TIPS_ORDER_COLS}) SELECT {TIPS_ORDER_COLS} FROM tips_orders_pr_a")
     conn.execute("DROP TABLE tips_orders_pr_a")
+
+
+TIPS_AI_COLS = "id, hint_id, kind, day, at, model, prompt_v, input_json, lines_json, ok, ms"
+
+
+def _migrate_tips_ai_market(conn) -> bool:
+    """📈 the market read: tips_ai's kind CHECK gains 'market'. SQLite cannot change a CHECK in place: the old table is
+    renamed (its indexes dropped), the schema creates the new one and _copy_tips_ai copies every row across (ids kept),
+    then the renamed copy goes. Nothing is lost; runs once."""
+    r = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tips_ai'").fetchone()
+    if not r or "'market'" in (r[0] or ""):
+        return False
+    conn.execute("DROP INDEX IF EXISTS idx_tips_ai_hint")
+    conn.execute("DROP INDEX IF EXISTS idx_tips_ai_day")
+    conn.execute("ALTER TABLE tips_ai RENAME TO tips_ai_pre_market")
+    return True
+
+
+def _copy_tips_ai(conn) -> None:
+    conn.execute(f"INSERT INTO tips_ai ({TIPS_AI_COLS}) SELECT {TIPS_AI_COLS} FROM tips_ai_pre_market")
+    n_old = conn.execute("SELECT COUNT(*) FROM tips_ai_pre_market").fetchone()[0]
+    n_new = conn.execute("SELECT COUNT(*) FROM tips_ai").fetchone()[0]
+    if n_new >= n_old:                                  # every row is across: only then the renamed copy goes
+        conn.execute("DROP TABLE tips_ai_pre_market")
 
 
 def _add_column(conn, table: str, column: str, decl: str) -> None:

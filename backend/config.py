@@ -112,6 +112,14 @@ class MarketConfig:
     dist_days_correction: int = 7          # this many or more = correction
     breakout_window: int = 20              # breakouts in the last N sessions ...
     breakout_rate_min: float = 0.5         # ... at least this share still above the pivot for an uptrend
+    # 📈 the market read on Tips (backend/market): the chart facts by code always show; the Kronos candle model runs in its
+    # own process on this server (127.0.0.1:port) and its numbers stay in shadow until the scorecard earns them
+    kronos: bool = True                    # the candle model worker runs and reads NIFTY / BANKNIFTY / SENSEX + open Kite hints
+    kronos_show: str = "shadow"            # shadow (stored and scored, never shown beyond the hit-rate chip) | cards (shown once the gate passes)
+    interval_s: int = 60                   # seconds between index reads 9:15 AM–3:30 PM (30 at least)
+    horizon_min: int = 30                  # the horizon the panel and the cards headline (15 and 30 are both computed)
+    samples: int = 10                      # sampled paths per read
+    port: int = 8765                       # the worker's port on 127.0.0.1
 
 
 @dataclass
@@ -641,6 +649,20 @@ def check_maintenance(sec: "MaintenanceConfig") -> None:
         raise ValueError("archive_days must be at least 30")
 
 
+def check_market(sec: "MarketConfig") -> None:
+    """📈 kronos_show shadow|cards, interval_s ≥ 30, horizon_min 15|30, samples 1-30, port 1024-65535."""
+    if sec.kronos_show not in ("shadow", "cards"):
+        raise ValueError("kronos_show must be shadow or cards")
+    if int(sec.interval_s) < 30:
+        raise ValueError("interval_s must be at least 30")
+    if int(sec.horizon_min) not in (15, 30):
+        raise ValueError("horizon_min must be 15 or 30")
+    if not (1 <= int(sec.samples) <= 30):
+        raise ValueError("samples must be 1 … 30")
+    if not (1024 <= int(sec.port) <= 65535):
+        raise ValueError("port must be 1024 … 65535")
+
+
 def check_real(sec: "RealConfig") -> None:
     """💰 confirm_time is HH:MM or "" (off); tt_sid is a deployment id, 0 = not set."""
     v = str(sec.confirm_time or "")
@@ -717,10 +739,10 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name in ("alerts", "ai", "options", "tips", "maintenance", "real"):
+        if name in ("alerts", "ai", "options", "tips", "maintenance", "real", "market"):
             try:
                 {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times, "tips": check_tips,
-                 "maintenance": check_maintenance, "real": check_real}[name](sec)
+                 "maintenance": check_maintenance, "real": check_real, "market": check_market}[name](sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))

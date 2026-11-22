@@ -190,6 +190,9 @@ export const tipsKiteRehearse = () => req('POST', '/api/tips/kite/dry/rehearse',
 export const tipsKiteDayCheck = () => req('POST', '/api/tips/kite/daycheck', {});     // the Kite day check now (3:35 PM by itself)
 export const tipsTestPost = (text) => req('POST', '/api/tips/test-post', { text });
 // 🤖 AI on Tips: the weekly channel profile (Research › Tips › Track); Write now is one per hour (429 before that)
+// 📈 the market read: the "Market now" panel (Research › Tips) and the candle model's scorecard (Settings › market / ai)
+export const getMarketNow = (index) => req('GET', `/api/market/now?index=${encodeURIComponent(index || 'NIFTY')}`);
+export const getMarketScorecard = () => req('GET', '/api/market/scorecard');
 export const getTipsWeekly = (week) => req('GET', `/api/tips/ai/weekly${week ? `?week=${encodeURIComponent(week)}` : ''}`);
 export const tipsWeeklyWrite = (week) => req('POST', '/api/tips/ai/weekly/write', week ? { week } : {});
 export const tipsLogin = (phone) => req('POST', '/api/tips/login', { phone });

@@ -51,7 +51,7 @@ def _count(table, db=None):
 def test_old_rows_move_young_stay_and_the_archive_gets_them():
     _seed()
     r = archive.run(AppConfig(), NOW)
-    assert r["moved_by_table"] == {"options_chain_snap": 3, "tips_quotes": 1, "tips_ticks": 0, "tips_ai": 0, "ai_jobs": 1, "job_runs": 1, "sent_alerts": 1}
+    assert r["moved_by_table"] == {"options_chain_snap": 3, "tips_quotes": 1, "tips_ticks": 0, "tips_ai": 0, "market_reads": 0, "ai_jobs": 1, "job_runs": 1, "sent_alerts": 1}
     assert r["moved"] == 7 and r["error"] is None and r["vacuumed"] is True
     with get_db() as conn:
         assert {x[0] for x in conn.execute("SELECT DISTINCT day FROM options_chain_snap")} == {NEW}

@@ -186,13 +186,16 @@ def _label_re(label: str) -> str:
     return r"[\s-]?".join(re.escape(w) for w in re.split(r"[\s-]+", label))
 
 
-def parse(kind: str, raw: str, src: str) -> dict:
+def parse(kind: str, raw: str, src: str, labels: Optional[tuple] = None, words: Optional[int] = None) -> dict:
     """{lines [{label, text}], dropped [text]}: a line must start with one of the kind's labels and every figure in it
-    must be in `src` (typed: a % stays a %, a ₹ a ₹); the words are capped; a broker's name drops the line."""
+    must be in `src` (typed: a % stays a %, a ₹ a ₹); the words are capped; a broker's name drops the line. `labels` /
+    `words` override the kind's own (📈 the market read's card, panel and entry-timing lines)."""
     from backend.ai import notes
     from backend.tips import kite_check as kc
     allowed = notes.typed_tokens(src)
-    labels = sorted(LABELS[kind], key=len, reverse=True)
+    order = tuple(labels or LABELS[kind])
+    cap = int(words or WORDS[kind])
+    labels = sorted(order, key=len, reverse=True)
     pat = re.compile(r"^\s*(?:[-*•]|\d+[.)])?\s*(?:\[?AI\]?\s*:?\s*)?\**\s*(" + "|".join(_label_re(x) for x in labels) +
                      r")\s*\**\s*[:\-–—]\s*(.+)$", re.I)
     got: dict = {}
@@ -208,13 +211,13 @@ def parse(kind: str, raw: str, src: str) -> dict:
         lab = next(x for x in labels if re.fullmatch(_label_re(x), m.group(1).strip(), re.I))
         text = notes.normalise_currency(m.group(2).strip().strip("*").strip())
         words = text.split()
-        if len(words) > WORDS[kind]:
-            text = " ".join(words[:WORDS[kind]]).rstrip(",;:") + "…"
+        if len(words) > cap:
+            text = " ".join(words[:cap]).rstrip(",;:") + "…"
         if lab in got or not text or not kc._figures_ok(text, allowed) or notes._blocked_word(text):
             dropped.append(t[:240])
             continue
         got[lab] = text[:400]
-    return {"lines": [{"label": x, "text": got[x]} for x in LABELS[kind] if x in got], "dropped": dropped}
+    return {"lines": [{"label": x, "text": got[x]} for x in order if x in got], "dropped": dropped}
 
 
 def _generate(config, kind: str, src: str, generate=None) -> tuple[str, Optional[str], Optional[int]]:
@@ -348,6 +351,9 @@ def review_input(h: dict, now: datetime) -> dict:
         lines.append(f'Follow-up {t12(x.get("at"))} "{x.get("text")}" · the app: {x.get("did") or x.get("action") or "noted"}'
                      + (f" · the day's low {pl.fmt(flo)} high {pl.fmt(fhi)} after it" if flo is not None else "")
                      + (f" · AI second opinion: {'agrees' if op['agrees'] else 'differs'} ({op['reads']})" if op else ""))
+    mkt = market_at_entry(h, entry_at)
+    if mkt:
+        lines.append(f"Market at entry: {mkt}")
     ch = f.get("channel_result")
     lines.append("Channel's result: " + (f"{ch['outcome']} at {pl.fmt(ch.get('exit_px'))}" + (f" ({t12(ch.get('at'))})" if ch.get("at") else "") if ch else "none posted"))
     nums = [f"entry {pl.fmt(k.get('entry_px'))}"]
@@ -362,6 +368,42 @@ def review_input(h: dict, now: datetime) -> dict:
         nums.append(f"channel {pl.fmt(ch.get('exit_px'))}" if ch.get("exit_px") is not None else f"channel {ch['outcome']}")
     return {"text": "\n".join(lines), "numbers": " · ".join(nums) + " · all from code", "dry": dry,
             "pnl": round(float(k.get("realised") or 0.0), 2), "exit_by": by, "title": short(h)}
+
+
+def market_at_entry(h: dict, entry_at: Optional[datetime]) -> Optional[str]:
+    """📈 The index trend at the entry (code, from the stored 1-minute candles up to the fill) and, when the cards gate
+    shows the model, its read at the fill with the version. None off the three indices / without candles."""
+    if entry_at is None:
+        return None
+    try:
+        from backend.market import candles as mcd
+        from backend.market import chart as mch
+        from backend.market import reads as mrd
+        from backend.market import view as mv
+        idx = mrd.hint_index(h)
+        if not idx:
+            return None
+        hm = entry_at.astimezone(IST).strftime("%H:%M")
+        bars = [b for b in mcd.index_bars(idx, 3, entry_at.date().isoformat()) if b["d"] < entry_at.date().isoformat() or b["t"] <= hm]
+        f = mch.summary(bars, idx) if bars else None
+        if not f:
+            return None
+        tr = f["trend"]
+        out = f"{idx} {tr['side']} · {'above' if tr.get('above_vwap') else 'below'} VWAP · {mv.align(tr['side'], mv.call_dir(h)) or 'flat'} the call"
+        cfg = None
+        try:
+            from backend.api import routes
+            cfg = routes._state.config if routes._state is not None else None
+        except Exception:
+            cfg = None
+        if cfg is not None and mrd.gate(cfg)["cards"]:
+            r = next((x for x in reversed(mrd.hint_reads(h["id"])) if (x.get("paths_json") or {}).get("why") == "fill"), None)
+            if r:
+                out += f" · candle model {mv.pct(r['p_up'])} up over {r['horizon']} min ({r['version']})"
+        return out
+    except Exception:
+        logger.exception("Market at entry failed")
+        return None
 
 
 def review_hint(config, h: dict, now: Optional[datetime] = None, notify: bool = True) -> Optional[int]:
@@ -560,9 +602,42 @@ def plan_sig(h: dict) -> str:
     return json.dumps([e.get("mode"), e.get("lo"), e.get("hi"), (plan.get("stop") or {}).get("value"), plan.get("targets")])
 
 
-def grade_input(h: dict, now: datetime) -> dict:
+GRADE_STEPS = ("D", "C", "B", "A")
+
+
+def market_input(config, h: dict, now: datetime) -> Optional[dict]:
+    """📈 with / against the market, by code (the market read's verdict: the index trend with the call and, only when
+    the cards gate shows the model, its vote); `applied` only when market.kronos_show is "cards" (and the gate passes):
+    in shadow it is stored, the grade is unchanged. None for a hint off the three indices or with no candles."""
+    try:
+        from backend.market import view as mv
+        cf = mv.card_facts(config, h, now)
+    except Exception:
+        logger.exception("Market input of the grade failed")
+        return None
+    if not cf or not cf["facts"]:
+        return None
+    tr = cf["facts"]["trend"]
+    al = {"supports the call": "with", "against the call": "against"}.get(cf["verdict"])
+    applied = bool(cf["gate"]["cards"]) and al is not None
+    return {"align": al, "verdict": cf["verdict"], "applied": applied, "mode": cf["gate"]["mode"],
+            "text": f"{cf['index']} {tr['side']} · {'above' if tr.get('above_vwap') else 'below'} VWAP · {cf['verdict']}"}
+
+
+def market_step(g: str, why: str, mk: Optional[dict]) -> tuple[str, str]:
+    """One step up (with) or down (against) at most, only when applied; never on "–" or a missing stop."""
+    if not mk or not mk.get("applied") or g not in GRADE_STEPS or why == "stop missing":
+        return g, why
+    i = GRADE_STEPS.index(g) + (1 if mk["align"] == "with" else -1)
+    g2 = GRADE_STEPS[max(0, min(len(GRADE_STEPS) - 1, i))]
+    return g2, why + (f" · {'one step up: with' if mk['align'] == 'with' else 'one step down: against'} the market" if g2 != g else "")
+
+
+def grade_input(h: dict, now: datetime, config=None) -> dict:
     rec, shp, words = record_like(h, now), shape(h), wording(h)
     g, why = grade_of(rec, shp, words)
+    mk = market_input(config, h, now) if config is not None else None
+    g, why = market_step(g, why, mk)
     rtxt = (f"{rec['label']}: {rec['calls']} call{'s' if rec['calls'] != 1 else ''} · T1 first {rec['t1_first']} · stop first {rec['stop_first']}"
             f" · no fill {rec['no_fill']} · avg {_r(rec['avg_r'])}" + (f" · won {rec['win_pct']:g} %" if rec.get("win_pct") is not None else "")
             + ("" if rec["enough"] else " · too few calls like this"))
@@ -581,10 +656,11 @@ def grade_input(h: dict, now: datetime) -> dict:
                       "Post: " + " / ".join(x.strip() for x in (h.get("raw") or "").split("\n") if x.strip())[:300],
                       f"Plan: entry {plan.get('entry_text') or '-'} · {plan.get('stop_text') or '-'} · {plan.get('targets_text') or '-'}"
                       + (f" · time stop {ampm(plan['time_stop'])}" if plan.get("time_stop") else ""),
-                      f"Record ({rec['days']} days, {rec['level']}): {rtxt}", f"Shape: {stxt}",
-                      f"Grade by code: {g} ({why})"])
+                      f"Record ({rec['days']} days, {rec['level']}): {rtxt}", f"Shape: {stxt}"]
+                     + ([f"Market (code): {mk['text']}" + ("" if mk["applied"] else " · not counted in the grade")] if mk else [])
+                     + [f"Grade by code: {g} ({why})"])
     return {"text": text, "grade": g, "why": why, "record": rec, "shape": shp, "wording": words, "record_text": rtxt,
-            "shape_text": stxt, "sig": plan_sig(h), "numbers": rtxt + " · " + stxt}
+            "shape_text": stxt, "sig": plan_sig(h), "numbers": rtxt + " · " + stxt, "market": mk}
 
 
 def grade_hint(config, h: dict, now: Optional[datetime] = None, notify: bool = True) -> Optional[int]:
@@ -600,7 +676,7 @@ def grade_hint(config, h: dict, now: Optional[datetime] = None, notify: bool = T
             return None                                 # re-graded once at most, never after the entry
         if (have[-1].get("input_json") or {}).get("sig") == plan_sig(h):
             return None                                 # the plan did not change
-    data = grade_input(h, now)
+    data = grade_input(h, now, config)
     rid = insert("grade", h["id"], now.date().isoformat(), data, now)
     enqueue(config, rid, "grade", f"tips_ai_grade:{h['id']}:{rid}", f"Call grade #{h['id']}", notify)
     return rid
@@ -840,7 +916,14 @@ def week_view(channel: str, mon: date) -> dict:
     tw = n["this_week"]
     v = lines_view(r) if r else {"state": "none", "lines": [], "text": "not written yet · Sunday 7:05 PM or Write now"}
     head = f"{tw['calls']} calls · T1 first {tw['t1_first']} · stop first {tw['stop_first']} · avg {_r(tw['avg_r'])}"
-    return {"channel": channel, "week": mon.isoformat(), "label": n["label"], "numbers": n, "ai": v, "headline": head,
+    model = None
+    try:                                                  # 📈 the candle model's hit rate on this channel's calls (a score, not a read)
+        from backend.market import reads as mrd
+        hr = mrd.channel_hit_rate(channel, mon.isoformat(), (mon + timedelta(days=7)).isoformat())
+        model = f"candle model on this channel's calls: {hr['pct']:g} % over {hr['n']} reads" if hr else None
+    except Exception:
+        logger.exception("Weekly model hit rate failed")
+    return {"channel": channel, "week": mon.isoformat(), "label": n["label"], "numbers": n, "ai": v, "headline": head, "model": model,
             "written": f"written {(_dt(r['at']) or _now()):%a} {t12(r['at'])}" if r and r["ok"] is not None else None}
 
 
@@ -944,7 +1027,8 @@ def card_view(config, h: dict) -> dict:
             v["text"] = "the local model is off · the grade stands by code"
         out["grade"] = {"grade": gr, "tone": GRADE_TONE.get(gr, ""), "why": d.get("why"), "at_label": t12(d.get("at") or g["at"]),
                         "record": d.get("record_text"), "shape": d.get("shape_text"), "level": (d.get("record") or {}).get("level"),
-                        "read": v, "regraded": len(rows("grade", h["id"])) > 1}
+                        "read": v, "regraded": len(rows("grade", h["id"])) > 1,
+                        "market": (f"market: {(d.get('market') or {}).get('align') or 'mixed'} · " + ("counted (one step at most)" if (d.get("market") or {}).get("applied") else "stored, not counted (shadow)")) if d.get("market") else None}
     r = latest("review", h["id"]) if on(config, "review") else None
     if r:
         d = r.get("input_json") or {}

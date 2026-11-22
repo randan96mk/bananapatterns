@@ -23,7 +23,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends tzdata libgl1 l
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
+# 📈 the candle model worker: torch from the CPU index (aarch64 / x86_64 CPU wheels; never the CUDA build), then the rest
+ARG TORCH_VERSION=2.15.0
+RUN pip install "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu
 RUN pip install -r requirements.txt
+# the Kronos-mini weights + tokenizer (~31 MB) baked in, so the container starts offline; the worker copies them to
+# data/ai/kronos at first run and keeps them there
+ENV BP_KRONOS_BAKED=/app/models/kronos HF_HUB_DISABLE_TELEMETRY=1
+RUN python -c "from huggingface_hub import snapshot_download as d; [d(r, local_dir='/app/models/kronos/' + r.split('/')[-1]) for r in ('NeoQuasar/Kronos-mini', 'NeoQuasar/Kronos-Tokenizer-2k')]"
 COPY backend/ backend/
 COPY config/ config/
 COPY run.py .

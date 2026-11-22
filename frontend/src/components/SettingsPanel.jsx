@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ampm, stamp } from '../timefmt';
-import { Head, Chip, Panel, Act } from './ui2';
+import { Head, Chip, Panel, Act, FixedTable, AiTag } from './ui2';
 import * as api from '../services/api';
 
 const HELP = {
@@ -180,7 +180,47 @@ const HELP_MAINT = {
   day: 'Weekday the archive runs (monday … sunday)',
   time: 'Time the archive runs on that day (24-hour HH:MM, IST); a missed run catches up later the same day',
 };
-const HELP_SEC = { tips: HELP_TIPS, maintenance: HELP_MAINT };
+// 📈 the market read (section-scoped: the market section's other keys are the market-health ones)
+const HELP_MARKET = {
+  kronos: '📈 The candle model (Kronos-mini, its own process on this server, 127.0.0.1 only) reads NIFTY, BANKNIFTY, SENSEX and the open Kite hints every interval; every read is stored and scored at 6:40 PM (true/false). Off = no candles fetched, the panel says off. It never touches an order',
+  kronos_show: '📈 "shadow" (default): the model\'s numbers are stored and scored but never shown beyond the hit-rate chip · "cards": shown on the cards and the panel only while NIFTY and BANKNIFTY 30-min direction are each ≥ 55 % over 100+ scored reads (the scorecard below); the grade then moves one step at most with / against the market',
+  interval_s: '📈 Seconds between index reads, 9:15 AM–3:30 PM on trading days (30 at least); a pass still running makes the next one skip, never queue up',
+  horizon_min: '📈 The horizon the panel and the cards headline: 15 or 30 minutes (both are computed and scored)',
+  samples: '📈 Sampled paths per read (1–30; 10 by default): more paths, steadier odds, a slower read',
+  port: '📈 The worker\'s port on 127.0.0.1 (1024–65535); if the worker is down the cards say "no model read" and nothing else changes',
+};
+const HELP_SEC = { tips: HELP_TIPS, maintenance: HELP_MAINT, market: HELP_MARKET };
+const pctC = (v) => (v == null ? '—' : `${Math.round(Number(v))} %`);
+const sinceC = (d) => { try { return new Date(`${d}T00:00:00+05:30`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }); } catch { return d || '—'; } };
+
+// 📈 the candle model's scorecard (Settings › market / ai): every read stored and scored at 6:40 PM; the model shows on
+// the cards only while this table earns it. Numbers are code; the read line is the local model's (AI tag).
+function Scorecard() {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => { api.getMarketScorecard().then(setD).catch((e) => setErr(e.message)); }, []);
+  const rows = (d?.rows || []).map((x) => ({ key: `${x.name}|${x.horizon}`, cells: [`${x.name} · ${x.horizon} min`, x.reads,
+    <span className={x.direction_pct == null ? '' : x.direction_pct >= 55 ? 'up' : x.direction_pct < 50 ? 'down' : ''}>{pctC(x.direction_pct)}</span>,
+    pctC(x.touch_pct), pctC(x.avg_conf), sinceC(x.since)] }));
+  const ai = d?.ai || {};
+  const g = d?.gate || {};
+  return <Panel className="mk-score" title="Candle model · scorecard" meta={g.mode || null}
+    right={<span className="muted">every read stored · scored at 6:40 PM · on the cards only while this table earns it</span>}>
+    <FixedTable cols={[{ h: 'index · horizon' }, { h: 'reads', w: 70, n: true }, { h: 'direction right', w: 120, n: true }, { h: 'stop-first calls right', w: 180, n: true, lo: true },
+      { h: 'avg confidence', w: 120, n: true, lo: true }, { h: 'since', w: 80 }]} rows={rows} empty={err || (d ? 'No reads scored yet: the first scoring runs at 6:40 PM after a session with reads.' : 'Loading…')} />
+    <div style={{ padding: '8px 14px', display: 'grid', gap: 8 }}>
+      <div className="tp-ai">
+        <div className="t"><AiTag title="the read line is the local model's; the numbers are code" /><b>What the scorecard says</b></div>
+        {(ai.lines || []).map((x, i) => <div key={i} className="l"><span className="lk">{x.label}</span><div><AiTag title="written by the local model" /> {x.text}</div></div>)}
+        {ai.state !== 'done' && <div className="l"><span className="lk">read</span><div className="dim"><AiTag title="the local model's read" /> {ai.state === 'empty' ? 'no usable read' : ai.text || 'written after the 6:40 PM scoring'}</div></div>}
+        <div className="l"><span className="lk">numbers</span><div className="dim">a read counts as right when the close at its horizon is on the side it gave more than half the paths · stop-first right when the level touched first is the one it gave the most paths · all from code</div></div>
+      </div>
+      <div className="mk-help">gate: <b>{g.cards ? 'model shown' : 'model not shown'}</b> · {g.why || '—'} · {d?.gate_rule || ''}</div>
+      <div className="mk-help" title={[HELP_MARKET.kronos, HELP_MARKET.kronos_show, HELP_MARKET.interval_s].join('\n')}>switches (Settings › market): <b>kronos</b> on/off (off: no candles fetched, no reads) · <b>kronos_show</b> shadow | cards (cards only when NIFTY and BANKNIFTY direction ≥ 55 % over 100+ reads; then the grade moves one step at most) · <b>interval_s</b> {d?.settings?.interval_s ?? 60} s between reads (a pass still running skips the next)</div>
+      <div className="mk-help">{d?.version || 'kronos-mini-v1'} · worker {d?.worker?.state || '—'} · a separate process on this server: if it is down the cards say "no model read" and nothing else changes</div>
+    </div>
+  </Panel>;
+}
 // text kept one entry per line (a textarea for a plain string)
 const MULTI = { tips: ['relay_to'] };
 
@@ -246,6 +286,7 @@ export default function SettingsPanel() {
           {changes.slice(0, 30).map((c, i) => <Act key={i} icon="⚙" text={<><b>{c.section}</b> · {c.what.join(' · ')}</>} meta={stamp(c.at)} />)}
         </Panel>
       </div>
+      {['market', 'ai'].includes(section) && <Scorecard />}
     </div>
   );
 }

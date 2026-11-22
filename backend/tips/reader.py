@@ -197,6 +197,12 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             from backend.tips import ai4                  # 🤖 the call grade (code) before any arming; never acts
             ai4.on_post(config, out)
             kite_after(config, client, out, push)
+            if out.get("kind") == "hint" and out.get("hint_id"):
+                try:                                      # 📈 the market read: queued AFTER the plan and any arm, never waited on
+                    from backend.market import reads as mr
+                    mr.queue_hint(config, out["hint_id"], "ingest")
+                except Exception:
+                    logger.exception("Market read not queued")
         return out
     channel = channel.lstrip("@").lower()
     posted = posted_at if isinstance(posted_at, datetime) else datetime.fromisoformat(str(posted_at))
