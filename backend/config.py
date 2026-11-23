@@ -576,8 +576,9 @@ RELAY_USER_RE = re.compile(r"@?[A-Za-z][A-Za-z0-9_]{3,31}")
 
 
 def split_relay(raw) -> list[str]:
-    """tips.relay_to → entries, each in one form: '@username', '+<digits>' (a phone, international form) or '<digits>'
-    (a numeric Telegram id). New lines and ';' separate. ValueError on an entry that is none of the three."""
+    """tips.relay_to → entries, each in one form: '@username', '+<digits>' (a phone, international form), '<digits>' (a
+    numeric Telegram id) or 'group: <name>' (a group or chat the account is in, by its title). New lines and ';' separate.
+    ValueError on an entry that is none of the four."""
     out = []
     for part in re.split(r"[;\n]+", str(raw or "")):
         part = part.strip()
@@ -590,10 +591,15 @@ def split_relay(raw) -> list[str]:
             e = "+" + digits
         elif re.fullmatch(r"-?\d{5,20}", part):
             e = part
+        elif re.match(r"(?i)^(group|chat)\s*:\s*\S", part):
+            title = re.sub(r"(?i)^(group|chat)\s*:\s*", "", part).strip()       # a group or chat by its title: "group: vijay and gagan"
+            if len(title) < 2:
+                raise ValueError(f"relay_to: {part!r} needs the group's name after 'group:'")
+            e = "group: " + title
         elif RELAY_USER_RE.fullmatch(part):
             e = "@" + part.lstrip("@")
         else:
-            raise ValueError(f"relay_to: {part!r} is not an @username, a phone (+91…) or a numeric id")
+            raise ValueError(f"relay_to: {part!r} is not an @username, a phone (+91…), a numeric id or 'group: <name>'")
         if e.lower() not in (x.lower() for x in out):
             out.append(e)
     return out

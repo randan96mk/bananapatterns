@@ -926,6 +926,10 @@ async def _relay_peer(client, entry: str):
     account's contacts; a numeric id the session has not seen yet is looked up after loading the dialogs once)."""
     if entry in _relay_peers:
         return _relay_peers[entry]
+    if entry.lower().startswith("group:"):
+        peer = await find_channel(client, entry.split(":", 1)[1].strip())       # a group / chat by its title among the account's chats
+        _relay_peers[entry] = peer
+        return peer
     if entry.lstrip("-").isdigit():
         try:
             peer = await client.get_entity(int(entry))
@@ -945,6 +949,8 @@ def relay_reason(exc: Exception) -> str:
         return "the channel restricts forwarding"
     if name == "FloodWaitError":
         return f"flood wait {int(getattr(exc, 'seconds', 0) or 0)} s · skipped"
+    if isinstance(exc, LookupError):
+        return "no group with that name among your chats (the name as Telegram shows it)"
     if name in ("UsernameNotOccupiedError", "UsernameInvalidError", "PeerIdInvalidError") or isinstance(exc, ValueError):
         return "unknown user (a phone number must be in your contacts)"
     return _reason(exc)

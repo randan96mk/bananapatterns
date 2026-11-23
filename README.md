@@ -1920,7 +1920,7 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
    An entry is a public channel's username, or for a private channel (no `t.me/` link) its title (whole, the start, or
    a part of it, any case, punctuation ignored) or numeric id: the reader finds it among the chats your account is in. A private channel
    has no public preview page, so the preview fallback skips it.
-4. **↗ Relay** (Settings › tips: `relay` on, `relay_to` one per line): every new channel post (not edits, the catch-up or imports) is forwarded as-is to each person, text and media, with Telegram's own "Forwarded from".
+4. **↗ Relay** (Settings › tips: `relay` on, `relay_to` one per line: `@username`, a phone in your contacts, a numeric id, or `group: <name>` for a group or chat you are in): every new channel post (not edits, the catch-up or imports) is forwarded as-is to each person or group, text and media, with Telegram's own "Forwarded from".
    It acts as **your own Telegram account** (the reader's session): the forwards go out as you, the moment the post arrives; the Tips header shows "↗ relay on · n people · k sent today".
    An entry is an `@username`, a numeric id, or a phone in international form (`+91…`), and a phone resolves only when it is in your contacts.
    A channel that restricts forwarding (protected content) refuses every forward; a failure is logged and you get one Telegram line per person per day.
