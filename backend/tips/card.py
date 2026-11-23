@@ -16,6 +16,7 @@ their kite JSON, tips_orders, the stored quotes and ticks; no quote call, no Kit
 from datetime import datetime
 from typing import Optional
 
+from backend.config import IST
 from backend.timefmt import ampm
 from backend.tips import book as bk
 from backend.tips import facts as fx
@@ -225,6 +226,17 @@ def _prev_quotes(h: dict) -> list[float]:
         return [r[0] for r in conn.execute("SELECT ltp FROM tips_quotes WHERE hint_id = ? AND ltp IS NOT NULL ORDER BY t DESC LIMIT 2", (h["id"],))]
 
 
+def _dt(v) -> Optional[datetime]:
+    """An ISO timestamp from the hint's kite record → aware datetime (IST), or None."""
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=IST)
+
+
 def now_tile(h: dict) -> Optional[dict]:
     """The big NOW tile: live (open on Kite: green / red against the fill, the tick's change, a pulse), at exit (closed:
     the exit fill, now the last price), or grey (armed / not entered: where the price sits against the entry). None when
@@ -240,8 +252,11 @@ def now_tile(h: dict) -> Optional[dict]:
         if ex is None:                                # no exit fill stored: the last price, never called the exit fill
             return {"state": "exit", "label": "now · after exit", "value": ltp, "value_text": pl.fmt(ltp), "tone": "", "pulse": False,
                     "sub": "last price · exit fill not stored"} if ltp is not None else None
-        return {"state": "exit", "label": "now · at exit", "value": ex, "value_text": pl.fmt(ex), "tone": "", "pulse": False,
-                "sub": f"exit fill{f' · now {pl.fmt(ltp)}' if ltp is not None else ''}"}
+        at = _dt(k.get("closed_at"))
+        # the exit fill and its time only: a "now" here lagged the legs' live price on 23 Nov (one payload, two reads),
+        # and after the exit the live price belongs to the legs, which keep it
+        return {"state": "exit", "label": "at exit", "value": ex, "value_text": pl.fmt(ex), "tone": "", "pulse": False,
+                "sub": f"exit fill{f' · {ampm(at)}' if at else ''}"}
     if ltp is None:
         return None
     if st == "entered" and k.get("entry_px") is not None:
