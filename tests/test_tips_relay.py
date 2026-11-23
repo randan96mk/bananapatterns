@@ -163,6 +163,9 @@ def test_each_entry_is_resolved_once_per_process():
 def test_settings_parse_the_three_entry_forms():
     assert split_relay("@friend_one\n+91 98765-43210; 123456789\nplain_name\n\n") == \
         ["@friend_one", "+919876543210", "123456789", "@plain_name"]
+    assert split_relay("group: vijay and gagan\nChat:Family 2") == ["group: vijay and gagan", "group: Family 2"]
+    with pytest.raises(ValueError):
+        split_relay("group:")
     c = AppConfig()
     out = c.update_section("tips", {"relay": "true", "relay_to": "@friend_one;+91 98765 43210\n-1001234567"})
     assert out["relay"] is True and out["relay_to"] == "@friend_one\n+919876543210\n-1001234567"
@@ -170,3 +173,29 @@ def test_settings_parse_the_three_entry_forms():
         c.update_section("tips", {"relay_to": "not a person!"})
     assert c.tips.relay_to == "@friend_one\n+919876543210\n-1001234567"   # rolled back
     assert AppConfig().tips.relay is False and AppConfig().tips.relay_to == ""
+
+
+def test_a_group_entry_resolves_by_title_among_the_dialogs(monkeypatch):
+    """"group: <name>" forwards to a group the account is in: resolved through the dialogs like a channel title."""
+    import asyncio
+    from types import SimpleNamespace
+    from backend.tips import reader as rd
+
+    class Tele:
+        def __init__(self):
+            self.forwards = []
+
+        async def iter_dialogs(self):
+            for t, i in (("Moltbot", 7), ("vijay and gagan", -1009001), ("GAGAN AND VIJAY", -1009002)):
+                yield SimpleNamespace(title=t, entity=SimpleNamespace(id=i, title=t))
+
+        async def get_entity(self, x):
+            raise AssertionError("a group entry never goes through get_entity")
+
+    rd._relay_peers.clear()
+    peer = asyncio.run(rd._relay_peer(Tele(), "group: vijay and gagan"))
+    assert peer.id == -1009001
+    assert rd._relay_peers["group: vijay and gagan"] is peer
+    with pytest.raises(LookupError):
+        asyncio.run(rd._relay_peer(Tele(), "group: nobody here"))
+    assert "no group with that name" in rd.relay_reason(LookupError("x"))
