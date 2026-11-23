@@ -2059,6 +2059,10 @@ never averages, never re-enters after a stop, and stops for the day at the loss 
   cancelled + `MARKET` exit; trail / TSL at cost → the stop to cost (never lower for a buy); "modify SL to N", "REST
   STOPLOSS 530", "REVISE SL 298", "sl now 298" → the stop's trigger; book part → half the open lots at market (one lot
   open: `kite_auto_book_part`). One Telegram line each. In click mode these stay informational. Never averages.
+- **A fresh call on a contract traded earlier today** (`kite_reenter`, default `new call`): once the earlier position is
+  closed, auto arms the new call like any other; a contract still armed or open under another hint is never entered
+  twice. `never` keeps one entry per contract per day (the second call waits for your click). Added 23 Nov after the
+  channel re-called a strike it had booked and the app waited.
 - **Follow-up precedence** (`plan.followup_action`, one post, the first that applies wins):
 
   | # | The post says | Action |

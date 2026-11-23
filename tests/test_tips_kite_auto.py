@@ -297,7 +297,7 @@ def test_auto_max_open_one_and_same_contract_and_kill_switch(pushed):
     h3 = post(c, w, s, 3, "14:07", CALL3.replace("306", "310"))["hint_id"]    # the same contract the same day
     c.tips.kite_auto_max_open = 5
     ka.auto_scan(c, s, t19("14:08"))
-    assert bk.load(h3)["kite"]["state"] == "none" and "already traded on Kite" in bk.load(h3)["kite"]["auto"]["why"]
+    assert bk.load(h3)["kite"]["state"] == "none" and "the same contract is armed or open" in bk.load(h3)["kite"]["auto"]["why"]
     ko.set_kill(c, s, True, t19("14:09"))
     assert bk.load(h2)["kite"]["state"] == "none"
     h4 = post(c, w, s, 4, "14:10", CALL1)["hint_id"]
@@ -628,3 +628,21 @@ def test_the_channel_closes_the_day_and_a_new_call_reopens_it(pushed):
     assert any("day re-opened by a new call" in e["text"] for e in bk.load(h2)["events"])
     ka.auto_scan(c, s, t19("14:06"))
     assert bk.load(h1)["kite"]["state"] in ko.WORKING                          # the earlier hint is armed again too
+
+
+def test_a_fresh_call_on_a_contract_closed_earlier_today_arms_by_default(pushed):
+    """23 Nov: the channel re-called a strike it had booked earlier and the app waited for a click."""
+    c, w, s = auto_setup(kite_auto_max_open=5)
+    w.prices.update({S82400: 300.0})
+    h1 = post(c, w, s, 1, "13:52", CALL3)["hint_id"]
+    tick(c, w, {S82400: 309.0}, "13:53")
+    assert bk.load(h1)["kite"]["state"] == "entered"
+    ko.exit_now(c, s, h1, now=t19("14:00"))                                  # closed by a click
+    tick(c, w, {S82400: 312.0}, "14:01")
+    assert bk.load(h1)["kite"]["state"] not in ko.WORKING
+    h2 = post(c, w, s, 2, "14:07", CALL3.replace("306", "310"))["hint_id"]  # a fresh call on the same contract
+    assert bk.load(h2)["kite"]["state"] in ko.WORKING                        # default "new call": armed again
+    ko.cancel(c, s, h2, "entry", now=t19("14:10"))                        # nothing working on the contract any more
+    c.tips.kite_reenter = "never"
+    h3 = post(c, w, s, 3, "14:20", CALL3.replace("306", "314"))["hint_id"]
+    assert bk.load(h3)["kite"]["state"] == "none" and "kite_reenter = never" in bk.load(h3)["kite"]["auto"]["why"]

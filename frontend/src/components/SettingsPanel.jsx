@@ -168,6 +168,7 @@ const HELP_TIPS = {
   kite_auto_max_open: 'Auto: Kite hints open (armed or entered) at once; a second qualifying hint waits and is armed when the first closes',
   vision: '📷 Read the channel\'s screenshots on this server (RapidOCR; nothing leaves the server): the strike, index, expiry and price shown, checked against the text (true/false; off = no download, no read). Images are deleted after 2 days; the read text stays. Posts older than 2 days are never read',
   vision_mode: '📷 "report" (a strike mismatch between the text and the screenshot is shown on the card, pushed and on Home) or "check" (also: auto does not arm the hint and an armed Kite entry is cancelled until you pick the strike)',
+  kite_reenter: 'A fresh call on a contract already traded today: "new call" (default) = auto arms it once the earlier position is closed · "never" = one entry per contract per day (a second call waits for your click). A contract still armed or open under another hint is never entered twice',
   kite_auto_book_part: 'Auto, "book part" with ONE lot open: "channel" = book it at market (the channel\'s "you can book now") · "hold" = keep it for the target and move the stop to cost',
   relay: '↗ Forward every new channel post from your own Telegram account to the people in relay_to (true/false)',
   relay_to: 'forwards go out as you, the moment a post arrives · exactly as posted · @username, phone or id, one per line · a phone number must be in your contacts',

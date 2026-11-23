@@ -122,15 +122,22 @@ def auto_lots(config, h: dict) -> int:
     return max(1, min(ko.default_lots(config, h), int(config.tips.kite_max_lots)))
 
 
-def _same_contract_today(h: dict, day: str) -> bool:
-    with get_db() as conn:
-        rows = conn.execute("SELECT o.hint_id FROM tips_orders o JOIN tips_hints t ON t.id = o.hint_id WHERE o.day = ? AND o.leg = 'entry' "
-                            "AND o.status NOT IN ('rejected', 'failed', 'voided', 'cancelled') AND t.tradingsymbol = ? AND o.hint_id != ?",
-                            (day, h.get("tradingsymbol"), h["id"])).fetchall()
-    if rows:
-        return True
-    return any(x["id"] != h["id"] and x.get("tradingsymbol") == h.get("tradingsymbol") and ko.kstate(x)["state"] in ko.WORKING
-               for x in bk.rows("json_extract(kite, '$.state') IN ('armed', 'armed_watch', 'armed_wait', 'entered')"))
+def _same_contract_today(h: dict, day: str, config=None) -> Optional[str]:
+    """Why a second hint on the same contract may not arm: another hint on it is still armed / open (always), or — with
+    tips.kite_reenter = "never" — any entry on it today at all. A fresh call after the earlier position closed arms by default
+    (23 Nov: the channel re-called a strike it had already booked; the app waited for a click)."""
+    sym = h.get("tradingsymbol")
+    if any(x["id"] != h["id"] and x.get("tradingsymbol") == sym and ko.kstate(x)["state"] in ko.WORKING
+           for x in bk.rows("json_extract(kite, '$.state') IN ('armed', 'armed_watch', 'armed_wait', 'entered')")):
+        return "already on Kite (the same contract is armed or open under another hint)"
+    if config is not None and getattr(config.tips, "kite_reenter", "new call") == "never":
+        with get_db() as conn:
+            rows = conn.execute("SELECT o.hint_id FROM tips_orders o JOIN tips_hints t ON t.id = o.hint_id WHERE o.day = ? AND o.leg = 'entry' "
+                                "AND o.status NOT IN ('rejected', 'failed', 'voided', 'cancelled') AND t.tradingsymbol = ? AND o.hint_id != ?",
+                                (day, sym, h["id"])).fetchall()
+        if rows:
+            return "already traded on Kite (the same contract today · kite_reenter = never)"
+    return None
 
 
 def open_count(exclude: Optional[int] = None) -> int:
@@ -188,8 +195,9 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
     rearm = bool((k.get("auto") or {}).get("rearm"))
     if [r for r in ko.rows_for(h["id"]) if r["leg"] == "entry" and r["status"] != "voided" and not (rearm and r["status"] == "cancelled")]:
         return None                                      # one Kite entry per hint, never re-entered
-    if _same_contract_today(h, now.date().isoformat()):
-        _note(config, h, "one", "already traded on Kite (the same contract today)", now, notify)
+    same = _same_contract_today(h, now.date().isoformat(), config)
+    if same:
+        _note(config, h, "one", same, now, notify)
         return None
     mx = int(getattr(config.tips, "kite_auto_max_open", 1) or 1)
     if open_count(h["id"]) >= mx:
