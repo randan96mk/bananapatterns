@@ -20,6 +20,7 @@ logger = setup_logger("tips")
 
 TRADE_WORDS = re.compile(r"\b(buy|sell|ce|pe|sl|target|targets|tgt|tg|exit|book|booked|booking|short|long|cmp|active|activated|triggered|tsl|npnl|hit|done|"
                          r"trail|trailing|avoid|entry|stop\s*loss|stoploss|cost)\b", re.I)
+SIZE_WORDS = re.compile(r"(?<![\d.])\d{1,2}\s*(?:-\s*\d{1,2}\s*)?lots?\b", re.I)
 LINK = re.compile(r"https?://\S+|t\.me/\S+|www\.\S+|bit\.ly/\S+", re.I)
 PROMO = re.compile(r"guidelines|disclaimer|not a recommendation|sebi|join (my|our|the)|subscribe|mentorship|course|webinar|"
                    r"enrol|enroll|premium (group|members|channel)|whatsapp|instagram|youtube|josh talks|feedbacks?\b|"
@@ -29,6 +30,7 @@ FOLLOW_CODE = re.compile(r"\b(sl|stop\s*loss)\b.*\b(hit|modif|chang|trail)|\b(ta
                          r"\b(sl|stop\s*loss|stoploss)\s*[:\-]?\s*\d|\b(tgt|target|tg)s?\s*[:\-]?\s*\d{2,}|\badd more\b|\bcentury\b|\bdone\b|"
                          r"\b\d+(\.\d+)?\s*(\+|to\b)|^\s*\d+(\.\d+)?\s*\W*$|"
                          r"\bwait\b|\bpart(ly)?\b|"
+                         r"\badd\s+(?:\d+\s*(?:lots?\s*)?)?more\b|\badd\s+\d+\s*lots?\b|\b\d{1,2}\s*(?:-\s*\d{1,2}\s*)?lots?\b|"   # 📏 23 Nov: adds / sizes
                          r"\b(rest|revise|revised)\s*(sl|stop\s*loss|stoploss)\b|\b(t?sl|stop\s*loss|stoploss)\s*(now|gone)\b", re.I | re.S)
 SYSTEM = ("You sort posts from a Telegram trading channel. Reply with JSON only: {\"kind\": \"hint\" | \"follow_up\" | "
           "\"chatter\", \"hint_id\": <one of the open hint ids or null>}. hint = a NEW trade call (buy/sell an option, future "
@@ -60,6 +62,8 @@ def code_kind(text: str, has_media: bool, open_levels: Optional[list] = None) ->
     if PROMO.search(t) and not TRADE_WORDS.search(t) and not re.search(r"\d{3,}", t):
         return "promo"
     if not re.search(r"\d{3,}", bare) and not TRADE_WORDS.search(bare):
+        if open_levels and SIZE_WORDS.search(bare):              # 📏 "2-2 lots" / "2 lots here": the size of an open call
+            return None
         levels = [x for x in (open_levels or []) if x]
         if levels and any(any(0.5 * lv <= n <= 2.0 * lv for lv in levels) for n in numbers(bare)):
             return None

@@ -123,7 +123,7 @@ def test_click_place_all_rests_a_stop_entry_fills_in_the_sim_then_sl_and_t1(push
     r = tick(c, w, {S82300: 340.0}, "13:55")
     assert r["lines"] == [] and bk.load(hid)["kite"]["state"] == "armed"         # under the trigger: still resting
     r = tick(c, w, {S82300: 372.0}, "13:58")
-    assert r["lines"][0] == "⚡ Kite DRY · #1 entry filled 370 ×20 · SL 200 placed · T1 500 watched by the app"
+    assert r["lines"][0] == "⚡ Kite DRY · #1 entry filled 370 ×20 (1 lot) · SL 200 placed · T1 500 watched by the app"
     assert ko.entries_today(D19.isoformat(), dry=True) == 1
     k = bk.load(hid)["kite"]
     assert k["legs"]["stop"]["trigger"] == 200 and "t1" not in k["legs"] and k["check"]["ok"]
@@ -157,7 +157,7 @@ def test_zone_rests_as_a_limit_at_its_top_and_fills(pushed):
     e = ko.rows_for(hid)[0]
     assert (e["order_type"], e["price"], e["status"]) == ("LIMIT", 540, "placed")
     r = tick(c, w, {S82200: 538.0}, "12:55")
-    assert r["lines"][0].startswith("⚡ Kite DRY · #1 entry filled 540 ×20 · SL 480 placed · T1 600 watched by the app")
+    assert r["lines"][0].startswith("⚡ Kite DRY · #1 entry filled 540 ×20 (1 lot) · SL 480 placed · T1 600 watched by the app")
 
 
 def test_spot_watch_arms_and_buys_at_market_on_the_index_cross(pushed):
@@ -180,7 +180,7 @@ def test_spot_watch_arms_and_buys_at_market_on_the_index_cross(pushed):
     rows = ko.rows_for(hid)
     assert rows[0]["order_type"] == "MARKET" and rows[0]["by"] == "dry" and rows[0]["filled_px"] == 318.0
     assert any("entry sent BUY 20 MARKET · SENSEX 82,415 ≥ 82,400" in p for p in pushed)
-    assert any(ln.startswith("⚡ Kite DRY · #1 entry filled 318 ×20 · SL 200") for ln in r["lines"])
+    assert any(ln.startswith("⚡ Kite DRY · #1 entry filled 318 ×20 (1 lot) · SL 200") for ln in r["lines"])
 
 
 def test_armed_wait_holds_until_active_and_send_now_overrides(pushed):
@@ -255,7 +255,7 @@ def test_auto_arms_a_placeable_hint_with_one_telegram_line(pushed):
     assert k["state"] == "armed" and k["by"] == "auto" and k["arm"]["kind"] == "slm" and k["auto_rest"]
     assert ko.rows_for(r["hint_id"])[0]["order_type"] == "SL"            # NOT gated by "WAIT FOR ACTIVATION"
     line = [p for p in pushed if "armed" in p]
-    assert line == ["🤖 Kite AUTO DRY · #1 armed · BUY 20 SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
+    assert line == ["🤖 Kite AUTO DRY · #1 armed · BUY 1 lot · 20 qty SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
     v = tr.hint_view(bk.load(r["hint_id"]), config=c)["kite"]
     assert v["auto"] == {"state": "armed", "text": "auto · armed"}
 
@@ -297,7 +297,7 @@ def test_auto_max_open_one_and_same_contract_and_kill_switch(pushed):
     h3 = post(c, w, s, 3, "14:07", CALL3.replace("306", "310"))["hint_id"]    # the same contract the same day
     c.tips.kite_auto_max_open = 5
     ka.auto_scan(c, s, t19("14:08"))
-    assert bk.load(h3)["kite"]["state"] == "none" and "already traded on Kite" in bk.load(h3)["kite"]["auto"]["why"]
+    assert bk.load(h3)["kite"]["state"] == "none" and "the same contract is armed or open" in bk.load(h3)["kite"]["auto"]["why"]
     ko.set_kill(c, s, True, t19("14:09"))
     assert bk.load(h2)["kite"]["state"] == "none"
     h4 = post(c, w, s, 4, "14:10", CALL1)["hint_id"]
@@ -628,3 +628,21 @@ def test_the_channel_closes_the_day_and_a_new_call_reopens_it(pushed):
     assert any("day re-opened by a new call" in e["text"] for e in bk.load(h2)["events"])
     ka.auto_scan(c, s, t19("14:06"))
     assert bk.load(h1)["kite"]["state"] in ko.WORKING                          # the earlier hint is armed again too
+
+
+def test_a_fresh_call_on_a_contract_closed_earlier_today_arms_by_default(pushed):
+    """23 Nov: the channel re-called a strike it had booked earlier and the app waited for a click."""
+    c, w, s = auto_setup(kite_auto_max_open=5)
+    w.prices.update({S82400: 300.0})
+    h1 = post(c, w, s, 1, "13:52", CALL3)["hint_id"]
+    tick(c, w, {S82400: 309.0}, "13:53")
+    assert bk.load(h1)["kite"]["state"] == "entered"
+    ko.exit_now(c, s, h1, now=t19("14:00"))                                  # closed by a click
+    tick(c, w, {S82400: 312.0}, "14:01")
+    assert bk.load(h1)["kite"]["state"] not in ko.WORKING
+    h2 = post(c, w, s, 2, "14:07", CALL3.replace("306", "310"))["hint_id"]  # a fresh call on the same contract
+    assert bk.load(h2)["kite"]["state"] in ko.WORKING                        # default "new call": armed again
+    ko.cancel(c, s, h2, "entry", now=t19("14:10"))                        # nothing working on the contract any more
+    c.tips.kite_reenter = "never"
+    h3 = post(c, w, s, 3, "14:20", CALL3.replace("306", "314"))["hint_id"]
+    assert bk.load(h3)["kite"]["state"] == "none" and "kite_reenter = never" in bk.load(h3)["kite"]["auto"]["why"]

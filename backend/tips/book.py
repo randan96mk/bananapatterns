@@ -18,10 +18,10 @@ from backend.tips import plan as pl
 
 logger = setup_logger("tips")
 
-JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite", "shot", "facts")
+JSON_COLS = ("entry", "stop", "targets", "size_hint", "decoded", "plan", "events", "run", "pos", "score", "kite", "shot", "facts", "adds")
 SAVE_COLS = ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "tradingsymbol", "exchange",
              "lot_size", "entry", "stop", "targets", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
-             "lots", "entry_px", "exit_px", "pnl", "events", "tracked", "untracked_why", "run", "pos", "score")
+             "lots", "entry_px", "exit_px", "pnl", "events", "tracked", "untracked_why", "run", "pos", "score", "adds")
 # `kite` (the hint's Kite legs) is loaded with the hint but written only by backend/tips/kite_orders.py (its own UPDATE), so
 # the quotes poll saving a hint never overwrites a leg the order sync just wrote. `shot` (📷 the screenshot's facts) the same:
 # written only by backend/tips/vision.py's save_shot.
@@ -310,7 +310,8 @@ def last_ltp(h: dict) -> Optional[float]:
 
 
 def size_for(h: dict, config, lots: Optional[float] = None, rupees: Optional[float] = None, ltp: Optional[float] = None) -> tuple[int, str]:
-    """(lots, where the size came from): what you give > the post's lots / qty > tips.rupees (rupees mode) > tips.lots."""
+    """(lots, where the size came from): what you give > tips.kite_size_mode fixed (tips.lots) / risk (the risk per trade
+    at the stop) > the post's lots / qty > tips.rupees (rupees mode) > tips.lots."""
     lot = int(h.get("lot_size") or 0) or 1
     if lots is not None:
         if float(lots) < 1 or float(lots) != int(lots):
@@ -322,6 +323,14 @@ def size_for(h: dict, config, lots: Optional[float] = None, rupees: Optional[flo
         if not ltp:
             raise TipsError(409, "no quote yet: give lots instead")
         return max(1, int(float(rupees) // (ltp * lot))), "rupees"
+    mode = str(getattr(config.tips, "kite_size_mode", "post") or "post")   # 📏 the same mode as the Kite orders
+    if mode == "fixed":
+        return int(config.tips.lots), "fixed"
+    if mode == "risk":
+        from backend.tips import sizing
+        sz = sizing.size(config, h, ltp)
+        if sz["src"] == "risk":
+            return int(sz["lots"]), "risk"
     sh = h.get("size_hint") or {}
     if sh.get("lots"):
         return int(sh["lots"]), "post"

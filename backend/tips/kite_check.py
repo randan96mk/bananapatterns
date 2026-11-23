@@ -108,10 +108,10 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
             red(f"order {r.get('order_id')} went out on {r['tradingsymbol']}, the hint is {ts}", "exit on Kite now")
     eside, xside = ko.entry_side(h), ko.exit_side(h)
     lot = int(h.get("lot_size") or 0) or 1
-    lots = int(k.get("lots") or 0)
+    lots = int(k.get("entry_lots") or k.get("lots") or 0)        # 📏 the first entry's lots (an add counts on its own row)
     ents = [r for r in rows if r["leg"] == "entry" and r["status"] not in ("rejected", "failed", "cancelled")]
     for r in rows:
-        want = eside if r["leg"] == "entry" else xside
+        want = eside if r["leg"] in ("entry", "add") else xside
         if r.get("side") and r["side"] != want and r["status"] not in ("rejected", "failed"):
             red(f"{ko.LEG_NAMES.get(r['leg'], r['leg']).lower()} is a {r['side']} (should be {want})",
                 "exit on Kite now" if r["leg"] == "entry" else f"cancel the {ko.LEG_NAMES.get(r['leg'], r['leg']).lower()}")

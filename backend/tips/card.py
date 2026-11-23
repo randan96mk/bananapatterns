@@ -152,6 +152,7 @@ def pnl_strip(config, h: dict, f: Optional[dict], now: datetime, day: Optional[d
         out.update(state="open", label=f"open P&L · {lots} lot{'s' if lots != 1 else ''} · {q_open} qty", pnl=pnl, open=pnl,
                    pnl_text=bk.inr(pnl, sign=True) if pnl is not None else "—", pct=round(pct, 1) if pct is not None else None,
                    pct_text=pct_text(pct), time_k="in trade", time_v=dur((now - ent).total_seconds()) if ent else "—", time_sub=left)
+        out.update(parts(h, k, lot))
     else:
         pnl = round(float(k.get("realised") or 0.0), 2)
         pct = pnl / (epx * qty) * 100 if epx and qty else None
@@ -168,6 +169,29 @@ def pnl_strip(config, h: dict, f: Optional[dict], now: datetime, day: Optional[d
     out["net"] = net
     out["net_text"] = f"≈ {bk.inr(net, sign=True)}" if net is not None else "—"
     out["tone"] = "up" if (pnl or 0) > 0 else "down" if (pnl or 0) < 0 else ""
+    return out
+
+
+def parts(h: dict, k: dict, lot: int) -> dict:
+    """📏 An open position after a part is booked / an add filled: "booked so far +₹1,800 · 1 lot at 500", "rest 2 lots ·
+    60 qty · stop 440", "avg 687.5 · 4 lots" (from the order rows and the kite JSON; {} when none applies)."""
+    from backend.tips import kite_orders as ko
+    out: dict = {}
+    q_open = int(k.get("qty_open") or 0)
+    ad = k.get("add") if isinstance(k.get("add"), dict) else None
+    if ad and ad.get("state") == "filled":
+        out["avg_text"] = f"avg {pl.fmt(k.get('entry_px'))} · {int(k.get('qty') or 0) // lot} lots"
+    if float(k.get("realised") or 0.0) and q_open < int(k.get("qty") or 0):
+        ex = [r for r in ko.rows_for(h["id"]) if r["leg"] in ("exit", "stop", "t1", "t2") and r["status"] == "complete" and r.get("filled_px") is not None]
+        if ex:
+            q = sum(int(r.get("filled_qty") or r["qty"] or 0) for r in ex)
+            px = sum(float(r["filled_px"]) * int(r.get("filled_qty") or r["qty"] or 0) for r in ex) / q if q else None
+            n = q // lot
+            out["booked_text"] = f"booked so far {bk.inr(float(k['realised']), sign=True)} · {n} lot{'s' if n != 1 else ''} at {pl.fmt(round(px, 2))}"
+        rl = q_open // lot
+        st = (k.get("legs") or {}).get("stop") or {}
+        stop = st.get("trigger") if st.get("status") in ko.LIVE else k.get("stop_px")
+        out["rest_text"] = f"rest {rl} lot{'s' if rl != 1 else ''} · {q_open} qty" + (f" · stop {pl.fmt(stop)}" if stop is not None else "")
     return out
 
 

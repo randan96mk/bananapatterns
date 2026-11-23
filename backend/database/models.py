@@ -1,6 +1,7 @@
 """SQLite (WAL) schema and data-access helpers."""
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -422,7 +423,7 @@ CREATE INDEX IF NOT EXISTS idx_tips_instr_name ON tips_instruments(name, as_of);
 -- DRY-n, the simulator) end 'voided' when the owner clears the dry run; the connection test's row is hint 0, leg 'test'.
 CREATE TABLE IF NOT EXISTS tips_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NOT NULL,
-    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 'exit', 'test')), side TEXT, qty INTEGER, order_type TEXT,
+    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 'exit', 'test', 'add')), side TEXT, qty INTEGER, order_type TEXT,
     price REAL, "trigger" REAL, status TEXT NOT NULL DEFAULT 'placed'
         CHECK(status IN ('placed', 'open', 'complete', 'rejected', 'cancelled', 'failed', 'voided')),
     order_id TEXT, filled_px REAL, filled_qty INTEGER, placed_at TEXT, updated_at TEXT,
@@ -532,6 +533,7 @@ def init_db(path: Optional[str] = None) -> None:
         _add_column(conn, "guard_positions", "source", "TEXT NOT NULL DEFAULT 'sync'")   # sync / manual (kite: removed)
         _migrate_ai_notes(conn)
         _add_column(conn, "tips_orders", "tradingsymbol", "TEXT")    # ⚡ PR C: the contract each order went out on (the order check)
+        _migrate_tips_orders_add(conn)                               # 📏 leg 'add' (the channel's one add, opt-in)
         _add_column(conn, "market_reads", "book", "TEXT NULL")       # 📈 "real": a read on a Real position (NULL: Tips / index rows)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_market_reads_book ON market_reads(book, interval, symbol, at)")
         _drop_track_record(conn)
@@ -730,6 +732,28 @@ def _migrate_tips_orders(conn) -> bool:
     return True
 
 
+def _migrate_tips_orders_add(conn) -> bool:
+    """📏 Tips sizing: tips_orders' leg CHECK gains 'add'. SQLite cannot change a CHECK in place: the table is renamed,
+    created again from the schema, every row copied across (tradingsymbol included) and the old one dropped only when
+    the row counts match. Nothing is lost; runs once."""
+    r = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tips_orders'").fetchone()
+    if not r or "'add'" in (r[0] or ""):
+        return False
+    conn.execute("DROP INDEX IF EXISTS idx_tips_orders_day")
+    conn.execute("DROP INDEX IF EXISTS idx_tips_orders_hint")
+    conn.execute("ALTER TABLE tips_orders RENAME TO tips_orders_pr_c")
+    m = re.search(r"CREATE TABLE IF NOT EXISTS tips_orders \(.*?\);\n(?:CREATE INDEX[^\n]*tips_orders[^\n]*\n)*", SCHEMA, re.S)
+    conn.executescript(m.group(0))
+    _add_column(conn, "tips_orders", "tradingsymbol", "TEXT")
+    cols = TIPS_ORDER_COLS + ", tradingsymbol"
+    conn.execute(f"INSERT INTO tips_orders ({cols}) SELECT {cols} FROM tips_orders_pr_c")
+    a = conn.execute("SELECT COUNT(*) FROM tips_orders").fetchone()[0]
+    b = conn.execute("SELECT COUNT(*) FROM tips_orders_pr_c").fetchone()[0]
+    if a == b:
+        conn.execute("DROP TABLE tips_orders_pr_c")
+    return True
+
+
 def _copy_tips_orders(conn) -> None:
     conn.execute(f"INSERT INTO tips_orders ({TIPS_ORDER_COLS}) SELECT {TIPS_ORDER_COLS} FROM tips_orders_pr_a")
     conn.execute("DROP TABLE tips_orders_pr_a")
@@ -773,6 +797,7 @@ def _migrate_ai_notes(conn) -> None:
     _add_column(conn, "tips_posts", "media_path", "TEXT")         # 📷 the downloaded screenshot (data/tips_media/…; the file goes after 2 days)
     _add_column(conn, "tips_posts", "ocr", "TEXT")                # 📷 the OCR read (JSON: lines + facts + ms + engine + error; kept forever)
     _add_column(conn, "tips_hints", "shot", "TEXT")               # 📷 the hint's screenshot facts / mismatch (JSON)
+    _add_column(conn, "tips_hints", "adds", "TEXT")               # 📏 the call's own add ("ADD MORE NEAR 125"; JSON list, logged only by default)
     _add_column(conn, "tips_hints", "facts", "TEXT")              # 💡 the trade facts (JSON; backend/tips/facts.py, its own UPDATE)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
                  "WHERE source_key IS NOT NULL")

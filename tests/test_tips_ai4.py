@@ -244,7 +244,7 @@ def test_auto_ignores_the_grade_arming_identical_with_grade_d(pushed, queued, mo
     k = bk.load(r["hint_id"])["kite"]
     assert k["state"] == "armed" and k["by"] == "auto" and ko.rows_for(r["hint_id"])[0]["order_type"] == "SL"
     assert [p for p in pushed if "armed" in p] == [
-        "🤖 Kite AUTO DRY · #1 armed · BUY 20 SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
+        "🤖 Kite AUTO DRY · #1 armed · BUY 1 lot · 20 qty SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
     src = (ROOT / "backend/tips/kite_auto.py").read_text() + (ROOT / "backend/tips/kite_orders.py").read_text()
     assert "grade" not in src.replace("upgrade", "")                                         # the arming code never reads it
 

@@ -2205,7 +2205,7 @@ class TipsKiteAct(BaseModel):
     to: Optional[Union[float, str]] = None
 
 
-KITE_ACTIONS = ("entry", "stop", "all", "rest", "exit", "cancel", "modify_stop", "send_now")      # targets: watched by the app, never placed
+KITE_ACTIONS = ("entry", "stop", "all", "rest", "exit", "cancel", "modify_stop", "send_now", "add")      # targets: watched by the app, never placed
 
 
 @router.get("/tips/kite")
@@ -2305,6 +2305,8 @@ def tips_kite_action(hid: int, action: str, req: Optional[TipsKiteAct] = None):
             h = ko.cancel(c, cl, hid, req.leg or "")
         elif action == "send_now":
             h = ko.send_now(c, cl, hid)
+        elif action == "add":                        # 📏 the channel's one add (tips.kite_follow_adds on), your click
+            h = ko.place_add(c, cl, hid)
         else:
             if req.to is None:
                 raise HTTPException(400, 'modify_stop needs {to: price | "cost"}')
