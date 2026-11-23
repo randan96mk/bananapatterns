@@ -319,7 +319,7 @@ def test_backfill_close_facts_from_the_order_rows_idempotent(ltp):
     assert s["label"] == "closed · your exit 10:51 AM" and s["time_v"] == "53 min"
     assert s["channel"] == {"text": "T1 at 271.05", "left": 1527.5, "note": "left ₹1,528", "tone": "down"}   # the record's call
     t = cd.now_tile(h)
-    assert t["value"] == 247.55 and t["sub"] == "exit fill · now 271.05"
+    assert t["value"] == 247.55 and t["label"] == "at exit" and t["sub"] == "exit fill · 10:51 AM"   # no "now" after the exit: the legs keep it
     assert bk.kite_taken_text(h) == "taken by auto on Kite"
     row = cd.facts_row(h, fx.for_hint(h, T0 + timedelta(hours=3)))
     assert row[0]["v"] == "0 min 32 s" and row[-1]["v"] == "you · 10:51 AM" and row[2]["v"] == "—"   # no ticks: "—"
