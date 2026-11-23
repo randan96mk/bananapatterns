@@ -144,6 +144,7 @@ def build(h: dict, cfg, posted: datetime) -> dict:
     return {"ok": ok, "why": why, "side": side, "entry": e, "wait": wait, "stop": st, "targets": tg,
             "open_ended": bool(h.get("open_ended")), "partial_at_t1": partial, "trail_to_cost": bool(cfg.trail_to_cost_after_t1),
             "time_stop": ts, "hold_to_expiry": hold, "day": day.isoformat(), "queued": queued, "expiry": h.get("expiry"),
+            "expiry_kind": "monthly" if h.get("expiry_src") == "series" else None, "adds": h.get("adds") or [],
             "exchange": exch, "opt_type": h.get("opt_type"), "needs_activation": needs_act,
             "level_kind": e.get("level_kind") if e.get("mode") not in (None, "market") else None, "entry_text": entry_text(e), "stop_text": stop_text(st), "targets_text": targets_text(tg, bool(h.get("open_ended"))),
             "text": " · ".join(lines), "lines": lines}
@@ -356,12 +357,49 @@ STOP_RES = (
     REST_STOP_RE,
 )
 EXIT_RE = re.compile(r"\b(exit|exited|close (it|all)|book\s*(all|full|fully|everything|entire|complete|profits?(\s*fully)?)|"
+                     r"book\s*(?:at\s*)?\d+(?:\.\d+)?\s*(?:full|fully)|"            # "Der can book 156 full" (23 Nov): the whole position
                      r"square\s*off|cost to cost|exit near cost)\b")
+# 📏 the channel's add: "ADD MORE NEAR 125" · "Add 2 lots near 660 if comes after activation" · "we will add 2 more near 125"
+ADD_LEVEL_RE = re.compile(r"\badd\s+(?:(\d+)\s*(?:-\s*\d+\s*)?(?:lots?\s*)?(?:more\s*)?|more\s*(?:(\d+)\s*lots?\s*)?)"
+                          r"(?:if\s+(?:it\s+)?comes?\s+)?(?:near|at|around|below|@)\s*(\d+(?:\.\d+)?)")
+ADD_ANY_RE = re.compile(r"^\W*add\b|\badd\s+(?:more|\d+\s*(?:-\s*\d+\s*)?(?:lots?|more))\b")
+ADD_COND_RE = re.compile(r"\bafter\s+(?:the\s+)?(?:breakout\s+)?activation\b|\bif\s+(?:it\s+)?comes?\s+after\s+activation\b")
+PAIR_LOTS_RE = re.compile(r"(?<![\d.])(\d{1,2})\s*-\s*\1\s*lots?\b")            # "2-2 lots" / "3-3 lots"
+SIZE_RE = re.compile(r"^\W*(?:buy\s+)?(\d{1,2})\s*(?:-\s*\d{1,2}\s*)?lots?\b(?:\s*(?:buy\s+)?here\b)?")
 PART_RE = re.compile(r"\b(part(ly|ial)?\s*book|book\s*(part|partly|partial|half)|half\s*book)")
 BOOK_RE = re.compile(r"\bbook(ing)?\b")             # "book" alone ("defensive traders book", "book it", "book now"): a part
 DAY_CLOSE_RE = re.compile(r"\b(?:temporarily\s+)?clos(?:e|ing)\s+(?:the\s+|for\s+the\s+)?day\b|\bdone\s+for\s+(?:the\s+)?(?:day|today)\b|"
                           r"\bno\s+more\s+(?:trades?|calls?|positions?)\s+(?:for\s+)?today\b|\bthat'?s\s+it\s+for\s+today\b|"
                           r"\bthat\s+is\s+it\s+for\s+today\b")
+
+
+def add_of(text: str) -> Optional[dict]:
+    """The add a post names, by code: {lots N | None, level X | None, cond "after activation" | None}, or None."""
+    low = (text or "").lower()
+    m = ADD_LEVEL_RE.search(low)
+    if m:
+        n = m.group(1) or m.group(2)
+        if not n:
+            p = PAIR_LOTS_RE.search(low)
+            n = p.group(1) if p else None
+        return {"lots": int(n) if n and int(n) > 0 else None, "level": _val(m.group(3)),
+                "cond": "after activation" if ADD_COND_RE.search(low) else None}
+    if ADD_ANY_RE.search(low):
+        return {"lots": None, "level": None, "cond": None}
+    return None
+
+
+def size_of(text: str) -> Optional[dict]:
+    """A follow-up's size: "buy 2 lots here" / "2 lots here" -> {active, lots 2}; "2-2 lots" / "3 lots" -> {size, lots}."""
+    low = (text or "").lower().strip()
+    p = PAIR_LOTS_RE.search(low)
+    m = SIZE_RE.search(low)
+    n = int(p.group(1)) if p else int(m.group(1)) if m else None
+    if not n:
+        return None
+    if re.search(r"\bhere\b", low):
+        return {"action": "active", "lots": n, "value": None}
+    return {"action": "size", "lots": n}
 
 
 def _val(v: str):
@@ -386,16 +424,15 @@ def day_closed(text: str) -> bool:
 
 def followup_action(text: str) -> dict:
     """What a follow-up says, by code: {action: exit|sl_hit|stop|trail|partial|add|active|avoid|targets|price|note, n,
-    value, spot, cost, rest_stop}. Precedence inside ONE post: SL hit / exit (full) > partial (book part / half / "book"
-    alone) > stop change > trail > targets > avoid > active > price > note. A booking with a stop figure is a partial whose
+    value, spot, cost, rest_stop, lots, level}. Precedence inside ONE post: SL hit / exit (full; "book 156 full") > partial
+    (book part / half / "book" alone) > stop change > add (lots, level) > size ("2-2 lots"; "buy 2 lots here" = active
+    with lots) > trail > targets > avoid > active > price > note. A booking with a stop figure is a partial whose
     remainder takes that stop ("book part ... rest sl 440" -> {partial, rest_stop 440}); a stop figure alone is a stop.
     "add more near 440" is an add-on (never averaged); bare numbers are price notes. Words only: the channel's "target
     done" never sets a price or a P&L."""
     low = (text or "").lower()
     if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(hit|triggered|done|gone)\b", low):
         return {"action": "sl_hit"}
-    if re.search(r"^\W*add\b|\badd\s+(?:more|\d+\s*(?:-\s*\d+\s*)?lots?)\b", low):
-        return {"action": "add"}                        # "add more near 440" / "add 5 lots at 560": never averaged
     if EXIT_RE.search(low):
         return {"action": "exit"}
     cost = bool(re.search(r"\bcost\b", low))
@@ -406,6 +443,12 @@ def followup_action(text: str) -> dict:
         return {"action": "partial", "cost": cost, "rest_stop": fig}
     if fig is not None:
         return {"action": "stop", "value": fig, "spot": "spot" in low}
+    ad = add_of(low)
+    if ad:                                              # "add more near 440": logged; acted on only with kite_follow_adds
+        return {"action": "add", "lots": ad["lots"], "level": ad["level"], "cond": ad["cond"]}
+    sz = size_of(low)
+    if sz:                                              # "buy 2 lots here" / "2-2 lots": the size before the fill
+        return sz
     if trail:
         return {"action": "trail", "cost": cost}
     if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(?:to|at)\s*cost\b", low):

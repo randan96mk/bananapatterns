@@ -280,7 +280,7 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     if kind == "hint":
         if push and source in ("live", "preview") and config.tips.push_hints and fresh:
             from backend.alerts import messages as msg
-            out["push"] = (f"tips|hint|{h['id']}", msg.tips_hint(h))
+            out["push"] = (f"tips|hint|{h['id']}", msg.tips_hint(h) + "".join(f"\n📏 {add_line(config, a)}" for a in (h.get("adds") or [])))
     elif kind == "follow_up" and hint_id:
         h = bk.load(hint_id, conn)
         if h:
@@ -295,6 +295,9 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
                 line = done
             else:
                 line = bk.channel_action(config, h, act, text, now, conn=conn)
+            sz = resize_hint(config, h, act, posted)
+            if sz:
+                line = f"{line} · {sz}"
             bk.save(h, conn)
             out["line"] = line
             out["act"], out["text"], out["at"] = act, text, posted.isoformat(timespec="seconds")
@@ -328,6 +331,23 @@ def kite_after(config, client, out: dict, push: bool = True) -> None:
             ka.on_new(config, client, out["hint_id"], now, notify=push)
     except Exception:
         logger.exception("Tips Kite after the post failed")
+
+
+def resize_hint(config, h: dict, act: dict, posted: datetime) -> Optional[str]:
+    """📏 "2-2 lots" / "buy 2 lots here" (post mode, nothing filled yet): the hint's size becomes the channel's (the paper
+    take and the Kite entry use it; an armed Kite entry is re-planned by kite_auto). After a fill: logged only."""
+    n = (act or {}).get("lots")
+    if not n or (act or {}).get("action") not in ("size", "active"):
+        return None
+    k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
+    if h.get("taken") or k.get("state") in ("entered", "closed"):
+        return f"size {n} lots logged (already filled)"
+    if str(getattr(config.tips, "kite_size_mode", "post")) != "post":
+        return f"size {n} lots noted (kite_size_mode {config.tips.kite_size_mode})"
+    old = (h.get("size_hint") or {}).get("lots")
+    h["size_hint"] = {"lots": int(n)}
+    bk.event(h, posted, f"size from the channel: {int(n)} lot{'s' if int(n) != 1 else ''}" + (f" (was {old})" if old else ""), "channel")
+    return f"size → {int(n)} lots"
 
 
 PLAN_SKIP_ACTIONS = ("targets", "sl_hit", "exit", "partial", "trail")     # "tgt 1 done" states a result, not a plan
@@ -369,7 +389,7 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
     """The hint row of a decoded post: resolved to a contract, planned, tracked or not (and why)."""
     d = d or dc.decode(text, posted)
     h = {k: d.get(k) for k in ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "entry", "stop",
-                               "targets", "open_ended", "size_hint", "decoded")}
+                               "targets", "open_ended", "size_hint", "decoded", "adds")}
     h["exchange"] = tr.exchange_of(h)
     day, _ = pl.plan_day(posted, h["exchange"])
     tr.resolve(h, None, day)                           # the stored contracts only: the tracker loads a missing dump
@@ -387,13 +407,25 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
     h["id"] = cur.lastrowid
     h.update(events=[], channel=channel, post_id=post_id, posted_at=posted.isoformat(timespec="seconds"), raw=text, source=source)
     how = "decoded by code" if all(v == "code" for v in (d.get("decoded") or {}).values()) else "decoded by code + AI"
-    exp = {"post": "expiry from the post", "listed": "expiry from the nearest listed", "computed": "expiry computed"}.get(h.get("expiry_src"), "")
+    exp = {"post": "expiry from the post", "listed": "expiry from the nearest listed", "computed": "expiry computed",
+           "series": "the monthly expiry (series)"}.get(h.get("expiry_src"), "")
     bk.event(h, posted, "💡 hint posted · " + how + (f" · {exp}" if exp else "") + ("" if h["plan"]["ok"] else f" · no plan: {h['plan']['why']}")
              + (f" · index {h['symbol']} read from the strike level (the post named none)" if (d.get("decoded") or {}).get("symbol") == "strike" else ""), "code")
+    for a in h.get("adds") or []:                       # 📏 the call's own add: always on the card, never an order by default
+        bk.event(h, posted, add_line(config, a), "code")
     for k in ("taken", "tracked", "open_ended"):
         h[k] = bool(h.get(k))
     bk.save(h, conn)
     return h
+
+
+def add_line(config, a: dict) -> str:
+    """"channel adds 2 lots near 660 (after activation) · the app never adds unless kite_follow_adds is on"."""
+    from backend.tips import kite_orders as ko
+    txt = ko.add_text(a)
+    if getattr(config.tips, "kite_follow_adds", False):
+        return f"{txt} · kite_follow_adds on: ONE add after the first fill, inside the lots cap and the risk per trade"
+    return f"{txt} · {ko.ADD_OFF}"
 
 
 def edited(config, channel: str, post_id: int, text: str, at: Optional[datetime] = None, client=None) -> Optional[dict]:
@@ -412,7 +444,7 @@ def edited(config, channel: str, post_id: int, text: str, at: Optional[datetime]
             if not h.get("taken") and (h.get("run") or {}).get("state", "waiting") == "waiting" and h["status"] in ("new", "waiting", "paused"):
                 d = dc.decode(text, datetime.fromisoformat(h["posted_at"]))
                 for k in ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "expiry_src", "entry", "stop", "targets",
-                          "open_ended", "size_hint", "decoded"):
+                          "open_ended", "size_hint", "decoded", "adds"):
                     h[k] = d.get(k)
                 h["raw_edited"] = text
                 tr.resolve(h, None, datetime.fromisoformat(h["posted_at"]).date())

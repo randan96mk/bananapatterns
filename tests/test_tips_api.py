@@ -13,7 +13,7 @@ HINT_KEYS = {"id", "channel", "post_id", "posted_at", "time", "day", "day_label"
              "opt_type", "expiry", "expiry_label", "expiry_src", "tradingsymbol", "exchange", "lot_size", "entry", "entry_text", "stop",
              "stop_text", "targets", "targets_hit", "targets_text", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
              "lots", "entry_px", "exit_px", "pnl", "ltp", "events", "tracked", "untracked_why", "score", "position", "actions", "telegram", "source", "kite", "shot", "now",
-             "pnl_strip", "now_tile", "dist", "said_next", "facts", "trade_facts", "ai4", "market", "log_open"}
+             "pnl_strip", "now_tile", "dist", "said_next", "facts", "trade_facts", "ai4", "market", "log_open", "sizing"}
 
 
 @pytest.fixture

@@ -603,6 +603,29 @@
   .rd .tp-dist .lbls .m, .rd .tp-dist .lbls .r { text-align: left; }
   .rd .tp-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* 📏 Tips sizing: the size cell (two cells wide, three fixed lines), the held box, the add line, the strip's parts */
+.rd .tp-dec.sz { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rd .tp-dec.sz.n8 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.rd .tp-dec.sz > div { height: 76px; }
+.rd .tp-dec .szc { grid-column: span 2; }
+.rd .tp-dec .szc .s1, .rd .tp-dec .szc .s2 { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 14px; line-height: 14px; font-variant-numeric: tabular-nums; }
+.rd .tp-dec .szc .s2.down, .rd .tp-dec .szc b.down { color: var(--bad); }
+.rd .tp-dec .szc.held { border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--border)); box-sizing: border-box; }
+.rd .tp-held { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; border-radius: 8px; font-size: 12px; color: var(--bad);
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--border)); background: color-mix(in srgb, var(--bad) 7%, var(--panel)); height: 40px; box-sizing: border-box; }
+.rd .tp-held .tx { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 14px; max-height: 28px; }
+.rd .tp-held .btn { flex: none; }
+.rd .tp-addl { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 16px; line-height: 16px; min-width: 0; }
+.rd .tp-pnl .pkv.parts { grid-column: span 2; }
+.rd .set-refused { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; font-size: 12px; color: var(--bad); border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--border));
+  background: color-mix(in srgb, var(--bad) 7%, var(--panel)); overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .rd .tp-dec.sz, .rd .tp-dec.sz.n8 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .rd .tp-dec .szc { grid-column: span 3; }
+  .rd .tp-pnl .pkv.parts { grid-column: 1 / -1; }
+  .rd .tp-held { height: 48px; }
+  .rd .tp-held .tx { -webkit-line-clamp: 3; max-height: 42px; }
+}
 @media (prefers-reduced-motion: reduce) { .rd .tp-dec .nowt .pulse { animation: none; } .rd .tp-dist .bar .dot { transition: none; } }
 
 /* 🤖 AI on Tips: the evening review / call grade / pre-flight read blocks, the grade chip, the weekly profile (Track) */

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ampm, stamp } from '../timefmt';
-import { Head, Chip, Panel, Act, FixedTable, AiTag } from './ui2';
+import { Head, Chip, Panel, Act, FixedTable, AiTag, Seg } from './ui2';
 import * as api from '../services/api';
 
 const HELP = {
@@ -141,7 +141,11 @@ const HELP_TIPS = {
   enabled: 'The Tips module: read the channels, decode the calls, push them to Telegram (true/false; off until the reader is logged in)',
   channels: 'Channels to read, comma-separated (any channel your Telegram account is a member of)',
   capital: 'Starting capital of the Tips paper book (rupees; separate from every other book)',
-  lots: 'Lots per taken hint when the post names no size (the Take field starts here)',
+  lots: '📏 The fallback size: lots per hint when the post names no size (kite_size_mode post), and always (fixed). With Kite on, a save where lots × the lot size × the usual stop of an index (the median of the last 30 days\' calls; else NIFTY 50 / BANKNIFTY 40 / SENSEX 60 points) is over kite_risk_per_trade or kite_loss_cap is refused with the arithmetic',
+  kite_size_mode: '📏 How a hint is sized for Kite and the paper book: "post" (default: the post\'s size wins, else lots) · "fixed" (always lots; the post\'s size is shown, ignored) · "risk" (lots = floor(kite_risk_per_trade ÷ ((entry − stop) × lot size)), 1 at least, capped by kite_max_lots)',
+  kite_risk_per_trade: '📏 Rupees at the stop per trade (default 6000): the figure of the risk mode AND a guard in every mode: an entry whose (entry − stop) × qty is over it is never armed or placed (the card says why and offers the largest size under it, through a confirm)',
+  kite_book_part: '📏 "book part" and T1 with 2+ lots: "half" (default: floor(lots ÷ 2) lots, today\'s rule) or "one" (one lot); with 1 lot the whole lot is booked (the channel\'s rule)',
+  kite_follow_adds: '📏 Follow the channel\'s adds ("add 2 lots near 660"; true/false, default false). On: after the FIRST entry fills and while the stop is still the plan\'s, ONE LIMIT add at the level, inside kite_max_lots and kite_risk_per_trade (blended average); never after a stop hit, never with the kill switch on, never a second add. Averaging doubles a bad day',
   size_mode: 'How a take is sized when the post names no size: "lots" (the lots above) or "rupees" (the amount below)',
   rupees: 'With size_mode rupees: about this much premium per taken hint, in whole lots',
   push_hints: 'Push every new hint to Telegram at once (true/false)',
@@ -157,7 +161,7 @@ const HELP_TIPS = {
   kite_sl_buffer_pct: 'Stops go to Kite as SL orders (trigger + limit): the limit sits this % past the trigger (default 1.5). Options allow no SL-M; a trigger-only change was refused on 20 Nov',
   kite_market_protection: 'Market protection in % on MARKET and SL-M orders (0.5 … 20, default 5): API orders at market must carry one, the exchange rejects 0',
   kite_max_entries_day: 'Kite entry orders a day at most (a rejected one does not count)',
-  kite_max_lots: 'Lots per Kite entry order at most',
+  kite_max_lots: 'Lots per Kite entry order at most (caps every size mode, and an add\'s total)',
   kite_loss_cap: 'Realised loss a day from these Kite orders (rupees); at or past it no new entry that day',
   kite_entry_from: 'Kite entries only from this time (24-hour HH:MM, IST; shown 12-hour)',
   kite_entry_until: 'Kite entries only until this time (24-hour HH:MM, IST; exits are never blocked)',
@@ -222,6 +226,9 @@ export function Scorecard() {
     </div>
   </Panel>;
 }
+// 📏 a choice of a few words: a segment in place of the text box
+const SEGS = { tips: { kite_size_mode: [['post', 'post', "the post's size wins, else lots"], ['fixed', 'fixed', 'always lots'], ['risk', 'risk', 'kite_risk_per_trade at the stop']],
+  kite_book_part: [['half', 'half', 'floor(lots ÷ 2) lots'], ['one', 'one lot', 'one lot']] } };
 // text kept one entry per line (a textarea for a plain string)
 const MULTI = { tips: ['relay_to'] };
 
@@ -257,6 +264,7 @@ export default function SettingsPanel() {
     });
     try { const v = await api.putConfig(section, changed); setVals(v); setDraft(v); setMsg('Saved'); } catch (e) { setMsg(e.message); }
   };
+  const refused = msg && msg !== 'Saved' && vals ? msg : '';     // a refused save: the server's words (the arithmetic) in a red box
   const dirty = vals ? Object.keys(draft).some((k) => JSON.stringify(draft[k]) !== JSON.stringify(vals[k])) : false;
 
   return (
@@ -278,12 +286,14 @@ export default function SettingsPanel() {
                 <div style={{ textAlign: 'right' }}>{Array.isArray(v)
                   ? <textarea rows={Math.min(4, v.length || 1)} style={{ width: 220, maxWidth: '100%', fontSize: 11, textAlign: 'left' }} value={v.join('\n')}
                       onChange={(e) => setDraft({ ...draft, [k]: e.target.value.split('\n').filter(Boolean) })} />
+                  : SEGS[section]?.[k] ? <Seg small opts={SEGS[section][k]} v={String(v)} set={(x) => setDraft({ ...draft, [k]: x })} />
                   : (MULTI[section] || []).includes(k)
                     ? <textarea rows={Math.min(4, Math.max(2, String(v).split('\n').length))} style={{ width: 220, maxWidth: '100%', fontSize: 11, textAlign: 'left' }} value={String(v)}
                         onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
                     : <input className="mono" value={String(v)} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />}</div>
               </div>))}</div>}
-          <div className="rwrap"><button className="btn small" disabled={!vals || !dirty} onClick={save}>Save</button><span className="msg">{msg}</span></div>
+          {refused && <div className="set-refused" role="alert">⛔ {refused}</div>}
+          <div className="rwrap"><button className="btn small" disabled={!vals || !dirty} onClick={save}>Save</button><span className="msg">{refused ? '' : msg}</span></div>
         </Panel>
         <Panel title="Recent changes" meta={changes.length || null}>
           {!changes.length && <p className="muted small rempty">No settings changed yet.</p>}

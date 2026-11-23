@@ -216,7 +216,7 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
         tail += " · activation words: the level decides"
     if notify:
         bk.push(config, f"tips|kite|auto|{h['id']}|armed",
-                f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {k['qty']} {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
+                f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {k['lots']} lot{'s' if k['lots'] != 1 else ''} · {k['qty']} qty {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
     return h
 
 
@@ -258,10 +258,10 @@ def on_followup(config, client, hid: int, act: dict, text: str, now: Optional[da
     auto = ko.mode(config) == "auto"
     with ko._LOCK:
         if a == "add":
-            if k["state"] != "none" or auto:
-                _line(config, h, now, "add-on ignored (never averaged)" if not auto else "auto: add-on ignored (never averaged)", notify and auto, "add")
-                return "add-on ignored (never averaged)"
-            return None
+            return _on_add(config, cl, h, act, quote, now, notify)
+        sized = _on_size(config, cl, h, act, now) if a in ("size", "active") and act.get("lots") else None
+        if a == "size":
+            return sized
         if k["state"] in ko.ARMED:
             if a in ("avoid", "sl_hit", "exit"):
                 ko.disarm(config, cl, h, now, f'the channel: "{quote}"', notify)
@@ -287,6 +287,85 @@ def on_followup(config, client, hid: int, act: dict, text: str, now: Optional[da
         except TipsError as exc:
             _line(config, h, now, f'auto: the channel "{quote}" · not followed: {exc}', notify, "fail")
             return f"not followed: {exc}"
+
+
+def _on_add(config, cl, h: dict, act: dict, quote: str, now: datetime, notify: bool) -> str:
+    """📏 The channel's add ("we will add 2 more near 125"): ALWAYS logged on the card + one Telegram line; acted on only
+    with tips.kite_follow_adds on (auto: armed now on its own entered position; click: the "Place add…" button)."""
+    k = ko.kstate(h)
+    if act.get("level") is None:                        # "add more" with no price: nothing to arm
+        _line(config, h, now, f'the channel "{quote}" · add-on with no level · ignored (never averaged)', notify, "add")
+        return "add-on ignored (never averaged)"
+    off = {"lots": act.get("lots"), "level": act.get("level"), "cond": act.get("cond"), "text": quote, "at": now.isoformat(timespec="seconds")}
+    if not isinstance(k.get("add"), dict):
+        k["add_offer"] = off
+    txt = ko.add_text(off)
+    if not getattr(config.tips, "kite_follow_adds", False):
+        _line(config, h, now, f"{txt} · add-on ignored (never averaged) · {ko.ADD_OFF}", notify, "add")
+        return f"{txt} · add-on ignored (never averaged) · {ko.ADD_OFF}"
+    if ko.mode(config) == "auto" and k.get("by") == "auto" and k["state"] == "entered":
+        try:
+            out = ko._arm_add(config, cl, h, now, "auto", notify=False)
+        except TipsError as exc:
+            out = str(exc)
+        _line(config, h, now, f"{txt} · {out}", notify, "add")
+        ko.after_event(config, h, now, notify)
+        return out
+    why = ko.add_block(config, cl, h, now) if k["state"] == "entered" else ("waits for the first fill" if k["state"] in ko.ARMED else None)
+    out = f"{txt} · " + (f"not armed: {why}" if why and why != "waits for the first fill" else
+                         "armed after the first fill" if why else "Place add… on the card (your click)")
+    _line(config, h, now, out, notify, "add")
+    return out
+
+
+def _on_size(config, cl, h: dict, act: dict, now: datetime) -> Optional[str]:
+    """📏 "2-2 lots" / "buy 2 lots here" before the fill (post mode): an armed entry is re-planned to the new size (the
+    caps and the risk guard first; a resting order's quantity modified on Kite); after the fill it is logged only."""
+    k = ko.kstate(h)
+    n = int(act.get("lots") or 0)
+    if n < 1:
+        return None
+    if k["state"] in ("entered", "closed"):
+        ko._log(k, now, f"Kite: the channel's size {n} lots · after the fill: logged only")
+        ko.save_kite(h)
+        return "size logged (after the fill)"
+    if k["state"] not in ko.ARMED:
+        return None
+    if str(getattr(config.tips, "kite_size_mode", "post")) != "post":
+        ko._log(k, now, f"Kite: the channel's size {n} lots · kite_size_mode {config.tips.kite_size_mode}: not used")
+        ko.save_kite(h)
+        return "size noted (not post mode)"
+    from backend.tips import sizing
+    lot = int(h.get("lot_size") or 0) or 1
+    if k.get("by") == "auto":
+        n = max(1, min(n, int(config.tips.kite_max_lots)))
+    if n > int(config.tips.kite_max_lots):
+        why = f"{n} lots > the cap {int(config.tips.kite_max_lots)}"
+    else:
+        g = sizing.check(config, h, n, bk.last_ltp(h))
+        why = sizing.held_text(g) if g["held"] else None
+    if why:
+        ko._log(k, now, f"Kite: the channel's size {n} lots · not re-planned: {why}")
+        ko.save_kite(h)
+        return f"size not re-planned: {why}"
+    if n == int(k.get("lots") or 0):
+        return None
+    old = int(k.get("lots") or 0)
+    if k["state"] == "armed":
+        lg = k["legs"].get("entry") or {}
+        if lg.get("status") in ko.LIVE:
+            try:
+                cl.modify_order(lg["order_id"], quantity=n * lot)
+                ko._update(lg["row"], qty=n * lot)
+                lg["qty"] = n * lot
+            except Exception as exc:
+                ko._log(k, now, f"Kite: the channel's size {n} lots · the resting entry could not be resized: {str(exc)[:80]}")
+                ko.save_kite(h)
+                return "size not re-planned: Kite refused the change"
+    k.update(lots=n, qty=n * lot)
+    ko._log(k, now, f"Kite: size re-planned {old} → {n} lots ({n * lot} qty) · the channel's size before the fill")
+    ko.save_kite(h)
+    return f"size re-planned {old} → {n} lots"
 
 
 def _to_cost(config, cl, h: dict, now: datetime, why: str) -> str:
@@ -346,7 +425,7 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
         lot = int(h.get("lot_size") or 1)
         open_lots = int(k["qty_open"]) // lot
         if open_lots > 1:
-            q = (open_lots // 2) * lot
+            q = ko.part_lots(open_lots, config) * lot            # kite_book_part: half (floor) or one lot
             if (k["legs"].get("exit") or {}).get("status") in ko.LIVE:
                 return None
             rs = act.get("rest_stop") if not act.get("spot") else None
@@ -516,6 +595,9 @@ def _keep_one(config, cl, h: dict, now: datetime, notify: bool, c) -> Optional[s
                 return f"#{hid} index crossed"
         return None
     if k["state"] == "entered" and int(k.get("qty_open") or 0) > 0:
+        if (k["legs"].get("add") or {}).get("status") in ko.LIVE and (passed(ts) or passed(c.kite_entry_until) or ko.killed()):
+            ko.cancel_add(cl, h, now, "time stop" if passed(ts) else "the kill switch" if ko.killed() else f"entry window ended {ampm(c.kite_entry_until)}")
+            ko.save_kite(h)
         if ts and not plan.get("hold_to_expiry") and passed(ts) and (k["legs"].get("exit") or {}).get("status") not in ko.LIVE:
             k["exit_why"] = f"time stop {ampm(ts)}"
             ko.save_kite(h)

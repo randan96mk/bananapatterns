@@ -57,7 +57,7 @@ def no_limit_sell(b):
 def test_two_lots_t1_half_new_stop_at_cost_t2_rest_closed_auto_line(pushed):
     c, b, hid = setup("auto")
     r = entered(c, b, hid, by="auto")
-    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
+    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 (2 lots) · SL 190 placed · T1 320 watched by the app"]
     sl = b.last(order_type="SL")
     price(c, b, 300.0, "10:10")
     assert ko.watch_all(c, b, at("10:10"))["open"] == 1 and b.placed[-1] is sl      # under T1: nothing
@@ -191,7 +191,7 @@ def test_a_restart_with_the_price_already_past_t1_acts_on_the_first_tick(pushed)
 def test_click_mode_entry_then_place_sl_gets_the_same_watch(pushed):
     c, b, hid = setup()
     r = entered(c, b, hid, place_all=False)
-    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30"]
+    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 (2 lots)"]
     h = ko.place_rest(c, b, hid, now=at("10:01"))                    # "Place rest…" = the stop only + the watch
     assert [p["order_type"] for p in b.placed] == ["LIMIT", "SL"] and h["kite"]["auto_rest"]
     v = tr.hint_view(bk.load(hid), config=c)["kite"]

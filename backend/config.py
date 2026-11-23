@@ -539,6 +539,13 @@ class TipsConfig:
     kite_entry_until: str = "14:30"        # ... until here
     kite_auto_max_open: int = 1            # auto: Kite hints open (armed or entered) at once; a second one waits
     kite_auto_book_part: str = "channel"   # auto, "book part" with ONE lot open: channel = book it | hold = keep it, stop to cost
+    # 📏 Tips sizing (backend/tips/sizing.py): post = the post's size wins, else `lots` | fixed = always `lots` (the post's
+    # size shown, ignored) | risk = floor(kite_risk_per_trade ÷ ((entry − stop) × lot size)), 1 at least. kite_max_lots
+    # caps every mode; an entry whose loss at the stop is over kite_risk_per_trade is never armed / placed (every mode).
+    kite_size_mode: str = "post"
+    kite_risk_per_trade: float = 6000.0    # ₹ at the stop per trade: the risk mode's figure AND a guard in every mode
+    kite_book_part: str = "half"           # "book part" / T1 with 2+ lots: half = floor(lots ÷ 2) lots | one = one lot
+    kite_follow_adds: bool = False         # follow the channel's "add 2 lots near 660": ONE extra LIMIT after the fill (opt-in)
     # 📷 the channel's screenshots read on this server (RapidOCR): off = no download, no read. Images kept 2 days at most.
     vision: bool = False
     vision_mode: str = "report"            # report = a strike mismatch is shown and pushed | check = auto also holds / cancels
@@ -555,6 +562,7 @@ class TipsConfig:
 
 TIPS_KITE_MODES = ("off", "dry", "click", "auto")
 TIPS_KITE_PRODUCTS = ("NRML", "MIS")
+TIPS_KITE_SIZE_MODES = ("post", "fixed", "risk")
 
 
 def _hhmm_ok(v) -> bool:
@@ -620,6 +628,16 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_auto_book_part must be channel or hold")
     if getattr(sec, "vision_mode", "report") not in ("report", "check"):
         raise ValueError("vision_mode must be report or check")
+    if sec.kite_size_mode not in TIPS_KITE_SIZE_MODES:
+        raise ValueError("kite_size_mode must be post, fixed or risk")
+    if sec.kite_book_part not in ("half", "one"):
+        raise ValueError("kite_book_part must be half or one")
+    if float(sec.kite_risk_per_trade) <= 0:
+        raise ValueError("kite_risk_per_trade must be positive")
+    from backend.tips import sizing                  # 📏 lots × lot size × the usual stop distance vs the risk / loss caps
+    bad = sizing.check_settings(sec)
+    if bad:
+        raise ValueError(bad)
     sec.relay_to = "\n".join(split_relay(sec.relay_to))
 
 

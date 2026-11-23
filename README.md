@@ -2269,6 +2269,53 @@ has / had a position on the hint; a paper-only hint keeps its old look.
 `test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes), `test_tips_vision.py` (18: OCR facts on hand-written line sets, a fake engine, mismatch / report vs check / the 2-day rule; one real-engine test when installed). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
 
 
+### 📏 Tips sizing · post / fixed / risk, the per-trade risk guard, the book part size, the channel's adds (opt-in)
+
+`backend/tips/sizing.py`; Settings › tips. The defaults reproduce the earlier behaviour exactly: `kite_size_mode` post,
+`lots` 1 as the fallback, `kite_max_lots` 2, `kite_book_part` half, `kite_follow_adds` off.
+
+| `kite_size_mode` | lots | the card's size cell (line 3) |
+|---|---|---|
+| `post` (default) | the post's size ("2 lots", "qty 60"; a follow-up "2-2 lots" before the fill), else `lots` | `post wins · fallback 1` |
+| `fixed` | always `lots`; the post's size is shown and ignored | `fixed 1 lot · cap 2` |
+| `risk` | floor(`kite_risk_per_trade` ÷ ((entry − stop) × lot size)), 1 at least, capped by `kite_max_lots` | `by risk · cap 2` |
+
+- **The entry price** the risk is measured from: the plan's entry level (a zone's top for a buy, its bottom for a sell;
+  the level for above / below / at), the last price for a market entry. A sell hint mirrors it (stop − entry).
+- **The guard** (`kite_risk_per_trade`, ₹6,000 by default) holds in every mode: an entry whose (entry − stop) × qty is
+  over it is never armed or placed. Auto logs "not armed · size held: 2 lots × 55 points × 65 = ₹7,150 at the stop, above
+  kite_risk_per_trade ₹6,000 · lower the lots in Settings or take 1 lot by hand" (one Telegram line); click turns the
+  Place buttons off with that reason and shows a red box with **Take 1 lot…** (the largest size under the guard, through
+  its confirm). The card's size cell: "2 lots · 130 qty" (red when held), the reasoning ("risk ₹6,000 ÷ (230 − 175) ×
+  65 = 1.67 → 1 lot · premium ₹14,950 · at the stop −₹3,575"), the rule.
+- **The settings check** (`check_tips`, both the generic Settings save and the Tips save; with Kite on): `lots` × the lot
+  size × the median stop distance of the last 30 days' calls per index (else NIFTY 50 pts / 65, BANKNIFTY 40 / 30,
+  SENSEX 60 / 20) over `kite_risk_per_trade` or `kite_loss_cap` refuses the save, with the arithmetic in a red box.
+- **`kite_book_part`**: half = floor(lots ÷ 2) lots at "book part" and at T1 (the earlier rule) · one = one lot. With 1
+  lot the whole lot is booked (the channel's rule, unchanged). The P&L strip then shows "booked so far +₹1,800 · 1 lot at
+  500" and "rest 2 lots · 60 qty · stop 440".
+- **The paper book** sizes with the same mode; the Place / Send confirms repeat the lots, qty, premium and the loss at
+  the stop; the Telegram arm and fill lines say the lots and the qty.
+- **The channel's adds** ("ADD MORE NEAR 125", "Add 2 lots near 660 if comes after activation", "we will add 2 more
+  near 125") are decoded (`h["adds"]` on a call, `{action: add, lots, level}` in a follow-up) and ALWAYS logged on the
+  card ("channel adds 2 lots near 660 · the app never adds unless kite_follow_adds is on") with one Telegram line. With
+  `kite_follow_adds` on: after the FIRST entry fills and while the stop is still the plan's (no trail, no move to cost,
+  nothing booked), ONE LIMIT add at the level for the post's lots (or `lots`), refused when the total lots pass
+  `kite_max_lots` or (blended average − stop) × total qty passes `kite_risk_per_trade` (the card says why). On its fill
+  the resting stop's quantity goes UP to the total (same trigger / limit), the entry price becomes the quantity-weighted
+  average ("avg 687.5 · 4 lots"), and the targets / book part work on the total. The add is cancelled with the window
+  end, the time stop, any exit, a target exit and a stop hit; never armed after a stop hit, on a day the channel closed,
+  with the kill switch on, or twice; a gap that fills the stop and the add in one read sells the add at market at once.
+  Click mode: **Place add…** with a confirm. **Warning: averaging doubles a bad day** — it stays off unless you turn it on.
+- **23 Nov decoder fixes**: "NOV SERIES" / "monthly" / "monthly expiry" / "<MON> series" = the LAST listed expiry of that
+  month for the symbol (the card: "Tue 25 Nov · monthly"); a follow-up "buy 2 lots here" / "2 lots here" = active with
+  the size, "2-2 lots" = the size (re-plans an armed entry in post mode; after the fill: logged only); "book 156 full",
+  "book full at 156", "Der can book 156 full" = exit (full); "book part at 500" stays a part.
+
+**Tests**: `tests/test_tips_sizing.py` (the modes, the guard and Take 1 lot, the settings check, half vs one with 2/3/4
+lots, the paper book, the size cell, the Telegram lines, the adds off / on / refused / filled / one only / cancelled /
+after a stop / a gap, the three decoder fixes with the 23 Nov texts).
+
 ### 🤖 AI on Tips · evening review, call grade, pre-flight read, weekly channel profile
 
 `backend/tips/ai4.py`, table `tips_ai`. The rules: **every number comes from code**; the local model (the queue in

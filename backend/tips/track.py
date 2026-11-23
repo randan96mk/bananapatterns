@@ -160,6 +160,24 @@ def computed_expiry(sym: str, instrument: str, day: date) -> date:
     return e
 
 
+def monthly_expiry(sym: str, instrument: str, first: date) -> date:
+    """The monthly expiry of `first`'s month with no instrument table: the last Tuesday (SENSEX / BANKEX the last
+    Thursday), moved back over holidays; MCX about the 17th."""
+    from backend.tips.plan import trading_day
+    if instrument == "commodity":
+        d = date(first.year, first.month, 17)
+        while not trading_day(d, "MCX"):
+            d -= timedelta(days=1)
+        return d
+    wd = 3 if sym in ("SENSEX", "BANKEX") else 1
+    d = date(first.year + (first.month == 12), first.month % 12 + 1, 1) - timedelta(days=1)
+    while d.weekday() != wd:
+        d -= timedelta(days=1)
+    while not trading_day(d):
+        d -= timedelta(days=1)
+    return d
+
+
 def resolve(h: dict, client=None, today: Optional[date] = None) -> dict:
     """Exchange, expiry, tradingsymbol and lot size of a decoded hint (in place). Loads the exchange's dump once a day
     when a logged-in client is given."""
@@ -190,6 +208,15 @@ def resolve(h: dict, client=None, today: Optional[date] = None) -> dict:
         cands = [r for r in rows if r["type"] == "FUT"]
     explicit = h.get("expiry") if h.get("expiry_src") == "post" else None
     pick_row = None
+    if h.get("expiry_src") == "series" and h.get("expiry"):     # "NOV SERIES": the LAST listed expiry of that month
+        month = str(h["expiry"])[:7]
+        ins = sorted({r["expiry"] for r in rows if str(r["expiry"])[:7] == month})
+        if ins:
+            explicit = ins[-1]
+        else:
+            mo = monthly_expiry(sym, inst, date.fromisoformat(month + "-01")).isoformat()
+            h["expiry"] = mo
+            explicit = mo
     if explicit:
         pick_row = next((r for r in cands if r["expiry"] == explicit), None)
     else:
@@ -200,6 +227,8 @@ def resolve(h: dict, client=None, today: Optional[date] = None) -> dict:
         return h
     if not explicit:
         h["expiry"], h["expiry_src"] = computed_expiry(sym, inst, today).isoformat(), "computed"
+    elif h.get("expiry_src") == "series":
+        h["expiry"] = explicit
     h.update(tradingsymbol=None, tracked=False, untracked_why="no instrument")
     if not h.get("lot_size"):
         any_row = next((r for r in rows), None)
@@ -553,6 +582,17 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
     except Exception:
         logger.exception("Market read block #%s failed", h.get("id"))
         cb["market"] = None
+    try:                                              # 📏 the size cell: the lots by kite_size_mode, the reasoning, the risk guard
+        from backend.tips import sizing
+        kst = h.get("kite") if isinstance(h.get("kite"), dict) else {}
+        live = kst.get("state") not in (None, "none")
+        cb["sizing"] = sizing.cell(cfg, h, bk.last_ltp(h) if h.get("id") else None, lots=int(kst.get("lots") or 0) or None if live else None)
+        if live and isinstance(kst.get("sizing"), dict) and cb["sizing"]:     # armed / on Kite: the reasoning as armed, the lots now
+            cb["sizing"] = {**cb["sizing"], **{x: kst["sizing"][x] for x in ("line2", "line3", "mode") if kst["sizing"].get(x)}, "held": False,
+                            "held_text": None}
+    except Exception:
+        logger.exception("Tips sizing #%s failed", h.get("id"))
+        cb["sizing"] = None
     kv["taken"] = (h.get("kite") or {}).get("taken") if isinstance(h.get("kite"), dict) else None
     kv["footer"] = bk.kite_taken_text(h)
     return {**cb, "id": h["id"], "channel": h["channel"], "post_id": h["post_id"], "posted_at": h["posted_at"],

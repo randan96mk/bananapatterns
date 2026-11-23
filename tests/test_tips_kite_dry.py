@@ -124,7 +124,7 @@ def test_dry_place_all_whole_flow_with_dry_in_every_line(pushed):
     e = ko.rows_for(hid)[0]
     assert e["by"] == "dry" and e["order_id"] == "DRY-1" and e["leg"] == "entry"
     r = ko.sync(c, s, at("10:00", sec=10))
-    assert r["lines"] == ["⚡ Kite DRY · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
+    assert r["lines"] == ["⚡ Kite DRY · #1 entry filled 262 ×30 (2 lots) · SL 190 placed · T1 320 watched by the app"]
     quote(c, b, 325.0, "10:20")
     ko.watch_all(c, b, at("10:20", sec=1))                                 # the Syncer's tick: the target watch, then the sync
     r = ko.sync(c, s, at("10:20", sec=5))
@@ -158,7 +158,7 @@ def test_dry_run_ignores_hours_and_window_but_not_the_caps(pushed):
         ko.place_entry(c, s, hid, 2, now=at("19:05"))
     h = ko.place_entry(c, s, hid, 1, now=at("19:05"))                      # the evening: a MARKET still fills at the last LTP
     r = ko.sync(c, s, at("19:05", sec=10))
-    assert r["lines"] == ["⚡ Kite DRY · #1 entry filled 262 ×15"] and bk.load(hid)["kite"]["state"] == "entered"
+    assert r["lines"] == ["⚡ Kite DRY · #1 entry filled 262 ×15 (1 lot)"] and bk.load(hid)["kite"]["state"] == "entered"
     assert h["kite"]["dry"]
     g = {x["key"]: x for x in ko.guards(c, s, bk.load(hid), 1, at("19:06"))}
     assert g["market"]["ok"] and "a dry run fills at the last price" in g["market"]["text"]

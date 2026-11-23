@@ -91,7 +91,7 @@ def test_whole_flow_entry_stop_watched_t1_cost_t2(pushed):
     assert h["kite"]["state"] == "armed" and h["kite"]["auto_rest"]
     b.fill(e["order_id"], 262.0)
     r = ko.sync(c, b, at("10:00", sec=10))
-    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 · SL 190 placed · T1 320 watched by the app"]
+    assert r["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 (2 lots) · SL 190 placed · T1 320 watched by the app"]
     sl = b.last(order_type="SL")
     assert sl["trigger_price"] == 190.0 and sl["quantity"] == 30 and sl["transaction_type"] == "SELL"
     assert len(b.placed) == 2                                  # only the stop rests on Kite
@@ -223,7 +223,7 @@ def test_click_legs_one_by_one_spot_stop_modify_cancel_exit(pushed):
     ko.place_entry(c, b, hid, 2, now=at("10:00"))
     assert ko.sync(c, b, at("10:00", sec=5))["lines"] == []          # still pending: nothing to say
     b.fill(b.last(transaction_type="BUY")["order_id"], 262.0)
-    assert ko.sync(c, b, at("10:01"))["lines"] == ["⚡ Kite · #1 entry filled 262 ×30"]   # no Place all: nothing more
+    assert ko.sync(c, b, at("10:01"))["lines"] == ["⚡ Kite · #1 entry filled 262 ×30 (2 lots)"]   # no Place all: nothing more
     assert b.last(transaction_type="BUY")["quantity"] == 30 and len(b.placed) == 1
     v = tr.hint_view(bk.load(hid), config=c)["kite"]
     assert {"rest", "stop", "exit"} <= set(v["actions"]) and "targets" not in v["actions"]

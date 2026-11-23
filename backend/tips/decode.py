@@ -40,7 +40,7 @@ STOP_WORDS = {"buy", "sell", "short", "long", "at", "near", "above", "below", "a
               "avoid", "wait", "active", "done", "hit", "exit", "book", "booked", "level", "levels", "zone", "plus",
               "abv", "strike", "premium", "price", "with", "if", "will", "can", "this", "that", "is", "a", "an", "to",
               "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "april", "march"}
-FIELDS = ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "entry", "stop", "targets", "size_hint")
+FIELDS = ("symbol", "side", "instrument", "strike", "opt_type", "expiry", "entry", "stop", "targets", "size_hint", "adds")
 DONE_WORDS = re.compile(r"\b(done|hit|booked|reached|achieved|triggered|gone|went|made|became)\b", re.I)
 SL_RE = re.compile(r"\b(stop\s*loss|stoploss|sl|stop)\b\s*[-:=]?\s*", re.I)
 TGT_RE = re.compile(r"\b(targets?|tgts?|tg)\b\s*[-:=]?\s*", re.I)
@@ -184,6 +184,32 @@ def _expiry(text: str, posted: date) -> Optional[str]:
     if not m.group(3) and (posted - d).days > 30:
         d = date(year + 1, mon, day)
     return d.isoformat()
+
+
+SERIES_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+series\b|\bmonthly(?:\s+expiry)?\b|\bseries\b", re.I)
+
+
+def _series(text: str, posted: date) -> Optional[str]:
+    """"NOV SERIES" / "monthly" / "monthly expiry" / "series": the MONTHLY expiry of that month (the post's month when
+    none is named; a month already past is next year's). Returns a placeholder date in that month (its last day); the
+    instrument list decides the real one (track.resolve: the LAST listed expiry of the month)."""
+    m = SERIES_RE.search(text or "")
+    if not m:
+        return None
+    mon = MONTHS[m.group(1).lower()[:3]] if m.group(1) else posted.month
+    year = posted.year + (1 if mon < posted.month else 0)
+    nxt = date(year + (mon == 12), mon % 12 + 1, 1)
+    return date.fromordinal(nxt.toordinal() - 1).isoformat()
+
+
+def _adds(text: str, posted: date) -> Optional[list]:
+    """The call's own add ("ADD MORE NEAR 125", "Add 2 lots near 660 if comes after activation"): [{lots, level, cond,
+    at}] (logged on the card; acted on only with tips.kite_follow_adds), or None."""
+    from backend.tips.plan import add_of
+    a = add_of(text)
+    if not a or a.get("level") is None:
+        return None
+    return [{**a, "at": posted.isoformat()}]
 
 
 def _stop(seg: Optional[str], side: Optional[str], opt_type: Optional[str]) -> dict:
@@ -356,6 +382,11 @@ def decode(text: str, posted_at, fill: Optional[Callable[[str, list], dict]] = N
     exp = _expiry(text, posted)
     if exp:
         out["expiry"], decoded["expiry"], out["expiry_src"] = exp, "code", "post"
+    elif _series(text, posted):
+        out["expiry"], decoded["expiry"], out["expiry_src"] = _series(text, posted), "series", "series"
+    ad = _adds(text, posted)
+    if ad:
+        out["adds"], decoded["adds"] = ad, "code"
     sz = _size(text)
     if sz:
         out["size_hint"], decoded["size_hint"] = sz, "code"
