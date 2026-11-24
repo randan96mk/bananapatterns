@@ -62,6 +62,39 @@ function Col({ title, meta, rows, Row, empty, note }) {
     {note && <div className="tc-row tc-note" title={txt(note)}>{note.ai ? <AiTag /> : null}<span className="f">{txt(note)}</span></div>}</div>;
 }
 
+// ✨ the phase-aware tiles (payload `panel`, backend/ai/today_tiles.py): each row is one fixed-height line (ellipsis), a
+// sub line under it when it has one; [AI] rows carry the AI tag (text the model already wrote, stored); a tile that
+// shows the last session's rows is greyed (.last) with the date in its header. Markers: .tt-tile[data-tile], .tt-row.
+const TROWS = 8;                                                 // rows a tile shows (fixed height); the rest go to "+n"
+const PICON = { evening: '🌙', premarket: '☀️', market: '📈' };
+const ST = { done: ['✓', ''], run: ['…', 'run'], queued: ['·', 'q'], wait: ['·', 'q'], skipped: ['–', 'q'], failed: ['!', 'bad'] };
+function Spark({ r }) {
+  const pts = (r.pts || []).map(Number).filter((x) => Number.isFinite(x));
+  if (pts.length < 2) return null;
+  const lo = Math.min(...pts), hi = Math.max(...pts), span = hi - lo || 1;
+  const xy = pts.map((v, i) => `${((i / (pts.length - 1)) * 200).toFixed(1)},${(26 - ((v - lo) / span) * 24).toFixed(1)}`).join(' ');
+  return <div className="tt-spark"><svg viewBox="0 0 200 28" preserveAspectRatio="none" aria-hidden="true"><polyline className={r.c || ''} fill="none" strokeWidth="1.6" points={xy} /></svg></div>;
+}
+function TRow({ r }) {
+  if (r.kind === 'spark') return <Spark r={r} />;
+  if (r.kind === 'step') {
+    const [ic, k] = ST[r.st] || ST.wait;
+    return <div className="tt-step" title={[r.t, r.at].filter(Boolean).join(' · ')}><i className={k}>{ic}</i><span className="f">{r.t}</span><span className="s">{r.at}</span></div>;
+  }
+  const v = (r.v || []).filter((x) => x && x.t);
+  return <div className={`tt-row${r.s || r.s_ai ? ' tt2' : ''}${r.dim ? ' dim' : ''}`} title={[r.icon, r.b, r.n, ...v.map((x) => x.t), r.s, r.s_ai].filter(Boolean).join(' ')}>
+    <div className="l"><span className="n">{r.ai ? <AiTag /> : null}{r.icon ? <span className="ic">{r.icon}</span> : null}{r.b ? <b>{r.b}</b> : null}{r.n}</span>
+      {(v.length > 0 || r.tag) && <span className="v">{v.map((x, i) => <span key={i} className={x.c || ''}>{i ? ' · ' : ''}{x.t}</span>)}{r.tag ? <Tag c={r.tag.c || ''}>{r.tag.t}</Tag> : null}</span>}</div>
+    {(r.s || r.s_ai) && <div className="s">{r.s}{r.s && r.s_ai ? ' · ' : ''}{r.s_ai ? <><AiTag /> {r.s_ai}</> : null}</div>}</div>;
+}
+function Tile({ t }) {
+  const list = t.rows || [];
+  const more = list.length - TROWS;
+  return <div className={`tc-col tt-tile${t.last ? ' last' : ''}`} data-tile={t.key}>
+    <div className="kk"><span>{t.title}</span><span className="m">{t.meta}{more > 0 ? ` · +${more} more` : ''}</span></div>
+    {list.length ? list.slice(0, TROWS).map((r, i) => <TRow key={i} r={r} />) : <div className="tc-row muted">{t.empty}</div>}</div>;
+}
+
 export default function TodayCard({ onGo }) {
   const ov = useLive('overview');
   const [fetched, reload] = useLiveOr('today_card', api.getTodayCard, 60000);
@@ -70,17 +103,19 @@ export default function TodayCard({ onGo }) {
   const c = ov?.today_card || fetched;
   if (!c || c.error || typeof c !== 'object') return null;
   const phase = NOW[c.phase] != null ? c.phase : 'morning';
+  const pn = c.panel && Array.isArray(c.panel.tiles) ? c.panel : null;   // the phase-aware tiles (evening · pre-market · market hours)
+  const lit = pn && Number.isInteger(pn.step) ? pn.step : NOW[phase];
   const cols = c.columns || {}, counts = c.counts || {};
   const one = c.the_one_thing ? (typeof c.the_one_thing === 'string' ? { text: c.the_one_thing } : c.the_one_thing) : null;
   const given = Object.fromEntries((Array.isArray(c.steps) ? c.steps : []).filter((x) => x && x.key).map((x) => [x.key, x.label]));
   const steps = STEPS.map(([k, l], i) => { const lab = given[k] || l;
-    return [k === 'orders' && phase === 'morning' && counts.minutes_to_send != null ? `${lab} · in ${counts.minutes_to_send} min` : lab, i < NOW[phase] ? 'done' : i === NOW[phase] ? 'now' : '']; });
+    return [k === 'orders' && phase === 'morning' && counts.minutes_to_send != null ? `${lab} · in ${counts.minutes_to_send} min` : lab, i < lit ? 'done' : i === lit ? 'now' : '']; });
   const nSugg = counts.suggestions ?? counts.suggestions_open;
 
   // the buttons: what the payload asks for, plus the three that only navigate (never anything automatic)
-  const acts = [...(c.actions || [])];
+  const acts = [...(c.actions || []), ...((pn && pn.buttons) || [])];
   const has = (kind, arg) => acts.some((a) => a.kind === kind && (arg == null || String(a.arg || '').includes(arg)));
-  if (!has('go', 'real')) acts.push({ label: 'Open the dry run', kind: 'go', arg: 'portfolio/real' });
+  if (!acts.some((a) => a.label === 'Open the dry run')) acts.push({ label: 'Open the dry run', kind: 'go', arg: 'portfolio/real' });
   if (!has('open', 'suggestions') && !has('scroll')) acts.push({ label: `Suggestions${nSugg != null ? ` (${nSugg})` : ''}`, kind: 'open', arg: 'suggestions' });
   if (!has('go', 'plan')) acts.push({ label: 'Plan', kind: 'go', arg: 'research/plan' });
   const oneSkip = one && acts.find((a) => a.kind === 'skip' && a.arg && (one.symbol ? a.arg === one.symbol : txt(one).includes(a.arg)));
@@ -105,25 +140,25 @@ export default function TodayCard({ onGo }) {
   const ordersMeta = [cols.orders?.length || null, counts.cash_after != null && `cash after ${inr(counts.cash_after)}`, counts.free_slots != null && `${counts.free_slots} slots free`].filter(Boolean).join(' · ');
 
   return <div className={`tc-hero ph-${phase}`}>
-    <div className="tc-hh"><span className="ttl">{ICON[phase]} Today · {dayLabel(c.day) || 'today'}</span>
-      <span className="dim">{c.at ? `${clock(c.at)} · ` : ''}from the brief, the plan, the suggestions and the books · the model wrote only the tagged lines</span>
-      <span className="tc-chip">{phase}</span></div>
+    <div className="tc-hh"><span className="ttl">{pn ? PICON[pn.phase] || ICON[phase] : ICON[phase]} Today · {dayLabel(c.day) || 'today'}</span>
+      <span className="dim">{c.at ? `${clock(c.at)} · ` : ''}from the brief, the plan, the books and the night batch · the model wrote only the tagged lines</span>
+      <span className="tc-chip">{pn ? pn.chip : phase}</span></div>
     <div className="tc-ribbon">{steps.map(([l, st], i) => <span key={i} className={st || ''}><i />{l}</span>)}</div>
-    {c.headline && <div className="tc-headline" title={txt(c.headline)}>{txt(c.headline)}</div>}
+    {(pn?.one || c.headline) && <div className="tc-headline" title={txt(pn?.one || c.headline)}>{txt(pn?.one || c.headline)}</div>}
     {one && txt(one) && <div className="tc-one"><span className="k">The one thing</span>
       <span className="t" title={[txt(one), one.sub].filter(Boolean).join(' · ')}>{txt(one)}{one.sub ? <small> · {one.sub}</small> : null}</span>
       {oneSkip && <button type="button" className="btn primary small" disabled={busy} onClick={() => run(oneSkip)}>{label(oneSkip)}</button>}</div>}
-    <div className="tc-cols">
+    {pn ? <div className="tc-cols tt-cols">{pn.tiles.slice(0, 3).map((t) => <Tile key={t.key} t={t} />)}</div> : <div className="tc-cols">
       <Col title={ordersTitle} meta={ordersMeta} rows={cols.orders} Row={OrderRow} note={cols.orders_note}
         empty={phase === 'close' || phase === 'evening' ? 'no orders now · the next send is 9:16 AM on the next trading day' : 'no orders for this send'} />
       <Col title="Watch" rows={cols.watch} Row={WatchRow} empty="nothing to watch right now" />
       <Col title="Books" meta="last session" rows={cols.books} Row={BookRow} empty="no book figures yet" />
-    </div>
-    {(c.brief_lines || []).length > 0 && <div className="tc-brief">{c.brief_lines.map((l, i) => <div key={i} title={txt(l)}><AiTag of={l} /><span>{txt(l)}</span></div>)}</div>}
+    </div>}
+    {(c.brief_lines || []).length > 0 && pn?.phase !== 'premarket' && <div className="tc-brief">{c.brief_lines.map((l, i) => <div key={i} title={txt(l)}><AiTag of={l} /><span>{txt(l)}</span></div>)}</div>}
     <div className="tc-acts">
       {acts.map((a, i) => <button key={`${a.kind}${a.arg}${i}`} type="button" className={`btn small ${a.kind === 'skip' ? 'primary' : 'ghost'}`} disabled={a.kind === 'skip' && busy}
         title={a.kind === 'skip' ? 'asks first · then the same morning skip as the Real page (today only)' : undefined} onClick={() => run(a)}>{label(a)}</button>)}
-      <span className="dim">{msg ? <span className={msg.bad ? 'down' : 'up'}>{msg.text}</span> : c.footer || FOOT[phase]}</span>
+      <span className="dim">{msg ? <span className={msg.bad ? 'down' : 'up'}>{msg.text}</span> : pn?.footer || c.footer || FOOT[phase]}</span>
     </div>
   </div>;
 }

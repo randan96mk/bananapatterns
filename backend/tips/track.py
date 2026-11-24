@@ -523,6 +523,29 @@ def record(days: int = 30, channel: Optional[str] = None, now: Optional[datetime
                            "skips_right": sum(1 for h in skipped if ((h.get("score") or {}).get("pnl_lot") or 0) <= 0), "skips": len(skipped)}}
 
 
+def first_call(days: int = 30, now: Optional[datetime] = None) -> Optional[str]:
+    """The channel's usual first call: the median of each day's first hint time (IST) over `days`, 12-hour ('9:58 AM');
+    None without a hint. Stored rows only (Home › Today)."""
+    from statistics import median
+    from backend.timefmt import ampm
+    now = now or datetime.now(IST)
+    since = (now - timedelta(days=days)).isoformat(timespec="seconds")
+    first: dict = {}
+    for h in bk.rows("posted_at >= ? AND posted_at < ? AND channel != 'rehearsal'", (since, now.isoformat(timespec="seconds")), order="id"):
+        try:
+            t = datetime.fromisoformat(h["posted_at"])
+        except (TypeError, ValueError):
+            continue
+        t = t.astimezone(IST) if t.tzinfo else t
+        m = t.hour * 60 + t.minute
+        d = t.date().isoformat()
+        first[d] = min(first.get(d, m), m)
+    if not first:
+        return None
+    m = int(round(median(first.values())))
+    return ampm(f"{m // 60:02d}:{m % 60:02d}")
+
+
 # --- the page's views ---------------------------------------------------------------------------------------------------------
 
 ACTIONS = {"new": ["take", "take_half", "skip", "pause"], "waiting": ["take", "take_half", "skip", "pause"],

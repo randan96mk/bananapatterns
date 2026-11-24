@@ -7,9 +7,13 @@ confirm, open a page, scroll to the suggestions): nothing here sends, skips or c
   phase_for(now, config, trading, eod_done)   morning (to real.send_time) · session (to 3:40 PM) · close (to the
                                               evening job's end) · evening (after it, or a weekend / holiday)
   today_card(config, now)                     the payload of GET /api/today-card and the stream topic `today_card`
+                                              (+ `panel`: the phase-aware tiles of backend/ai/today_tiles.py)
+  clock(at)                                   now in IST; a test clock (`?at=` / BP_TODAY_AT) only on a server
+                                              without the scheduler (BP_NO_SCHEDULER=1: a test or scratch run)
 """
 
 import json
+import os
 from datetime import datetime, time
 from typing import Optional
 
@@ -294,10 +298,32 @@ def actions(phase: str, morning_orders: list, n_sugg: int, has_real: bool) -> li
     return out
 
 
+def test_clock_ok() -> bool:
+    """The `?at=` / BP_TODAY_AT clock is honoured only where the scheduler is off (tests, a scratch server)."""
+    return os.getenv("BP_NO_SCHEDULER") == "1"
+
+
+def clock(at: Optional[str] = None) -> datetime:
+    """Now in IST, or the test clock (an ISO time, IST when it has no zone) where test_clock_ok()."""
+    at = at or os.getenv("BP_TODAY_AT") or None
+    if at and test_clock_ok():
+        try:
+            t = datetime.fromisoformat(at)
+            return t.astimezone(IST) if t.tzinfo else t.replace(tzinfo=IST)
+        except ValueError:
+            pass
+    return datetime.now(IST)
+
+
+def _panel(config: AppConfig, now: datetime, trading: bool) -> dict:
+    from backend.ai import today_tiles
+    return today_tiles.panel(config, now, trading)
+
+
 def today_card(config: AppConfig, now: Optional[datetime] = None) -> dict:
     """{phase, day, at, at_label, headline, the_one_thing, columns: {orders, watch, books}, brief_lines: [{text, ai}],
-    actions: [{label, kind, arg}], counts, phases}. Read-only."""
-    now = now or datetime.now(IST)
+    actions: [{label, kind, arg}], counts, phases, panel}. Read-only."""
+    now = now or clock()
     day = now.date().isoformat()
     from backend.ingest.holidays import is_trading_day
     trading = is_trading_day(now.date())
@@ -332,6 +358,7 @@ def today_card(config: AppConfig, now: Optional[datetime] = None) -> dict:
             "headline": headline(phase, config, orders, stops, close_line, eod),
             "the_one_thing": the_one_thing(sugg, ew, morning_orders if phase == "morning" else [], config),
             "columns": {"orders": orders, "watch": watch, "books": books}, "brief_lines": lines, "actions": acts, "counts": counts,
+            "panel": _safe(_panel, None, config, now, trading),
             "steps": [{"key": "brief", "label": f"{ampm(config.ai.brief_time)} brief"},
                       {"key": "orders", "label": f"{ampm(config.real.send_time)} orders"},
                       {"key": "summary", "label": f"{ampm(getattr(config.alerts, 'day_summary_time', '15:40'))} summary"}]}

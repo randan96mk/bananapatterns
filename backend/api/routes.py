@@ -1813,11 +1813,12 @@ def plan_heat_view():
 
 
 @router.get("/today-card")
-def today_card_view():
+def today_card_view(at: Optional[str] = None):
     """✨ The Today card on Home: the phase by the clock, the headline, the one thing, orders / watch / books, the
-    morning brief's lines (the only model text, tagged), the actions (labels only: nothing fires by itself)."""
+    morning brief's lines (the only model text, tagged), the actions (labels only: nothing fires by itself), and the
+    phase-aware tiles (`panel`). `at` (an ISO time) is a test clock, honoured only without the scheduler."""
     from backend.ai import today
-    return today.today_card(S().config)
+    return today.today_card(S().config, today.clock(at) if at else None)
 
 
 @router.get("/week")
