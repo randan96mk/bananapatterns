@@ -497,6 +497,19 @@ CREATE TABLE IF NOT EXISTS ai_views (
     UNIQUE (day, symbol, source));
 CREATE INDEX IF NOT EXISTS idx_ai_views_symbol ON ai_views(symbol, day);
 
+-- ₿ BTC pivot patterns (backend/crypto): Delta Exchange candles (t = the candle's open, unix seconds UTC) and every
+-- detection (state sent | quiet | mark | confirm_wait | dropped; why = the reason a row was dropped or not sent).
+-- Never deleted: the archive job MOVES rows older than crypto.archive_days (365) to data/archive.db; the snapshot PNGs
+-- (data/crypto/snaps/<id>.png) move with them to data/crypto/snaps/archive/.
+CREATE TABLE IF NOT EXISTS crypto_candles (symbol TEXT NOT NULL, tf TEXT NOT NULL, t INTEGER NOT NULL, o REAL NOT NULL,
+    h REAL NOT NULL, l REAL NOT NULL, c REAL NOT NULL, v REAL, PRIMARY KEY (symbol, tf, t));
+CREATE TABLE IF NOT EXISTS crypto_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL, tf TEXT NOT NULL, t INTEGER NOT NULL, pattern TEXT NOT NULL,
+    dir TEXT NOT NULL CHECK(dir IN ('long', 'short')), level_name TEXT, level_px REAL, entry REAL, stop REAL, r1 REAL,
+    ema_ok INTEGER, vol_ok INTEGER,
+    state TEXT NOT NULL CHECK(state IN ('sent', 'quiet', 'mark', 'confirm_wait', 'dropped')),
+    sent_at TEXT, ai_json TEXT, png_path TEXT, why TEXT, facts_json TEXT, created_at TEXT, digest_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_crypto_signals_t ON crypto_signals(symbol, tf, t);
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,

@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
         tips_kite.backfill_close_facts()
     except Exception:
         logger.exception("Tips Kite close-facts backfill failed")
+    try:                                  # ₿ BTC pivot patterns: idle until crypto.enabled (alerts only, its own thread)
+        from backend.crypto import feed as crypto_feed
+        state.crypto = crypto_feed.CryptoService(state)
+        if os.getenv("BP_NO_CRYPTO") != "1":
+            state.crypto.start()
+    except Exception:
+        logger.exception("Crypto feed start failed")
     if os.getenv("BP_NO_SCHEDULER") != "1":
         state.scheduler.start()           # evening job, reminders, login links, intraday heads-up, weekly refresh
         try:                              # 🤖 a deploy at night: the skipped night jobs are queued again
@@ -105,6 +112,8 @@ async def lifespan(app: FastAPI):
     state.tips_kite.stop()
     if getattr(state, "market", None) is not None:
         state.market.stop()
+    if getattr(state, "crypto", None) is not None:
+        state.crypto.stop()
     if tips_reader.READER is not None:
         tips_reader.READER.stop()
     logger.info("Banana Patterns backend stopped")

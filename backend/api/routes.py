@@ -52,6 +52,7 @@ class AppState:
         self.tips_tracker = None              # 💡 backend.tips.track.Tracker, set at startup
         self.tips_kite = None                 # ⚡ backend.tips.kite_orders.Syncer, set at startup
         self.market = None                    # 📈 backend.market.reads.MarketService, set at startup
+        self.crypto = None                    # ₿ backend.crypto.feed.CryptoService, set at startup (alerts only)
 
     @property
     def ticker(self):
@@ -291,6 +292,8 @@ def put_config(section: str, values: dict):
             set_setting(conn, "config.changes", json.dumps(log[:100]))
     if section == "ingest":
         S().client.hist_bucket.set_rate(S().config.ingest.hist_rate_per_sec)
+    if section == "crypto" and getattr(S(), "crypto", None) is not None:
+        S().crypto.poke()                          # ₿ a new symbol / timeframe: backfilled on the next pass
     return out
 
 
@@ -2554,6 +2557,73 @@ def today_pnl_view():
     return today_pnl(S().config)
 
 
+# --- ₿ BTC pivot patterns (alerts only: nothing here places, sizes or books an order) ---------------------------------
+
+def crypto_summary():
+    from backend.crypto import view as cv
+    return cv.summary(S().config, S().crypto)
+
+
+@router.get("/crypto")
+def crypto_view():
+    """₿ The Strategies › ₿ BTC patterns page: the feed, the pivots, the alert hours, the detections, the settings."""
+    return crypto_summary()
+
+
+@router.get("/crypto/candles")
+def crypto_candles(tf: Optional[str] = None, start: Optional[int] = Query(None, alias="from"), end: Optional[int] = Query(None, alias="to"),
+                   range: str = "3d"):
+    """₿ The chart's candles from the store (time shifted to IST), the EMA, the pivot segments, the detections."""
+    from backend.crypto import view as cv
+    return cv.candles(S().config, tf, start, end, range)
+
+
+@router.get("/crypto/signals")
+def crypto_signals(limit: int = Query(300, ge=1, le=5000)):
+    from backend.crypto import signals as sg
+    from backend.crypto import view as cv
+    return {"signals": [cv.row_view(r) for r in sg.rows("symbol = ?", (S().config.crypto.symbol,), limit=limit)]}
+
+
+@router.get("/crypto/snap/{sid}.png")
+def crypto_snap(sid: int):
+    """₿ A detection's chart snapshot (the PNG sent with the alert; an archived one from snaps/archive)."""
+    from backend.crypto import signals as sg
+    r = sg.load(sid)
+    p = Path(r["png_path"]) if r and r.get("png_path") else None
+    if p and not p.is_file():
+        p = p.parent / "archive" / p.name
+    if not p or not p.is_file():
+        raise HTTPException(404, "no snapshot for this detection")
+    return Response(p.read_bytes(), media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+class CryptoQuiet(BaseModel):
+    hours: Optional[float] = None          # None / 0 = resume
+
+
+@router.post("/crypto/quiet")
+def crypto_quiet(req: CryptoQuiet):
+    """₿ Pause the alerts for N hours (detections are stored "quiet" and listed in the digest), or resume."""
+    from backend.crypto import signals as sg
+    if req.hours is not None and not (0 <= float(req.hours) <= 72):
+        raise HTTPException(400, "hours must be 0 … 72")
+    q = sg.set_quiet(req.hours or None)
+    return {"quiet_until": q.isoformat(timespec="seconds") if q else None, "quiet_label": ampm(q) if q else None,
+            "text": sg.hours_text(S().config)}
+
+
+@router.post("/crypto/refresh")
+def crypto_refresh():
+    """₿ Wake the feed now (it fetches the last candles on its next pass); off: says so."""
+    st = S()
+    if not st.config.crypto.enabled:
+        return {"ok": False, "why": "the feed is off (crypto.enabled)"}
+    if st.crypto is not None:
+        st.crypto.poke()
+    return {"ok": True}
+
+
 # --- 📡 one live connection: the page subscribes to topics; each is sent when it changes ---------------------
 
 def _stream_topics() -> dict:
@@ -2572,6 +2642,7 @@ def _stream_topics() -> dict:
         "tips": (tips_summary, lambda d: 5 if (d or {}).get("any_open") else 60),
         "home_tips": (home_tips_view, lambda d: 5 if (d or {}).get("live") else 30),
         "today_pnl": (today_pnl_view, lambda d: 5 if (d or {}).get("open") else 60),
+        "crypto": (crypto_summary, lambda d: 10 if (d or {}).get("enabled") else 60),
         "ai": (ai_summary, lambda d: 5 if ((d or {}).get("models") or {}).get("pull", {}).get("running") or ((d or {}).get("queue") or {}).get("job") else 60),
     }
 

@@ -15,6 +15,8 @@
                                hold need `yes N` within 10 min; a skip goes straight through); dismiss with a reason;
                                the evidence of #N. Nothing runs without your reply
   ask <question>               🤖 ask the app: the day model answers from one read-only tool ("thinking…" first)
+  btc / btc quiet 2h / btc quiet off   ₿ BTC pivot patterns: the status line; pause the alerts for N hours (the
+                               detections are stored "quiet" and listed in the digest); resume. Alerts only
   tips / tip N / take N [lots|half] / skip N / exit N / trail N <px> / pause N / resume N / tips channels
                                💡 Tips: the status line, a hint's card, take it into the Tips paper book (2 = lots),
                                skip it (still scored), close it, move its stop, pause / resume it, the channels read
@@ -91,6 +93,10 @@ class BotCommands:
             if str((m.get("chat") or {}).get("id")) != notifier.chat_id or not parts:
                 continue
             w0 = parts[0].lstrip("/").split("@")[0].lower()
+            if w0 == "btc":                                                                        # ₿ "btc quiet 2h" / "btc quiet off"
+                if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
+                    handled += int(self._say(notifier, self.btc(parts[1:])))
+                continue
             if w0 == "tips" or (w0 in TIPS_WORDS and len(parts) > 1 and parts[1].isdigit()):   # 💡 "skip 12" (a number) is Tips
                 if self.clock().timestamp() - m.get("date", 0) <= STALE_SEC:
                     handled += int(self._say(notifier, self.tips(w0, parts[1:])))
@@ -119,6 +125,31 @@ class BotCommands:
             if self.handle(parts[0].split("@")[0].lower(), notifier, arg):
                 handled += 1
         return handled
+
+    def btc(self, args: list) -> str:
+        """₿ "btc" (status) · "btc quiet 2h" / "btc quiet 90m" (pause) · "btc quiet off" (resume)."""
+        import re as _re
+        from backend.crypto import signals as sg
+        cfg = self.state.config
+        a = [x.lower() for x in args]
+        if a[:1] == ["quiet"]:
+            if len(a) > 1 and a[1] in ("off", "stop", "resume", "0"):
+                sg.set_quiet(None, self.clock())
+                return "₿ BTC alerts resumed · " + sg.hours_text(cfg, self.clock())
+            m = _re.fullmatch(r"(\d+(?:\.\d+)?)\s*(h|hr|hrs|hours?|m|min|mins)?", "".join(a[1:]) or "2h")
+            if not m:
+                return "₿ use: btc quiet 2h · btc quiet 30m · btc quiet off"
+            hours = float(m.group(1)) / (60 if (m.group(2) or "h").startswith("m") else 1)
+            if not 0 < hours <= 72:
+                return "₿ quiet for 1 minute … 72 hours"
+            q = sg.set_quiet(hours, self.clock())
+            return f"₿ BTC alerts quiet until {ampm(q)} · detections are still stored and listed in the digest"
+        c = cfg.crypto
+        from backend.crypto import feed
+        h = feed.health(c.symbol, c.tf)
+        state = "on" if c.enabled else "off"
+        last = f"last candle {h['last_label']}" if h.get("last_label") else "no candles yet"
+        return f"₿ BTC patterns {state} · {c.symbol} {c.tf} · {last} · {sg.hours_text(cfg, self.clock())} · alerts only"
 
     def _say(self, notifier: Notifier, html: str) -> bool:
         return notifier.send(f"bot|{uuid.uuid4().hex}", "bot", html)
