@@ -199,7 +199,7 @@ const PAT = (name, rule) => `₿ ${name}: off | mark (on the chart only) | alert
 const HELP_CRYPTO = {
   enabled: '₿ The Delta Exchange feed runs 24×7 on its own thread (true/false); off: nothing is fetched or detected. Alerts only: it never places an order',
   symbol: '₿ Delta Exchange India symbol (public candles, no key)', tf: '₿ Candle timeframe the patterns read: 1m | 5m | 15m | 1h',
-  history_days: '₿ Backfill depth at the first start, paged at ≤ 2 requests a second', archive_days: '₿ Candles and detections older than this MOVE to data/archive.db (never deleted; 30 at least)',
+  history_days: '₿ Backfill depth at the first start, paged at ≤ 2 requests a second', scan_days: '₿ After the backfill (and on the tab\'s "Scan history"): the patterns in the last N days are marked on the chart and listed as "history scan" · nothing is sent · 0 = off', archive_days: '₿ Candles and detections older than this MOVE to data/archive.db (never deleted; 30 at least)',
   pivot_type: '₿ traditional | fibonacci | woodie | classic | camarilla | dm (TradingView\'s formulas, from the previous period)',
   pivot_tf: '₿ auto (daily for 15 min and under, weekly above) | daily | weekly | monthly',
   day_boundary: '₿ utc: Delta\'s day starts 00:00 UTC = 5:30 AM IST (matches TradingView) · ist: midnight IST', use_p: '₿ P counts as a level for both sides (true/false)',

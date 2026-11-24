@@ -301,6 +301,12 @@ class CryptoService:
                 r = backfill(self.client, sym, tf, int(c.history_days), now_ts, self._stop)
                 logger.info("₿ backfill %s %s: %d candles in %d calls", sym, tf, r["candles"], r["calls"])
                 self.backfilled.add((sym, tf))
+                self.refresh_daily(now_ts)
+                try:                                         # the chart shows history from the first minute: mark, never send
+                    sc = signals.scan_history(self.config, now_ts=now_ts)
+                    logger.info("₿ history scan %s %s: %d candles, %d marked", sym, tf, sc["scanned"], sc["marked"])
+                except Exception:
+                    logger.exception("₿ history scan failed")
             self.refresh_daily(now_ts)
             fresh = self.client.candles(sym, tf, int(now_ts) - 6 * s, int(now_ts))
             upsert(sym, tf, fresh)
