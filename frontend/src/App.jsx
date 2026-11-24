@@ -48,6 +48,7 @@ const WeekPage = lazyPage(() => import('./components/WeekPage'));
 const StrategiesPage = lazyPage(() => import('./components/StrategiesPage'));
 const SystemHome = lazyPage(() => import('./components/SystemHome'));
 const TipsPage = lazyPage(() => import('./components/TipsPage'));
+const CryptoPage = lazyPage(() => import('./components/CryptoPage'));
 
 // v2 layout: five sections (sidebar on a computer, bottom bar on a phone), each with its pages. The page is kept in the
 // address (#/section/page), so links and the back button work.
@@ -60,13 +61,13 @@ const ICONS = {
 };
 export const SECTIONS = [
   ['home', 'Home', [['home', 'Overview']]],
-  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['breakout', 'Trend Breakout'], ['options', '🧩 Options']]],
+  ['strategies', 'Strategies', [['strategies', 'All strategies'], ['breakout', 'Trend Breakout'], ['options', '🧩 Options'], ['crypto', '₿ BTC patterns']]],
   ['portfolio', 'Portfolio', [['portfolio', 'All accounts'], ['real', 'Real'], ['paper', 'Paper · swing'], ['week', '📖 Week']]],
   ['research', 'Research', [['screens', 'Screens'], ['follow', '📈 Follow'], ['plan', "Today's plan"], ['universe', 'Universe'], ['tips', '💡 Tips']]],
   ['system', 'System', [['system', 'Connections'], ['alerts', 'Alerts & schedule'], ['sent', 'Sent alerts'], ['data', 'Data'], ['settings', 'Settings'], ['logs', 'Logs'], ['ai', '🤖 AI']]],
 ];
 const SECTION_OF = Object.fromEntries(SECTIONS.flatMap(([s, , pages]) => pages.map(([p]) => [p, s])));
-const DOTS = ['breakout', 'paper', 'real', 'options'];
+const DOTS = ['breakout', 'paper', 'real', 'options', 'crypto'];
 const Icon = ({ id }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
   strokeLinejoin="round" aria-hidden="true"><path d={ICONS[id]} /></svg>;
 
@@ -175,6 +176,7 @@ export default function App() {
           {tab === 'breakout' && <BreakoutPage />}
           {tab === 'real' && <RealPage />}
           {tab === 'options' && <OptionsPage />}
+          {tab === 'crypto' && <CryptoPage />}
           {tab === 'paper' && <PaperPage />}
           {tab === 'week' && <WeekPage onGo={go} />}
           {tab === 'follow' && <FollowPage />}

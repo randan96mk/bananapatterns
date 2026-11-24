@@ -75,6 +75,11 @@ def signals(config, kite: bool) -> dict:
         out["tips"] = _pack(vs.attention_items() + kc.attention_items())
     except Exception:
         out["tips"] = _pack([])
+    try:                                                   # ₿ the BTC feed behind or failing (alerts only)
+        from backend.crypto import feed as crypto_feed
+        out["crypto"] = _pack(crypto_feed.attention_items(config))
+    except Exception:
+        out["crypto"] = _pack([])
     return out
 
 

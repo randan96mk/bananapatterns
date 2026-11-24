@@ -47,7 +47,11 @@ TABLES = {
     "ai_jobs": ("created", ("id",), "status IN ('queued', 'running')"),
     "job_runs": ("run_date", ("id",), "id IN (SELECT MAX(id) FROM main.job_runs GROUP BY job)"),
     "sent_alerts": ("sent_at", ("key",), "ok = 0 OR key NOT GLOB '[0-9][0-9][0-9][0-9]*'"),
+    "crypto_candles": ("t", ("symbol", "tf", "t"), None),
+    "crypto_signals": ("t", ("id",), "state = 'confirm_wait'"),
 }
+# ₿ tables whose time column is unix seconds (an INTEGER always sorts before TEXT in SQLite: the cutoff must be a number)
+UNIX_TIME = ("crypto_candles", "crypto_signals")
 
 # a table kept longer than maintenance.archive_days in the live DB (days): the Tips card's tick store and the Tips AI
 # reads (tips_ai), 180 days
@@ -76,7 +80,10 @@ def _mb(p: Path) -> float:
     return round(size / 1e6, 1)
 
 
-def _cutoff(config: AppConfig, now: datetime, table: Optional[str] = None) -> str:
+def _cutoff(config: AppConfig, now: datetime, table: Optional[str] = None):
+    if table in UNIX_TIME:                                 # ₿ crypto.archive_days (365), as unix seconds
+        day = now.date() - timedelta(days=int(getattr(getattr(config, "crypto", None), "archive_days", 365)))
+        return int(datetime(day.year, day.month, day.day, tzinfo=IST).timestamp())
     days = TABLE_DAYS.get(table or "", int(config.maintenance.archive_days))
     return (now.date() - timedelta(days=int(days))).isoformat()
 
@@ -173,7 +180,12 @@ def _run(config: AppConfig, now: datetime) -> dict:
         conn.execute("ATTACH DATABASE ? AS a", (str(arch),))
         for table in TABLES:
             try:
+                if table == "crypto_signals":             # ₿ the snapshot PNGs of the rows about to move go with them
+                    snaps = [r[0] for r in conn.execute("SELECT png_path FROM main.crypto_signals WHERE t < ? AND state != 'confirm_wait' "
+                                                        "AND png_path IS NOT NULL", (_cutoff(config, now, table),))]
                 moved[table] = _move(conn, table, _cutoff(config, now, table))
+                if table == "crypto_signals" and moved[table]:
+                    _move_snaps(snaps)
             except sqlite3.Error as exc:                  # one table failing leaves the others (and its rows) alone
                 logger.exception("Archive of %s failed", table)
                 error = f"{table}: {exc}"
@@ -208,6 +220,20 @@ def _run(config: AppConfig, now: datetime) -> dict:
         set_setting(c, LAST_KEY, json.dumps(out))
     logger.info("Archive: %s", message)
     return out
+
+
+def _move_snaps(paths: list) -> int:
+    """₿ Move (never delete) archived detections' snapshot PNGs into data/crypto/snaps/archive/."""
+    n = 0
+    for p in paths:
+        src = Path(p)
+        if not src.is_file():
+            continue
+        dst = src.parent / "archive" / src.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.replace(dst)
+        n += 1
+    return n
 
 
 # --- schedule ------------------------------------------------------------------------------------------------------------

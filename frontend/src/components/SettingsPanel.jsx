@@ -74,8 +74,8 @@ const HELP = {
   dryup_lookback: 'Sessions before the base used for "base volume vs prior pace"',
 };
 
-const SECTIONS = ['real', 'paper', 'options', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest', 'maintenance'];
-const NAMES = { tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest', maintenance: '🧹 Archive' };
+const SECTIONS = ['real', 'paper', 'options', 'crypto', 'ai', 'tips', 'breakout', 'vcp', 'flag', 'screen', 'bases', 'trend', 'market', 'ingest', 'maintenance'];
+const NAMES = { crypto: '₿ BTC patterns', tips: '💡 Tips', real: 'Real trading', paper: 'Paper trading', options: 'NIFTY options', ai: 'Local AI', breakout: 'Trend Breakout', vcp: 'VCP', flag: 'Bull flag', screen: 'Screens', bases: 'Bases', trend: 'Trend', market: 'Market', ingest: 'Data ingest', maintenance: '🧹 Archive' };
 // Set on their own pages (switches, confirms, deposits): not editable here.
 const HIDE = { real: ['enabled', 'variant', 'capital'], paper: ['capital', 'variants'], options: ['real'], ai: ['enabled'] };
 const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_until: '… until here; missed orders are not sent that day', preview_time: 'Morning reminder with the orders ("" = off)',
@@ -194,7 +194,45 @@ const HELP_MARKET = {
   samples: '📈 Sampled paths per read (1–30; 10 by default): more paths, steadier odds, a slower read',
   port: '📈 The worker\'s port on 127.0.0.1 (1024–65535); if the worker is down the cards say "no model read" and nothing else changes',
 };
-const HELP_SEC = { tips: HELP_TIPS, maintenance: HELP_MAINT, market: HELP_MARKET };
+// ₿ BTC pivot patterns (section-scoped: several keys share names with other sections). Alerts only: nothing here trades.
+const PAT = (name, rule) => `₿ ${name}: off | mark (on the chart only) | alert (Telegram) · ${rule}`;
+const HELP_CRYPTO = {
+  enabled: '₿ The Delta Exchange feed runs 24×7 on its own thread (true/false); off: nothing is fetched or detected. Alerts only: it never places an order',
+  symbol: '₿ Delta Exchange India symbol (public candles, no key)', tf: '₿ Candle timeframe the patterns read: 1m | 5m | 15m | 1h',
+  history_days: '₿ Backfill depth at the first start, paged at ≤ 2 requests a second', archive_days: '₿ Candles and detections older than this MOVE to data/archive.db (never deleted; 30 at least)',
+  pivot_type: '₿ traditional | fibonacci | woodie | classic | camarilla | dm (TradingView\'s formulas, from the previous period)',
+  pivot_tf: '₿ auto (daily for 15 min and under, weekly above) | daily | weekly | monthly',
+  day_boundary: '₿ utc: Delta\'s day starts 00:00 UTC = 5:30 AM IST (matches TradingView) · ist: midnight IST', use_p: '₿ P counts as a level for both sides (true/false)',
+  hammer: PAT('hammer', 'lower wick ≥ 2× body and ≥ 50 % of range · upper ≤ 30 % · body in the top 60 % · on S1–S3'),
+  bullish_engulfing: PAT('bullish engulfing', 'green body covers the prior red body · close above the prior open'),
+  piercing_line: PAT('piercing line', 'opens below the prior low · closes above the prior body\'s midpoint'),
+  morning_star: PAT('morning star', 'red · small body ≤ 30 % of the first at or under its close · green closing into the first body'),
+  bullish_harami: PAT('bullish harami', 'small green body inside the prior red body · confirmation: a close above the harami high'),
+  dragonfly_doji: PAT('dragonfly doji', 'body ≤ 10 % of range · lower wick ≥ 70 %'), tweezer_bottom: PAT('tweezer bottom', 'equal lows within 0.1 % · the second green'),
+  inverted_hammer: PAT('inverted hammer', 'upper wick ≥ 2× body after a decline · body at the bottom · confirmation: a green next candle'),
+  shooting_star: PAT('shooting star', 'upper wick ≥ 2× body and ≥ 50 % · lower ≤ 30 % · body in the bottom 40 % · on R1–R3'),
+  bearish_engulfing: PAT('bearish engulfing', 'red body covers the prior green body'), dark_cloud_cover: PAT('dark cloud cover', 'opens above the prior high · closes below the prior body\'s midpoint'),
+  evening_star: PAT('evening star', 'green · small body higher · red closing into the first body'), bearish_harami: PAT('bearish harami', 'small red body inside the prior green body · confirmation: a close below the harami low'),
+  gravestone_doji: PAT('gravestone doji', 'body ≤ 10 % · upper wick ≥ 70 %'), tweezer_top: PAT('tweezer top', 'equal highs · the second red'),
+  hanging_man: PAT('hanging man', 'hammer shape after a rise · confirmation: a red next candle'),
+  confirm_bullish_harami: '₿ The alert waits for the next candle to close in the direction (true/false)', confirm_bearish_harami: '₿ Wait for a confirming close (true/false)',
+  confirm_inverted_hammer: '₿ Wait for a green next candle (true/false)', confirm_hanging_man: '₿ Wait for a red next candle (true/false)',
+  confirm_dragonfly_doji: '₿ Wait for a confirming close (true/false)', confirm_gravestone_doji: '₿ Wait for a confirming close (true/false)',
+  wick_mult: '₿ The long wick ≥ this × the body (2.0)', wick_min: '₿ … and ≥ this share of the range (0.5)', opp_wick_max: '₿ The opposite wick ≤ this share of the range (0.3)',
+  body_zone: '₿ Hammer: the body in the top 60 % of the range · shooting star: in the bottom 40 % (0.6)', doji_body: '₿ A doji: the body ≤ this share of the range (0.1)',
+  doji_wick: '₿ Dragonfly / gravestone: the long wick ≥ this share (0.7)', star_body: '₿ Morning / evening star: the middle body ≤ this × the first body (0.3)',
+  eq_tol_pct: '₿ Tweezers: equal lows / highs within this % of the price (0.1)', touch_points: '₿ A level touches when inside the pattern\'s low–high or within this many points (20)',
+  ema_on: '₿ Trend filter: bullish needs close > EMA, bearish close < EMA (true/false)', ema_len: '₿ EMA length (20)', vol_on: '₿ Volume filter (true/false)',
+  vol_len: '₿ Volume average length (50)', vol_mult: '₿ The candle\'s volume ≥ this × its average (1.0)', trend_on: '₿ Prior 3-candle trend: bullish after a decline, bearish after a rise (true/false)',
+  days: '₿ IST weekdays the patterns are read (mon … sun, one a line)', alert_from: '₿ Alerts from (24-hour HH:MM, IST); outside the hours a detection is stored "quiet" and listed in the digest',
+  alert_until: '₿ … until (24-hour HH:MM, IST; may run over midnight)', alert_days: '₿ IST weekdays alerts go out (mon … sun, one a line)',
+  telegram: '₿ Telegram lines, kind "crypto" (true/false)', snapshot: '₿ The chart PNG with each alert (true/false)',
+  forming: '₿ Heads-up at 80 % of the candle for the alert-state hammer / shooting star / engulfings; the close confirms or cancels (true/false)',
+  digest: '₿ At alert_from: the detections made in the quiet hours (true/false)', cooldown_candles: '₿ One alert per level and direction per this many candles (6 = 30 min on 5m)',
+  stop_pad: '₿ Suggested stop = pattern low − this (points; information only)', max_stop: '₿ The suggested stop at most this many points from the entry level',
+  ai_read: '₿ The market read at a detection: code facts, the candle model (shadow) and one [AI] line through the AI queue; never gates an alert (true/false)',
+};
+const HELP_SEC = { tips: HELP_TIPS, maintenance: HELP_MAINT, market: HELP_MARKET, crypto: HELP_CRYPTO };
 const pctC = (v) => (v == null ? '—' : `${Math.round(Number(v))} %`);
 const sinceC = (d) => { try { return new Date(`${d}T00:00:00+05:30`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }); } catch { return d || '—'; } };
 
@@ -272,7 +310,7 @@ export default function SettingsPanel() {
     <div className="rd">
       <Head title="Settings" right={<><span className="msg">{msg}</span><button className="btn" disabled={!vals || !dirty} onClick={save}>Save</button></>}>
         <Chip>{NAMES[section]} · <b>{vals ? Object.keys(vals).length : '…'}</b> fields</Chip>
-        {!['ingest', 'maintenance'].includes(section) && <Chip title="Charts update when reopened">after saving, press Rescan on the Screens tab</Chip>}
+        {!['ingest', 'maintenance', 'crypto'].includes(section) && <Chip title="Charts update when reopened">after saving, press Rescan on the Screens tab</Chip>}
       </Head>
       <div className="two" style={narrow ? undefined : { gridTemplateColumns: '220px minmax(0, 1fr) 380px' }}>
         <Panel title="Sections">

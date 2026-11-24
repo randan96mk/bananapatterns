@@ -41,6 +41,7 @@ bananapatterns.com's terms forbid scraping: it is used only for design inspirati
 19. [Telegram alerts and automatic jobs](#telegram-alerts-and-automatic-jobs)
 19a. [💡 Tips · a Telegram channel's calls](#-tips--a-telegram-channels-calls-decoded-tracked-and-scored)
 19b. [📈 Market read](#-market-read--code-chart-facts--the-kronos-candle-model--the-local-models-words)
+19c. [₿ BTC pivot patterns](#-btc-pivot-patterns--alerts-only)
 20. [REST API](#rest-api)
 21. [CLI](#cli)
 22. [Configuration](#configuration)
@@ -2490,6 +2491,64 @@ torch 2.x) and pre-downloads the Kronos-mini weights (~31 MB with the tokenizer)
 container starts offline; at first run they are vendored to `data/ai/kronos/` (git-ignored, kept forever). Measured
 here (x86, 2 threads, 10 paths): load 1.4–1.6 s, an index read (30 min, 10 paths, 120 candles) 1.7–2.1 s, a hint read (15 min) 0.5–0.9 s; the server is ARM (aarch64), expect 2–3× slower.
 Kronos-small was too slow for live reads.
+
+## ₿ BTC pivot patterns · alerts only
+
+**Strategies › ₿ BTC patterns** watches Bitcoin (BTCUSD, Delta Exchange India's public candles, no key) for 16 candle
+patterns that form on the day's pivot levels, and sends a Telegram line with a chart snapshot. **It never trades:**
+nothing in `backend/crypto/` places, sizes or books an order (no broker, no paper book; `tests/test_crypto_api.py`
+asserts it). Every number in a line and on the chart comes from code; the `[AI]` line comes only from the existing AI
+queue and never gates or delays an alert.
+
+**What it watches.** The feed (`backend/crypto/feed.py`) backfills `crypto.history_days` (400) of the chosen timeframe
+(`crypto.tf`: 1m · 5m (default) · 15m · 1h) at the first start, paged at ≤ 2 requests a second, then wakes on each
+candle's close + 3 s (24×7, its own thread, off until `crypto.enabled`). Candles live in `crypto_candles`, detections in
+`crypto_signals`; neither is ever deleted (the weekly archive MOVES rows older than `crypto.archive_days` = 365 to
+`data/archive.db`, the snapshot PNGs to `data/crypto/snaps/archive/`). The daily candles for the pivots refresh once a
+day at 5:30 AM IST (Delta's day starts 00:00 UTC; `crypto.day_boundary` utc (default, as TradingView) or ist). A Home
+"Needs a look" item appears when the feed is more than 3 candles behind.
+
+**Pivots** (`backend/crypto/pivots.py`): TradingView's `ta.pivot_point_levels` from the previous closed period:
+Traditional (default), Fibonacci, Woodie, Classic, Camarilla, DM. Pivot timeframe Auto (daily for ≤ 15 min, weekly
+above), Daily, Weekly or Monthly. Bullish patterns count only at S1–S3, bearish at R1–R3 (P optional, off).
+
+**The 16 patterns** (`backend/crypto/patterns.py`; every threshold is an input). A level *touches* when it lies inside the
+pattern's low–high or within `touch_points` (20). Each pattern is off | mark | alert (alert by default: hammer, shooting
+star, both engulfings, morning and evening star; the rest mark only).
+
+| Bullish (S1–S3) | Rule | Bearish (R1–R3) | Rule |
+|---|---|---|---|
+| Hammer | lower wick ≥ 2× body and ≥ 50 % of range · upper wick ≤ 30 % · body in the top 60 % | Shooting star | upper wick ≥ 2× body and ≥ 50 % · lower wick ≤ 30 % · body in the bottom 40 % |
+| Bullish engulfing | green body covers the whole prior red body · close above the prior open | Bearish engulfing | red body covers the whole prior green body |
+| Piercing line | opens below the prior low · closes above the prior body's midpoint | Dark cloud cover | opens above the prior high · closes below the prior body's midpoint |
+| Morning star | red · small body (≤ 30 % of the first) at or under it · green closing into the first body · level at the middle candle | Evening star | green · small body higher · red closing into the first body |
+| Bullish harami | small green body inside the prior red body · prior low on S · confirmation: a close above the harami high | Bearish harami | small red body inside the prior green body · confirmation: a close below the harami low |
+| Dragonfly doji | body ≤ 10 % of range · lower wick ≥ 70 % | Gravestone doji | body ≤ 10 % · upper wick ≥ 70 % |
+| Tweezer bottom | equal lows within 0.1 % · the second green | Tweezer top | equal highs · the second red |
+| Inverted hammer | upper wick ≥ 2× body after a decline · body at the bottom · needs a green next candle | Hanging man | hammer shape after a rise · needs a red next candle |
+
+The weak ones (both haramis, the dojis, the inverted hammer, the hanging man) wait for the next candle to close in the
+direction (a switch each). Filters (each switchable, the Pine script's defaults): close above / below the 20 EMA (on),
+volume ≥ 1.0× its 50-candle average (off), a prior 3-candle trend (off), weekdays (all). A failing filter stores the row
+"dropped: why". Suggested stop / 1R (information only): bullish stop = pattern low − 10 points, at most 50 points from
+the entry level (the pattern high); 1R = entry + (entry − stop); bearish mirrored. One alert per level and direction
+per 6 candles (30 min on 5m).
+
+**Alert hours.** Alerts go out 8:00 AM – 11:00 PM IST (`crypto.alert_from` / `alert_until`, weekday switches); outside
+them, or while paused (`btc quiet 2h` on Telegram or **Quiet 2 h…** on the page; `btc quiet off` / **Resume**), a
+detection is stored "quiet", drawn muted on the chart and listed in one digest at `alert_from`. The line, within
+seconds of the close: `₿ hammer on S1 60,010 · 5 min · 2:10 AM · long bias · stop under 59,980 · 1R 60,320 · EMA 20
+above ✓ · volume 1.3×` with the chart PNG (`crypto.snapshot`), the `[AI]` line appended when ready within 3 s, else sent
+as a second message. An optional heads-up (`crypto.forming`, off) at 80 % of the candle says "forming · not confirmed";
+the close confirms or cancels it.
+
+**The page.** Top bar (state · pivots · alert hours, timeframe and range segments, Quiet / Resume, Refresh), the chart
+(lightweight-charts: candles, pivot lines with labels, EMA, markers, the selected detection's entry / stop / 1R), cards
+(feed, today's detections, today's pivots, AI), the market read, the detections table (newest first, every row stays;
+click a row to jump the chart, **Snapshot** opens the PNG) and the inputs panel (saved to the config section `crypto`,
+the same keys as Settings › ₿ BTC patterns). API: `GET /api/crypto`, `GET /api/crypto/candles?tf=&from=&to=`,
+`GET /api/crypto/signals`, `GET /api/crypto/snap/{id}.png`, `POST /api/crypto/quiet`, `POST /api/crypto/refresh`; stream
+topic `crypto`.
 
 ## REST API
 

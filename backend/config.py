@@ -702,6 +702,116 @@ def check_real(sec: "RealConfig") -> None:
         raise ValueError("tt_sid must be 0 (not set) or the deployment id")
 
 
+# ₿ BTC pivot-pattern alerts (backend/crypto): ALERTS ONLY, nothing here places, sizes or books an order
+CRYPTO_PATTERNS = ("hammer", "bullish_engulfing", "piercing_line", "morning_star", "bullish_harami", "dragonfly_doji",
+                   "tweezer_bottom", "inverted_hammer", "shooting_star", "bearish_engulfing", "dark_cloud_cover",
+                   "evening_star", "bearish_harami", "gravestone_doji", "tweezer_top", "hanging_man")
+CRYPTO_CONFIRM = ("bullish_harami", "bearish_harami", "inverted_hammer", "hanging_man", "dragonfly_doji", "gravestone_doji")
+CRYPTO_TFS = ("1m", "5m", "15m", "1h")
+CRYPTO_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+PIVOT_TYPES = ("traditional", "fibonacci", "woodie", "classic", "camarilla", "dm")
+
+
+@dataclass
+class CryptoConfig:
+    """₿ BTC pivot patterns: Delta Exchange public candles (no key), the previous period's pivot levels, 16 candle
+    patterns at S1–S3 (bullish) / R1–R3 (bearish), a Telegram line with a chart snapshot. Alerts only: it never trades."""
+    enabled: bool = False                  # the feed runs (24×7, its own thread); off until the owner turns it on
+    symbol: str = "BTCUSD"                 # Delta Exchange India symbol
+    tf: str = "5m"                         # candle timeframe the patterns read: 1m | 5m | 15m | 1h
+    history_days: int = 400                # backfill depth at the first start (paged, ≤ 2 requests a second)
+    archive_days: int = 365                # candles and detections older than this MOVE to data/archive.db (never deleted)
+    pivot_type: str = "traditional"        # traditional | fibonacci | woodie | classic | camarilla | dm (TradingView's)
+    pivot_tf: str = "auto"                 # auto (daily for tf ≤ 15m, weekly above) | daily | weekly | monthly
+    day_boundary: str = "utc"              # utc (Delta's day, 5:30 AM IST; matches TradingView) | ist (midnight IST)
+    use_p: bool = False                    # P counts as a level for both sides
+    hammer: str = "alert"                  # each pattern: off | mark (on the chart only) | alert (Telegram)
+    bullish_engulfing: str = "alert"
+    piercing_line: str = "mark"
+    morning_star: str = "alert"
+    bullish_harami: str = "mark"
+    dragonfly_doji: str = "mark"
+    tweezer_bottom: str = "mark"
+    inverted_hammer: str = "mark"
+    shooting_star: str = "alert"
+    bearish_engulfing: str = "alert"
+    dark_cloud_cover: str = "mark"
+    evening_star: str = "alert"
+    bearish_harami: str = "mark"
+    gravestone_doji: str = "mark"
+    tweezer_top: str = "mark"
+    hanging_man: str = "mark"
+    confirm_bullish_harami: bool = True    # the weak patterns: the alert waits for the next candle to close in the direction
+    confirm_bearish_harami: bool = True
+    confirm_inverted_hammer: bool = True
+    confirm_hanging_man: bool = True
+    confirm_dragonfly_doji: bool = True
+    confirm_gravestone_doji: bool = True
+    wick_mult: float = 2.0                 # the long wick ≥ this × the body
+    wick_min: float = 0.5                  # … and ≥ this share of the range
+    opp_wick_max: float = 0.3              # the opposite wick ≤ this share of the range
+    body_zone: float = 0.6                 # hammer: the body in the top 60 % · shooting star: in the bottom 40 %
+    doji_body: float = 0.1                 # a doji: the body ≤ this share of the range
+    doji_wick: float = 0.7                 # dragonfly / gravestone: the long wick ≥ this share of the range
+    star_body: float = 0.3                 # morning / evening star: the middle body ≤ this × the first body
+    eq_tol_pct: float = 0.1                # tweezers: equal lows / highs within this % of the price
+    touch_points: float = 20.0             # a level touches when inside the pattern's low–high or within this many points
+    ema_on: bool = True                    # trend filter: bullish needs close > EMA, bearish close < EMA
+    ema_len: int = 20
+    vol_on: bool = False                   # volume filter: the candle's volume ≥ vol_mult × its vol_len average
+    vol_len: int = 50
+    vol_mult: float = 1.0
+    trend_on: bool = False                 # prior 3-candle trend: bullish after a decline, bearish after a rise
+    days: list = field(default_factory=lambda: list(CRYPTO_DAYS))        # IST weekdays the patterns are read
+    alert_from: str = "08:00"              # alert hours (IST, 24-hour HH:MM): outside them a detection is stored "quiet"
+    alert_until: str = "23:00"
+    alert_days: list = field(default_factory=lambda: list(CRYPTO_DAYS))  # IST weekdays alerts go out
+    telegram: bool = True                  # Telegram lines (kind "crypto"); off: detections are stored and charted only
+    snapshot: bool = True                  # the chart PNG with each alert
+    forming: bool = False                  # heads-up at 80 % of the candle (hammer / shooting star / engulfings, alert state)
+    digest: bool = True                    # at alert_from: the detections made in the quiet hours
+    cooldown_candles: int = 6              # one alert per (level, direction) per this many candles
+    stop_pad: float = 10.0                 # suggested stop = pattern low − this (points; information only)
+    max_stop: float = 50.0                 # the stop at most this many points from the entry level
+    ai_read: bool = True                   # the market read (code facts + the candle model + one [AI] line); never gates an alert
+
+
+def check_crypto(sec: "CryptoConfig") -> None:
+    """₿ the choices, the ranges, HH:MM alert hours, weekday names."""
+    if sec.tf not in CRYPTO_TFS:
+        raise ValueError(f"tf must be one of {list(CRYPTO_TFS)}")
+    if not re.fullmatch(r"[A-Z0-9]{3,20}", str(sec.symbol)):
+        raise ValueError("symbol must be letters and digits, like BTCUSD")
+    if str(sec.pivot_type).lower() not in PIVOT_TYPES:
+        raise ValueError(f"pivot_type must be one of {list(PIVOT_TYPES)}")
+    sec.pivot_type = str(sec.pivot_type).lower()
+    if sec.pivot_tf not in ("auto", "daily", "weekly", "monthly"):
+        raise ValueError("pivot_tf must be auto, daily, weekly or monthly")
+    if sec.day_boundary not in ("utc", "ist"):
+        raise ValueError("day_boundary must be utc or ist")
+    for p in CRYPTO_PATTERNS:
+        if getattr(sec, p) not in ("off", "mark", "alert"):
+            raise ValueError(f"{p} must be off, mark or alert")
+    for k in ("alert_from", "alert_until"):
+        if not _hhmm_ok(getattr(sec, k)):
+            raise ValueError(f"{k} must be HH:MM (24-hour, IST)")
+    for k in ("days", "alert_days"):
+        v = [str(x).lower()[:3] for x in getattr(sec, k)]
+        if any(x not in CRYPTO_DAYS for x in v):
+            raise ValueError(f"{k} must list weekdays like mon tue wed")
+        setattr(sec, k, [d for d in CRYPTO_DAYS if d in v])
+    ranges = {"history_days": (1, 3650), "archive_days": (30, 3650), "ema_len": (2, 500), "vol_len": (2, 500), "cooldown_candles": (0, 500)}
+    for k, (lo, hi) in ranges.items():
+        if not lo <= int(getattr(sec, k)) <= hi:
+            raise ValueError(f"{k} must be {lo} … {hi}")
+    franges = {"wick_mult": (0.5, 10), "wick_min": (0.1, 1), "opp_wick_max": (0, 1), "body_zone": (0.1, 1), "doji_body": (0.01, 0.5),
+               "doji_wick": (0.3, 1), "star_body": (0.05, 1), "eq_tol_pct": (0, 2), "touch_points": (0, 5000), "vol_mult": (0.1, 10),
+               "stop_pad": (0, 5000), "max_stop": (1, 50000)}
+    for k, (lo, hi) in franges.items():
+        if not lo <= float(getattr(sec, k)) <= hi:
+            raise ValueError(f"{k} must be {lo:g} … {hi:g}")
+
+
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")   # 🤖 the local AI service (compose network; not a secret)
 
 VARIANTS = ("E",)                      # the swing variants that exist: E+ only (A, the 200-day filter, removed Nov 2026)
@@ -714,7 +824,7 @@ PERSISTED_SECTIONS = {"ingest": IngestConfig, "bases": BaseConfig, "screen": Scr
                       "market": MarketConfig, "breakout": BreakoutConfig,
                       "paper": PaperConfig, "real": RealConfig,
                       "options": OptionsConfig, "ai": AIConfig,
-                      "tips": TipsConfig, "maintenance": MaintenanceConfig}
+                      "tips": TipsConfig, "maintenance": MaintenanceConfig, "crypto": CryptoConfig}
 
 
 @dataclass
@@ -735,6 +845,7 @@ class AppConfig:
     ai: AIConfig = field(default_factory=AIConfig)
     tips: TipsConfig = field(default_factory=TipsConfig)
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
+    crypto: CryptoConfig = field(default_factory=CryptoConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
 
     def section(self, name: str):
@@ -767,10 +878,10 @@ class AppConfig:
             elif isinstance(current, str):
                 value = str(value)
             setattr(sec, key, value)
-        if name in ("alerts", "ai", "options", "tips", "maintenance", "real", "market"):
+        if name in ("alerts", "ai", "options", "tips", "maintenance", "real", "market", "crypto"):
             try:
                 {"alerts": check_alert_times, "ai": check_ai_times, "options": check_options_times, "tips": check_tips,
-                 "maintenance": check_maintenance, "real": check_real, "market": check_market}[name](sec)
+                 "maintenance": check_maintenance, "real": check_real, "market": check_market, "crypto": check_crypto}[name](sec)
             except ValueError:
                 for key in values:                       # roll back this update
                     setattr(sec, key, getattr(before, key))

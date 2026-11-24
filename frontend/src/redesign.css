@@ -743,3 +743,47 @@
   background: linear-gradient(90deg, var(--ok) 0 var(--p), color-mix(in srgb, var(--bad) 45%, transparent) var(--p) 100%); }
 .rd .kbar.r { background: linear-gradient(90deg, var(--bad) 0 var(--p), var(--hover) var(--p) 100%); }
 @media (max-width: 599px) { .rd .kbar { width: 40px; } }
+
+/* ₿ BTC pivot patterns (CryptoPage.jsx): chart + cards + AI read + detections on the left, the inputs on the right;
+   one column on a narrow window (the inputs under). Fixed heights: the chart, the rows, the table box. */
+.rd.btc { display: grid; gap: 12px; min-width: 0; }
+.rd .btc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; min-width: 0; }
+.rd .btc-left { display: grid; gap: 12px; min-width: 0; }
+.rd .btc-chart { position: relative; height: 420px; overflow: hidden; }
+.rd .btc-empty { position: absolute; left: 14px; top: 12px; z-index: 2; }
+.rd .btc-tip { position: absolute; z-index: 3; pointer-events: none; background: var(--panel); border: 1px solid var(--border-strong); border-radius: 6px;
+  padding: 4px 8px; font-size: 11.5px; line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow); max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.rd .btc-leg { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 14px 8px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--rowline); }
+.rd .btc-leg i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 4px; }
+.rd .btc-leg i.dotm { width: 8px; height: 8px; border-radius: 50%; } .rd .btc-leg i.dotm.up { background: var(--ok); } .rd .btc-leg i.dotm.down { background: var(--bad); }
+.rd .btc-ai { border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--border)); background: color-mix(in srgb, var(--purple) 5%, var(--panel));
+  border-radius: var(--radius); padding: 8px 14px; display: grid; gap: 2px; font-size: 12.5px; min-width: 0; }
+.rd .btc-ai .t { display: flex; gap: 8px; align-items: center; height: 28px; overflow: hidden; white-space: nowrap; min-width: 0; }
+.rd .btc-ai .t .rtag { margin-left: 0; }
+.rd .btc-ai .l { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; height: 24px; align-items: center; min-width: 0; }
+.rd .btc-ai .l > span { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.rd .btc-ai .l > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rd .btc-ai .l .rtag { margin-left: 0; }
+.rd .btc-table { height: 380px; overflow: auto; }
+.rd .btc-table .ftab tr.btc-sel-row td { background: var(--hover); }
+.rd .btc-table .ftab td .rtag { margin-left: 0; }
+.rd .btc-set .g { padding: 7px 12px 3px; font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; background: var(--bg); border-top: 1px solid var(--rowline); height: 26px; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
+.rd .btc-set .k { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; height: 34px; padding: 0 12px; border-top: 1px solid var(--rowline); font-size: 12.5px; }
+.rd .btc-set .k > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.rd .btc-set .k .c { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.rd .btc-set .k.pat i { font-style: normal; font-size: 9px; } .rd .btc-set .k.pat i.up { color: var(--ok); } .rd .btc-set .k.pat i.down { color: var(--bad); }
+.rd .btc-set .k .cf { width: 32px; display: inline-flex; justify-content: flex-end; }
+.rd .btc-in { width: 92px; text-align: right; font-family: var(--num-font); font-size: 12px; padding: 3px 7px; }
+.rd .btc-sel { width: 110px; font-size: 12px; padding: 3px 5px; }
+.rd .btc-days { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.rd .btc-days button { font: inherit; font-size: 10.5px; padding: 2px 4px; width: 24px; border: 0; border-right: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; }
+.rd .btc-days button:last-child { border-right: 0; } .rd .btc-days button.on { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+.rd .btc-save { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--rowline); height: 48px; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
+.rd .btc-set .rnote { padding: 6px 12px 8px; height: 40px; box-sizing: border-box; overflow: hidden; }
+@media (max-width: 1100px) { .rd .btc-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) {
+  .rd .btc-chart { height: 300px; }
+  .rd .btc-table { height: 460px; }
+  .rd .btc-ai .t { height: auto; flex-wrap: wrap; white-space: normal; padding: 2px 0; }
+  .rd .btc-set .rnote { height: 52px; }
+}
