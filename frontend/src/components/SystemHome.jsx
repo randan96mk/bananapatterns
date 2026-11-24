@@ -46,7 +46,7 @@ export default function SystemHome({ onGo, onKite }) {
       <Conn title="Telegram" ok={tg ? !!(tg.ready && tg.enabled) : null} warn={tg?.ready && !tg.enabled}
         state={tg ? (tg.ready ? (tg.enabled ? 'on' : 'paused') : 'not set up') : '…'}
         pairs={tg ? [['Alerts', tg.enabled ? 'on' : 'off'], ['Scheduler', tg.scheduler_running ? 'running' : 'stopped'],
-          ['Today', tg.trading_day ? 'trading day' : `no trading · ${tg.holiday_today || 'weekend'}`]] : [['Status', '…']]}>
+          ['Today', tg.trading_day ? 'trading day' : tg.holiday_today ? `holiday · ${tg.holiday_today.length > 22 ? tg.holiday_today.slice(0, 21).trim() + '…' : tg.holiday_today}` : 'weekend · no trading']] : [['Status', '…']]}>
         <button className="btn ghost" onClick={() => onGo('alerts')}>Alerts & schedule</button></Conn>
       <Conn title="Evening sync + scan" ok={!eod?.last || eod.last.status === 'ok'} state={eod?.last ? (eod.last.status === 'ok' ? 'ok' : eod.last.status) : 'not run yet'}
         pairs={[['Last run', eod?.last?.at ? stamp(eod.last.at) : 'never'], ['Next', eod?.at ? stamp(eod.at) : '—'],

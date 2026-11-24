@@ -1765,6 +1765,33 @@ on the API, "<i>AI ·</i>" on Telegram).
   names, results within 2 sessions on held names, the last session's deal notes), **books** (the day summary's Real /
   Paper / Options value and today's P&L). **Actions** are labels only: "Skip SYM" opens the Real page's confirm
   and calls the existing `POST /api/real/skip`; "Open the dry run"; "Suggestions (n)". Nothing fires by itself.
+- **Today · the phase-aware tiles** (`backend/ai/today_tiles.py`, the `panel` of the same payload; no model, quote or
+  broker call, nothing waits on or touches an order): **evening** after the 3:40 PM summary until 6:00 AM (weekends /
+  holidays all day, chip "holiday · next session Wed"), **pre-market** 6:00 AM → the 9:16 AM send, **market hours** the
+  send → 3:40 PM. The timeline dots and the one-line stay. Evening: *Tomorrow · 9:16 AM* (the queued plan: name · side ·
+  E+ · ₹ · shares, the stop and the reason; the Tips channel row with the median first-call time over 30 days, the caps,
+  the lots max and the risk per trade; the candle model's held-name odds with its shadow tag, "no read yet" before a read),
+  *Tonight* (the night batch step by step from the evening job's row and the AI jobs table: candles, scan, notes, why,
+  ratings + suggestions, the candle-model scorecard; ✓ / running / queued / skipped with the time, then up to 2 [AI] lines
+  the model already wrote tonight; before the batch "tonight: … after 6:30 PM" and the steps queued), *Books · today*
+  (Real day ₹ · value, worst / best name, slots, unconfirmed fills; Paper; Tips · Kite day ₹ with each hint's ₹ and the
+  newest review's "one thing" [AI]; Options; all books with the high / low from the open). Pre-market: *Orders · 9:16 AM*
+  (each queued order tagged **will send** or **held (reason)** by `real.presend`, a read-only copy of the send's rules:
+  the switches, an EXIT with no position, the EXIT gate, a BUY skipped for the day, the cash after the EXITs; the Kite row:
+  logged in · valid till, webhook token present / missing, confirm before sending), *Watch · before the open* (the 9:00
+  AM brief's lines [AI] or "brief at 9:00 AM", the stored VIX, the candle model's top 3 held names, the filings since the
+  last close, the Tips channel; no index-futures row: the app has no source for it), *Books · yesterday close* (value and
+  last-day ₹, held count and how many sit within 3 % of the stop, open risk at the stops, Tips yesterday + caps, the
+  options book's next look) and the "Confirm the 9:16 send…" button (the Real page's confirm). Market hours: *Orders ·
+  today* (sent / filled at the logged price with the slippage tag against the plan: ≤ 0.5 % ok, over it warn; every Tips
+  hint armed / open with its live P&L from the Home rows; next: the stop-check cadence, the time stop, the day check),
+  *Watch · live* (held names within 3 % of a stop in red, with a target in green, nearest first; Tips targets / stops by
+  distance; Market now · NIFTY from the stored candles with the model's tag; the latest stored backdrop line [AI]),
+  *Books · live* (Real with a sparkline from Home's one-point-a-minute series, Tips, Options, all books with the day's
+  high / low and their times). A tile whose live list is empty shows the last session's rows greyed with "last session ·
+  Mon 23 Nov" in its header; only a fresh install keeps "no orders now · the next send is…" / "nothing to watch right
+  now". Rows are one fixed-height line (+ one sub line) with an ellipsis; at 390 px the tiles stack. A test clock
+  (`?at=` on `GET /api/today-card`, or `BP_TODAY_AT`) is honoured only with `BP_NO_SCHEDULER=1` (tests, a scratch run).
 - **Overnight** (`view.overnight(day)`): every ok AI view of the day that has a previous view: yesterday's and today's
   score and verdict, the delta, the model's `change` text (tagged), and the level by code ("support 1 1,261 held |
   broken", "pivot 65 reclaimed" when the close is back at or over the pivot after a close under it, or "—"). A row
@@ -1793,7 +1820,7 @@ on the API, "<i>AI ·</i>" on Telegram).
   one week; 409 while it runs or once written).
 - **API**: `GET /api/today-card` (stream topic `today_card`, every 60 s) → `{phase, day, at, at_label, headline,
   the_one_thing, columns {orders, watch, books}, brief_lines [{text, ai}], actions [{label, kind: go|skip|open, arg}],
-  counts, steps}`; `GET /api/ai/overnight?day=` → `{day, rows [{symbol, source, book, prev {score, verdict, day}, now
+  counts, steps, panel {phase, chip, step, one, tiles [{key, title, meta, last, rows, empty}], buttons, footer}}`; `GET /api/ai/overnight?day=` → `{day, rows [{symbol, source, book, prev {score, verdict, day}, now
   {score, verdict}, delta, change {text, ai} | null, level, moved}], unchanged, total}`; `GET /api/plan/heat` (stream
   topic `plan_heat`, 60 s while the market is open, else 10 min) → `{at, at_label, live, market_open, as_of, items
   [{symbol, rank, price, change_pct, state, pos, stop, fails_below, pivot, zone_top, support_1, resistance, score,

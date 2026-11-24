@@ -841,6 +841,50 @@ def morning(config: AppConfig, now: Optional[datetime] = None) -> dict:
             "size_by_score": bool(config.ai.view_size_by_score), "ai_full": _fulls(st, today)}   # 🤖 AI view
 
 
+def presend(config: AppConfig, now: Optional[datetime] = None) -> dict:
+    """Read-only: the planned orders as the next send will treat them, each tagged "will send" or "held" (reason), by
+    the same rules send_orders applies (the switch and the kill switch, an EXIT with no position, the EXIT gate on an
+    unconfirmed buy, a BUY skipped for that day, the cash after the EXITs at the plan's close). Nothing is sent, saved
+    or skipped. {day, orders: [{symbol, action, qty, close, value, stop, why, variant, tag, reason}]}"""
+    from backend.config import IST
+    now = now or datetime.now(IST)
+    st = _state() or {}
+    if not st.get("orders") or not st.get("as_of"):
+        return {"day": None, "orders": []}
+    day = next_session(st["as_of"])
+    skips = _skips(st, day)
+    off = None if active(config) else ("the kill switch is on" if killed() else "real trading is off")
+    cash = float(st.get("cash") or 0.0)
+    pos = st.get("positions") or {}
+    out = []
+    for o in sorted(st["orders"], key=lambda o: o["action"] != "EXIT"):
+        sym, act = o["symbol"], o["action"]
+        p = pos.get(sym) or {}
+        close = o.get("close") if act == "BUY" else p.get("last")
+        value = round(o["qty"] * close, 2) if close and o.get("qty") else None
+        why = None
+        if off:
+            why = off
+        elif o.get("sent") or _sent(f"{day}|{sym}|{act}"):
+            why = f"already {o.get('sent') or 'logged'}"
+        elif act == "EXIT" and sym not in pos:
+            why = "no open position"
+        elif act == "EXIT" and gate_on(config) and not confirmed(p):
+            why = "the buy's fill is not confirmed (the EXIT gate)"
+        elif act == "BUY" and sym in skips:
+            sk = skips[sym]
+            why = f"skipped by {sk.get('by') or 'you'}" + (f" · {sk['note']}" if sk.get("note") else "")
+        elif act == "BUY" and close and o["qty"] * close * 1.0012 > cash:
+            why = "not enough cash"
+        if why is None:
+            cash += (value or 0.0) if act == "EXIT" else -(o["qty"] * (close or 0.0) * 1.0012)
+        out.append({"symbol": sym, "action": act, "qty": o.get("qty"), "close": round(close, 2) if close else None, "value": value,
+                    "stop": round(o["stop"], 2) if o.get("stop") else (round(p["stop"], 2) if p.get("stop") else None), "why": o.get("why"),
+                    "variant": o.get("variant") or st.get("variant") or config.real.variant,
+                    "tag": "held" if why else "will send", "reason": why})
+    return {"day": day, "orders": out}
+
+
 def send_now(config: AppConfig, client, now: Optional[datetime] = None, sender: Optional[Callable] = None) -> dict:
     """The morning send run at once instead of at send_time (the confirm is on the page). Refused when real trading
     is off or killed, outside market hours (9:15 AM – 3:30 PM), on a day that is not a trading day, or after
