@@ -139,6 +139,7 @@ function Inputs({ d, onSaved }) {
     <K l="symbol">{num('symbol')}</K>
     <K l="timeframe"><Seg small opts={TFS} v={draft.tf} set={(v) => set('tf', v)} /></K>
     <K l="history (days)" title="backfill depth at the first start">{num('history_days')}</K>
+    <K l="scan history (days)" title="patterns of the last N days marked on the chart after the backfill and on Scan history · nothing sent">{num('scan_days')}</K>
     <K l="archived after (days)" title="older candles and detections MOVE to data/archive.db; nothing is deleted">{num('archive_days')}</K>
     <G>Pivots</G>
     <K l="type"><select className="btc-sel" value={draft.pivot_type} onChange={(e) => set('pivot_type', e.target.value)}>
@@ -216,6 +217,7 @@ export default function CryptoPage() {
   const quiet = async (hours_) => { try { await api.cryptoQuiet(hours_); load(); } catch (e) { setErr(e.message); } };
   const askQuiet = () => { const v = window.prompt('Quiet the BTC alerts for how many hours? (detections are still stored and listed in the digest)', '2'); if (v && +v > 0) quiet(+v); };
   const refresh = async () => { try { const r = await api.cryptoRefresh(); if (!r.ok) setErr(r.why); load(); } catch (e) { setErr(e.message); } };
+  const scan = async () => { try { const r = await api.cryptoScan(); if (!r.ok) setErr(r.why); else setErr(`history scan: ${r.marked} marked over ${r.scanned} candles (${r.days} d) · nothing sent`); load(); } catch (e) { setErr(e.message); } };
   const pick = (id) => { setSel(id === sel ? null : id); };
 
   const cols = [{ h: 'When (IST)' }, { h: 'Pattern', w: 112, ell: true }, { h: 'Dir', w: 54 }, { h: 'Level', w: 104, ell: true },
@@ -236,7 +238,8 @@ export default function CryptoPage() {
       <Seg small opts={RANGES} v={range} set={setRange} />
       {hours.quiet_until ? <button type="button" className="btn ghost small" onClick={() => quiet(null)}>Resume</button>
         : <button type="button" className="btn ghost small" onClick={askQuiet}>Quiet 2 h…</button>}
-      <button type="button" className="btn ghost small" onClick={refresh}>Refresh</button></>}>
+      <button type="button" className="btn ghost small" onClick={refresh}>Refresh</button>
+      <button type="button" className="btn ghost small" onClick={scan} title="mark the patterns of the last scan_days on the chart · nothing is sent">Scan history</button></>}>
       {stateChip}
       <Chip>pivots {d?.pivots?.period || 'daily'} · {d?.pivots?.type === 'dm' ? 'DM' : (d?.pivots?.type || 'traditional').replace(/^./, (x) => x.toUpperCase())}</Chip>
       <Chip c={hours.quiet_until ? 'warn' : ''}>{hours.text || 'alerts …'}</Chip>

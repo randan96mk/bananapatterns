@@ -267,6 +267,44 @@ def process(config, t: int, now_ts: Optional[float] = None, candles: Optional[li
     return ids
 
 
+def scan_history(config, days: Optional[int] = None, now_ts: Optional[float] = None) -> dict:
+    """Mark the patterns in the stored candles of the last `days` (crypto.scan_days): every detection is stored as "mark"
+    with why "history scan" so the chart and the table show what the rules would have found. Nothing is sent, no
+    confirmation waits, no AI read, no cooldown (the markers are the point). Idempotent per (t, pattern)."""
+    c = config.crypto
+    now_ts = _now_ts() if now_ts is None else now_ts
+    days = int(c.scan_days if days is None else days)
+    if days <= 0:
+        return {"scanned": 0, "marked": 0}
+    s = pv.TF_SECONDS.get(c.tf, 300)
+    start = int(now_ts) - days * 86400
+    cs = feed.load(c.symbol, c.tf, start - WINDOW * s, int(now_ts))
+    done = [b for b in cs if b["t"] + s <= now_ts]
+    marked, scanned = 0, 0
+    lv_cache: dict = {}
+    for i, b in enumerate(done):
+        if b["t"] < start:
+            continue
+        scanned += 1
+        win = done[max(0, i - WINDOW + 1):i + 1]
+        day = b["t"] // 86400
+        if day not in lv_cache:
+            lv_cache[day] = levels_for(config, b["t"])
+        lv = lv_cache[day]
+        if not lv:
+            continue
+        for det in pt.detect(win, pv.pattern_levels(lv["levels"], c.use_p), c):
+            if det["why"]:
+                continue
+            with get_db() as conn:
+                if conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = ?",
+                                (c.symbol, c.tf, b["t"], det["pattern"])).fetchone():
+                    continue
+            insert(config, det, "mark", "history scan", lv)
+            marked += 1
+    return {"scanned": scanned, "marked": marked, "days": days}
+
+
 def _resolve_waits(config, cs: list[dict], now_ts: float) -> None:
     c = config.crypto
     by_t = {b["t"]: i for i, b in enumerate(cs)}

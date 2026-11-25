@@ -206,3 +206,22 @@ def test_telegram_switch(monkeypatch, on):
     r = _hammer(cfg(telegram=on, **QUIET))
     assert r["state"] == "sent" and bool(tg.sent) is on
     assert (r["why"] is None) is on
+
+
+def test_history_scan_marks_past_patterns_without_sending(monkeypatch):
+    """The chart showed nothing after the first deploy: detection ran only on candles closed after the feed started.
+    scan_history marks what the rules find in the stored candles of the last scan_days, never sends, is idempotent."""
+    tg = telegram(monkeypatch)
+    c = cfg(**QUIET)
+    hammer_world(T_DAY)                                              # stored, never processed live
+    now = T_DAY + 2 * 3600
+    r = sg.scan_history(c, days=2, now_ts=now)
+    assert r["marked"] >= 1 and r["scanned"] >= 30 and r["days"] == 2
+    rows_ = sg.rows("pattern = 'hammer'")
+    assert len(rows_) == 1 and rows_[0]["state"] == "mark" and rows_[0]["why"] == "history scan"
+    assert tg.sent == [] and tg.photos == []                           # nothing on Telegram
+    again = sg.scan_history(c, days=2, now_ts=now)
+    assert again["marked"] == 0 and len(sg.rows("pattern = 'hammer'")) == 1   # idempotent
+    assert sg.scan_history(c, days=0, now_ts=now) == {"scanned": 0, "marked": 0}
+    ids = sg.process(c, T_DAY, now_ts=T_DAY + 303)                    # a live pass on the same candle adds no duplicate
+    assert ids == [] and len(sg.rows("pattern = 'hammer'")) == 1

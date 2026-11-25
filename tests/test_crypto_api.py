@@ -90,6 +90,8 @@ def test_api_shapes(api, monkeypatch):
     assert api.post("/api/crypto/quiet", json={"hours": 100}).status_code == 400
     assert api.post("/api/crypto/quiet", json={"hours": None}).json()["quiet_until"] is None
     assert api.post("/api/crypto/refresh").json() == {"ok": True}
+    sc = api.post("/api/crypto/scan").json()
+    assert sc["ok"] is True and sc["marked"] >= 0 and "scanned" in sc
     r = api.put("/api/config/crypto", json={"tf": "15m", "hammer": "mark"})
     assert r.status_code == 200 and r.json()["tf"] == "15m"
     assert api.put("/api/config/crypto", json={"tf": "3m"}).status_code == 422

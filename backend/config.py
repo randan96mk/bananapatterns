@@ -720,6 +720,7 @@ class CryptoConfig:
     symbol: str = "BTCUSD"                 # Delta Exchange India symbol
     tf: str = "5m"                         # candle timeframe the patterns read: 1m | 5m | 15m | 1h
     history_days: int = 400                # backfill depth at the first start (paged, ≤ 2 requests a second)
+    scan_days: int = 14                    # after the backfill (and on "Scan history"): mark the patterns in the last N days on the chart, nothing sent
     archive_days: int = 365                # candles and detections older than this MOVE to data/archive.db (never deleted)
     pivot_type: str = "traditional"        # traditional | fibonacci | woodie | classic | camarilla | dm (TradingView's)
     pivot_tf: str = "auto"                 # auto (daily for tf ≤ 15m, weekly above) | daily | weekly | monthly
@@ -800,7 +801,7 @@ def check_crypto(sec: "CryptoConfig") -> None:
         if any(x not in CRYPTO_DAYS for x in v):
             raise ValueError(f"{k} must list weekdays like mon tue wed")
         setattr(sec, k, [d for d in CRYPTO_DAYS if d in v])
-    ranges = {"history_days": (1, 3650), "archive_days": (30, 3650), "ema_len": (2, 500), "vol_len": (2, 500), "cooldown_candles": (0, 500)}
+    ranges = {"history_days": (1, 3650), "scan_days": (0, 400), "archive_days": (30, 3650), "ema_len": (2, 500), "vol_len": (2, 500), "cooldown_candles": (0, 500)}
     for k, (lo, hi) in ranges.items():
         if not lo <= int(getattr(sec, k)) <= hi:
             raise ValueError(f"{k} must be {lo} … {hi}")

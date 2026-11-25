@@ -2613,6 +2613,17 @@ def crypto_quiet(req: CryptoQuiet):
             "text": sg.hours_text(S().config)}
 
 
+@router.post("/crypto/scan")
+def crypto_scan():
+    """₿ Mark the patterns in the stored candles of the last crypto.scan_days on the chart (nothing is sent)."""
+    from backend.crypto import signals as sg
+    st = S()
+    if not st.config.crypto.enabled:
+        return {"ok": False, "why": "the feed is off (crypto.enabled)"}
+    r = sg.scan_history(st.config)
+    return {"ok": True, **r}
+
+
 @router.post("/crypto/refresh")
 def crypto_refresh():
     """₿ Wake the feed now (it fetches the last candles on its next pass); off: says so."""
