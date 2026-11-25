@@ -2502,7 +2502,7 @@ queue and never gates or delays an alert.
 
 **What it watches.** The feed (`backend/crypto/feed.py`) backfills `crypto.history_days` (400) of the chosen timeframe
   After the backfill, and on the tab's "Scan history", the patterns of the last `crypto.scan_days` (14) are marked on the chart and listed as "history scan": nothing is sent for them; patterns the filters rejected are stored too, as "history scan · <why>". Live alerts come only from candles that close after the feed started.
-  On the chart every formed pattern has a marker: sent and confirm-wait in full colour, quiet and mark-only faded, filtered ones grey; clicking a detection older than the chosen range loads the candles around it and jumps there.
+  On the chart every formed pattern has a marker: sent and confirm-wait in full colour, quiet and mark-only faded, filtered ones grey; clicking a detection older than the chosen range loads the candles around it and jumps there. "⛶ Full screen" on the chart panel fills the window (the browser's own fullscreen where allowed) with the timeframe and range pickers in the header; Esc or "✕ Exit full screen" returns.
 (`crypto.tf`: 1m · 5m (default) · 15m · 1h) at the first start, paged at ≤ 2 requests a second, then wakes on each
 candle's close + 3 s (24×7, its own thread, off until `crypto.enabled`). Candles live in `crypto_candles`, detections in
 `crypto_signals`; neither is ever deleted (the weekly archive MOVES rows older than `crypto.archive_days` = 365 to

@@ -232,6 +232,25 @@ export default function CryptoPage() {
   const refresh = async () => { try { const r = await api.cryptoRefresh(); if (!r.ok) setErr(r.why); load(); } catch (e) { setErr(e.message); } };
   const scan = async () => { try { const r = await api.cryptoScan(); if (!r.ok) setErr(r.why); else setErr(`history scan: ${r.marked} marked over ${r.scanned} candles (${r.days} d) · nothing sent`); load(); } catch (e) { setErr(e.message); } };
   const pick = (id) => { setSel(id === sel ? null : id); };
+  // ⛶ full screen: the chart panel fills the window (the browser's fullscreen when it allows it, else a fixed overlay); Esc leaves
+  const [full, setFull] = useState(false);
+  const fullRef = useRef(null);
+  useEffect(() => {
+    if (!full) return undefined;
+    const el = fullRef.current;
+    const onKey = (e) => { if (e.key === 'Escape') setFull(false); };
+    const onFs = () => { if (!document.fullscreenElement) setFull(false); };
+    window.addEventListener('keydown', onKey);
+    document.addEventListener('fullscreenchange', onFs);
+    try { el?.requestFullscreen?.().catch(() => {}); } catch { /* overlay only */ }
+    document.body.classList.add('btc-full-open');
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.removeEventListener('fullscreenchange', onFs);
+      document.body.classList.remove('btc-full-open');
+      try { if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}); } catch { /* ignore */ }
+    };
+  }, [full]);
 
   const cols = [{ h: 'When (IST)' }, { h: 'Pattern', w: 112, ell: true }, { h: 'Dir', w: 54 }, { h: 'Level', w: 104, ell: true },
     { h: 'Entry · stop · 1R', w: 176, ell: true }, { h: 'Filters', w: 118, ell: true, lo: true }, { h: 'State', w: 150, ell: true }, { h: 'AI', w: 90, ell: true, lo: true }, { h: '', w: 100 }];
@@ -261,15 +280,19 @@ export default function CryptoPage() {
     {err && <div className="rbanner bad">{err}</div>}
     <div className="btc-grid">
       <div className="btc-left">
+        <div className={full ? 'btc-full' : undefined} ref={fullRef}>
         <Panel title="Chart" right={<>
           {s ? <Chip title={s.text}>{s.label} {s.when.split(' ').slice(-2).join(' ')} on {s.level} {px(s.level_px)}</Chip> : <Chip>click a marker or a row</Chip>}
-          {s && <Chip>entry {px(s.entry)} · stop {px(s.stop)}{s.capped ? ' (cap)' : ''} · 1R {px(s.r1)}</Chip>}</>}>
+          {s && <Chip>entry {px(s.entry)} · stop {px(s.stop)}{s.capped ? ' (cap)' : ''} · 1R {px(s.r1)}</Chip>}
+          {full && <><Seg small opts={TFS} v={vtf} set={setTf} /><Seg small opts={RANGES} v={range} set={setRange} /></>}
+          <button type="button" className="btn ghost small" onClick={() => setFull(!full)} title={full ? 'exit full screen (Esc)' : 'full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button></>}>
           <BtcChart data={ch} sel={sel} onPick={pick} />
           <div className="btc-leg"><span><i style={{ background: '#e08a2e' }} />pivots R1–R5 / S1–S5</span><span><i style={{ background: '#9aa3ad' }} />P</span>
             <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span><span><i className="dotm grey" />formed but filtered (EMA · volume · day · cooldown)</span>
             <span><i style={{ background: 'var(--blue)' }} />entry</span><span><i style={{ background: 'var(--bad)' }} />stop</span><span><i style={{ background: 'var(--ok)' }} />1R</span>
             <span className="muted">{d?.symbol || 'BTCUSD'} · Delta Exchange · {TF_WORD[vtf]} · IST</span></div>
         </Panel>
+        </div>
         <Cards n={4}>
           <Card unit="n" label="Feed · Delta" value={H.last_label || (d?.enabled ? '—' : 'off')} sub={H.lag_candles != null ? `lag ${H.lag_candles} candle${H.lag_candles === 1 ? '' : 's'} · ${H.errors || 0} errors` : 'no candles yet'}
             fact={`${d?.symbol || 'BTCUSD'} · ${TF_WORD[d?.tf] || '5 min'} · 24×7`} k={H.behind ? 'down' : ''} title={H.last_error || 'last closed candle stored'} />
