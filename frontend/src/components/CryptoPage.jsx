@@ -89,11 +89,15 @@ function BtcChart({ data, sel, onPick }) {
     const lastSeg = data.pivots[data.pivots.length - 1];
     if (lastSeg) ['P', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3'].forEach((n) => { if (lastSeg.levels[n] != null) c.lines.push(c.candles.createPriceLine({ price: lastSeg.levels[n], color: n === 'P' ? c.pal.muted : c.pal.level, lineVisible: false, axisLabelVisible: true, title: n })); });
     const times = new Set(data.candles.map((b) => b.time));
-    c.sigs = data.signals.filter((s) => s.state !== 'dropped').map((s) => ({ ...s, mt: s.t + off })).filter((s) => times.has(s.mt));
-    const seen = new Set();
-    c.markers.setMarkers(c.sigs.filter((s) => { const k = `${s.mt}${s.dir}`; if (seen.has(k)) return false; seen.add(k); return true; })
-      .sort((a, b) => a.mt - b.mt).map((s) => ({ time: s.mt, position: s.dir === 'long' ? 'belowBar' : 'aboveBar', shape: 'circle', size: s.id === sel ? 1.6 : 1,
-        color: muted(s) ? `${s.dir === 'long' ? c.pal.up : c.pal.down}66` : (s.dir === 'long' ? c.pal.up : c.pal.down) })));
+    // every formed pattern gets a marker: sent / confirm wait full colour, quiet / mark-only faded, filtered (dropped) grey
+    c.sigs = data.signals.map((s) => ({ ...s, mt: s.t + off })).filter((s) => times.has(s.mt));
+    const rank = (s) => (s.id === sel ? 0 : s.state === 'dropped' ? 3 : muted(s) ? 2 : 1);
+    const best = new Map();
+    c.sigs.forEach((s) => { const k = `${s.mt}${s.dir}`; const o = best.get(k); if (!o || rank(s) < rank(o)) best.set(k, s); });
+    c.markers.setMarkers([...best.values()].sort((a, b) => a.mt - b.mt).map((s) => ({
+      time: s.mt, position: s.dir === 'long' ? 'belowBar' : 'aboveBar', shape: 'circle',
+      size: s.id === sel ? 1.6 : s.state === 'dropped' ? 0.7 : 1,
+      color: s.state === 'dropped' ? `${c.pal.muted}99` : muted(s) ? `${s.dir === 'long' ? c.pal.up : c.pal.down}66` : (s.dir === 'long' ? c.pal.up : c.pal.down) })));
     const s = data.signals.find((x) => x.id === sel);
     if (s) {
       [[s.entry, c.pal.blue, 'entry'], [s.stop, c.pal.down, 'stop'], [s.r1, c.pal.up, '1R']].forEach(([p, color, title]) => c.lines.push(c.candles.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: c.LineStyle.Solid, axisLabelVisible: true, title })));
@@ -203,13 +207,22 @@ export default function CryptoPage() {
   useEffect(() => { if (live && !live.error) setD(live); }, [live]);
   const vtf = tf || d?.tf || '5m';
   const lastT = d?.health?.last_t;
-  useEffect(() => {
-    let alive = true;
-    api.cryptoCandles(vtf, range).then((x) => { if (alive) setCh(x); }).catch((e) => alive && setErr(e.message));
-    return () => { alive = false; };
-  }, [vtf, range, lastT]);
   const sigs = useMemo(() => d?.signals || [], [d]);
   const s = useMemo(() => sigs.find((x) => x.id === sel) || null, [sigs, sel]);
+  // a selected detection outside the chosen range: the chart loads a window around it and jumps there
+  const win = useMemo(() => {
+    if (!s) return null;
+    const step = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 }[vtf] || 300;
+    const span = { '1d': 86400, '3d': 3 * 86400, '2w': 14 * 86400 }[range] || 3 * 86400;
+    const now = Math.floor(Date.now() / 1000);
+    if (s.t >= now - span) return null;
+    return { from: s.t - 80 * step, to: s.t + 40 * step };
+  }, [s, vtf, range]);
+  useEffect(() => {
+    let alive = true;
+    api.cryptoCandles(vtf, range, win).then((x) => { if (alive) setCh(x); }).catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+  }, [vtf, range, lastT, win]);
   const H = d?.health || {};
   const P = d?.pivots?.levels || {};
   const T = d?.today || {};
@@ -253,7 +266,7 @@ export default function CryptoPage() {
           {s && <Chip>entry {px(s.entry)} · stop {px(s.stop)}{s.capped ? ' (cap)' : ''} · 1R {px(s.r1)}</Chip>}</>}>
           <BtcChart data={ch} sel={sel} onPick={pick} />
           <div className="btc-leg"><span><i style={{ background: '#e08a2e' }} />pivots R1–R5 / S1–S5</span><span><i style={{ background: '#9aa3ad' }} />P</span>
-            <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span>
+            <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span><span><i className="dotm grey" />formed but filtered (EMA · volume · day · cooldown)</span>
             <span><i style={{ background: 'var(--blue)' }} />entry</span><span><i style={{ background: 'var(--bad)' }} />stop</span><span><i style={{ background: 'var(--ok)' }} />1R</span>
             <span className="muted">{d?.symbol || 'BTCUSD'} · Delta Exchange · {TF_WORD[vtf]} · IST</span></div>
         </Panel>
