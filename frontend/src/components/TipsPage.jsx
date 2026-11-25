@@ -213,12 +213,12 @@ function Timeline({ events, id, defOpen }) {
 }
 
 // ⚡ Tips → Kite orders ----------------------------------------------------------------------------------------------
-const LEG_IC = { entry: '🟢', stop: '🛑', t1: '🎯', t2: '🎯', exit: '⏏', add: '➕' };
+const LEG_IC = { entry: '🟢', stop: '🛑', t1: '🎯', t2: '🎯', t3: '🎯', exit: '⏏', add: '➕' };
 const LIVE_ST = ['placed', 'open'];
 const legTag = (lg) => {
   const s = lg?.status;
   const c = s === 'complete' ? 'ok' : s === 'open' || s === 'placed' ? 'a' : s === 'armed' || s === 'watched' ? 'w' : s === 'rejected' || s === 'failed' ? 'bad' : '';
-  const text = s === 'placed' && lg?.leg !== 'entry' ? 'placed' : lg?.status_text || 'not placed';
+  const text = s === 'placed' && lg?.leg !== 'entry' ? 'placed' : lg?.runner && s === 'watched' && lg?.status_text === 'watched' ? 'watched · runner' : lg?.status_text || 'not placed';
   return <Tag c={c} title={lg?.note || undefined}>{lg?.dry && s && s !== 'none' ? 'DRY · ' : ''}{text}</Tag>;
 };
 export const kiteCaps = (k) => {
@@ -316,9 +316,9 @@ function KiteLegs({ h, kinfo, onDone }) {
   const ew = k.needs_activation ? `armed: nothing is sent until the channel says active · then ${k.entry_what || 'at market'}` : (k.entry_what || `${L.entry?.side} at market now`);
   const tsLine = k.hold_to_expiry ? 'held to expiry (target 0): no time-stop exit' : k.time_stop ? `a Kite position still open at ${hm12(k.time_stop)} is exited at market (the time stop)` : '';
   const unfilled = k.entry_what && !/at market now/.test(k.entry_what) ? `An entry that never fills is cancelled at the end of the entry window${k.time_stop ? ` / at ${hm12(k.time_stop)}` : ''}, or when the channel says avoid.` : '';
-  const all = () => run('all', {}, `${head('Place all on Kite')}${PLACE_ALL_NOTE}\n\n${sizeLine}\npremium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\n1 · entry   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}\n2 · the moment it fills   ${stopTxt} rests on Kite\n${L.t1 ? `3 · watched by the app   T1 ${legLine(L.t1)}${L.t2 ? ' · then the stop to cost' : ''}\n` : ''}${L.t2 ? `4 · watched by the app   T2 ${legLine(L.t2)}\n` : ''}caps after this   ${capsAfter}\n\nThe steps after the entry are the app's, as the consequence of this click; the leftovers are cancelled when the position closes.${k.beyond_t2 ? ` Targets past the second stay in the paper record only.` : ''}${unfilled ? ` ${unfilled}` : ''}${tsLine ? `\n${tsLine}.` : ''}\n\n${W}`, `entry ${k.needs_activation || L.entry?.arm_kind === 'watch' ? 'armed' : 'sent'} · ${to} · SL on the fill · targets watched`);
+  const all = () => run('all', {}, `${head('Place all on Kite')}${PLACE_ALL_NOTE}\n\n${sizeLine}\npremium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\n1 · entry   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}\n2 · the moment it fills   ${stopTxt} rests on Kite\n${L.t1 ? `3 · watched by the app   T1 ${legLine(L.t1)}${L.t2 ? ' · then the stop to cost' : ''}\n` : ''}${L.t2 ? `4 · watched by the app   T2 ${legLine(L.t2)}${L.t3 ? ' · then the stop to T1' : ''}\n` : ''}${L.t3 ? `5 · watched by the app   T3 ${legLine(L.t3)} · the runner\n` : ''}caps after this   ${capsAfter}\n\nThe steps after the entry are the app's, as the consequence of this click; the leftovers are cancelled when the position closes.${k.beyond_t2 ? ` Targets past the ${L.t3 ? 'third' : 'second'} stay in the paper record only.` : ''}${unfilled ? ` ${unfilled}` : ''}${tsLine ? `\n${tsLine}.` : ''}\n\n${W}`, `entry ${k.needs_activation || L.entry?.arm_kind === 'watch' ? 'armed' : 'sent'} · ${to} · SL on the fill · targets watched`);
   const entry = () => run('entry', {}, `${head('Place the entry on Kite')}${sizeLine}\npremium ≈   ${isNum(L.entry?.premium) ? inr(Number(L.entry.premium)) : '—'}\norder   ${L.entry?.side} ${px(L.entry?.qty)} ${L.entry?.type_text || 'MARKET'} · ${ew}${tsLine ? `\n${tsLine}` : ''}\ncaps after this   ${capsAfter}\n\nOnly the entry: the stop is yours to place once it fills (Place SL… / Place rest…); the targets are watched by the app either way.\n\n${W}`, `entry sent to ${to}`);
-  const rest = () => run('rest', {}, `${head('Place the rest on Kite')}now   SL ${stopTxt} rests on Kite\n${L.t1 && L.t1.status !== 'complete' ? `watched   T1 ${legLine(L.t1)}\n` : ''}${L.t2 && L.t2.status !== 'complete' ? `watched   T2 ${legLine(L.t2)}\n` : ''}\n${WATCH_NOTE}.\n\n${W}`, `the stop sent to ${to} · targets watched`);
+  const rest = () => run('rest', {}, `${head('Place the rest on Kite')}now   SL ${stopTxt} rests on Kite\n${L.t1 && L.t1.status !== 'complete' ? `watched   T1 ${legLine(L.t1)}\n` : ''}${L.t2 && L.t2.status !== 'complete' ? `watched   T2 ${legLine(L.t2)}\n` : ''}${L.t3 && L.t3.status !== 'complete' ? `watched   T3 ${legLine(L.t3)} · the runner\n` : ''}\n${WATCH_NOTE}.\n\n${W}`, `the stop sent to ${to} · targets watched`);
   const stop = () => run('stop', {}, `${head('Place the stop on Kite')}order   ${L.stop?.side} ${stopTxt}\n\n${W}`, `stop sent to ${to}`);
   const exit = () => run('exit', {}, T.exit, `exit sent to ${to}`);
   const cancel = (leg) => run('cancel', { leg }, T.cancel(leg), `${L[leg]?.name || leg} cancelled`);
@@ -343,7 +343,7 @@ function KiteLegs({ h, kinfo, onDone }) {
       if (live('stop') && isNum(k.entry_px) && Number(lg.trigger) !== Number(k.entry_px) && acts.includes('modify_stop')) out.push(btn(`Modify → cost ${px(k.entry_px)}`, toCost));
       if (acts.includes('cancel:stop')) out.push(btn('Cancel', () => cancel('stop')));
       if (!live('stop') && lg.status !== 'complete' && lg.placeable !== false && !lg.closed && k.state !== 'closed') out.push(btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }));
-    } else if (lg.leg === 't1' || lg.leg === 't2') {      // watched by the app: no order to place (a resting one from before can be cancelled)
+    } else if (lg.leg === 't1' || lg.leg === 't2' || lg.leg === 't3') {      // watched by the app: no order to place (a resting one from before can be cancelled)
       if (acts.includes(`cancel:${lg.leg}`)) out.push(btn('Cancel', () => cancel(lg.leg)));
     } else if (lg.leg === 'add') {
       if (acts.includes('cancel:add')) out.push(btn('Cancel', () => cancel('add')));
@@ -356,7 +356,7 @@ function KiteLegs({ h, kinfo, onDone }) {
         : k.state === 'armed_watch' ? `armed · the app watches ${k.arm?.index || 'the index'} · buys at market on the cross${k.auto_rest ? ' · then SL' : ''}`
         : k.state === 'armed_wait' ? `armed · waiting for the channel's activation${k.auto_rest ? ' · then SL' : ''}`
         : k.state === 'armed' ? `entry ${k.arm?.kind === 'slm' || k.arm?.kind === 'limit' ? 'resting on Kite' : 'on Kite'} · waiting for the fill${k.auto_rest ? ' · then SL by the app' : ''}`
-          : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'} · only the stop rests · targets watched by the app${k.beyond_t2 ? ' · targets past T2: paper record only' : ''}${k.footer ? ` · ${k.footer}` : ''}`
+          : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'} · only the stop rests · targets watched by the app${k.beyond_t2 ? ` · targets past ${L.t3 ? 'T3' : 'T2'}: paper record only` : ''}${k.footer ? ` · ${k.footer}` : ''}`
             : k.sim ? 'dry run · every button opens a confirm · nothing reaches Kite' : 'every button opens a confirm · the paper book stays as it is';
   return <div className="tp-kite">
     <div className="tp-legs">{legs.map((lg) => <div key={lg.leg} className={`tp-leg ${lg.status}`}>
@@ -579,7 +579,7 @@ function WeeklyPanel({ p, onWrite, busy, next }) {
     </div>
   </Panel>;
 }
-function TrackTab({ record, channel }) {
+function TrackTab({ record, channel, books }) {
   const [w, setW] = useState(null);
   const [week, setWeek] = useState('');
   const [busy, setBusy] = useState(false);
@@ -599,8 +599,21 @@ function TrackTab({ record, channel }) {
       {w && !w.on && <span className="small dim">the weekly profile is off · Settings › tips · ai_weekly</span>}</div>
     {panels.length ? panels.map((p) => <WeeklyPanel key={p.channel} p={p} onWrite={w?.on ? write : null} busy={busy} next={w?.write_next} />)
       : <Panel title="📊 Channel profile"><p className="muted small rempty">{w ? 'No calls in this week.' : 'Loading…'}</p></Panel>}
+    {books}
+    <KiteDays record={record} show={!!books} />
     <Record record={record} channel={channel} />
   </>;
+}
+
+// ⚡ Track › the Kite ledger by day (real fills only; a dry run is never part of the record).
+function KiteDays({ record, show }) {
+  const days = arr(record?.kite_days);
+  if (!days.length && !show) return null;
+  const rows = days.map((x, i) => ({ key: `d${i}`, cells: [x.label || x.day, px(x.n), <span className={tone(x.net)}>{money(x.net)}</span>, px(x.won)] }));
+  return <Panel title="Kite trades by day" meta={`${record?.days ?? 30} d · real fills only`}>
+    <FixedTable cols={[{ h: 'Day', ell: true }, { h: 'Trades', w: 70, n: true }, { h: 'Net', w: 100, n: true }, { h: 'Won', w: 60, n: true }]}
+      rows={rows} empty="No Kite trade closed in these days." />
+  </Panel>;
 }
 
 // 📷 the channel's screenshot read on the server (RapidOCR, rules only): agrees (quiet), a strike mismatch (red, two
@@ -856,6 +869,32 @@ function Book({ book }) {
   </Panel>;
 }
 
+// ⚡ The Kite ledger beside the paper book: one row per closed Kite hint (the app's own orders only), charges per order
+// like the paper book. A dry run's book says so and is never summed as real. At phone width the table scrolls sideways
+// inside the panel, never the page.
+const BY = { click: 'you', dry: 'you (dry)', auto: 'auto', app: 'app' };
+function KiteBook({ kb }) {
+  const b = kb || {};
+  const dry = !!b.dry;
+  const tr = arr(b.trades);
+  const T = b.totals || {};
+  const endTag = (w) => <Tag c={w === 'stop' ? 'bad' : /^target/.test(String(w || '')) ? 'ok' : /time stop/.test(String(w || '')) ? 'w' : ''}>{w || 'closed'}</Tag>;
+  const rows = tr.map((x, i) => ({ key: `k${i}`, cells: [x.when_label || '—', <><b className="mono">#{x.hint_id}</b> {String(x.title || '').replace(/^(BUY|SELL) /, '')}{x.dry ? <> <Tag c="w">dry</Tag></> : ''}</>,
+    px(x.lots), x.entry_exit || '—', money(x.gross), isNum(x.charges) ? money(-Number(x.charges)) : '—', <span className={tone(x.net)}>{money(x.net)}</span>, endTag(x.why), BY[x.by] || x.by || '—'] }));
+  if (tr.length) rows.push({ key: 'tot', cls: 'tp-tot', cells: [`${plural(px(T.n ?? tr.length), 'trade')} · ${px(T.won ?? 0)} won`, '', '', '', money(T.gross), isNum(T.charges) ? money(-Number(T.charges)) : '—', <span className={tone(T.net)}>{money(T.net)}</span>, '', ''] });
+  const since = b.since ? dayLabel(b.since).split(' ').slice(1).join(' ') : '';
+  return <Panel title={<>{dry ? 'Tips · dry run book' : 'Tips · Kite book'}{dry ? <> <Tag c="w">dry</Tag></> : ''}</>} className="tp-kbook"
+    meta={`${px(b.open ?? 0)} open · ${px(b.closed ?? tr.length)} closed · ${dry ? 'dry run fills · never summed as real' : 'real fills only'} · charges per order`}
+    right={<span>today <b className={`mono ${tone(b.today)}`}>{money(b.today ?? 0)}</b>{since ? <> · since {since} <b className={`mono ${tone(b.net)}`}>{money(b.net ?? 0)}</b></> : ''}</span>}>
+    <div className="kscroll">
+      <FixedTable cols={[{ h: 'When', w: 150 }, { h: 'Hint', ell: true }, { h: 'Lots', w: 50, n: true }, { h: 'Entry → exit', w: 150, n: true }, { h: 'Gross', w: 84, n: true },
+        { h: 'Charges', w: 78, n: true }, { h: 'Net', w: 88, n: true }, { h: 'Ended', w: 130 }, { h: 'By', w: 60 }]}
+        rows={rows} empty="No Kite trade closed yet. Every one starts from a card, through the app's own orders." />
+    </div>
+    <div className="rnote">one row per closed hint · a partial booking shows every exit fill · backfilled once from the app's own order rows · never deleted · the Track tab lists the same rows by day</div>
+  </Panel>;
+}
+
 // A small modal in the page's style; Esc or the backdrop closes it.
 function Dialog({ title, onClose, children, wide }) {
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
@@ -1012,6 +1051,11 @@ export default function TipsPage() {
   const firstOpen = openH.slice(0, 2).map((h) => `#${h.id} ${h.status === 'active' ? [h.symbol, h.strike, h.opt_type].filter(Boolean).join(' ') : 'waiting'}`).join(' · ');
   const O = C.open || {}, B = C.book || {}, H = C.channel30 || {}, Y = C.you_vs_all || {};
   const equity = B.equity ?? B.value ?? (isNum(capital) ? Number(capital) + (Number(B.net) || 0) : null);
+  const K = C.kite || {};                                // ⚡ the Kite ledger's card (mode kite / dry; off = the paper card as before)
+  const kOn = K.mode === 'kite' || K.mode === 'dry';
+  const kDry = K.mode === 'dry';
+  const showBooks = kOn || arr(data.kite_book?.trades).length > 0;
+  const books = showBooks ? <div className="tp-books"><KiteBook kb={data.kite_book} /><Book book={book} /></div> : null;
   const shownHints = older ? hints : hints.slice(0, Math.max(6, openH.length));
   const runTest = () => {
     setKtest({ busy: true, err: '', hidden: null });
@@ -1039,19 +1083,22 @@ export default function TipsPage() {
     {data.enabled === false && <div className="rbanner warn tp-banner"><span>💡 Tips is <b>off</b>: nothing is read or pushed. {reader.state === 'logged_out' ? 'Log the reader in below first, then turn it on.' : ''}</span>
       <button type="button" className="btn small" onClick={enable}>Turn on…</button></div>}
     <div className="tp-tabs"><Seg opts={[['calls', 'Calls'], ['track', 'Track', 'the weekly channel profile and the record']]} v={view} set={setView} /></div>
-    {view === 'track' ? <TrackTab record={data.record} channel={chans.split(' · ')[0]} /> : <>
+    {view === 'track' ? <TrackTab record={data.record} channel={chans.split(' · ')[0]} books={books} /> : <>
     <MarketPanel />
     <Cards n={4}>
       <Card unit="n" label="Open hints" value={`${nAct} active · ${nNew} new`} num={nAct * 100 + nNew} live={openH.length > 0}
         sub={O.line || firstOpen || 'none open'} fact={<>today <b>{px(O.today?.hints ?? O.today_hints ?? 0)}</b> hints · {px(O.today?.posts ?? O.today_posts ?? 0)} posts · {px(O.today?.chatter ?? O.today_chatter ?? 0)} chatter</>} />
-      <Card label="Tips · paper" value={isNum(equity) ? inr(Number(equity)) : '—'} num={equity} k={isNum(equity) && isNum(capital) ? tone(Number(equity) - Number(capital)) : ''}
+      {kOn ? <Card label={kDry ? <>Tips · dry run <Tag c="w">dry</Tag></> : 'Tips · Kite'} value={money(K.net ?? 0)} num={K.net} k={tone(K.net)}
+        sub={<><span className={tone(K.today)}>{money(K.today ?? 0)}</span> today · {plural(px(K.lots_open ?? 0), 'lot')} open · {plural(px(K.trades_today ?? 0), 'trade')}</>}
+        fact={<>{K.since ? `since ${dayLabel(K.since).split(' ').slice(1).join(' ')} · ` : ''}{px(K.taken ?? 0)} taken · {px(K.won ?? 0)} won · paper book {isNum(equity) ? inr(Number(equity)) : '—'}{isNum(equity) && isNum(capital) ? <> · <span className={tone(Number(equity) - Number(capital))}>{money(Number(equity) - Number(capital))}</span></> : ''}</>} />
+      : <Card label="Tips · paper" value={isNum(equity) ? inr(Number(equity)) : '—'} num={equity} k={isNum(equity) && isNum(capital) ? tone(Number(equity) - Number(capital)) : ''}
         sub={<><span className={tone(B.today)}>{money(B.today ?? 0)}</span> today · {plural(px(B.lots_open ?? B.lots ?? 0), 'lot')} open</>}
-        fact={<>{B.since ? `since ${dayLabel(B.since).split(' ').slice(1).join(' ')} · ` : ''}{px(B.taken ?? 0)} taken · {px(B.won ?? 0)} won</>} />
+        fact={<>{B.since ? `since ${dayLabel(B.since).split(' ').slice(1).join(' ')} · ` : ''}{px(B.taken ?? 0)} taken · {px(B.won ?? 0)} won</>} />}
       <Card unit="n" label="Channel · 30 d" value={plural(px(H.hints ?? 0), 'hint')} num={H.hints}
         sub={`T1 first ${px(H.t1_first ?? 0)} · stop first ${px(H.stop_first ?? 0)} · no fill ${px(H.no_fill ?? 0)}`}
         fact={<>avg <b className={tone(H.avg_r)}>{avgR(H.avg_r)} R</b>{H.best_time || H.best_hour ? <> · best {H.best_time || hm12(H.best_hour)}</> : ''}</>} />
       <Card label="Your takes vs all" value={isNum(Y.you) || isNum(Y.all) ? (phone ? money(Y.you ?? 0) : `${money(Y.you ?? 0)} vs ${money(Y.all ?? 0)}`) : '—'} num={Y.you} k={tone(Y.you)}
-        sub={`${phone && isNum(Y.all) ? `all ${money(Y.all)} · ` : ''}you took ${px(Y.took ?? 0)} of ${px(Y.of ?? H.hints ?? 0)}`} fact={isNum(Y.skips) ? `skips were right ${px(Y.skips_right ?? 0)} of ${px(Y.skips)}` : 'every hint scored, taken or not'} />
+        sub={`${phone && isNum(Y.all) ? `all ${money(Y.all)} · ` : ''}you took ${px(Y.took ?? 0)} of ${px(Y.of ?? H.hints ?? 0)}${Number(Y.on_kite) > 0 ? ` · on Kite ${px(Y.on_kite)}${Number(Y.paper) > 0 ? ` · paper ${px(Y.paper)}` : ''}` : ''}`} fact={isNum(Y.skips) ? `skips were right ${px(Y.skips_right ?? 0)} of ${px(Y.skips)}` : 'every hint scored, taken or not'} />
     </Cards>
     <div className="tp-two">
       <div className="tp-col">
@@ -1065,9 +1112,10 @@ export default function TipsPage() {
         {(data.kite?.mode || 'off') !== 'off' && <KiteGuards kd={kd} />}
         <Feed feed={data.feed} reader={reader} />
         <Record record={data.record} channel={chans.split(' · ')[0]} />
-        <Book book={book} />
+        {!showBooks && <Book book={book} />}
       </div>
     </div>
+    {books}
     {((data.kite?.mode || 'off') !== 'off' || arr(kd?.orders).length > 0) && <KiteOrders kd={kd} onDone={reload} />}
     {((data.kite?.mode || 'off') !== 'off' || arr(kd?.orders).length > 0) && <KiteDayCheck kd={kd} onDone={reload} />}
     </>}

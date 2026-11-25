@@ -423,13 +423,21 @@ CREATE INDEX IF NOT EXISTS idx_tips_instr_name ON tips_instruments(name, as_of);
 -- DRY-n, the simulator) end 'voided' when the owner clears the dry run; the connection test's row is hint 0, leg 'test'.
 CREATE TABLE IF NOT EXISTS tips_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NOT NULL,
-    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 'exit', 'test', 'add')), side TEXT, qty INTEGER, order_type TEXT,
+    leg TEXT NOT NULL CHECK(leg IN ('entry', 'stop', 't1', 't2', 't3', 'exit', 'test', 'add')), side TEXT, qty INTEGER, order_type TEXT,
     price REAL, "trigger" REAL, status TEXT NOT NULL DEFAULT 'placed'
         CHECK(status IN ('placed', 'open', 'complete', 'rejected', 'cancelled', 'failed', 'voided')),
     order_id TEXT, filled_px REAL, filled_qty INTEGER, placed_at TEXT, updated_at TEXT,
     "by" TEXT CHECK("by" IN ('click', 'app', 'auto', 'dry', 'test')), note TEXT, day TEXT);
 CREATE INDEX IF NOT EXISTS idx_tips_orders_day ON tips_orders(day);
 CREATE INDEX IF NOT EXISTS idx_tips_orders_hint ON tips_orders(hint_id);
+-- ⚡ the Kite ledger (backend/tips/kite_book.py): one row per closed Kite hint (book 'kite' = real fills, 'dry' = the dry
+-- run's simulator), written when the position closes and backfilled once from the hints' kite JSON + tips_orders fills.
+-- Append-only: INSERT OR IGNORE on (hint_id, book); never updated, never deleted. exits = JSON [{leg, qty, px, at}].
+CREATE TABLE IF NOT EXISTS tips_kite_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, hint_id INTEGER NOT NULL, book TEXT NOT NULL CHECK(book IN ('kite', 'dry')), day TEXT,
+    opened_at TEXT, closed_at TEXT NOT NULL, side TEXT, symbol TEXT, tradingsymbol TEXT, lots REAL, qty INTEGER, entry_px REAL,
+    exit_px REAL, exits TEXT, gross REAL, charges REAL, net REAL, why TEXT, "by" TEXT, UNIQUE(hint_id, book));
+CREATE INDEX IF NOT EXISTS idx_tips_kite_trades_day ON tips_kite_trades(book, day);
 -- 💡 the Tips card's tick store (backend/tips/facts.py): every quote the Tips poll reads for a hint while it is armed /
 -- open on Kite (any mode but off; a dry run's rows carry dry = 1) and for 10 min after it closes. Kept for future AI
 -- features; never deleted (the archive job MOVES rows older than 180 days to data/archive.db).
@@ -547,6 +555,7 @@ def init_db(path: Optional[str] = None) -> None:
         _migrate_ai_notes(conn)
         _add_column(conn, "tips_orders", "tradingsymbol", "TEXT")    # ⚡ PR C: the contract each order went out on (the order check)
         _migrate_tips_orders_add(conn)                               # 📏 leg 'add' (the channel's one add, opt-in)
+        _migrate_tips_orders_t3(conn)                                # 🎯 leg 't3' (the T3 runner, kite_t2_part)
         _add_column(conn, "market_reads", "book", "TEXT NULL")       # 📈 "real": a read on a Real position (NULL: Tips / index rows)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_market_reads_book ON market_reads(book, interval, symbol, at)")
         _drop_track_record(conn)
@@ -764,6 +773,30 @@ def _migrate_tips_orders_add(conn) -> bool:
     b = conn.execute("SELECT COUNT(*) FROM tips_orders_pr_c").fetchone()[0]
     if a == b:
         conn.execute("DROP TABLE tips_orders_pr_c")
+    return True
+
+
+def _migrate_tips_orders_t3(conn) -> bool:
+    """🎯 The T3 runner: tips_orders' leg CHECK gains 't3'. The same move as _migrate_tips_orders_add: renamed, created
+    again from the schema, every row copied across, the old table dropped only when the row counts match. Runs once."""
+    r = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tips_orders'").fetchone()
+    if not r or "'t3'" in (r[0] or ""):
+        return False
+    old = "tips_orders_pr_t3"
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (old,)).fetchone():
+        old = f"tips_orders_pr_t3_{int(__import__('time').time())}"
+    conn.execute("DROP INDEX IF EXISTS idx_tips_orders_day")
+    conn.execute("DROP INDEX IF EXISTS idx_tips_orders_hint")
+    conn.execute(f"ALTER TABLE tips_orders RENAME TO {old}")
+    m = re.search(r"CREATE TABLE IF NOT EXISTS tips_orders \(.*?\);\n(?:CREATE INDEX[^\n]*tips_orders[^\n]*\n)*", SCHEMA, re.S)
+    conn.executescript(m.group(0))
+    _add_column(conn, "tips_orders", "tradingsymbol", "TEXT")
+    cols = TIPS_ORDER_COLS + ", tradingsymbol"
+    conn.execute(f"INSERT INTO tips_orders ({cols}) SELECT {cols} FROM {old}")
+    a = conn.execute("SELECT COUNT(*) FROM tips_orders").fetchone()[0]
+    b = conn.execute(f"SELECT COUNT(*) FROM {old}").fetchone()[0]
+    if a == b:
+        conn.execute(f"DROP TABLE {old}")
     return True
 
 

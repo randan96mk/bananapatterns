@@ -77,7 +77,9 @@ SYNC_FAST_S, SYNC_IDLE_S = 10, 30
 SYNC_WATCH_S = 5                               # the Syncer's tick while a Kite position is open (the target watch)
 QUOTE_STALE_S = 6                              # an LTP older than this is read again by the watch (real Kite only)
 NO_STOP = "no stop on Kite: exit by hand NOW"
-LEG_NAMES = {"entry": "Entry", "stop": "Stop", "t1": "Target 1", "t2": "Target 2", "exit": "Exit", "add": "Add"}
+LEG_NAMES = {"entry": "Entry", "stop": "Stop", "t1": "Target 1", "t2": "Target 2", "t3": "Target 3", "exit": "Exit",
+             "add": "Add"}
+TARGET_LEGS = ("t1", "t2", "t3")               # the watched targets (T3: the runner, kite_t2_part half / one with a 3rd target)
 ENTRY_LEGS = ("entry", "add")                  # the buy-side legs of a hint (the add: the channel's one add, opt-in)
 WARNING = ("Real money on your Kite account. The app never averages, never re-enters after a stop, and stops for the day "
            "at the loss cap.")
@@ -661,7 +663,7 @@ def place_entry(config, client, hid: int, lots: Optional[int] = None, by: str = 
         except Exception:
             logger.exception("Tips pre-flight read not queued")
         k["dry"] = is_dry(client)
-        for leg in ("entry", "stop", "t1", "t2", "exit"):
+        for leg in ("entry", "stop", "t1", "t2", "t3", "exit"):
             k["legs"].pop(leg, None)
         k.update(lots=n, qty=qty, qty_open=0, entry_px=None, stop_px=premium_stop(h), auto_rest=bool(auto_rest), reason=None,
                  by=by, day=now.date().isoformat(), arm=None, entry_at=None, stop_moves=[], check=None)
@@ -938,7 +940,7 @@ def _resize(client, h: dict, now: datetime) -> list[str]:
     k = kstate(h)
     out = []
     q = int(k.get("qty_open") or 0)
-    for leg in ("stop", "t1", "t2"):
+    for leg in ("stop",) + TARGET_LEGS:
         lg = k["legs"].get(leg) or {}
         if lg.get("status") in LIVE and q > 0 and int(lg.get("qty") or 0) > q:
             try:
@@ -952,10 +954,10 @@ def _resize(client, h: dict, now: datetime) -> list[str]:
 
 
 def cancel(config, client, hid: int, leg: str, now: Optional[datetime] = None) -> dict:
-    """Cancel one working leg (entry / stop / t1 / t2)."""
+    """Cancel one working leg (entry / stop / t1 / t2 / t3)."""
     now = now or _now()
-    if leg not in ("entry", "stop", "t1", "t2", "add"):
-        raise TipsError(400, "leg must be entry, stop, t1, t2 or add")
+    if leg not in ("entry", "stop", "t1", "t2", "t3", "add"):
+        raise TipsError(400, "leg must be entry, stop, t1, t2, t3 or add")
     with _LOCK:
         h = bk._get(hid)
         k = _ready(config, client, h, "cancel", now)
@@ -1011,7 +1013,7 @@ def exit_now(config, client, hid: int, now: Optional[datetime] = None, by: str =
             raise TipsError(409, "an exit is already working on Kite")
         try:
             cancel_add(client, h, now, "the exit")
-            for leg in ("stop", "t1", "t2"):
+            for leg in ("stop",) + TARGET_LEGS:
                 _cancel_leg(client, h, leg, now)
             r = _place(config, client, h, "exit", exit_side(h), k["qty_open"], "MARKET", now, by)
             k["auto_rest"] = False
@@ -1123,7 +1125,7 @@ def _arm_add(config, client, h: dict, now: datetime, by: str, notify: bool = Tru
     k.pop("add_why", None)
     who = "your click" if by == "click" else by
     text = (f"add armed {entry_side(h)} LIMIT {pl.fmt(nums['level'])} ×{nums['qty']} · {n} lot{'s' if n != 1 else ''} ({who}) · "
-            f"filled: avg {pl.fmt(nums['avg'])} · {nums['total_lots']} lots · the stop's qty goes up to {nums['total_qty']}")
+            f"if it fills: avg {pl.fmt(nums['avg'])} · {nums['total_lots']} lots · the stop's qty goes up to {nums['total_qty']}")
     _log(k, now, f"Kite: {text}")
     if notify:
         _push(config, f"tips|kite|{h['id']}|add|armed", f"{wpfx(h)}#{h['id']} {text}")
@@ -1226,7 +1228,7 @@ def set_kill(config, client, on: bool, now: Optional[datetime] = None) -> dict:
             k = kstate(h)
             cl = sim() if k.get("dry") else client
             try:
-                for leg in ("entry", "add", "stop", "t1", "t2"):
+                for leg in ("entry", "add", "stop") + TARGET_LEGS:
                     if cl is not None and _cancel_leg(cl, h, leg, now):
                         out["cancelled"] += 1
                 if k["state"] in ARMED:
@@ -1358,7 +1360,7 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
             if leg == "add" and isinstance(k.get("add"), dict):
                 k["add"]["state"] = "rejected"
             msg = r.get("note") or "no reason given"
-            if leg in ("t1", "t2") and (r.get("order_type") or "") == "MARKET":
+            if leg in TARGET_LEGS and (r.get("order_type") or "") == "MARKET":
                 lines.append(_exit_refused(config, client, h, leg, msg, now))
                 continue
             _log(k, now, f"Kite: {LEG_NAMES[leg].lower()} REJECTED · {msg}")
@@ -1428,17 +1430,19 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
         k["qty_open"] = max(0, int(k["qty_open"]) - fq)
         pnl = round((fpx - (k.get("entry_px") or fpx)) * fq * _sign(h), 2)
         k["realised"] = round(float(k.get("realised") or 0.0) + pnl, 2)
-        name = {"stop": "stop", "t1": "T1", "t2": "T2", "exit": "exit"}[leg]
-        watched = leg in ("t1", "t2") and (r.get("order_type") or "") == "MARKET"
+        name = {"stop": "stop", "t1": "T1", "t2": "T2", "t3": "T3", "exit": "exit"}[leg]
+        watched = leg in TARGET_LEGS and (r.get("order_type") or "") == "MARKET"
         text = f"{P}#{hid} {name} filled {pl.fmt(fpx)} ×{fq}"
         if watched:                                     # the app's market exit on a watched target
             text = f"{P}#{hid} {name} hit {pl.fmt(fpx)} · sold {fq}{f' of {before}' if k['qty_open'] > 0 else ''} at market"
             k.pop("target_exit", None)
         if watched and k["qty_open"] > 0:
-            text += " · " + _stop_for_rest(config, client, h, now)
+            text += " · " + _stop_for_rest(config, client, h, now, leg)
             tg = (h.get("plan") or {}).get("targets") or []
             if leg == "t1" and len(tg) > 1:
                 text += f" · watching T2 {pl.fmt(tg[1])}"
+            elif leg == "t2" and len(tg) > 2:
+                text += f" · watching T3 {pl.fmt(tg[2])}"
         elif leg == "t1" and k["qty_open"] > 0:
             st = k["legs"].get("stop") or {}
             if st.get("status") in LIVE and k.get("entry_px") is not None:
@@ -1471,7 +1475,7 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                     k["cost_after_part"] = False
         if k["qty_open"] <= 0:
             left = []
-            for other in ("stop", "t1", "t2"):
+            for other in ("stop",) + TARGET_LEGS:
                 if other != leg and (k["legs"].get(other) or {}).get("status") in LIVE:
                     try:
                         _cancel_leg(client, h, other, now)
@@ -1480,14 +1484,26 @@ def _apply(config, client, h: dict, rs: list[dict], now: datetime) -> list[str]:
                         pass
             if left:
                 text += " · " + ("targets cancelled" if leg == "stop" else "stop cancelled" if left == ["stop"] else "leftovers cancelled")
-            k.update(state="closed", reason=k.get("exit_why") or {"stop": "stop", "t1": "target 1", "t2": "target 2", "exit": "your exit"}[leg], auto_rest=False,
+            k.update(state="closed", reason=k.get("exit_why") or {"stop": "stop", "t1": "target 1", "t2": "target 2", "t3": "target 3",
+                                                                    "exit": "your exit"}[leg], auto_rest=False,
                      no_stop=False, watch=None, closed_at=now.isoformat(timespec="seconds"), exit_by=exit_by_of(k, leg, r.get("by")))
             if k.get("entry_px") is not None and int(k.get("qty") or 0) > 0:     # the average exit (the card's P&L strip)
                 k["exit_px"] = round(float(k["entry_px"]) + float(k["realised"]) / (int(k["qty"]) * _sign(h)), 2)
             text += f" · closed {rupees(k['realised'], sign=True)} total" if leg != "stop" else ""
+            ledger(config, h, now)                              # ⚡ the Kite ledger: one append-only row per closed hint
         _log(k, now, text.replace(f"{P}#{hid} ", "Kite: "))
         lines.append(text.replace(P, wpfx(h), 1) if watched else text)
     return lines
+
+
+def ledger(config, h: dict, now: datetime) -> None:
+    """⚡ The close → the Kite ledger's row (backend/tips/kite_book.py; INSERT OR IGNORE, a re-close adds none). Never
+    raises."""
+    try:
+        from backend.tips import kite_book as kb
+        kb.record(config, h, now)
+    except Exception:
+        logger.exception("Tips Kite ledger row #%s failed", h.get("id"))
 
 
 def exit_by_of(k: dict, leg: str, by: Optional[str]) -> str:
@@ -1497,7 +1513,7 @@ def exit_by_of(k: dict, leg: str, by: Optional[str]) -> str:
         return "time_stop"
     if leg == "stop":
         return "stop"
-    if leg in ("t1", "t2"):
+    if leg in TARGET_LEGS:
         return "target"
     if why.startswith("the channel"):
         return "auto"
@@ -1506,7 +1522,7 @@ def exit_by_of(k: dict, leg: str, by: Optional[str]) -> str:
 
 # --- backfill: the close facts of a hint closed before the card's P&L strip existed -----------------------------------------
 
-EXIT_LEGS = ("exit", "stop", "t1", "t2")
+EXIT_LEGS = ("exit", "stop", "t1", "t2", "t3")
 BACKFILL_LINE = "backfilled close facts from the order rows"
 
 
@@ -1541,7 +1557,7 @@ def close_facts(h: dict, rows: list[dict]) -> dict:
             leg, by = last.get("leg"), last.get("by")
             if leg == "stop":
                 out["exit_by"] = "stop"
-            elif leg in ("t1", "t2"):
+            elif leg in TARGET_LEGS:
                 out["exit_by"] = "target"
             elif _time_stop_exit(k):
                 out["exit_by"] = "time_stop"
@@ -1603,7 +1619,9 @@ def _done(lg: Optional[dict]) -> bool:
 
 
 def next_target(config, h: dict) -> Optional[dict]:
-    """The target the app watches now: {leg t1|t2, i, price, qty, last}, or None (nothing left to watch)."""
+    """The target the app watches now: {leg t1|t2|t3, i, price, qty, last}, or None (nothing left to watch). T2 closes
+    everything (today's rule) unless the post names a 3rd target, kite_t2_part is half / one and 2+ lots are open at
+    T2: then T2 sells that part and T3 (the runner) the rest."""
     k = kstate(h)
     tg = (h.get("plan") or {}).get("targets") or []
     q_open = int(k.get("qty_open") or 0)
@@ -1616,8 +1634,31 @@ def next_target(config, h: dict) -> Optional[dict]:
         last = q2 <= 0 or len(tg) < 2 or q_open // lot <= 1 or q1 >= q_open
         return {"leg": "t1", "i": 0, "price": float(tg[0]), "qty": q_open if last else q1, "last": last}
     if len(tg) > 1 and not _done(k["legs"].get("t2")):
+        n = t2_part_lots(config, h, q_open // lot)
+        if n:
+            return {"leg": "t2", "i": 1, "price": float(tg[1]), "qty": n * lot, "last": False}
         return {"leg": "t2", "i": 1, "price": float(tg[1]), "qty": q_open, "last": True}
+    if len(tg) > 2 and t2_part(config) != "all" and not _done(k["legs"].get("t3")):
+        return {"leg": "t3", "i": 2, "price": float(tg[2]), "qty": q_open, "last": True}
     return None
+
+
+def t2_part(config) -> str:
+    """tips.kite_t2_part: all (default: T2 closes everything) · half · one."""
+    if config is None:
+        config = _CFG.get()
+    v = str(getattr(getattr(config, "tips", None), "kite_t2_part", "all") or "all")
+    return v if v in ("all", "half", "one") else "all"
+
+
+def t2_part_lots(config, h: dict, open_lots: int) -> int:
+    """The lots T2 sells when the runner applies (a 3rd target, kite_t2_part half / one, 2+ lots open at T2): half =
+    floor(open ÷ 2), one = one lot. 0 = no runner (T2 closes everything)."""
+    tg = (h.get("plan") or {}).get("targets") or []
+    part = t2_part(config)
+    if len(tg) < 3 or part == "all" or int(open_lots) < 2:
+        return 0
+    return 1 if part == "one" else int(open_lots) // 2
 
 
 def fresh_ltp(h: dict, client, now: datetime) -> Optional[float]:
@@ -1696,12 +1737,18 @@ def _exit_refused(config, client, h: dict, leg: str, msg: str, now: datetime) ->
     return _no_stop(config, h, now, f"target exit refused: {str(msg)[:100]} · the stop re-place refused too: {bad[:80]}")
 
 
-def _stop_for_rest(config, client, h: dict, now: datetime) -> str:
+def _stop_for_rest(config, client, h: dict, now: datetime, leg: str = "t1") -> str:
     """After T1's market exit filled: a NEW SL-M for the rest at cost (a buy never below the previous stop, a sell never
-    above). The line's part."""
+    above). After T2's part (the T3 runner): the same at T1's price. The line's part."""
     k = kstate(h)
     prev = k.get("stop_px")
     cost = k.get("entry_px")
+    tg = (h.get("plan") or {}).get("targets") or []
+    at_t1 = leg == "t2" and bool(tg)
+    if at_t1:
+        cost = float(tg[0])
+    word = "T1 " if at_t1 else "cost "
+    who = "T2 hit" if at_t1 else "T1 hit"
     if cost is None:
         trig = prev
     elif prev is None:
@@ -1718,10 +1765,10 @@ def _stop_for_rest(config, client, h: dict, now: datetime) -> str:
             _update(st["row"], trigger=trig, qty=k["qty_open"], price=kw["price"], order_type="SL")
             st.update(trigger=trig, qty=k["qty_open"], price=kw["price"], type="SL")
             k["stop_px"] = trig
-            k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": trig, "who": "T1 hit"})
-            return f"stop → cost {pl.fmt(trig)} for the rest"
+            k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": trig, "who": who, "from": prev})
+            return f"stop → {word}{pl.fmt(trig)} for the rest"
         except Exception as exc:
-            return f"stop to cost refused: {str(exc)[:80]}"
+            return f"stop to {word.strip()} refused: {str(exc)[:80]}"
     try:
         r = _place(config, client, h, "stop", exit_side(h), k["qty_open"], "SL-M", now, "app", trigger=trig)
     except TipsError as exc:
@@ -1730,8 +1777,8 @@ def _stop_for_rest(config, client, h: dict, now: datetime) -> str:
         return f"the stop for the rest refused: {str(exc)[:80]} · {NO_STOP}"
     k["stop_px"] = trig
     k["no_stop"] = False
-    k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": trig, "who": "T1 hit"})
-    return f"stop → {'cost ' if cost is not None and float(trig) == float(cost) else ''}{pl.fmt(r['trigger'])} for the rest"
+    k.setdefault("stop_moves", []).append({"t": now.isoformat(timespec="seconds"), "to": trig, "who": who, "from": prev})
+    return f"stop → {word if cost is not None and float(trig) == float(cost) else ''}{pl.fmt(r['trigger'])} for the rest"
 
 
 def watch_one(config, client, h: dict, now: datetime, notify: bool = True) -> Optional[str]:
@@ -1740,7 +1787,7 @@ def watch_one(config, client, h: dict, now: datetime, notify: bool = True) -> Op
     if k["state"] != "entered" or int(k.get("qty_open") or 0) <= 0 or k.get("watch") == "refused" or killed() or mode(config) == "off":
         return None
     legs = k["legs"]
-    if any((legs.get(x) or {}).get("status") in LIVE for x in ("exit", "t1", "t2")):
+    if any((legs.get(x) or {}).get("status") in LIVE for x in ("exit",) + TARGET_LEGS):
         return None                                      # an exit already working: its fill decides
     nt = next_target(config, h)
     if not nt:
@@ -1764,7 +1811,7 @@ def watch_one(config, client, h: dict, now: datetime, notify: bool = True) -> Op
     try:
         r = _place(config, client, h, nt["leg"], exit_side(h), nt["qty"], "MARKET", now, "auto" if k.get("by") == "auto" else "app")
     except TipsError as exc:
-        line = _exit_refused(config, client, h, nt["leg"], str(exc).replace("Kite refused the target 1: ", "").replace("Kite refused the target 2: ", ""), now)
+        line = _exit_refused(config, client, h, nt["leg"], re.sub(r"^Kite refused the target \d: ", "", str(exc)), now)
         save_kite(h)
         if notify:
             _push(config, f"tips|kite|{hid}|watch|{now.isoformat(timespec='seconds')}", line)
@@ -1781,7 +1828,7 @@ def migrate_targets(config, client, h: dict, now: datetime, notify: bool = True)
     marked watched (real accounts; one log + Telegram line). A rejected / failed target leg becomes watched silently."""
     k = kstate(h)
     out, changed = None, False
-    for leg in ("t1", "t2"):
+    for leg in TARGET_LEGS:
         lg = k["legs"].get(leg) or {}
         if not lg or (lg.get("type") or "LIMIT") != "LIMIT":
             continue
@@ -1880,6 +1927,11 @@ class Syncer:
                 backfill_close_facts()
             except Exception:
                 logger.exception("Tips Kite close-facts backfill failed")
+            try:                                       # ⚡ the Kite ledger: closed hints without their row
+                from backend.tips import kite_book as kb
+                kb.backfill(cfg, now)
+            except Exception:
+                logger.exception("Tips Kite ledger backfill failed")
             self._backfilled = True
         try:                                           # the target watch first: a market exit it sends is read back below
             watched = watch_all(cfg, real, now)
@@ -1983,27 +2035,54 @@ def legs_view(config, h: dict) -> list[dict]:
     else:
         loss = round((stop_px - ref) * open_q * sign, 2) if ref is not None and stop_px is not None else None
         moved = k.get("entry_px") is not None and stop_px == k.get("entry_px")
+        t2m = next((m for m in reversed(k.get("stop_moves") or []) if m.get("who") == "T2 hit"), None)
+        moved_text = None
+        if t2m is not None:                                  # 🎯 the runner: the stop went from cost to T1 after T2's part
+            moved_text = f"moved cost {pl.fmt(t2m.get('from') if t2m.get('from') is not None else k.get('entry_px'))} → T1 {pl.fmt(t2m.get('to'))} after T2"
         leg("stop", exit_side(h), open_q, "SL-M", None, stop_px,
-            ("at cost · " if moved else "") + (f"max loss {rupees(loss, sign=True)}" if loss is not None else "max loss —"),
-            {"max_loss": loss, "placeable": True})
+            (f"{moved_text} · " if moved_text else "at cost · " if moved else "") + (f"max loss {rupees(loss, sign=True)}" if loss is not None else "max loss —"),
+            {"max_loss": loss, "placeable": True, "moved_text": moved_text})
     if tg:
         gain = round((float(tg[0]) - ref) * q1 * sign, 2) if ref is not None else None
         target_leg(k, out, "t1", exit_side(h), q1, float(tg[0]), ("half" if q2 else "all") + (f" · {rupees(gain, sign=True)} if hit" if gain is not None else ""),
                    {"if_filled": gain})
+    q2r, q3 = runner_split(config, h, q2)
     if len(tg) > 1 and q2:
         t1s = (k["legs"].get("t1") or {}).get("status")
-        target_leg(k, out, "t2", exit_side(h), q2, float(tg[1]),
-                   "rest · watched after T1 · the stop moves to cost" if t1s != "complete" else "rest · T1 hit · the stop is at cost",
-                   {"after_t1": True})
+        if q3:
+            n2 = q2r // lot
+            d2 = (f"{n2} lot{'s' if n2 != 1 else ''} · the rest rides to T3 · " +
+                  ("watched after T1 · the stop moves to cost" if t1s != "complete" else "T1 hit · the stop is at cost"))
+        else:
+            d2 = "rest · watched after T1 · the stop moves to cost" if t1s != "complete" else "rest · T1 hit · the stop is at cost"
+        target_leg(k, out, "t2", exit_side(h), q2r, float(tg[1]), d2, {"after_t1": True})
+    if len(tg) > 2 and q3:                               # 🎯 the T3 runner (kite_t2_part half / one)
+        n3 = q3 // lot
+        ts = (plan.get("time_stop") or None)
+        sub = (f"the last {'lot' if n3 == 1 else f'{n3} lots'} · stop at T1 {pl.fmt(tg[0])} · the channel's exit, SL hit or 'closed' ends it"
+               + (f" · time stop {ampm(_hm(ts))}" if ts else " · held to expiry" if plan.get("hold_to_expiry") else ""))
+        target_leg(k, out, "t3", exit_side(h), q3, float(tg[2]), "runner · " + sub, {"after_t2": True, "runner": True, "sub": sub})
     ad = k.get("add") if isinstance(k.get("add"), dict) else None
     if ad:                                               # 📏 the channel's one add (opt-in): its own row
         a_lg = k["legs"].get("add") or {}
         st = {"filled": f"filled · avg {pl.fmt(ad.get('avg'))} · {int(k.get('qty') or 0) // lot} lots"}.get(ad.get("state"), "")
         leg("add", entry_side(h), ad.get("qty"), "LIMIT", ad.get("level"), None,
             f"{ad.get('lots')} lot{'s' if ad.get('lots') != 1 else ''} · the channel's add · one per call" + (f" · {st}" if st else
-            f" · filled: avg {pl.fmt(ad.get('avg_if'))} · {ad.get('total_lots')} lots" if a_lg.get("status") in LIVE else ""))
+            f" · if it fills: avg {pl.fmt(ad.get('avg_if'))} · {ad.get('total_lots')} lots" if a_lg.get("status") in LIVE else ""))
     now_texts(h, out, bk.last_ltp(h))
     return out
+
+
+def runner_split(config, h: dict, q2: int) -> tuple[int, int]:
+    """(T2 qty, T3 qty) of the rest after T1 (`q2`): the runner applies with a 3rd target, kite_t2_part half / one and
+    2+ lots at T2; else (q2, 0) (T2 closes everything). A T2 already hit shows its own sold quantity."""
+    lot = int(h.get("lot_size") or 0) or 1
+    if not q2:
+        return q2, 0
+    n = t2_part_lots(config, h, int(q2) // lot)
+    if not n:
+        return q2, 0
+    return n * lot, int(q2) - n * lot
 
 
 def target_leg(k: dict, out: list, key: str, side: str, q: int, price: float, detail: str, extra: dict) -> None:
@@ -2076,7 +2155,7 @@ def now_texts(h: dict, legs: list[dict], ltp: Optional[float]) -> None:
                 d["now_text"] = f"{now} · at market"
         elif d["leg"] == "stop" and d.get("trigger") is not None:
             d["now_text"] = f"{now} · stop {pl.fmt(d['trigger'])} is {_pct(d['trigger'], ltp)}"
-        elif d["leg"] in ("t1", "t2") and d.get("price") is not None:
+        elif d["leg"] in TARGET_LEGS and d.get("price") is not None:
             d["now_text"] = f"{now} · target {pl.fmt(d['price'])} is {_pct(d['price'], ltp)}"
 
 
@@ -2127,12 +2206,12 @@ def _actions(config, h: dict, k: dict) -> list[str]:
         acts += ["send_now", "cancel:entry"]
     if k["state"] == "entered":
         need_stop = not live("stop") and premium_stop(h) is not None and k["qty_open"] > 0 \
-            and not any(live(x) for x in ("exit", "t1", "t2"))
+            and not any(live(x) for x in ("exit",) + TARGET_LEGS)
         if need_stop:
             acts += ["rest", "stop"]
         if live("stop"):
             acts += ["modify_stop", "cancel:stop"]
-        for leg in ("t1", "t2"):
+        for leg in TARGET_LEGS:
             if live(leg) and (legs.get(leg) or {}).get("type") == "LIMIT":     # a resting target from before only
                 acts.append(f"cancel:{leg}")
         if live("add"):
@@ -2149,12 +2228,13 @@ def hint_kite(config, h: dict) -> dict:
     """The hint's `kite` for the card: state, sizes, the legs, the actions, the log."""
     k = kstate(h)
     lots = int(k.get("lots") or 0) or default_lots(config, h)
+    legs = legs_view(config, h)
     return {"state": k["state"], "lots": lots, "qty": int(k.get("qty") or 0) or lots * (int(h.get("lot_size") or 0) or 1),
             "qty_open": int(k.get("qty_open") or 0), "entry_px": k.get("entry_px"), "stop_px": k.get("stop_px"),
             "auto_rest": bool(k.get("auto_rest")), "realised": k.get("realised") or 0.0, "reason": k.get("reason"),
-            "legs": legs_view(config, h), "actions": kite_actions(config, h), "log": k.get("log") or [],
+            "legs": legs, "actions": kite_actions(config, h), "log": k.get("log") or [],
             "dry": bool(k.get("dry")) and k["state"] != "none", "sim": routes_dry(config, h),
-            "beyond_t2": max(0, len((h.get("plan") or {}).get("targets") or []) - 2),
+            "beyond_t2": max(0, len((h.get("plan") or {}).get("targets") or []) - (3 if any(d["leg"] == "t3" for d in legs) else 2)),
             "arm": k.get("arm"), "by": k.get("by"), "check": k.get("check"), "ai": k.get("ai"), "auto": auto_tag(config, h),
             "needs_activation": needs_activation(h) and k["state"] in ("none", "armed_wait"),
             "entry_what": (k.get("arm") or entry_plan(h, bk.last_ltp(h))).get("what") or "",
@@ -2187,11 +2267,11 @@ def auto_tag(config, h: dict) -> Optional[dict]:
 
 def _order_view(r: dict, names: dict, entry_qty: dict) -> dict:
     nm = names.get(r["hint_id"], "")
-    label = {"entry": f"Entry {nm}".strip(), "stop": "Stop", "t1": "Target 1", "t2": "Target 2 (rest)", "exit": "Exit at market",
+    label = {"entry": f"Entry {nm}".strip(), "stop": "Stop", "t1": "Target 1", "t2": "Target 2 (rest)", "t3": "Target 3 (runner)", "exit": "Exit at market",
              "test": "Connection test", "add": "Add (the channel's)"}[r["leg"]]
     if r["leg"] == "t1" and entry_qty.get(r["hint_id"]) and int(r["qty"] or 0) < entry_qty[r["hint_id"]]:
         label += " (half)"
-    if r["leg"] in ("t1", "t2") and r.get("order_type") == "MARKET":
+    if r["leg"] in TARGET_LEGS and r.get("order_type") == "MARKET":
         label += " · hit, sold at market"
     lg = {"status": r["status"], "filled_px": r.get("filled_px"), "note": r.get("note")}
     dry = is_dry_row(r)

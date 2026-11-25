@@ -147,7 +147,7 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
     if ps is not None and k.get("stop_px") is not None and float(k["stop_px"]) != float(ps) and float(k["stop_px"]) in moves:
         amber(f"stop moved {pl.fmt(ps)} → {pl.fmt(k['stop_px'])} (logged)")
     for r in rows:
-        if r["leg"] in ("t1", "t2") and r["status"] in ko.LIVE and (r.get("order_type") or "") != "MARKET":
+        if r["leg"] in ko.TARGET_LEGS and r["status"] in ko.LIVE and (r.get("order_type") or "") != "MARKET":
             red(f"a target resting on Kite ({ko.LEG_NAMES[r['leg']].lower()} {ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))})",
                 f"cancel the resting {ko.LEG_NAMES[r['leg']].lower()} on Kite (the app watches the targets)")
     q_open = int(k.get("qty_open") or 0)
@@ -156,7 +156,7 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
         if lg.get("status") in ko.LIVE and int(lg.get("qty") or 0) > q_open:
             red(f"the resting stop sells {lg.get('qty')}, only {q_open} held", "modify the stop's quantity on Kite")
         stop_live = (k["legs"].get("stop") or {}).get("status") in ko.LIVE
-        exiting = any((k["legs"].get(x) or {}).get("status") in ko.LIVE for x in ("exit", "t1", "t2"))
+        exiting = any((k["legs"].get(x) or {}).get("status") in ko.LIVE for x in ("exit",) + ko.TARGET_LEGS)
         at = _dt(k.get("entry_at"))
         if k.get("no_stop") and not stop_live:
             red(ko.NO_STOP)
@@ -352,6 +352,8 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
                     hit += 1
                 elif k["state"] == "entered":
                     watched += 1
+            if (k["legs"].get("t3") or {}).get("status") == "complete":     # 🎯 the T3 runner
+                hit += 1
             if ko.premium_stop(h) is not None and not any(r["leg"] == "stop" and r["status"] in ko.LIVE + ("complete", "cancelled") for r in mine):
                 items.append({"level": "red", "text": f"{tag} entry filled, no stop ever resting", "hand": "check the position on Kite"})
         if k["state"] == "entered" and int(k.get("qty_open") or 0) > 0:
@@ -359,7 +361,7 @@ def day_check(config, now: Optional[datetime] = None, client=None, notify: bool 
             if not (h.get("plan") or {}).get("hold_to_expiry"):
                 items.append({"level": "red", "text": f"{tag} {k['qty_open']} open after the time stop", "hand": "exit on Kite now"})
         for r in mine:
-            if r["status"] in ko.LIVE and r["leg"] in ("t1", "t2") and (r.get("order_type") or "") != "MARKET":
+            if r["status"] in ko.LIVE and r["leg"] in ko.TARGET_LEGS and (r.get("order_type") or "") != "MARKET":
                 items.append({"level": "red", "text": f"{tag} a target resting on Kite ({ko.LEG_NAMES[r['leg']].lower()} "
                                                        f"{ko._type_text(r.get('order_type') or '', r.get('price'), r.get('trigger'))})",
                               "hand": f"cancel the resting {ko.LEG_NAMES[r['leg']].lower()} on Kite (the app watches the targets)"})

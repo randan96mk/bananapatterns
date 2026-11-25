@@ -445,7 +445,7 @@
 .rd .tp-kbar .rsw { font-size: 12px; flex: none; }
 .rd .tp-kbar .btn { flex: none; }
 .rd .tp-kite { display: grid; gap: 8px; min-width: 0; }
-.rd .tp-legs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px; min-width: 0; }
+.rd .tp-legs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 8px; min-width: 0; }
 .rd .tp-leg { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--hover); display: grid; gap: 5px; min-width: 0; align-content: start; }
 .rd .tp-leg.complete { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
 .rd .tp-leg.open, .rd .tp-leg.placed { border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); }
@@ -793,4 +793,20 @@ body.btc-full-open { overflow: hidden; }
   .rd .btc-table { height: 460px; }
   .rd .btc-ai .t { height: auto; flex-wrap: wrap; white-space: normal; padding: 2px 0; }
   .rd .btc-set .rnote { height: 52px; }
+}
+
+/* ⚡ the Kite ledger beside the paper book; its table scrolls sideways inside the panel at phone width, never the page */
+.rd .tp-books { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+@media (max-width: 1100px) { .rd .tp-books { grid-template-columns: minmax(0, 1fr); } }
+.rd .tp-kbook { min-width: 0; }
+.rd .tp-kbook .kscroll { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.rd .tp-kbook .kscroll .ftab { min-width: 860px; }
+@media (max-width: 760px) {
+  .rd .tp-kbook .kscroll .ftab { display: table; } .rd .tp-kbook .kscroll .ftab tbody { display: table-row-group; }
+  .rd .tp-kbook .kscroll .ftab colgroup { display: table-column-group; } .rd .tp-kbook .kscroll .ftab thead { display: table-header-group; }
+  .rd .tp-kbook .kscroll .ftab tr { display: table-row; padding: 0; }
+  .rd .tp-kbook .kscroll .ftab td { display: table-cell; height: 34px; padding: 0 10px; border-bottom: 1px solid var(--rowline); font-size: 12px; }
+  .rd .tp-kbook .kscroll .ftab td.n { text-align: right !important; }
+  .rd .tp-kbook .kscroll .ftab td:first-child { font-size: 12px; }
+  .rd .tp-kbook .kscroll .ftab td:before { display: none; }
 }

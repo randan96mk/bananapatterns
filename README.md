@@ -2301,6 +2301,26 @@ has / had a position on the hint; a paper-only hint keeps its old look.
 `test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes), `test_tips_vision.py` (18: OCR facts on hand-written line sets, a fake engine, mismatch / report vs check / the 2-day rule; one real-engine test when installed). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
 
 
+### ⚡ Tips · the Kite ledger and the 🎯 T3 runner
+
+- **The Kite ledger** (`backend/tips/kite_book.py`, table `tips_kite_trades`): one row per closed Kite hint, written when
+  the position closes (book `kite` = real fills of the app's own tagged orders, `dry` = the dry run's simulator; Kite
+  holdings / positions are never read). Gross = the realised ₹ from the fills, charges = the paper book's per-order model
+  over the entry fill(s) and every exit fill, net = gross − charges, plus each exit fill (stop / T1 / T2 / T3 / exit),
+  why and by. Append-only: `INSERT OR IGNORE` on (hint, book), a resync never duplicates, nothing is updated or deleted.
+  Backfilled once at startup (and `POST /api/tips/kite/book/backfill`) from closed hints + their order rows;
+  `GET /api/tips/kite/book`. The Tips page: with Kite orders on, the second tile is **Tips · Kite** (net since the first
+  row · today · lots open · trades; the paper book in the fact line) or **Tips · dry run** (never summed as real); off =
+  the paper tile as before. **Tips · Kite book** sits beside the paper book (its table scrolls sideways at phone width);
+  "Your takes vs all" counts a real Kite close at its net (its paper position not again) with "on Kite N · paper N";
+  Track lists **Kite trades by day**.
+- **`kite_t2_part`** (Settings › tips; default `all` = T2 closes everything, today's rule): `half` / `one` — when the post
+  names a 3rd target and 2+ lots are open at T2, T2 sells floor(open ÷ 2) lots / one lot, the stop for the rest moves to
+  T1's price, and **T3** (the runner, watched like T1 / T2, never a resting order) sells the rest ("target 3"). Two
+  targets or one open lot: unchanged. The channel's exit / SL hit / "closed", the time stop, the kill switch and Exit now
+  close the runner like any open quantity; targets past T3 stay paper-only.
+
+
 ### 📏 Tips sizing · post / fixed / risk, the per-trade risk guard, the book part size, the channel's adds (opt-in)
 
 `backend/tips/sizing.py`; Settings › tips. The defaults reproduce the earlier behaviour exactly: `kite_size_mode` post,

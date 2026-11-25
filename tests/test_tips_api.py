@@ -8,7 +8,7 @@ from backend.config import AppConfig
 from backend.engine import health
 from tests.tips_world import BN12, KEY12, cfg, seed, world
 
-SUMMARY_KEYS = {"enabled", "reader", "channels", "cards", "hints", "feed", "record", "book", "settings", "quotes_at", "any_open", "at", "kite"}
+SUMMARY_KEYS = {"enabled", "reader", "channels", "cards", "hints", "feed", "record", "book", "settings", "quotes_at", "any_open", "at", "kite", "kite_book"}
 HINT_KEYS = {"id", "channel", "post_id", "posted_at", "time", "day", "day_label", "raw", "title", "symbol", "side", "instrument", "strike",
              "opt_type", "expiry", "expiry_label", "expiry_src", "tradingsymbol", "exchange", "lot_size", "entry", "entry_text", "stop",
              "stop_text", "targets", "targets_hit", "targets_text", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
