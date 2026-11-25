@@ -2240,6 +2240,22 @@ def tips_kite_resync():
     return {**r, **ko.today(st.config, st.client)}
 
 
+@router.get("/tips/kite/book")
+def tips_kite_book(days: Optional[int] = Query(None, ge=1, le=3650)):
+    """⚡ The Kite ledger (the mode's book: real, or the dry run while kite_mode is dry)."""
+    from backend.tips import kite_book as kb
+    return kb.view(S().config, days)
+
+
+@router.post("/tips/kite/book/backfill")
+def tips_kite_book_backfill():
+    """⚡ The Kite ledger: closed Kite hints without their row get one (never updates or deletes a row)."""
+    from backend.tips import kite_book as kb
+    st = S()
+    added = kb.backfill(st.config)
+    return {"added": added, **kb.view(st.config)}
+
+
 @router.post("/tips/kite/dry/clear")
 def tips_kite_dry_clear():
     """"Clear dry run": today's dry rows voided (never deleted), the simulator's book emptied, the dry hints' legs reset."""

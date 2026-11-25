@@ -514,13 +514,23 @@ def record(days: int = 30, channel: Optional[str] = None, now: Optional[datetime
         from backend.timefmt import ampm
         best_t = max(scored, key=lambda h: (h.get("score") or {}).get("r") or -99)
         tot["best_time"] = ampm(datetime.fromisoformat(best_t["posted_at"]))
-    taken = [h for h in hs if h.get("taken") and (h.get("pos") or {}).get("entry_px") is not None]
+    paper_taken = [h for h in hs if h.get("taken") and (h.get("pos") or {}).get("entry_px") is not None]
     skipped = [h for h in scored if h.get("status") == "skipped" and not (h.get("score") or {}).get("open")]
-    you = round(sum(h.get("pnl") or 0 for h in taken), 2)
+    # ⚡ a hint closed on Kite (real, never a dry run) counts its real net from the Kite ledger; its paper position (if
+    # any) is not counted again
+    from backend.tips import kite_book as kb
+    ledger = kb.by_hint("kite")
+    on_kite = [h for h in hs if isinstance(h.get("kite"), dict) and h["kite"].get("state") == "closed" and not h["kite"].get("dry")
+               and h["id"] in ledger]
+    kite_ids = {h["id"] for h in on_kite}
+    taken = [h for h in paper_taken if h["id"] not in kite_ids]
+    you = round(sum(h.get("pnl") or 0 for h in taken) + sum(ledger[i]["net"] or 0 for i in kite_ids), 2)
     return {"days": days, "channel": channel, "by_instrument": table(group_of), "by_hour": by_hour, "totals": tot,
             "untracked": {"count": len(untracked), "why": why},
-            "you_vs_all": {"you": you, "all": tot["pnl_lot"], "took": len(taken), "of": len(scored),
-                           "skips_right": sum(1 for h in skipped if ((h.get("score") or {}).get("pnl_lot") or 0) <= 0), "skips": len(skipped)}}
+            "you_vs_all": {"you": you, "all": tot["pnl_lot"], "took": len(taken) + len(kite_ids), "of": len(scored),
+                           "on_kite": len(kite_ids), "paper": len(taken), "kite_net": round(sum(ledger[i]["net"] or 0 for i in kite_ids), 2),
+                           "skips_right": sum(1 for h in skipped if ((h.get("score") or {}).get("pnl_lot") or 0) <= 0), "skips": len(skipped)},
+            "kite_days": kb.days_view("kite", days, now)}
 
 
 def first_call(days: int = 30, now: Optional[datetime] = None) -> Optional[str]:
@@ -696,8 +706,8 @@ def hints_list(status: Optional[str] = None, days: Optional[int] = None, channel
 
 
 def summary(config, now: Optional[datetime] = None) -> dict:
-    """GET /api/tips: {enabled, reader, channels, cards {open, book, channel30, you_vs_all}, hints, feed, record, book,
-    settings, quotes_at, any_open, at, kite (⚡ Tips → Kite orders: mode, kill, caps, open)}."""
+    """GET /api/tips: {enabled, reader, channels, cards {open, book, channel30, you_vs_all, kite}, hints, feed, record, book,
+    settings, quotes_at, any_open, at, kite (⚡ Tips → Kite orders: mode, kill, caps, open), kite_book (the Kite ledger)}."""
     from backend.tips import kite_orders as ko
     from backend.tips import reader as rd
     now = now or datetime.now(IST)
@@ -722,6 +732,8 @@ def summary(config, now: Optional[datetime] = None) -> dict:
     paused = [v for v in views if v["status"] == "paused"]
     first = active[0] if active else (waiting[0] if waiting else None)
     today_real = sum(t["net"] or 0 for t in book["trades"] if (t.get("closed_at") or "")[:10] == today)
+    from backend.tips import kite_book as kb
+    kbook = kb.view(config, now=now)
     cards = {
         "open": {"active": len(active), "new": len(waiting), "paused": len(paused),
                  "line": " · ".join([f"#{v['id']} {v['title'].split(' ', 1)[1]}" for v in active[:1]] + [f"#{v['id']} waiting" for v in waiting[:2]]),
@@ -731,12 +743,14 @@ def summary(config, now: Optional[datetime] = None) -> dict:
                  "since": book["since"], "taken": book["taken"], "won": book["won"], "capital": book["capital"]},
         "channel30": {**{k: rec["totals"][k] for k in ("hints", "t1_first", "stop_first", "no_fill", "avg_r", "best_hour", "best_time")}},
         "you_vs_all": rec["you_vs_all"],
+        "kite": kb.card(config, kbook, now),
     }
     reader = rd.status()
     reader["channels"] = rd.channels_of(config)
     return {"enabled": bool(config.tips.enabled), "reader": reader, "channels": rd.channels_of(config), "cards": cards, "hints": views,
             "feed": feed_rows(limit=50), "record": rec, "book": book, "settings": asdict(config.tips),
-            "quotes_at": quotes_at, "any_open": bool(open_h), "at": now.isoformat(timespec="seconds"), "kite": ko.lite(config, now)}
+            "quotes_at": quotes_at, "any_open": bool(open_h), "at": now.isoformat(timespec="seconds"), "kite": ko.lite(config, now),
+            "kite_book": kbook}
 
 
 def health_rows(config) -> list[dict]:

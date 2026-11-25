@@ -108,6 +108,6 @@ def test_summary_shape():
     seed(c, w)
     s = tr.summary(c, at("09:50"))
     assert set(s) >= {"enabled", "reader", "channels", "cards", "hints", "feed", "record", "book", "settings", "any_open", "at"}
-    assert set(s["cards"]) == {"open", "book", "channel30", "you_vs_all"}
+    assert set(s["cards"]) == {"open", "book", "channel30", "you_vs_all", "kite"}
     assert s["reader"]["state"] == "logged_out" and s["any_open"] and s["hints"][0]["actions"][:2] == ["take", "take_half"]
     assert s["feed"][0]["label"] == "hint #1"

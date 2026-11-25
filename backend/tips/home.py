@@ -113,7 +113,7 @@ def row(config, h: dict, now: datetime) -> dict:
         strip = cd.pnl_strip(config, h, None, now, day={})       # the card's P&L strip: the same open ₹
         out["pnl"] = strip["open"] if strip else open_pnl(h)
         out["pnl_pct"] = strip.get("pct") if strip else None
-        nxt = next((legs[x] for x in ("t1", "t2") if x in legs and legs[x]["status"] != "complete"), None)
+        nxt = next((legs[x] for x in ("t1", "t2", "t3") if x in legs and legs[x]["status"] != "complete"), None)
         parts = [f"now {pl.fmt(ltp)}"] if ltp is not None else []
         st_leg = legs.get("stop") or {}
         bar = cd.dist(h)                                          # the card's distance bar: the same % labels

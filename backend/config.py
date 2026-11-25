@@ -547,6 +547,8 @@ class TipsConfig:
     kite_size_mode: str = "post"
     kite_risk_per_trade: float = 6000.0    # ₹ at the stop per trade: the risk mode's figure AND a guard in every mode
     kite_book_part: str = "half"           # "book part" / T1 with 2+ lots: half = floor(lots ÷ 2) lots | one = one lot
+    kite_t2_part: str = "all"              # 🎯 at T2 when the post names a 3rd target: all = close at T2 (today's rule) | half =
+                                           # floor(open lots ÷ 2) | one = one lot; the rest rides to T3 with the stop at T1
     kite_follow_adds: bool = False         # follow the channel's "add 2 lots near 660": ONE extra LIMIT after the fill (opt-in)
     # 📷 the channel's screenshots read on this server (RapidOCR): off = no download, no read. Images kept 2 days at most.
     vision: bool = False
@@ -642,6 +644,8 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_size_mode must be post, fixed or risk")
     if sec.kite_book_part not in ("half", "one"):
         raise ValueError("kite_book_part must be half or one")
+    if sec.kite_t2_part not in ("all", "half", "one"):
+        raise ValueError("kite_t2_part must be all, half or one")
     if float(sec.kite_risk_per_trade) <= 0:
         raise ValueError("kite_risk_per_trade must be positive")
     from backend.tips import sizing                  # 📏 lots × lot size × the usual stop distance vs the risk / loss caps

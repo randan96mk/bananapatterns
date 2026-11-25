@@ -76,6 +76,11 @@ async def lifespan(app: FastAPI):
         tips_kite.backfill_close_facts()
     except Exception:
         logger.exception("Tips Kite close-facts backfill failed")
+    try:                                  # ⚡ once: the Kite ledger rows of closed Kite hints that lack one (append-only)
+        from backend.tips import kite_book as tips_kite_book
+        tips_kite_book.backfill(state.config)
+    except Exception:
+        logger.exception("Tips Kite ledger backfill failed")
     try:                                  # ₿ BTC pivot patterns: idle until crypto.enabled (alerts only, its own thread)
         from backend.crypto import feed as crypto_feed
         state.crypto = crypto_feed.CryptoService(state)

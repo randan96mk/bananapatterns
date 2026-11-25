@@ -183,7 +183,7 @@ def parts(h: dict, k: dict, lot: int) -> dict:
     if ad and ad.get("state") == "filled":
         out["avg_text"] = f"avg {pl.fmt(k.get('entry_px'))} · {int(k.get('qty') or 0) // lot} lots"
     if float(k.get("realised") or 0.0) and q_open < int(k.get("qty") or 0):
-        ex = [r for r in ko.rows_for(h["id"]) if r["leg"] in ("exit", "stop", "t1", "t2") and r["status"] == "complete" and r.get("filled_px") is not None]
+        ex = [r for r in ko.rows_for(h["id"]) if r["leg"] in ko.EXIT_LEGS and r["status"] == "complete" and r.get("filled_px") is not None]
         if ex:
             q = sum(int(r.get("filled_qty") or r["qty"] or 0) for r in ex)
             px = sum(float(r["filled_px"]) * int(r.get("filled_qty") or r["qty"] or 0) for r in ex) / q if q else None
@@ -352,7 +352,7 @@ def adjust_legs(h: dict, legs: list[dict], f: Optional[dict]) -> list[dict]:
     for d in legs:
         if ltp is None:
             break
-        if d["leg"] in ("t1", "t2") and d.get("price") is not None and d.get("status") != "complete":
+        if d["leg"] in ("t1", "t2", "t3") and d.get("price") is not None and d.get("status") != "complete":
             p = abs((float(d["price"]) - ltp) / ltp * 100)
             if p <= NEAR_PCT or (float(d["price"]) - ltp) * _sign(h) <= 0:
                 d["tone"] = "near"
@@ -370,7 +370,7 @@ def adjust_legs(h: dict, legs: list[dict], f: Optional[dict]) -> list[dict]:
                 d["closed"] = True
                 if d.get("status") != "complete" and (f or {}).get("stop_nearest_pct") is not None:
                     d["detail"] = f"never within {f['stop_nearest_pct']:.1f} % of the stop".replace(".0 %", " %")
-            elif d["leg"] in ("t1", "t2") and d.get("status") != "complete":
+            elif d["leg"] in ("t1", "t2", "t3") and d.get("status") != "complete":
                 n = int(d["leg"][1])
                 note, _ = target_after_exit(h, n, k)
                 if note.startswith("hit at"):
