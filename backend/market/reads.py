@@ -142,6 +142,7 @@ def store(at: datetime, symbol: str, res: dict, one: dict, extra: dict, hint_id:
           interval: Optional[str] = None) -> int:
     """One market_reads row per horizon. `book` "real" marks a read on a Real position (backend/market/real_reads.py);
     `interval` overrides the worker's echo (the Real reads say "1d" / "1m" by the candles they came from)."""
+    invalidate("scorecard")
     paths = {**(one.get("paths_summary") or {}), "last": res.get("last"), "samples": one.get("samples"), "context": res.get("context"),
              "touch_any": one.get("touch_any") or {}, **extra}
     with get_db() as conn:
@@ -150,6 +151,34 @@ def store(at: datetime, symbol: str, res: dict, one: dict, extra: dict, hint_id:
                             (at.isoformat(timespec="seconds"), symbol, interval or res.get("interval") or "1m", int(one["horizon"]), one.get("p_up"),
                              one.get("exp_range"), json.dumps(one.get("touch") or {}), json.dumps(paths), res.get("version") or VERSION,
                              res.get("ms"), hint_id, book)).lastrowid
+
+
+# ⏱ Short caches: the scorecard walks every market_reads row (thousands, each with its JSON) and the hint cards asked for it
+# twice per card, so a page of 25 cards ran 50 full scans (78 s on 25 Nov). One scan per CACHE_S now; a store or a scoring
+# clears it. Read-only data: nothing here acts.
+CACHE_S = 30.0
+_CACHE: dict = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def cached(key: tuple, fn: Callable, ttl: float = CACHE_S):
+    """fn()'s value for `key`, recomputed after `ttl` seconds (or after invalidate())."""
+    now = _time.monotonic()
+    with _CACHE_LOCK:
+        v = _CACHE.get(key)
+        if v is not None and now - v[0] < ttl:
+            return v[1]
+    out = fn()
+    with _CACHE_LOCK:
+        _CACHE[key] = (now, out)
+    return out
+
+
+def invalidate(prefix: Optional[str] = None) -> None:
+    """Forget the cached values (those whose key starts with `prefix`, or all)."""
+    with _CACHE_LOCK:
+        for k in [k for k in _CACHE if prefix is None or k[0] == prefix]:
+            _CACHE.pop(k, None)
 
 
 def rows(where: str = "1", args: tuple = (), order: str = "id") -> list[dict]:
@@ -569,6 +598,7 @@ def score(now: Optional[datetime] = None) -> dict:
             out["scored"] += 1
         with get_db() as conn:
             conn.execute("UPDATE market_reads SET scored_at = ?, outcome_json = ? WHERE id = ?", (now.isoformat(timespec="seconds"), json.dumps(o), r["id"]))
+    invalidate("scorecard")
     return out
 
 
@@ -594,7 +624,13 @@ def group_label(name: str, interval: str, horizon: int) -> str:
 
 def scorecard(where: str = "1", args: tuple = ()) -> list[dict]:
     """Per (index | option premium, interval, horizon): {name, horizon, reads (stored), scored, direction_pct, touch_pct,
-    touch_n, avg_conf (mean of max(p_up, 1 − p_up), %), since}."""
+    touch_n, avg_conf (mean of max(p_up, 1 − p_up), %), since}. The plain call (every row) is cached CACHE_S seconds."""
+    if where == "1" and not args:
+        return cached(("scorecard",), lambda: _scorecard(where, args))
+    return _scorecard(where, args)
+
+
+def _scorecard(where: str, args: tuple) -> list[dict]:
     g: dict = {}
     for r in rows(where, args):
         k = group_of(r)

@@ -35,8 +35,18 @@ def pct(p: Optional[float]) -> str:
 
 
 def index_facts(symbol: str, now: Optional[datetime] = None) -> Optional[dict]:
+    """The index's chart summary (3 sessions of 1-minute bars): computed once per symbol and day every FACTS_S seconds,
+    not once per card (25 cards × 3 sessions was most of a 78-s page on 25 Nov)."""
     now = now or datetime.now(IST)
-    bars = cd.index_bars(symbol, 3, now.date().isoformat())
+    day = now.date().isoformat()
+    return rd.cached(("index_facts", symbol, day), lambda: _index_facts(symbol, day), FACTS_S)
+
+
+FACTS_S = 20.0
+
+
+def _index_facts(symbol: str, day: str) -> Optional[dict]:
+    bars = cd.index_bars(symbol, 3, day)
     return chart.summary(bars, symbol) if bars else None
 
 

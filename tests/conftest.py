@@ -32,6 +32,8 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.tips.vision.MEDIA_DIR", tmp_path / "tips_media")   # 📷 screenshots never touch data/
     monkeypatch.setattr("backend.market.reads.queue_hint", lambda *a, **kw: False)   # 📈 no background market reads (test_market_read turns them on)
     from backend.database.models import init_db
+    from backend.market import reads as _rd
+    _rd.invalidate()                                                             # ⏱ the scorecard / index-facts cache never crosses a test
     init_db()
     return db
 

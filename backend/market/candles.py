@@ -49,6 +49,8 @@ def store(token: int, day: str, bars: list[dict], source: str = SOURCE, complete
         merged = [have[t] for t in sorted(have)]
         conn.execute("INSERT OR REPLACE INTO candles_intraday (instrument_token, day, interval, bars, n, source, complete) VALUES (?,?,?,?,?,?,?)",
                      (token, day, 1, _pack(merged), len(merged), source, 1 if complete or (r and r["complete"]) else 0))
+    from backend.market import reads as rd                 # ⏱ new bars: the cards' index summary is computed afresh
+    rd.invalidate("index_facts")
     return len(merged)
 
 
