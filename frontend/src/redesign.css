@@ -747,9 +747,13 @@
 /* ₿ BTC pivot patterns (CryptoPage.jsx): chart + cards + AI read + detections on the left, the inputs on the right;
    one column on a narrow window (the inputs under). Fixed heights: the chart, the rows, the table box. */
 .rd.btc { display: grid; gap: 12px; min-width: 0; }
-.rd .btc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; min-width: 0; }
+/* the chart takes the whole row; "⚙ Inputs" (page header) opens the inputs beside it (.open) · the chart is as tall as the window
+   allows (header, cards and legend taken off), never under 520px */
+.rd .btc-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+.rd .btc-grid.open { grid-template-columns: minmax(0, 1fr) 340px; }
 .rd .btc-left { display: grid; gap: 12px; min-width: 0; }
-.rd .btc-chart { position: relative; height: 420px; overflow: hidden; }
+.rd .btc-left > *, .rd .btc-left > * > * { min-width: 0; }   /* the canvas never pins the column: opening the inputs shrinks the chart */
+.rd .btc-chart { position: relative; height: calc(100vh - 330px); min-height: 520px; overflow: hidden; }
 /* ⛶ full screen: the chart panel covers the window; the chart (autoSize) fills what is left under the panel header and above the legend */
 .rd .btc-full { position: fixed; inset: 0; z-index: 60; background: var(--bg); padding: 10px; display: flex; flex-direction: column; }
 .rd .btc-full > * { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -786,9 +790,9 @@ body.btc-full-open { overflow: hidden; }
 .rd .btc-days button:last-child { border-right: 0; } .rd .btc-days button.on { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
 .rd .btc-save { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--rowline); height: 48px; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
 .rd .btc-set .rnote { padding: 6px 12px 8px; height: 40px; box-sizing: border-box; overflow: hidden; }
-@media (max-width: 1100px) { .rd .btc-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) { .rd .btc-grid, .rd .btc-grid.open { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) {
-  .rd .btc-chart { height: 300px; }
+  .rd .btc-chart { height: 62vh; min-height: 360px; }
   .rd .btc-full { padding: 6px; }
   .rd .btc-table { height: 460px; }
   .rd .btc-ai .t { height: auto; flex-wrap: wrap; white-space: normal; padding: 2px 0; }
