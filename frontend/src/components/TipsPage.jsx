@@ -755,16 +755,17 @@ function HintCard({ h, defLots, onDone, kinfo }) {
     <ReviewBlock r={h?.ai4?.review} />
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
     <Decoded h={h} />
-    <GradeBlock g={h?.ai4?.grade} />
-    <PreflightBlock p={h?.ai4?.preflight} />
-    <MarketBlock m={h?.market} />
-    <EntryTiming e={h?.market?.entry} />
     <DistBar d={h?.dist} />
     <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />
     <SaidNext chips={h?.said_next} />
     <Timeline id={id} defOpen={h?.log_open} events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
     {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) ? <KiteLegs h={h} kinfo={kinfo} onDone={onDone} /> : <FactsRow f={h?.facts} />}
+    {/* the [AI] blocks sit below the trade: plan, bar, chips, log and legs come first */}
+    <GradeBlock g={h?.ai4?.grade} />
+    <PreflightBlock p={h?.ai4?.preflight} />
+    <MarketBlock m={h?.market} />
+    <EntryTiming e={h?.market?.entry} />
     <div className="acts">
       {offer && <>
         <span className="lotf"><input inputMode="numeric" aria-label="lots" placeholder={String(n)} value={lots} onChange={(e) => setLots(e.target.value.replace(/[^\d]/g, '').slice(0, 3))} />lots</span>
