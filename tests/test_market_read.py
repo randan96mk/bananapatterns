@@ -285,6 +285,7 @@ def test_touch_probabilities_from_paths():
 # --- scoring, the scorecard and the gate ----------------------------------------------------------------------------------------
 
 def put_read(sym="NIFTY", at_="2026-11-19T10:00:00+05:30", h=30, p_up=0.64, right=None, last=25800.0, touch=None, basis="index", hint_id=None):
+    rd.invalidate("scorecard")                              # a row written behind rd.store(): the cached scorecard forgets
     with get_db() as conn:
         rid = conn.execute("INSERT INTO market_reads (at, symbol, interval, horizon, p_up, exp_range, touch_json, paths_json, version, ms, hint_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                            (at_, sym, "1m", h, p_up, 20.0, json.dumps(touch or {}), json.dumps({"last": last, "basis": basis, "index": sym if basis == "index" else "NIFTY"}),
@@ -730,3 +731,31 @@ def test_worker_weights_vendored_when_data_is_writable(tmp_path, monkeypatch):
     out = kw.resolve("NeoQuasar/Kronos-mini")
     assert out == tmp_path / "data" / "ai" / "kronos" / "Kronos-mini"
     assert (out / "config.json").exists()
+
+
+def test_scorecard_and_index_facts_are_cached_briefly(monkeypatch):
+    """25 Nov: a page of 25 cards ran the scorecard (every market_reads row) twice per card and the index summary once per
+    card, 78 s. The plain scorecard and the index facts now come from a short cache; a store or a scoring clears it."""
+    from backend.market import reads as rd, view as mv
+    rd.invalidate()
+    calls = {"sc": 0, "bars": 0}
+    real = rd._scorecard
+
+    def counted(where, args):
+        calls["sc"] += 1
+        return real(where, args)
+    monkeypatch.setattr(rd, "_scorecard", counted)
+    a = rd.scorecard()
+    b = rd.scorecard()
+    assert a is b and calls["sc"] == 1
+    rd.scorecard("symbol = ?", ("NIFTY",))                       # a filtered call is never cached
+    assert calls["sc"] == 2
+    rd.invalidate("scorecard")
+    rd.scorecard()
+    assert calls["sc"] == 3
+    monkeypatch.setattr(mv.cd, "index_bars", lambda *a, **k: (calls.__setitem__("bars", calls["bars"] + 1), [])[1])
+    rd.invalidate()
+    assert mv.index_facts("NIFTY") is None and mv.index_facts("NIFTY") is None
+    assert calls["bars"] == 1
+    assert mv.index_facts("BANKNIFTY") is None and calls["bars"] == 2
+    rd.invalidate()
