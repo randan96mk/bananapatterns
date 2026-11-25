@@ -234,6 +234,15 @@ export default function CryptoPage() {
   const pick = (id) => { setSel(id === sel ? null : id); };
   // ⛶ full screen: the chart panel fills the window (the browser's fullscreen when it allows it, else a fixed overlay); Esc leaves
   const [full, setFull] = useState(false);
+  // ⚙ Inputs: a drawer beside the chart (closed by default so the chart takes the whole row); the choice is remembered
+  const [inputsOpen, setInputsOpen] = useState(() => { try { return localStorage.getItem('bp.btc.inputs') === '1'; } catch { return false; } });
+  const toggleInputs = () => setInputsOpen((v) => { try { localStorage.setItem('bp.btc.inputs', v ? '0' : '1'); } catch { /* private mode */ } return !v; });
+  useEffect(() => {
+    if (!inputsOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape' && !full) toggleInputs(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inputsOpen, full]);
   const fullRef = useRef(null);
   useEffect(() => {
     if (!full) return undefined;
@@ -271,14 +280,15 @@ export default function CryptoPage() {
       {hours.quiet_until ? <button type="button" className="btn ghost small" onClick={() => quiet(null)}>Resume</button>
         : <button type="button" className="btn ghost small" onClick={askQuiet}>Quiet 2 h…</button>}
       <button type="button" className="btn ghost small" onClick={refresh}>Refresh</button>
-      <button type="button" className="btn ghost small" onClick={scan} title="mark the patterns of the last scan_days on the chart · nothing is sent">Scan history</button></>}>
+      <button type="button" className="btn ghost small" onClick={scan} title="mark the patterns of the last scan_days on the chart · nothing is sent">Scan history</button>
+      <button type="button" className={`btn small ${inputsOpen ? '' : 'ghost'}`} onClick={toggleInputs} aria-expanded={inputsOpen} title={inputsOpen ? 'close the inputs (Esc)' : 'open the inputs beside the chart'}>⚙ Inputs{inputsOpen ? ' ✕' : ''}</button></>}>
       {stateChip}
       <Chip>pivots {d?.pivots?.period || 'daily'} · {d?.pivots?.type === 'dm' ? 'DM' : (d?.pivots?.type || 'traditional').replace(/^./, (x) => x.toUpperCase())}</Chip>
       <Chip c={hours.quiet_until ? 'warn' : ''}>{hours.text || 'alerts …'}</Chip>
       <Chip c="warn" title="alerts only: nothing here places an order">alerts only · no orders</Chip>
     </Head>
     {err && <div className="rbanner bad">{err}</div>}
-    <div className="btc-grid">
+    <div className={`btc-grid ${inputsOpen ? 'open' : ''}`}>
       <div className="btc-left">
         <div className={full ? 'btc-full' : undefined} ref={fullRef}>
         <Panel title="Chart" right={<>
@@ -313,7 +323,7 @@ export default function CryptoPage() {
           <div className="btc-table"><FixedTable cols={cols} rows={rows} empty="No detections yet: they appear here as the candles close." /></div>
         </Panel>
       </div>
-      <Inputs d={d} onSaved={load} />
+      {inputsOpen && <Inputs d={d} onSaved={load} />}
     </div>
   </div>;
 }
