@@ -294,12 +294,13 @@ def scan_history(config, days: Optional[int] = None, now_ts: Optional[float] = N
         if not lv:
             continue
         for det in pt.detect(win, pv.pattern_levels(lv["levels"], c.use_p), c):
-            if det["why"]:
-                continue
             with get_db() as conn:
                 if conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = ?",
                                 (c.symbol, c.tf, b["t"], det["pattern"])).fetchone():
                     continue
+            if det["why"]:                                   # formed but filtered: a grey marker on the chart, like a live drop
+                insert(config, det, "dropped", f"history scan · {det['why']}", lv)
+                continue
             insert(config, det, "mark", "history scan", lv)
             marked += 1
     return {"scanned": scanned, "marked": marked, "days": days}

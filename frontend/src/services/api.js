@@ -220,7 +220,7 @@ export const tipsImport = (files, onProgress) => new Promise((resolve, reject) =
 
 // ₿ BTC pivot patterns (alerts only)
 export const getCrypto = () => req('GET', '/api/crypto');
-export const cryptoCandles = (tf, range) => req('GET', `/api/crypto/candles?tf=${encodeURIComponent(tf)}&range=${encodeURIComponent(range)}`);
+export const cryptoCandles = (tf, range, win) => req('GET', `/api/crypto/candles?tf=${encodeURIComponent(tf)}&range=${encodeURIComponent(range)}${win ? `&from=${win.from}&to=${win.to}` : ''}`);
 export const cryptoQuiet = (hours) => req('POST', '/api/crypto/quiet', { hours });
 export const cryptoRefresh = () => req('POST', '/api/crypto/refresh');
 export const cryptoScan = () => req('POST', '/api/crypto/scan');
