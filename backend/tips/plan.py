@@ -358,7 +358,8 @@ STOP_RES = (
 )
 EXIT_RE = re.compile(r"\b(exit|exited|close (it|all)|book\s*(all|full|fully|everything|entire|complete|profits?(\s*fully)?)|"
                      r"book\s*(?:at\s*)?\d+(?:\.\d+)?\s*(?:full|fully)|"            # "Der can book 156 full" (23 Nov): the whole position
-                     r"square\s*off|cost to cost|exit near cost)\b")
+                     r"square\s*off|cost\s*(?:to|2)\s*cost|cost2cost|c2c|exit near cost|"
+                     r"(?<!day )(?<!market )(?<!not )closed)\b")                 # "cmp 268, cost 2 cost closed" (25 Nov): closed at cost
 # 📏 the channel's add: "ADD MORE NEAR 125" · "Add 2 lots near 660 if comes after activation" · "we will add 2 more near 125"
 ADD_LEVEL_RE = re.compile(r"\badd\s+(?:(\d+)\s*(?:-\s*\d+\s*)?(?:lots?\s*)?(?:more\s*)?|more\s*(?:(\d+)\s*lots?\s*)?)"
                           r"(?:if\s+(?:it\s+)?comes?\s+)?(?:near|at|around|below|@)\s*(\d+(?:\.\d+)?)")

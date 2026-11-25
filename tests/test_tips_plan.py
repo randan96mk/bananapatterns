@@ -136,6 +136,19 @@ def test_followup_actions():
     assert fa("Defensive traders book Partly")["action"] == "partial" and fa("Good")["action"] == "note"
 
 
+def test_followup_actions_25_nov():
+    """The channel's replies of 25 Nov: "closed" / "cost 2 cost" end the trade (never "active" from the cmp figure);
+    "not active, avoid" cancels an unfilled entry; the re-entry note stays an exit; "day closed" is not an exit."""
+    fa = pl.followup_action
+    assert fa("`cmp 268 , cost 2 cost closed")["action"] == "exit"
+    assert fa("cost to cost")["action"] == "exit" and fa("closed at cost")["action"] == "exit" and fa("c2c done")["action"] == "exit"
+    assert fa("not active , avoid")["action"] == "avoid" and fa("sensex not active , avoid")["action"] == "avoid"
+    assert fa("exit at 267++\n\nre entry above 272")["action"] == "exit"
+    assert fa("Above 272 wapis entry krenge")["action"] == "price"
+    assert fa("day closed")["action"] == "note" and fa("market closed")["action"] == "note" and fa("not closed yet")["action"] == "note"
+    assert fa("cmp 93")["action"] == "active"
+
+
 NOV20 = ("bnf 440 to 500++\nDEFENSIVE TRADERS: book part qty and keep TSL at cost for rest qty\nAGGRESSIVE TRADERS: book part qty and "
          "for rest qty keep TSL at NPNL\nNote- If you are trading with 1 lot only, you can book now. If you are trading with more lots, "
          "book part lots and then trail for target with balance lots.\nrest sl 440")
