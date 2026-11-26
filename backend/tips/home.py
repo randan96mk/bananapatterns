@@ -106,7 +106,7 @@ def row(config, h: dict, now: datetime) -> dict:
     until = ampm(config.tips.kite_entry_until)
     out = {"id": h["id"], "title": bk.title(h), "name": _short(h), "state": st, "pnl": None, "ai": _ai_line(k), "grade": _grade(h),
            "tradingsymbol": h.get("tradingsymbol"), "exchange": h.get("exchange"), "ltp": ltp, "kite": v,
-           "product": config.tips.kite_product, "now": ko.now_cell(h)}
+           "product": config.tips.kite_product, "now": ko.now_cell(h), "state_word": (_state(h) or {}).get("word")}
     if st == "entered":
         from backend.tips import card as cd
         out["tag"], out["tag_c"] = f"{dry}open · {_lots(lots)}", "ok"
@@ -162,6 +162,15 @@ def row(config, h: dict, now: datetime) -> dict:
         out["buttons"] = ["send_now"] + (["cancel"] if "cancel:entry" in acts else ["exit"] if "exit" in acts else [])
         out["send_ok"] = "send_now" in acts
     return out
+
+
+def _state(h: dict) -> Optional[dict]:
+    """💡 The Tips card's state ({kind, word, why, group}, backend/tips/card2.py): the same word the card's badge shows."""
+    try:
+        from backend.tips import card2
+        return card2.state_of(h)
+    except Exception:
+        return None
 
 
 def _last_cancel_at(k: dict) -> str:
@@ -282,7 +291,7 @@ def home_tips(config, now: Optional[datetime] = None) -> dict:
                  if m != "off" else "paper book only"},
         "channel30": {k: tot.get(k) for k in ("hints", "t1_first", "stop_first", "no_fill", "avg_r")},
         "rows": rows,
-        "today": [{"id": h["id"], "name": _short(h), "text": o[0], "c": o[1], "grade": _grade(h)} for h in today_h for o in [outcome(h)]],
+        "today": [{"id": h["id"], "name": _short(h), "text": o[0], "c": o[1], "grade": _grade(h), "state": _state(h)} for h in today_h for o in [outcome(h)]],
         "checks": checks(list(kite_today.values()), now) if m != "off" else {"clear": [], "at": None, "at_label": None, "items": []},
         "record": {**{k: tot.get(k) for k in ("hints", "t1_first", "stop_first", "no_fill", "avg_r")}, "took": yva.get("took"), "of": yva.get("of"),
                    "you": yours, "all": yva.get("all"),

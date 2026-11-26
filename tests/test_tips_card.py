@@ -226,7 +226,7 @@ def test_closed_stop_leg_hides_place_sl(ltp):
     out = cd.adjust_legs(h, legs, {"stop_nearest_pct": 22.6})
     assert out[0]["closed"] and out[0]["detail"] == "never within 22.6 % of the stop"
     src = (ROOT / "frontend/src/components/TipsPage.jsx").read_text()
-    assert "lg.placeable !== false && !lg.closed && k.state !== 'closed') out.push(btn('Place SL…'" in src
+    assert "stopLeg.placeable !== false && !stopLeg.closed && k.state !== 'closed'" in src and "slOk && btn('Place SL…'" in src
     ltp["v"] = 268.0                                                  # open: the target's now line green within 3 %, the stop's red
     legs = [{"leg": "t1", "status": "watched", "price": 270.0}, {"leg": "stop", "status": "open", "trigger": 175.0}]
     assert cd.adjust_legs(hint(), legs, None)[0]["tone"] == "near"

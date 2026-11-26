@@ -1411,6 +1411,19 @@ def tips_hint_body(h: dict) -> str:
     return out
 
 
+def tips_state_word(h: dict) -> Optional[str]:
+    """💡 The card's state word ("WAITING · LEVEL", "ARMED · RESTING", "CLOSED · TARGET 2" …): the view's own when it
+    carries one, else by code from the hint (backend/tips/card2.py). None when it cannot be worked out."""
+    st = h.get("state")
+    if isinstance(st, dict) and st.get("word"):
+        return st["word"]
+    try:
+        from backend.tips import card2
+        return card2.state_of(dict(h))["word"]
+    except Exception:
+        return None
+
+
 def tips_hint(h: dict, ltp: Optional[float] = None) -> str:
     """💡 Tip #12 · channel · 9:43 AM / the call / the plan / the replies (the mock's first card)."""
     n = h["id"]
@@ -1423,7 +1436,7 @@ def tips_hint(h: dict, ltp: Optional[float] = None) -> str:
     elif h.get("untracked_why"):
         lines.append(f"<i>quotes start after you {escape(h['untracked_why'])}</i>")
     size = "" if (h.get("size_hint") or {}) else f" · size not stated → <b>take {n} N</b>"
-    now = f" · now {ltp:g}, waiting" if ltp is not None else ""
+    now = f" · now {ltp:g} · {escape(tips_state_word(h) or 'waiting')}" if ltp is not None else ""
     lines.append(f"reply <b>take {n}</b> · <b>take {n} 2</b> (lots) · <b>skip {n}</b> · <b>tip {n}</b>{size}{now}")
     return "\n".join(lines)
 
@@ -1481,8 +1494,10 @@ def tips_status(s: dict) -> str:
 def tips_card(h: dict) -> str:
     """tip N: the card: the raw post, the decoded call, the plan, the status, the last events."""
     from backend.tips import plan as pl
+    word = tips_state_word(h)
     lines = [f"{TIP} <b>#{h['id']} {escape(h.get('title') or '')}</b> · {escape(h.get('status') or '')}"
-             + (f" · {escape(h['ended'])}" if h.get("ended") else "") + f" · {escape(h.get('channel') or '')} · {_tip_t(h['posted_at'])}",
+             + (f" · {escape(h['ended'])}" if h.get("ended") else "") + (f" · <b>{escape(word)}</b>" if word else "")
+             + f" · {escape(h.get('channel') or '')} · {_tip_t(h['posted_at'])}",
              "<i>" + escape((h.get("raw") or "")[:400]) + "</i>", tips_hint_body(h)]
     p = h.get("plan") or {}
     if p.get("text"):
