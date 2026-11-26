@@ -133,7 +133,12 @@ def plan_post(text: str, hints: list[dict], posted: Optional[datetime] = None) -
     messages a minute after the call, 26 Nov): code decides, the model is not asked (it had sorted these as chatter).
     Returns the hint id, or None when the post is not that."""
     t = text or ""
-    if not hints or not PLAN_POST.search(t) or FOLLOW_CODE.search(t) and re.search(r"\b(done|hit|exit|book)\b", t, re.I):
+    if not hints:
+        return None
+    sz = size_post(t, hints, posted)                      # 📏 "2 lots" on its own line right after the call: its size
+    if sz:
+        return sz
+    if not PLAN_POST.search(t) or FOLLOW_CODE.search(t) and re.search(r"\b(done|hit|exit|book)\b", t, re.I):
         return None
     d = dc.decode(t, posted or datetime.now(IST))
     st = d.get("stop") or {}
@@ -152,6 +157,22 @@ def plan_post(text: str, hints: list[dict], posted: Optional[datetime] = None) -
     if (has_stop and lacks_stop) or (tg and (lacks_tg or recent_targets(h, posted))):
         return hid
     return None
+
+
+def size_post(text: str, hints: list[dict], posted: Optional[datetime] = None, minutes: int = 10) -> Optional[int]:
+    """A bare size post ("2 lots", "2-2 lots") within `minutes` of the newest open call that names no size: that call's
+    (26 Nov 10:53: the call, then "2 lots" as its own message)."""
+    from backend.tips import plan as pl
+    t = (text or "").strip()
+    if len(re.findall(r"\w+", t)) > 4 or not pl.size_of(t) or pl.size_of(t).get("action") != "size":
+        return None
+    h = max(hints, key=lambda x: x["id"])
+    if h.get("size_hint") or h.get("taken"):
+        return None
+    try:
+        return h["id"] if (posted or datetime.now(IST)) - datetime.fromisoformat(h["posted_at"]) <= timedelta(minutes=minutes) else None
+    except (TypeError, ValueError):
+        return None
 
 
 def recent_targets(h: dict, posted: Optional[datetime] = None, minutes: int = 15) -> bool:
