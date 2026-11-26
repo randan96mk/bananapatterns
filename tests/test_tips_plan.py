@@ -113,7 +113,7 @@ def test_after_hours_hint_waits_for_the_next_open():
 
 
 def test_stop_missing_is_no_plan():
-    _, p = mk("Buy fin nifty 23350 Pe at 100.. add more at 80-90")
+    _, p = mk("Buy fin nifty 23350 Pe at 100.. add more at 80-90", cfg=TipsConfig(kite_default_stop=0))
     assert not p["ok"] and p["why"] == "stop missing" and "no plan: stop missing" in p["text"]
 
 

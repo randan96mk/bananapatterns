@@ -190,6 +190,17 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     if conn is None:
         with get_db() as c:
             out = ingest(config, channel, post_id, posted_at, text, has_media, source, push, model, client, c, reply_to)
+        if out.get("channel_stop") is not None and out.get("hint_id"):   # 🛑 the DB connection is closed: the Kite lock next
+            at = datetime.fromisoformat(out["at"])
+            fresh = (datetime.now(IST) - at).total_seconds() <= PUSH_MAX_AGE_S
+            try:
+                from backend.tips import kite_orders as ko
+                ln = bk.channel_stop(config, out["hint_id"], out["channel_stop"], text, at, client=client,
+                                     kite=fresh and ko.mode(config) != "off", notify=push and fresh)
+                if ln:
+                    out["line"] = ln
+            except Exception:
+                logger.exception("Tips: the channel's SL not applied")
         for key in ("day_push", "push"):
             if out.get(key):
                 bk.push(config, out[key][0], out[key][1])
@@ -283,16 +294,23 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     if kind == "hint":
         if push and source in ("live", "preview") and config.tips.push_hints and fresh:
             from backend.alerts import messages as msg
-            out["push"] = (f"tips|hint|{h['id']}", msg.tips_hint(h) + "".join(f"\n📏 {add_line(config, a)}" for a in (h.get("adds") or [])))
+            out["push"] = (f"tips|hint|{h['id']}", msg.tips_hint(h) + size_line(config, h)
+                           + "".join(f"\n📏 {add_line(config, a)}" for a in (h.get("adds") or [])))
     elif kind == "follow_up" and hint_id:
         h = bk.load(hint_id, conn)
         if h:
             act = pl.followup_action(text)
             now = posted                                     # the post's own time (Telegram's clock, ~1 s behind)
+            cst = channel_stop_of(h, text, posted, act)      # 🛑 the channel's SL over a provisional / your stop
             done = complete_plan(config, h, text, posted, act)   # "SL 410 / TGT 520/550/600+" posted after the call
             if source == "import":
                 bk.event(h, posted, f'channel: "{text[:80]}"', "channel")
                 line = "follow-up"
+            elif cst is not None:                            # applied after the post is stored (book.channel_stop, the Kite lock)
+                if done:
+                    bk.event(h, posted, f'channel: "{text[:80]}" · {done}', "channel")
+                line = done or f"the channel's SL {pl.fmt(cst)}"
+                out["channel_stop"] = cst
             elif done:
                 bk.event(h, posted, f'channel: "{text[:80]}" · {done}', "channel")
                 line = done
@@ -304,8 +322,8 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             bk.save(h, conn)
             out["line"] = line
             out["act"], out["text"], out["at"] = act, text, posted.isoformat(timespec="seconds")
-            if push and source in ("live", "preview") and config.tips.push_followups:
-                from backend.alerts import messages as msg
+            if push and source in ("live", "preview") and config.tips.push_followups and out.get("channel_stop") is None:
+                from backend.alerts import messages as msg       # (the channel's SL over a provisional / your stop pushes its own line)
                 out["push"] = (f"tips|fu|{channel}|{post_id}", msg.tips_followup(h, text, line, now, act))
     return out
 
@@ -323,7 +341,7 @@ def kite_after(config, client, out: dict, push: bool = True) -> None:
         now = datetime.fromisoformat(out["at"]) if out.get("at") else datetime.now(IST)   # the post's own time (~1 s behind)
         if (datetime.now(IST) - now).total_seconds() > PUSH_MAX_AGE_S:
             return                                         # a caught-up old post never moves a Kite order
-        if out.get("kind") == "follow_up" and out.get("hint_id") and out.get("act"):
+        if out.get("kind") == "follow_up" and out.get("hint_id") and out.get("act") and out.get("channel_stop") is None:
             kline = ka.on_followup(config, client, out["hint_id"], out["act"], out.get("text") or "", now, notify=push)
             try:                                           # 🤖 the AI second opinion (informational: never acts)
                 from backend.tips import kite_check as kc
@@ -353,6 +371,22 @@ def resize_hint(config, h: dict, act: dict, posted: datetime) -> Optional[str]:
     return f"size → {int(n)} lots"
 
 
+def channel_stop_of(h: dict, text: str, posted: datetime, act: Optional[dict]) -> Optional[float]:
+    """🛑 The channel's premium SL in this follow-up when the hint's stop is provisional or yours (it replaces it), else
+    None: "Sl 530" (the plan post) or "revise sl 530" (a stop action)."""
+    if pl.stop_src(h.get("stop")) not in pl.REPLACEABLE:
+        return None
+    a = (act or {}).get("action")
+    if a == "stop" and not act.get("spot") and act.get("value") is not None:
+        return float(act["value"])
+    if a in PLAN_SKIP_ACTIONS:
+        return None
+    st = dc.decode(text, posted).get("stop") or {}
+    if st.get("kind") == "premium" and st.get("value") is not None:
+        return float(st["value"])
+    return None
+
+
 PLAN_SKIP_ACTIONS = ("targets", "sl_hit", "exit", "partial", "trail")     # "tgt 1 done" states a result, not a plan
 
 
@@ -360,7 +394,9 @@ def complete_plan(config, h: dict, text: str, posted: datetime, act: Optional[di
     """A follow-up that carries the stop and / or targets the call itself lacked (this channel posts "BUY SENSEX 82000
     CE NEAR 460" first and "SL 410 / TGT 520/550/600+" as a reply): fill them in, rebuild the plan and restart the
     record run when nothing has filled yet. Returns the line, or None when the follow-up adds nothing. A post that
-    reports a result ("tgt 1 done", "SL hit") never sets a level."""
+    reports a result ("tgt 1 done", "SL hit") never sets a level. A provisional stop / yours counts as a stop here: the
+    channel's SL replacing it is applied by channel_stop_of → book.channel_stop (under the Kite lock, after the post is
+    stored)."""
     if (act or {}).get("action") in PLAN_SKIP_ACTIONS:
         return None
     d = dc.decode(text, posted)
@@ -416,7 +452,10 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
     how = "decoded by code" if all(v == "code" for v in (d.get("decoded") or {}).values()) else "decoded by code + AI"
     exp = {"post": "expiry from the post", "listed": "expiry from the nearest listed", "computed": "expiry computed",
            "series": "the monthly expiry (series)"}.get(h.get("expiry_src"), "")
-    bk.event(h, posted, "💡 hint posted · " + how + (f" · {exp}" if exp else "") + ("" if h["plan"]["ok"] else f" · no plan: {h['plan']['why']}")
+    pst = h.get("stop") or {}
+    prov = (f" · no SL in the post · provisional stop {pl.fmt(pst['value'])} (−{pst.get('pct')} %) · plan complete"
+            if pst.get("src") == "provisional" and h["plan"]["ok"] else "")
+    bk.event(h, posted, "💡 hint posted · " + how + (f" · {exp}" if exp else "") + prov + ("" if h["plan"]["ok"] else f" · no plan: {h['plan']['why']}")
              + (f" · index {h['symbol']} read from the strike level (the post named none)" if (d.get("decoded") or {}).get("symbol") == "strike" else ""), "code")
     for a in h.get("adds") or []:                       # 📏 the call's own add: always on the card, never an order by default
         bk.event(h, posted, add_line(config, a), "code")
@@ -424,6 +463,20 @@ def new_hint(config, conn, channel: str, post_id: int, posted: datetime, text: s
         h[k] = bool(h.get(k))
     bk.save(h, conn)
     return h
+
+
+def size_line(config, h: dict) -> str:
+    """"\n📏 BUY 4 lots (2 × 2) · lots ×2" when tips.kite_lot_multiplier > 1 (the size by code), else ""."""
+    from backend.tips import sizing
+    if sizing.mult_of(config) <= 1 or not h.get("lot_size"):
+        return ""
+    try:
+        sz = sizing.size(config, h)
+    except Exception:
+        return ""
+    if sz["src"] == "risk":
+        return ""
+    return f"\n📏 {h.get('side') or 'BUY'} {sizing.mult_text(sz)} · lots ×{sz['mult']}"
 
 
 def add_line(config, a: dict) -> str:

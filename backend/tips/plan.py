@@ -4,7 +4,9 @@
           over the bottom); "above x" / "below x": a trigger; otherwise at the market on the first quote. A waiting hint
           that never fills by the time stop is "no fill" (skipped), unless the channel later says enter / active / cmp.
   stop    a premium stop on the option's own quote, or a spot stop on 15-minute closes of the underlying ("stop: spot
-          43,450 (15-min close)"); no stop at all = "stop missing", no plan (the card says so).
+          43,450 (15-min close)"); no stop at all = "stop missing", no plan (the card says so) — unless
+          tips.kite_default_stop (25 %) puts a provisional stop N % under the entry level (src "provisional"), which the
+          channel's SL replaces when it comes. A stop you set on the card is src "owner"; the channel's SL replaces it too.
   targets half at T1 (partial_at_t1), the stop to cost (trail_to_cost_after_t1), the rest at T2; with "trail" on (the
           channel says trail, or you trail) the rest rides target to target with the stop one target behind.
   time    option buys: the intraday time stop (tips.intraday_time_stop, 3:14 PM; MCX 11:20 PM). Option sells with
@@ -79,8 +81,53 @@ def entry_text(e: dict) -> str:
     return "at market"
 
 
+REPLACEABLE = ("provisional", "owner")      # stops the channel's SL replaces when it comes (never from the channel itself)
+
+
+def stop_src(s: Optional[dict]) -> Optional[str]:
+    """provisional (the app's −N %) · owner (set by you) · channel (the post / a follow-up) · None (no stop)."""
+    s = s or {}
+    if (s.get("kind") or "none") == "none" or s.get("value") is None:
+        return None
+    return s.get("src") or "channel"
+
+
+def entry_level(h: dict) -> Optional[float]:
+    """The option's own entry level (a zone's top for a buy, its bottom for a sell; the level for above / below / at),
+    None for a market entry or an index level."""
+    e = h.get("entry") or {}
+    m = e.get("mode") or "market"
+    if m == "market" or is_spot(e) or e.get("lo") is None:
+        return None
+    lo, hi = float(e["lo"]), float(e.get("hi") or e["lo"])
+    if m == "zone":
+        return hi if h.get("side") != "SELL" else lo
+    return lo
+
+
+def provisional_stop(h: dict, cfg) -> Optional[dict]:
+    """🛑 tips.kite_default_stop: the post names no SL → a stop N % under the entry level (over it for a sell), or None
+    (off, no premium level, no side)."""
+    try:
+        pct = int(getattr(cfg, "kite_default_stop", 0) or 0)
+    except (TypeError, ValueError):
+        pct = 0
+    lvl = entry_level(h)
+    if pct <= 0 or lvl is None or not h.get("side"):
+        return None
+    raw = lvl * (1 - pct / 100) if h.get("side") != "SELL" else lvl * (1 + pct / 100)
+    v = round(round(raw / 0.05) * 0.05, 2)             # on the option's 0.05 tick: a valid SL trigger
+    if v <= 0 or (h.get("side") != "SELL" and v >= lvl) or (h.get("side") == "SELL" and v <= lvl):
+        return None
+    return {"kind": "premium", "value": v, "src": "provisional", "pct": pct, "level": lvl}
+
+
 def stop_text(s: dict) -> str:
     k = (s or {}).get("kind")
+    if k == "premium" and (s or {}).get("src") == "provisional":
+        return f"stop {fmt(s['value'])} (provisional −{s.get('pct')} %)"
+    if k == "premium" and (s or {}).get("src") == "owner":
+        return f"SL {fmt(s['value'])} (yours)"
     if k == "premium":
         return f"SL {fmt(s['value'])}"
     if k == "spot":
@@ -100,6 +147,10 @@ def build(h: dict, cfg, posted: datetime) -> dict:
     side = h.get("side")
     e = h.get("entry") or {"mode": "market"}
     st = h.get("stop") or {"kind": "none", "value": None}
+    if st.get("kind") in (None, "none") or st.get("value") is None:
+        pv = provisional_stop(h, cfg)                # 🛑 no SL in the post: the provisional stop (tips.kite_default_stop)
+        if pv:
+            h["stop"] = st = pv
     tg = [t for t in (h.get("targets") or []) if t is not None]
     exch = h.get("exchange")
     day, queued = plan_day(posted, exch)
@@ -126,6 +177,8 @@ def build(h: dict, cfg, posted: datetime) -> dict:
                      f"wait for a trade {e['mode']} {fmt(e['lo'])}" if wait else "enter at the market")
     if e.get("wait_words") and not needs_act:
         lines.append("activation words · the level decides")
+    if st.get("src") == "provisional" and st.get("value") is not None:
+        lines.append(f"provisional stop {fmt(st['value'])} (−{st.get('pct')} %) · the channel's SL replaces it")
     if hold:
         lines.append("target 0 · hold to expiry unless the stop or an exit comes")
     elif tg:

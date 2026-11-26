@@ -83,7 +83,40 @@ const SRC = { channel: '📣', owner: '👤', code: '⚙', ai: '🤖', kite: '�
 // The decoded grid: six fixed cells (3 columns on a phone); each value ellipsizes, never wraps. An open hint (or an open
 // Kite position) gets a seventh, NOW: the strike's last price (the 5 s quote poll), bold, green / red against the fill
 // once entered (neutral before), with where it sits under it ("−5.6 % from 230" / "in the zone 191–198").
-export function Decoded({ h }) {
+// 🛑 The stop tile: the stop with its source (provisional amber · yours blue · the channel's plain) and, on an open hint
+// (not taken / armed / entered), "Set stop…": an inline price box (Enter sets, Esc cancels) and ONE confirm. The
+// server re-checks the side of the price and refuses a stale set (the stop changed since this page loaded: `rev`).
+function StopCell({ h, onDone }) {
+  const [edit, setEdit] = useState(null);             // null = closed, else the box's text
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const t = h?.stop_tile || null;
+  const val = t?.value_text || stopText(h?.stop);
+  const can = !!(onDone && h?.id != null && t?.settable);
+  const set = () => {
+    const raw = String(edit || '').trim();
+    if (!isNum(raw) || Number(raw) <= 0) { setErr('⚠ a price'); return; }
+    const v = Number(raw);
+    if (!window.confirm(`Set #${h.id}'s stop to ${px(v)}?\n\nBefore the fill it rewrites the plan and the SL the app places on the fill. After the fill it modifies the SL order on Kite. The channel's SL, when it comes, replaces it.`)) return;
+    setBusy(true); setErr('');
+    api.tipsSetStop(h.id, v, isNum(t?.rev) ? Number(t.rev) : undefined)
+      .then(() => { setEdit(null); onDone(); }).catch((e) => setErr(`⚠ ${e.message}`)).finally(() => setBusy(false));
+  };
+  return <div className={`stc ${t?.cls || ''}`} title={[val, t?.sub].filter(Boolean).join('\n')}>
+    <div className="kk"><span>stop{isAi(h, 'stop') && <AiTag title="filled by the local model from the post's own text" />}</span>
+      {can && edit == null && <button type="button" className="btn ghost small sbtn" onClick={() => { setEdit(''); setErr(''); }}>Set stop…</button>}</div>
+    <b className={val === 'no usable stop' ? 'warn' : ''}><span className="v">{val}</span></b>
+    {edit == null ? (t?.sub && <div className="s1">{t.sub}</div>)
+      : <span className="inl"><input aria-label={`set #${h.id}'s stop`} inputMode="decimal" placeholder="price" autoFocus value={edit}
+        onChange={(e) => setEdit(e.target.value.replace(/[^\d.]/g, '').slice(0, 10))}
+        onKeyDown={(e) => { if (e.key === 'Enter') set(); if (e.key === 'Escape') { setEdit(null); setErr(''); } }} />
+        <button type="button" className="btn small" disabled={busy} onClick={set}>Set</button>
+        <button type="button" className="btn ghost small" onClick={() => { setEdit(null); setErr(''); }} aria-label="cancel">✕</button></span>}
+    {err && <div className="s1 down">{err}</div>}
+  </div>;
+}
+
+export function Decoded({ h, onDone }) {
   const sh = h?.size_hint;
   const lotSize = h?.plan?.lot_size ?? h?.lot_size;
   const size = h?.taken && isNum(h.lots) ? `${plural(px(h.lots), 'lot')}${isNum(lotSize) ? ` · ${px(Number(h.lots) * Number(lotSize))}` : ''}`
@@ -106,7 +139,7 @@ export function Decoded({ h }) {
     : nw && <div key="now" className={`nowc ${nw.tone || ''}`} title={`now ${px(nw.ltp)}${nw.sub ? ` · ${nw.sub}` : ''}`}>
       <div className="kk">now</div><b className={`nv ${nw.tone || ''}`}><span className="v">{px(nw.ltp)}</span></b>{nw.sub && <div className="ns">{nw.sub}</div>}</div>;
   const sz = h?.sizing && h.sizing.line1 ? h.sizing : null;     // 📏 the size cell (server): lots · qty, the reasoning, the rule
-  const out = cells.map(([k, v, f]) => (k === 'size' && sz
+  const out = cells.map(([k, v, f]) => (k === 'stop' && (h?.stop_tile || onDone) ? <StopCell key={k} h={h} onDone={onDone} /> : k === 'size' && sz
     ? <div key={k} className={`szc ${sz.held ? 'held' : ''}`} title={[sz.line1, sz.line2, sz.line3].join('\n')}>
       <div className="kk">size{isAi(h, ...f) && <AiTag title="filled by the local model from the post's own text" />}</div>
       <b className={sz.held ? 'down' : ''}><span className="v">{sz.line1}</span></b>
@@ -223,7 +256,10 @@ const legTag = (lg) => {
 };
 export const kiteCaps = (k) => {
   const c = k?.caps || {};
-  return `today ${px(c.entries ?? 0)} of ${px(c.max_entries ?? 0)} entries · lots cap ${px(c.max_lots ?? 0)} · loss cap ${isNum(c.loss_cap) ? inr(Number(c.loss_cap)) : '—'} · used ${isNum(c.used_loss) ? (Number(c.used_loss) < 0 ? `−${inr(Math.abs(Number(c.used_loss)))}` : `−${inr(0)}`) : '—'}`;
+  const m = Number(k?.sizing?.lot_multiplier || 1);
+  const capTxt = m > 1 && isNum(c.max_lots_base) ? `${px(c.max_lots_base)} ×${m} = ${px(c.max_lots)}` : px(c.max_lots ?? 0);
+  const riskTxt = m > 1 && isNum(k?.sizing?.risk_per_trade_base) ? ` · risk ${inr(Number(k.sizing.risk_per_trade_base))} ×${m} = ${inr(Number(k.sizing.risk_per_trade))}` : '';
+  return `today ${px(c.entries ?? 0)} of ${px(c.max_entries ?? 0)} entries · lots cap ${capTxt}${riskTxt} · loss cap ${isNum(c.loss_cap) ? inr(Number(c.loss_cap)) : '—'} · used ${isNum(c.used_loss) ? (Number(c.used_loss) < 0 ? `−${inr(Math.abs(Number(c.used_loss)))}` : `−${inr(0)}`) : '—'}`;
 };
 
 // The bar under the Head: the mode (Off / By my click / Auto), the kill switch, the caps, "Orders today".
@@ -240,6 +276,21 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
   const setKill = (on) => {
     if (!window.confirm(killConfirm(on))) return;
     api.tipsKiteKill(on).then((r) => { setMsg(on ? `kill switch on · ${px(r?.cancelled ?? 0)} cancelled · ${px(r?.exits ?? 0)} exits` : ''); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`));
+  };
+  const mult = Number(k?.sizing?.lot_multiplier ?? 1) || 1;          // 📏 lots ×1…×5 (tips.kite_lot_multiplier)
+  const dstop = Number(k?.sizing?.default_stop ?? 0) || 0;          // 🛑 no-SL stop: 0 = off, else −N % (tips.kite_default_stop)
+  const stopOpts = [0, 15, 20, 25, 30, 40].concat([0, 15, 20, 25, 30, 40].includes(dstop) ? [] : [dstop]).sort((a, b) => a - b);
+  const setMult = (e) => {
+    const v = Number(e.target.value);
+    if (v === mult) return;
+    if (!window.confirm(`Lots ×${v}?\n\nEvery size the app decides (the post's lots, the fallback, fixed, the channel's "2-2 lots" and its add) is multiplied by ${v}. The risk mode's own figure is not. Lots you type are literal. kite_max_lots and kite_risk_per_trade scale with it (cap ${v} × ${px(k?.caps?.max_lots_base ?? k?.caps?.max_lots ?? 0)} lots, risk ${v} × ${isNum(k?.sizing?.risk_per_trade_base) ? inr(Number(k.sizing.risk_per_trade_base)) : '—'}); the loss cap does not.`)) { e.target.value = String(mult); return; }
+    api.putTipsSettings({ kite_lot_multiplier: v }).then(() => { setMsg(''); onDone && onDone(); }).catch((x) => setMsg(`⚠ ${x.message}`));
+  };
+  const setDstop = (e) => {
+    const v = Number(e.target.value);
+    if (v === dstop) return;
+    if (!window.confirm(v ? `No-SL stop −${v} %?\n\nA call with no SL gets a provisional stop ${v} % under its entry level (premium levels only), so its plan is complete and auto can arm it. The channel's SL replaces it the moment it comes.` : 'No-SL stop off?\n\nA call with no SL waits for the channel\'s SL (no plan until then), as before.')) { e.target.value = String(dstop); return; }
+    api.putTipsSettings({ kite_default_stop: v }).then(() => { setMsg(''); onDone && onDone(); }).catch((x) => setMsg(`⚠ ${x.message}`));
   };
   const clearDry = () => {
     if (!window.confirm(`Clear the dry run?\n\nToday's dry orders are voided (kept in the record, never deleted), the simulator's book is emptied and the dry hints' legs are reset, so you can rehearse again. A hint traded dry today still is not traded real today.\n\n${DRY_WARN}`)) return;
@@ -260,10 +311,15 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
     <b className="ttl">⚡ Kite orders</b>
     <Seg small opts={KMODES.map(([v, l, t]) => [v, l, t])} v={mode} set={setMode} />
     {mode !== 'off' && <Switch red on={kill} onChange={setKill} label="kill switch" title="cancels every working Tips order on Kite and exits at market" />}
+    {k?.sizing && <select className="tp-in tp-ksel" aria-label="lots multiplier" value={String(mult)} onChange={setMult} title="tips.kite_lot_multiplier: the post's lots (or the fallback) × this · caps and the risk guard after">
+      {[1, 2, 3, 4, 5].map((x) => <option key={x} value={String(x)}>lots ×{x}</option>)}</select>}
+    {k?.sizing && <select className="tp-in tp-ksel" aria-label="no-SL stop" value={String(dstop)} onChange={setDstop} title="tips.kite_default_stop: a call with no SL gets a provisional stop this far under its entry level until the channel's SL comes">
+      {stopOpts.map((x) => <option key={x} value={String(x)}>{x ? `no-SL stop −${x} %` : 'no-SL stop: off'}</option>)}</select>}
     <span className="sp" />
     {mode === 'off' ? <span className="cap">paper book only · nothing reaches Kite</span>
       : <><span className="cap" title={kiteCaps(k)}>{dry ? 'dry · ' : ''}{kiteCaps(k)}{k?.window ? ` · entries ${k.window}` : ''}</span>
         <span className={`cap note ${dry ? 'dry' : ''}`} title={dry ? DRY_NOTE : undefined}>{note}</span>
+        {(mult > 1 || dstop > 0) && <span className="cap warn">{[mult > 1 ? `lots ×${mult}: the post's lots (or ${px(k?.sizing?.lots ?? 1)}) ${mult === 2 ? 'doubled' : `× ${mult}`} · caps and the risk guard apply after` : '', dstop > 0 ? `no SL in the post: a −${dstop} % stop stands in until the channel's SL arrives` : ''].filter(Boolean).join(' · ')}</span>}
         {k?.day_closed && <span className="cap warn" title={`the channel closed the day${k.day_closed.text ? `: "${k.day_closed.text}"` : ''} · auto arms nothing new today · open positions and stops untouched · a new call re-opens it`}>📕 day closed {k.day_closed.at_label}</span>}</>}
     {mode !== 'off' && <button type="button" className="btn ghost small" disabled={testing} title="one LIMIT buy at half the price on your real Kite account, cancelled 5 s later" onClick={test}>{testing ? 'Testing… ~6 s' : 'Test connection…'}</button>}
     {dry && <button type="button" className="btn small" onClick={rehearse} title="a made-up NIFTY CE hint to press Place all on · nothing reaches Kite">+ Rehearsal hint…</button>}
@@ -703,7 +759,8 @@ function HintCard({ h, defLots, onDone, kinfo }) {
   const holding = can('exit') || can('trail');
   const offer = can('take') || can('take_half') || can('skip') || can('pause') || can('resume');
   const stated = h?.size_hint && isNum(h.size_hint.lots) ? Number(h.size_hint.lots) : null;
-  const n = isNum(lots) && Number(lots) > 0 ? Number(lots) : stated ?? (isNum(defLots) ? Number(defLots) : 1);
+  const mult = Number(h?.sizing?.mult ?? 1) || 1;                 // 📏 lots ×N: the default shown and taken is multiplied; typed lots are literal
+  const n = isNum(lots) && Number(lots) > 0 ? Number(lots) : (stated ?? (isNum(defLots) ? Number(defLots) : 1)) * mult;
   const tgts = arr(h?.targets).map(px).join(' / ') || 'none';
   const planLine = `entry ${entryText(h?.entry)} · stop ${stopText(h?.stop)} · targets ${tgts}`;
   const run = (p, okText) => {
@@ -760,6 +817,7 @@ function HintCard({ h, defLots, onDone, kinfo }) {
       {h?.kite?.needs_activation && open && <Tag c="w" title="wait words and no level: the entry waits for the channel's active / activated">needs activation</Tag>}
       {h?.kite?.auto && <Tag c={h.kite.auto.state === 'not_armed' ? 'bad' : h.kite.auto.state === 'waiting' ? 'w' : 'ok'} title={h.kite.auto.text}><span className="tp-adot">●</span> {h.kite.auto.text}</Tag>}
       {shotTag(shot)}
+      {h?.stop_tile?.chip && <Tag c={h.stop_tile.chip_tone === 'b' ? 'a' : h.stop_tile.chip_tone || ''} title={h.stop_tile.sub || undefined}>{h.stop_tile.chip}</Tag>}
       <GradeChip g={h?.ai4?.grade} />
       {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px' }} title="the post named no index: pick it after looking at the channel's screenshot">
         <option value="">{h?.symbol ? 'change index…' : 'set index…'}</option>{['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].map((x) => <option key={x} value={x}>{x}</option>)}</select>}
@@ -767,7 +825,7 @@ function HintCard({ h, defLots, onDone, kinfo }) {
     <PnlStrip s={h?.pnl_strip} />
     <ReviewBlock r={h?.ai4?.review} />
     {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
-    <Decoded h={h} />
+    <Decoded h={h} onDone={onDone} />
     <DistBar d={h?.dist} />
     <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
     <TargetBar h={h} />

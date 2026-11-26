@@ -11,7 +11,7 @@ from tests.tips_world import BN12, KEY12, cfg, seed, world
 SUMMARY_KEYS = {"enabled", "reader", "channels", "cards", "hints", "feed", "record", "book", "settings", "quotes_at", "any_open", "at", "kite", "kite_book"}
 HINT_KEYS = {"id", "channel", "post_id", "posted_at", "time", "day", "day_label", "raw", "title", "symbol", "side", "instrument", "strike",
              "opt_type", "expiry", "expiry_label", "expiry_src", "tradingsymbol", "exchange", "lot_size", "entry", "entry_text", "stop",
-             "stop_text", "targets", "targets_hit", "targets_text", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
+             "stop_text", "stop_tile", "targets", "targets_hit", "targets_text", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
              "lots", "entry_px", "exit_px", "pnl", "ltp", "events", "tracked", "untracked_why", "score", "position", "actions", "telegram", "source", "kite", "shot", "now",
              "pnl_strip", "now_tile", "dist", "said_next", "facts", "trade_facts", "ai4", "market", "log_open", "sizing"}
 
@@ -60,7 +60,9 @@ def test_actions_and_refusals(api):
     assert api.post("/api/tips/hints/1/resume").json()["status"] in ("new", "waiting")
     assert api.post("/api/tips/hints/1/exit").json()["position"]["state"] == "closed"
     assert api.post("/api/tips/hints/1/exit").status_code == 409
-    seed(cfg(), world(), "Buy bank nifty 50300 PE at 260 add more at 240", "10:00", 2)
+    c0 = cfg()
+    c0.tips.kite_default_stop = 0                       # no provisional stop: today's "no plan: stop missing"
+    seed(c0, world(), "Buy bank nifty 50300 PE at 260 add more at 240", "10:00", 2)
     assert api.post("/api/tips/hints/2/take", json={}).status_code == 400
     assert api.post("/api/tips/hints/2/take", json={"lots": 0}).status_code == 400
 

@@ -259,7 +259,7 @@ def test_one_lot_is_not_split_and_views_are_12_hour(pushed):
     ko.place_entry(c, b, hid, 2, now=at("10:07", sec=14))
     t = ko.today(c, b, at("10:08"))
     assert t["window"] == "9:20 AM – 2:30 PM" and t["orders"][0]["time"] == "10:07 AM" and t["orders"][0]["time_s"] == "10:07:14 AM"
-    assert t["orders"][0]["label"] == "Entry BANKNIFTY 50300 PE" and t["caps"] == {"entries": 0, "max_entries": 4, "max_lots": 2,
+    assert t["orders"][0]["label"] == "Entry BANKNIFTY 50300 PE" and t["caps"] == {"entries": 0, "max_entries": 4, "max_lots": 2, "max_lots_base": 2,
                                                                                    "loss_cap": 6000.0, "used_loss": 0.0}
     legs = {x["leg"]: x for x in tr.hint_view(bk.load(hid), config=c)["kite"]["legs"]}
     assert legs["entry"]["at"] == "10:07:14 AM" and set(legs) == {"entry", "stop", "t1", "t2"}

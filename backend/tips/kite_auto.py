@@ -31,6 +31,7 @@ from backend.timefmt import ampm
 from backend.tips import book as bk
 from backend.tips import kite_orders as ko
 from backend.tips import plan as pl
+from backend.tips import sizing
 from backend.tips.book import TipsError
 
 logger = setup_logger("tips")
@@ -119,7 +120,20 @@ def placeable(h: dict) -> Optional[str]:
 
 
 def auto_lots(config, h: dict) -> int:
-    return max(1, min(ko.default_lots(config, h), int(config.tips.kite_max_lots)))
+    return max(1, min(ko.default_lots(config, h), sizing.max_lots(config)))
+
+
+def lots_text(config, h: dict, lots: int) -> str:
+    """"4 lots (2 × 2)" with lots ×N (", capped at 6" when kite_max_lots cut it), else "2 lots"."""
+    n = int(lots)
+    txt = f"{n} lot{'s' if n != 1 else ''}"
+    try:
+        sz = sizing.size(config, h, bk.last_ltp(h) if h.get("id") else None)
+    except Exception:
+        return txt
+    if int(sz.get("mult") or 1) > 1 and sz["src"] != "risk":
+        txt += f" ({sz['base']} × {sz['mult']}" + (f" = {sz['raw']}, capped at {n}" if sz["raw"] != n else "") + ")"
+    return txt
 
 
 def _same_contract_today(h: dict, day: str, config=None) -> Optional[str]:
@@ -224,7 +238,7 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
         tail += " · activation words: the level decides"
     if notify:
         bk.push(config, f"tips|kite|auto|{h['id']}|armed",
-                f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {k['lots']} lot{'s' if k['lots'] != 1 else ''} · {k['qty']} qty {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
+                f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {lots_text(config, h, k['lots'])} · {k['qty']} qty {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
     return h
 
 
@@ -343,12 +357,14 @@ def _on_size(config, cl, h: dict, act: dict, now: datetime) -> Optional[str]:
         ko._log(k, now, f"Kite: the channel's size {n} lots · kite_size_mode {config.tips.kite_size_mode}: not used")
         ko.save_kite(h)
         return "size noted (not post mode)"
-    from backend.tips import sizing
     lot = int(h.get("lot_size") or 0) or 1
+    m = sizing.mult_of(config)                          # 📏 the channel's "2-2 lots" × lots ×N, then the caps
+    if m > 1:
+        n *= m
     if k.get("by") == "auto":
-        n = max(1, min(n, int(config.tips.kite_max_lots)))
-    if n > int(config.tips.kite_max_lots):
-        why = f"{n} lots > the cap {int(config.tips.kite_max_lots)}"
+        n = max(1, min(n, sizing.max_lots(config)))
+    if n > sizing.max_lots(config):
+        why = f"{n} lots > the cap {sizing.max_lots(config)}"
     else:
         g = sizing.check(config, h, n, bk.last_ltp(h))
         why = sizing.held_text(g) if g["held"] else None

@@ -145,6 +145,8 @@ const HELP_TIPS = {
   kite_size_mode: '📏 How a hint is sized for Kite and the paper book: "post" (default: the post\'s size wins, else lots) · "fixed" (always lots; the post\'s size is shown, ignored) · "risk" (lots = floor(kite_risk_per_trade ÷ ((entry − stop) × lot size)), 1 at least, capped by kite_max_lots)',
   kite_risk_per_trade: '📏 Rupees at the stop per trade (default 6000): the figure of the risk mode AND a guard in every mode: an entry whose (entry − stop) × qty is over it is never armed or placed (the card says why and offers the largest size under it, through a confirm)',
   kite_book_part: '📏 "book part" and T1 with 2+ lots: "half" (default: floor(lots ÷ 2) lots, today\'s rule) or "one" (one lot); with 1 lot the whole lot is booked (the channel\'s rule)',
+  kite_lot_multiplier: '📏 lots ×1…×5 (default ×1): every size the app decides is multiplied — the post\'s lots, the fallback lots, fixed, the channel\'s "2-2 lots" and its add. The risk mode\'s own figure is not (the rupee risk decides). Lots you type (the card\'s box, "take N 2", Take n lot…) are literal. kite_max_lots and kite_risk_per_trade apply after',
+  kite_default_stop: '🛑 A call with no SL: off (0 = wait for the channel\'s SL, no plan until then) or a provisional stop −15 / −20 / −25 (default) / −30 / −40 % under the entry level (premium levels only; an index level or a market entry still waits). The channel\'s SL replaces it the moment it comes (before the fill: the plan; after: the SL order on Kite is modified)',
   kite_t2_part: '📏 at T2 when the post names a 3rd target: all (default: close at T2, today\'s rule) · half · one — the rest rides to T3 with the stop at T1',
   kite_follow_adds: '📏 Follow the channel\'s adds ("add 2 lots near 660"; true/false, default false). On: after the FIRST entry fills and while the stop is still the plan\'s, ONE LIMIT add at the level, inside kite_max_lots and kite_risk_per_trade (blended average); never after a stop hit, never with the kill switch on, never a second add. Averaging doubles a bad day',
   size_mode: 'How a take is sized when the post names no size: "lots" (the lots above) or "rupees" (the amount below)',
@@ -269,6 +271,8 @@ export function Scorecard() {
 // 📏 a choice of a few words: a segment in place of the text box
 const SEGS = { tips: { kite_size_mode: [['post', 'post', "the post's size wins, else lots"], ['fixed', 'fixed', 'always lots'], ['risk', 'risk', 'kite_risk_per_trade at the stop']],
   kite_book_part: [['half', 'half', 'floor(lots ÷ 2) lots'], ['one', 'one lot', 'one lot']],
+  kite_lot_multiplier: [['1', '×1', 'the sizes as decided'], ['2', '×2', 'doubled'], ['3', '×3', 'tripled'], ['4', '×4', '× 4'], ['5', '×5', '× 5']],
+  kite_default_stop: [['0', 'off', "wait for the channel's SL"], ['15', '−15 %', '15 % under the entry level'], ['20', '−20 %', '20 % under'], ['25', '−25 %', '25 % under (default)'], ['30', '−30 %', '30 % under'], ['40', '−40 %', '40 % under']],
   kite_t2_part: [['all', 'all', 'close everything at T2'], ['half', 'half', 'floor(open lots ÷ 2) at T2, the rest rides to T3'], ['one', 'one lot', 'one lot at T2, the rest rides to T3']] } };
 // text kept one entry per line (a textarea for a plain string)
 const MULTI = { tips: ['relay_to'] };

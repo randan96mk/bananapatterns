@@ -18,6 +18,7 @@ from backend.config import IST
 
 from backend.logging_config.logger import setup_logger
 from backend.tips import decode as dc
+from backend.tips import plan as pl
 
 logger = setup_logger("tips")
 
@@ -152,7 +153,7 @@ def plan_post(text: str, hints: list[dict], posted: Optional[datetime] = None) -
     h = next((x for x in hints if x["id"] == hid), None)
     if h is None:
         return None
-    lacks_stop = ((h.get("stop") or {}).get("kind") or "none") == "none"
+    lacks_stop = pl.stop_src(h.get("stop")) in (None,) + pl.REPLACEABLE     # 🛑 a provisional / your stop: the channel's SL replaces it
     lacks_tg = not h.get("targets")
     if (has_stop and lacks_stop) or (tg and (lacks_tg or recent_targets(h, posted))):
         return hid

@@ -118,8 +118,9 @@ def check(config, h: dict, rows: Optional[list] = None, now: Optional[datetime] 
     for r in ents:
         if lots and int(r.get("qty") or 0) != lots * lot:
             red(f"entry qty {r.get('qty')} ≠ {lots} lot{'s' if lots != 1 else ''} × {lot}", "check the position on Kite")
-    if lots > int(config.tips.kite_max_lots):
-        red(f"{lots} lots > the cap {int(config.tips.kite_max_lots)}", "exit the extra on Kite")
+    from backend.tips import sizing
+    if lots > sizing.max_lots(config):
+        red(f"{lots} lots > the cap {sizing.max_lots(config)}", "exit the extra on Kite")
     if len([r for r in ents if r["status"] in ko.LIVE + ("complete",)]) > 1:
         red("a second entry for this hint", "cancel the extra entry on Kite")
     e = ko.entry_of(h)

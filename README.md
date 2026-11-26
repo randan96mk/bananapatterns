@@ -2348,6 +2348,22 @@ has / had a position on the hint; a paper-only hint keeps its old look.
   500" and "rest 2 lots · 60 qty · stop 440".
 - **The paper book** sizes with the same mode; the Place / Send confirms repeat the lots, qty, premium and the loss at
   the stop; the Telegram arm and fill lines say the lots and the qty.
+- **Lots ×N** (`kite_lot_multiplier`, 1–5, default 1; the "lots ×N" dropdown beside the kill switch, through a confirm):
+  every size the app decides — the post's lots, the fallback, fixed, the channel's "2-2 lots" and its add — is
+  multiplied; in risk mode the rupee limit scales instead, and lots you type are literal. `kite_max_lots` and `kite_risk_per_trade`
+  are set for 1× and scale with it (cap 6 ×2 = 12 lots, risk ₹20,000 ×2 = ₹40,000; the strip shows both); the daily loss
+  cap does not. The size cell says "the post says 2 lots × 2 (lots ×2)", the arm line "BUY 4 lots (2 × 2)".
+- **Provisional stop** (`kite_default_stop`, 0 = off or 10–60 %, default 25; the "no-SL stop" dropdown): a call with no
+  SL and a premium entry level gets a stop that far under the level (over it for a sell, on the 0.05 tick), marked
+  provisional (amber tile, header chip) so the plan is complete and auto can arm it. An index level or a market entry
+  still waits ("stop missing"). The channel's SL replaces it the moment it comes, with no click: before the fill the
+  plan and the armed entry's stop, after the fill the Kite SL order is modified once; a trade already closed at the
+  provisional stop only logs it. The call's grade still counts "no stop in the post".
+- **Set stop…** (the stop tile; `POST /api/tips/hints/{id}/stop {value, rev?}`; Telegram `stop N 510`): your stop, through
+  one confirm. Before the fill it rewrites the plan and the SL placed on the fill; after the fill it modifies the SL
+  order on Kite (modify_stop's guards, the right side of the price, skipped when already there). The channel's SL, when
+  it comes later, replaces it ("your 510 → 530 (the channel's)"). Both paths take the one Kite lock; the later change
+  wins and the log shows the order; a stale set (the stop changed since the page loaded) is refused with the new value.
 - **The channel's adds** ("ADD MORE NEAR 125", "Add 2 lots near 660 if comes after activation", "we will add 2 more
   near 125") are decoded (`h["adds"]` on a call, `{action: add, lots, level}` in a follow-up) and ALWAYS logged on the
   card ("channel adds 2 lots near 660 · the app never adds unless kite_follow_adds is on") with one Telegram line. With
