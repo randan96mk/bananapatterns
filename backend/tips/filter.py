@@ -11,7 +11,10 @@ The local 3B model only classifies {hint | follow_up | chatter} and picks among 
 import json
 import re
 import time
+from datetime import datetime, timedelta
 from typing import Optional
+
+from backend.config import IST
 
 from backend.logging_config.logger import setup_logger
 from backend.tips import decode as dc
@@ -120,6 +123,47 @@ def code_link(text: str, hints: list[dict]) -> Optional[int]:
     else:
         pick = []
     return (pick or hints)[-1]["id"]
+
+
+PLAN_POST = re.compile(r"\b(sl|stop\s*loss|stoploss|tgt|target|targets|tg)s?\b", re.I)
+
+
+def plan_post(text: str, hints: list[dict], posted: Optional[datetime] = None) -> Optional[int]:
+    """📌 A bare stop / targets post for an open call that lacks them ("Sl 530", "Tgt 830/880/940", posted as separate
+    messages a minute after the call, 26 Nov): code decides, the model is not asked (it had sorted these as chatter).
+    Returns the hint id, or None when the post is not that."""
+    t = text or ""
+    if not hints or not PLAN_POST.search(t) or FOLLOW_CODE.search(t) and re.search(r"\b(done|hit|exit|book)\b", t, re.I):
+        return None
+    d = dc.decode(t, posted or datetime.now(IST))
+    st = d.get("stop") or {}
+    tg = [x for x in (d.get("targets") or []) if x is not None]
+    has_stop = st.get("kind", "none") != "none" and st.get("value") is not None
+    if not has_stop and not tg:
+        return None
+    if dc.looks_like_hint(d, t):
+        return None
+    hid = code_link(t, hints)
+    h = next((x for x in hints if x["id"] == hid), None)
+    if h is None:
+        return None
+    lacks_stop = ((h.get("stop") or {}).get("kind") or "none") == "none"
+    lacks_tg = not h.get("targets")
+    if (has_stop and lacks_stop) or (tg and (lacks_tg or recent_targets(h, posted))):
+        return hid
+    return None
+
+
+def recent_targets(h: dict, posted: Optional[datetime] = None, minutes: int = 15) -> bool:
+    """The hint's targets came from a follow-up within `minutes` of `posted` and nothing has filled: a second "Tgt …"
+    post is the channel's correction (26 Nov: "Tgt 830/880/940" then "Tgt 730/780/840" a moment later)."""
+    ev = next((e for e in reversed(h.get("events") or []) if "plan completed" in str(e.get("text") or "") and "targets" in str(e.get("text") or "")), None)
+    if not ev or h.get("taken") or (h.get("run") or {}).get("state") not in (None, "waiting"):
+        return False
+    try:
+        return (posted or datetime.now(IST)) - datetime.fromisoformat(ev["t"]) <= timedelta(minutes=minutes)
+    except (TypeError, ValueError):
+        return False
 
 
 def code_classify(text: str, hints: list[dict]) -> tuple[str, Optional[int]]:

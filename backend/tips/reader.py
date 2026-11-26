@@ -239,8 +239,11 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
         if dc.looks_like_hint(d, text):
             kind = "hint"
         else:
-            res = flt.model_classify(config, text, hints) if model and source != "import" else None
-            if res:
+            pp = flt.plan_post(text, hints, posted)      # 📌 "Sl 530" / "Tgt 830/880/940" for an open call lacking them: code, not the model
+            res = None if pp else (flt.model_classify(config, text, hints) if model and source != "import" else None)
+            if pp:
+                kind, hint_id = "follow_up", pp
+            elif res:
                 kind, hint_id, by, mdl, ms = res["kind"], res["hint_id"], "ai", res["model"], res["ms"]
                 if kind == "hint":
                     fill = flt.model_fill(config)
@@ -374,6 +377,10 @@ def complete_plan(config, h: dict, text: str, posted: datetime, act: Optional[di
     if tg and not had_tg:
         h["targets"], h["open_ended"] = tg, bool(d.get("open_ended"))
         bits.append("targets " + "/".join(pl.fmt(t) for t in tg) + ("+" if d.get("open_ended") else ""))
+    elif tg and had_tg and tg != list(h.get("targets") or []) and flt.recent_targets(h, posted):
+        old_tg = "/".join(pl.fmt(t) for t in h["targets"])      # the channel's correction a moment after its own targets post
+        h["targets"], h["open_ended"] = tg, bool(d.get("open_ended"))
+        bits.append(f"targets revised {old_tg} → " + "/".join(pl.fmt(t) for t in tg) + ("+" if d.get("open_ended") else ""))
     if not bits:
         return None
     h["plan"] = pl.build(h, config.tips, posted)

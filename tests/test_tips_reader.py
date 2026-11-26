@@ -410,3 +410,34 @@ def test_a_saved_old_time_stop_moves_to_the_new_default():
     c.tips.intraday_time_stop = "15:05"
     assert rd.migrate_time_stop(c) is False and c.tips.intraday_time_stop == "15:05"
     assert AppConfig().tips.intraday_time_stop == "15:14"
+
+
+def test_26_nov_bare_sl_and_tgt_posts_complete_the_plan_even_when_the_model_says_chatter(monkeypatch):
+    """26 Nov: "Buy sensex 83500 CE above 665 / 2 lots" (no stop), then "Sl 530", "Tgt 830/880/940" and the correction
+    "Tgt 730/780/840" as separate posts (no reply). The model had sorted them as chatter and the card stayed
+    "no usable stop": code now decides these, the plan completes and the corrected targets win."""
+    from backend.tips import filter as flt
+    c, w = cfg(), world()
+    ch = "index options buying with aakanksha"
+    monkeypatch.setattr(rd, "PUSH_MAX_AGE_S", 10 ** 9)
+    monkeypatch.setattr(flt, "model_allowed", lambda config: True)
+    monkeypatch.setattr(flt, "model_classify", lambda config, text, hints: {"kind": "chatter", "hint_id": None, "model": "fake", "ms": 1})
+    r1 = rd.ingest(c, ch, 1, at("09:29"), "Buy sensex 83500 CE above 665\n\n2 lots", False, push=False, model=True, client=w)
+    assert r1["kind"] == "hint"
+    hid = r1["hint_id"]
+    assert bk.load(hid)["plan"]["ok"] is False
+    r2 = rd.ingest(c, ch, 2, at("09:30"), "Sl 530", False, push=False, model=True, client=w)
+    r3 = rd.ingest(c, ch, 3, at("09:30"), "Tgt 830/880/940", False, push=False, model=True, client=w)
+    r4 = rd.ingest(c, ch, 4, at("09:30", sec=30), "Tgt 730/780/840", False, push=False, model=True, client=w)
+    assert [r["kind"] for r in (r2, r3, r4)] == ["follow_up"] * 3 and all(r["hint_id"] == hid for r in (r2, r3, r4))
+    assert r2["line"].startswith("plan completed: stop 530")
+    assert r3["line"] == "plan completed: targets 830/880/940"
+    assert r4["line"] == "plan completed: targets revised 830/880/940 → 730/780/840"
+    h = bk.load(hid)
+    assert h["plan"]["ok"] is True and h["stop"]["value"] == 530 and h["targets"] == [730, 780, 840]
+    r5 = rd.ingest(c, ch, 5, at("09:32"), "Tgt 1 done ✅✅✅", False, push=False, model=False, client=w)
+    assert r5["kind"] == "follow_up" and bk.load(hid)["targets"] == [730, 780, 840]     # a result never sets a level
+    assert flt.plan_post("Tgt 1 done ✅✅✅", [bk.load(hid)], at("09:32")) is None          # a result is never a plan post
+    # a bare figure that is not a stop or a target still goes to the model / chatter as before
+    r6 = rd.ingest(c, ch, 6, at("09:33"), "Century done", False, push=False, model=True, client=w)
+    assert r6["kind"] == "chatter"
