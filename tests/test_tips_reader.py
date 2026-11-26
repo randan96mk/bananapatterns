@@ -441,3 +441,35 @@ def test_26_nov_bare_sl_and_tgt_posts_complete_the_plan_even_when_the_model_says
     # a bare figure that is not a stop or a target still goes to the model / chatter as before
     r6 = rd.ingest(c, ch, 6, at("09:33"), "Century done", False, push=False, model=True, client=w)
     assert r6["kind"] == "chatter"
+
+
+def test_26_nov_two_calls_on_one_strike_with_bare_size_and_plan_posts(monkeypatch):
+    """26 Nov 10:53–11:01 with the model saying chatter: "Buy sensex 85000 pe above 561" · "2 lots" (own line) · "Sl 490 /
+    Tgt 650/700/750/800" · "Buy 85000 pe near 520/30" (a new call: no index named, a zone) · "2 lots" (reply) · "Sl 475 /
+    Tgt 565/600/635/700" · "Cmp 527" (reply) · "Avoid this" (reply to the first). Each line lands on the right call."""
+    from backend.tips import filter as flt
+    c, w = cfg(), world()
+    ch = "index options buying with aakanksha"
+    monkeypatch.setattr(rd, "PUSH_MAX_AGE_S", 10 ** 9)
+    monkeypatch.setattr(flt, "model_allowed", lambda config: True)
+    monkeypatch.setattr(flt, "model_classify", lambda config, text, hints: {"kind": "chatter", "hint_id": None, "model": "fake", "ms": 1})
+    ing = lambda pid, t, txt, rt=None: rd.ingest(c, ch, pid, at(t), txt, False, push=False, model=True, client=w, reply_to=rt)
+    r1 = ing(1, "10:53", "Buy sensex 85000 pe above 561")
+    r2 = ing(2, "10:53", "2 lots")
+    r3 = ing(3, "10:54", "Sl 490\n\nTgt 650/700/750/800")
+    r4 = ing(4, "10:59", "Buy 85000 pe near 520/30")
+    r5 = ing(5, "10:59", "2 lots", 4)
+    r6 = ing(6, "10:59", "Sl 475\n\nTgt 565/600/635/700")
+    r7 = ing(7, "11:00", "Cmp 527", 4)
+    r8 = ing(8, "11:01", "Avoid this", 1)
+    a, b = r1["hint_id"], r4["hint_id"]
+    assert r1["kind"] == "hint" and r4["kind"] == "hint" and a != b
+    assert (r2["kind"], r2["hint_id"]) == ("follow_up", a) and "2 lots" in r2["line"]
+    assert (r3["kind"], r3["hint_id"]) == ("follow_up", a) and r3["line"] == "plan completed: stop 490 · targets 650/700/750/800"
+    assert (r5["kind"], r5["hint_id"]) == ("follow_up", b)
+    assert (r6["kind"], r6["hint_id"]) == ("follow_up", b) and r6["line"] == "plan completed: stop 475 · targets 565/600/635/700"
+    assert (r7["kind"], r7["hint_id"]) == ("follow_up", b) and (r8["kind"], r8["hint_id"]) == ("follow_up", a)
+    ha, hb = bk.load(a), bk.load(b)
+    assert ha["size_hint"] == {"lots": 2} and ha["plan"]["ok"] and ha["status"] == "paused"
+    assert (hb["symbol"], hb["strike"], hb["opt_type"]) == ("SENSEX", 85000, "PE") and hb["entry"]["lo"] == 520 and hb["entry"]["hi"] == 530
+    assert hb["size_hint"] == {"lots": 2} and hb["plan"]["ok"] and hb["run"]["allowed"] is True and hb["status"] != "paused"
