@@ -186,7 +186,15 @@ def test_close_check_summarises_many(monkeypatch):
     assert [h.split(":")[0].split("<b>")[1] for h in charts] == ["A5", "A4", "A3"]  # strongest volume first
     summary = [h for k, h in fake.sent if k == "msg"][0]
     assert "5 names above their pivot" in summary and "Also holding: A2" in summary and "A1" in summary
-    assert "A5" not in summary
+    assert summary.split("\n")[-2:] == ["sent above: A5, A4, A3", "✅ Also holding: A2 (+2.0%, 55.6×), A1 (+2.0%, 27.8×)"]
+
+
+def test_close_summary_one_name_wording():
+    one = msg.close_summary([{"symbol": "X", "verdict": "holding", "ltp": 102.0, "pivot": 100.0, "pace": 1.5}], set())
+    assert one.split("\n") == ["🕒 <b>3:15 PM check</b>: 1 name above its pivot", "✅ Also holding: X (+2.0%, 1.5×)"]
+    two = msg.close_summary([{"symbol": "X", "verdict": "holding", "ltp": 102.0, "pivot": 100.0, "pace": 1.5},
+                             {"symbol": "Y", "verdict": "weak", "ltp": 101.0, "pivot": 100.0, "pace": None}], {"X"})
+    assert two.split("\n") == ["🕒 <b>3:15 PM check</b>: 2 names above their pivot", "sent above: X", "🟡 Above pivot, weak: Y (+1.0%, n/a)"]
 
 
 def test_close_check_without_login_is_recorded(monkeypatch):

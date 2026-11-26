@@ -117,8 +117,17 @@ def jobs(config: AppConfig, now: datetime, scheduler=None, kite: bool = False) -
     if a.day_summary:
         add("day_summary", "🌙", "Day summary", "one Telegram message: each book's value and the day's P&L, the AI",
             _next_at(now, _hm(a.day_summary_time)))
+        if a.day_summary_final:
+            from backend.alerts.jobs import final_summary_time
+            add("day_summary_final", "🌙", "Full day summary", "once the evening job has marked paper",
+                _next_at(now, final_summary_time(a)))
     if a.morning_plan:
-        add("morning_plan", "🌅", "Morning plan", "top setups for the day", _next_at(now, _hm(a.morning_plan_time)))
+        from backend.alerts.jobs import brief_carries_plan
+        if brief_carries_plan(config):
+            add("morning_plan", "🌅", "Morning plan", "top setups for the day · one message with the AI brief",
+                _next_at(now, _hm(config.ai.brief_time)))
+        else:
+            add("morning_plan", "🌅", "Morning plan", "top setups for the day", _next_at(now, _hm(a.morning_plan_time)))
     if a.gap_check:
         add("gap_check", "🧭", "Opening check", "gaps on plan stocks and holdings", _next_at(now, _hm(a.gap_check_time)))
     add("kite_expiry", "🔑", "Kite login expires", "log in again from 6:00 AM", _next_at(now, time(6, 0), False),

@@ -128,7 +128,7 @@ def test_auto_arm_uses_the_multiplied_size(pushed):
     hid = post(c, w, s, 1, "13:52", "BUY SENSEX 82400 PE ABOVE 306\nSL 250\nTGT 380/420\n2 lots")["hint_id"]
     k = bk.load(hid)["kite"]
     assert k["state"] == "armed" and k["lots"] == 4 and k["qty"] == 80
-    assert any("armed · BUY 4 lots (2 × 2) · 80 qty" in p for p in pushed)
+    assert any(p.split("\n")[-1].startswith("auto DRY: armed 4 lots (2 × 2) · ") for p in pushed)     # the call's own last line (T3)
 
 
 def test_the_channels_size_line_is_multiplied(pushed):

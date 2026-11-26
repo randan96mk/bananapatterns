@@ -524,8 +524,8 @@ def attention_items(config, now: Optional[datetime] = None) -> list[tuple]:
 
 
 def brief_line(config, now: Optional[datetime] = None) -> Optional[str]:
-    """The 9:00 AM brief's line: 'candle model (shadow): 2 of 5 lean down over 3 d · DEF stop-first 52 % · GHI up 66 %'.
-    Numbers only; None when off or no held name has a read."""
+    """The 9:00 AM brief's line: 'candle model (shadow): 1 of 2 held names lean down · nearest to its stop: DEF (52 % odds
+    of the stop first)'. Numbers only; None when off or no held name has a read."""
     now = now or _now()
     if not mr.on(config):
         return None
@@ -538,14 +538,13 @@ def brief_line(config, now: Optional[datetime] = None) -> Optional[str]:
         return None
     mode = gate(config)["mode"]
     down = sum(1 for x in got.values() if x["up"] < 50)
-    bits = [f"candle model ({mode}): {down} of {len(got)} lean down over 3 d"]
+    names = "held names lean" if len(got) > 1 else "held name leans"
+    head = f"candle model ({mode}): {down} of {len(got)} {names} down"
     sf = {s: x["stop_first"] for s, x in got.items() if x["stop_first"] is not None}
-    if sf:
-        w = max(sf, key=lambda s: (sf[s], s))
-        bits.append(f"{w} stop-first {sf[w]} %")
-    b = max(got, key=lambda s: (got[s]["up"], s))
-    bits.append(f"{b} up {got[b]['up']} %")
-    return " · ".join(bits)
+    if not sf:
+        return head
+    w = max(sf, key=lambda s: (sf[s], s))
+    return f"{head} · nearest to its stop: {w} ({sf[w]} % odds of the stop first)"
 
 
 def day_line(config, now: Optional[datetime] = None) -> Optional[str]:

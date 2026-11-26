@@ -88,7 +88,9 @@ const HELP2 = { send_time: 'Orders go out from here (24-hour HH:MM, IST)', send_
 // 🧩 the options book (paper only; paper / enabled / capital are set on its own page)
 const HELP_OPT = { window_start: 'The bias is looked for on 5-minute closes from here (24-hour HH:MM, IST)', window_end: '… to here; no break by then = no trade today',
   hedge_points: 'The bought leg this many points further out than the sold one (200 when its premium is under Rs 2)', stop_pct: 'Stop when the sold premium rises this % over its entry (100 = 2×: sold at ₹60, stop at ₹120; 50 = 1.5×) · compare on Options → Report as if',
-  stop_pct_expiry: 'The same stop on expiry day (tighter; 70 = 1.7×)', vwap_exit: 'The VWAP exit: a 5-minute close back through VWAP against the bias closes the spread (true/false; the switch on the Options page sets the same)', be_after_pct: 'Once the sold premium has decayed this %, the stop becomes breakeven', target_pct: 'Target: the spread\'s value down this % from the entry credit',
+  stop_pct_expiry: 'The same stop on expiry day (tighter; 70 = 1.7×)', vwap_exit: 'The VWAP exit: 5-minute closes back through VWAP against the bias close the spread, as vwap_stop_closes / vwap_stop_margin_pts say (true/false; the switch on the Options page sets the same)',
+  vwap_stop_closes: 'The VWAP stop fires on this many 5-minute closes through VWAP in a row, against the bias (1 = the first close through; default 2) · paper',
+  vwap_stop_margin_pts: '… or on one close through VWAP by at least this many NIFTY points (default 10; 0 = off: closes 1 + margin 0 = the old rule) · paper', be_after_pct: 'Once the sold premium has decayed this %, the stop becomes breakeven', target_pct: 'Target: the spread\'s value down this % from the entry credit',
   time_exit: 'The time exit (24-hour HH:MM, IST); a hard exit follows at 15:20, nothing is held overnight', daily_loss_pct: 'No new entries once the day\'s realised + open loss reaches this % of capital',
   vix_half: 'India VIX over this halves the size (1 lot at least)', pcr_bull: 'Chain score: PCR over this confirms a bullish bias', pcr_bear: '… under this confirms a bearish one (over 1.5 / under 0.6 = crowded, size halves)',
   max_gap_pct: 'No entry when the open gapped more than this % from the previous close', event_days: 'Comma-separated ISO dates with no entries (RBI policy, budget, …), e.g. 2026-12-05, 2027-02-01',
@@ -130,6 +132,7 @@ const HELP_AI = { enabled: 'The master switch (set on System → AI; needs both 
 // 🌙 the one close-of-day Telegram summary across all the books (alerts section)
 Object.assign(HELP_AI, {
   day_summary: 'One close-of-day Telegram summary across all the books (Real, Paper E+, Options, AI) on trading days; replaces the separate options day line (true/false)',
+  day_summary_final: 'The full day summary 5 min after the evening job (6:35 PM) once paper is marked; the 3:40 PM one then says "paper marked at 6:30 PM · full summary then" (true/false)',
   day_summary_time: 'When the day summary is sent (24-hour HH:MM, IST)' });
 // 📖 the Week story page (Portfolio › Week)
 Object.assign(HELP_AI, {
@@ -153,6 +156,7 @@ const HELP_TIPS = {
   rupees: 'With size_mode rupees: about this much premium per taken hint, in whole lots',
   push_hints: 'Push every new hint to Telegram at once (true/false)',
   push_followups: 'Push the channel\'s follow-ups on a hint as one line each (true/false)',
+  push_level: '🔕 "normal" (default): price / note / wait follow-ups and the channel\'s "Defensive Style" summaries go to the card log only; the channel\'s SL replacing a provisional stop and "no target reached on our quotes yet" (once) are pushed only for a hint you hold or have armed · "all": every line pushed, as before',
   auto_follow_channel_exit: 'The paper book follows the channel\'s own exit / SL hit / "exit near cost" by itself and tells you (true/false)',
   intraday_time_stop: 'An intraday hint still open is closed here (24-hour HH:MM, IST); a "when comes" zone never reached is skipped then',
   partial_at_t1: 'Book half at target 1 (true/false)',
@@ -273,6 +277,7 @@ const SEGS = { tips: { kite_size_mode: [['post', 'post', "the post's size wins, 
   kite_book_part: [['half', 'half', 'floor(lots ÷ 2) lots'], ['one', 'one lot', 'one lot']],
   kite_lot_multiplier: [['1', '×1', 'the sizes as decided'], ['2', '×2', 'doubled'], ['3', '×3', 'tripled'], ['4', '×4', '× 4'], ['5', '×5', '× 5']],
   kite_default_stop: [['0', 'off', "wait for the channel's SL"], ['15', '−15 %', '15 % under the entry level'], ['20', '−20 %', '20 % under'], ['25', '−25 %', '25 % under (default)'], ['30', '−30 %', '30 % under'], ['40', '−40 %', '40 % under']],
+  push_level: [['normal', 'normal', 'the quiet follow-ups go to the card log only'], ['all', 'all', 'every follow-up pushed']],
   kite_t2_part: [['all', 'all', 'close everything at T2'], ['half', 'half', 'floor(open lots ÷ 2) at T2, the rest rides to T3'], ['one', 'one lot', 'one lot at T2, the rest rides to T3']] } };
 // text kept one entry per line (a textarea for a plain string)
 const MULTI = { tips: ['relay_to'] };

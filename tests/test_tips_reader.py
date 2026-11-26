@@ -224,7 +224,8 @@ def test_a_day_of_posts_links_follow_ups(monkeypatch):
     assert [out[i]["kind"] for i in (17608, 17609, 17610, 17611)] == ["follow_up"] * 4
     assert out[17608]["hint_id"] == 2 and out[17611]["hint_id"] == 2                # "50 to 90" sits on #13's levels
     assert bk.load(2)["status"] == "paused"
-    assert sum(1 for k in pushed if k.startswith("tips|fu|")) == 4
+    # 🔕 push_level normal: "50 to 90" (a price) and "2 targets done" on a hint we neither hold nor armed go to the card log only
+    assert sum(1 for k in pushed if k.startswith("tips|fu|")) == 2
 
 
 def test_edit_and_delete_keep_the_rows():
@@ -441,9 +442,9 @@ def test_26_nov_bare_sl_and_tgt_posts_complete_the_plan_even_when_the_model_says
     r5 = rd.ingest(c, ch, 5, at("09:32"), "Tgt 1 done ✅✅✅", False, push=False, model=False, client=w)
     assert r5["kind"] == "follow_up" and bk.load(hid)["targets"] == [730, 780, 840]     # a result never sets a level
     assert flt.plan_post("Tgt 1 done ✅✅✅", [bk.load(hid)], at("09:32")) is None          # a result is never a plan post
-    # a bare figure that is not a stop or a target still goes to the model / chatter as before
+    # "Century done" is a result (A1: by code, before the model): a follow-up that sets no level
     r6 = rd.ingest(c, ch, 6, at("09:33"), "Century done", False, push=False, model=True, client=w)
-    assert r6["kind"] == "chatter"
+    assert r6["kind"] == "follow_up" and r6["hint_id"] == hid and bk.load(hid)["targets"] == [730, 780, 840]
 
 
 def test_26_nov_two_calls_on_one_strike_with_bare_size_and_plan_posts(monkeypatch):

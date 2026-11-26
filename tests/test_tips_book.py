@@ -94,9 +94,9 @@ def test_sizes_post_lots_half_rupees(pushed):
     hid = seed(c, w)["hint_id"]
     h = bk.take(c, hid, lots=2, half=True, now=at("09:51"), ltp=262.0)
     assert h["pos"]["lots"] == 2 and h["pos"]["qty"] == 15 and h["pos"]["half"]
-    hid2 = seed(c, w, BN12.replace("Sl 190", "Sl 190 · 3 lots"), "09:50", 17630)["hint_id"]
+    hid2 = seed(c, w, BN12.replace("Sl 190", "Sl 190 · 3 lots").replace("250-270", "250-275"), "09:50", 17630)["hint_id"]   # another level: not the same call again
     assert bk.take(c, hid2, now=at("09:51"), ltp=262.0)["pos"]["lots"] == 3          # the post's size
-    hid3 = seed(c, w, BN12, "09:52", 17631)["hint_id"]
+    hid3 = seed(c, w, BN12.replace("250-270", "250-280"), "09:52", 17631)["hint_id"]
     assert bk.take(c, hid3, rupees=8000, now=at("09:53"), ltp=262.0)["pos"]["lots"] == 2   # 8000 // (262 x 15)
 
 

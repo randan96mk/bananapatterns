@@ -179,9 +179,14 @@ def _note(config, h: dict, cause: str, text: str, now: datetime, notify: bool) -
     ko.save_kite(h)
 
 
-def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bool = True) -> Optional[dict]:
-    """Arm one hint in auto mode (see the module doc). Returns the hint when it was armed, else None."""
+def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bool = True, fold: Optional[str] = None) -> Optional[dict]:
+    """Arm one hint in auto mode (see the module doc). Returns the hint when it was armed, else None. `fold`: the
+    caller's own message carries the outcome, so "armed" (the plan completed + armed line) or "all" (the new call's
+    "auto: …" line: the "not armed · …" line too) is not pushed here (still logged on the card)."""
     now = now or _now()
+    push_armed = notify and not fold
+    if fold == "all":
+        notify = False
     if ko.mode(config) != "auto":
         return None
     h = bk.load(h["id"]) or h
@@ -231,15 +236,45 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
     k["auto"] = {"armed_at": now.isoformat(timespec="seconds"), "causes": (k.get("auto") or {}).get("causes") or []}
     ko.save_kite(h)
     arm = k.get("arm") or {}
-    tail = ("waits for the channel's activation" if k["state"] == "armed_wait" else
-            f"the app watches {arm.get('index') or 'the index'}" if k["state"] == "armed_watch" else
-            "resting on Kite" if arm.get("kind") in ("slm", "limit") else "sent at market")
-    if ko.entry_of(h).get("wait_words") and k["state"] != "armed_wait":
-        tail += " · activation words: the level decides"
-    if notify:
+    tail = _tail(h)
+    if push_armed:
         bk.push(config, f"tips|kite|auto|{h['id']}|armed",
                 f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {lots_text(config, h, k['lots'])} · {k['qty']} qty {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
     return h
+
+
+def _tail(h: dict) -> str:
+    k = ko.kstate(h)
+    arm = k.get("arm") or {}
+    return ("waits for the channel's activation" if k["state"] == "armed_wait" else
+            f"the app watches {arm.get('index') or 'the index'}" if k["state"] == "armed_watch" else
+            "resting on Kite" if arm.get("kind") in ("slm", "limit") else "sent at market") \
+        + (" · activation words: the level decides" if ko.entry_of(h).get("wait_words") and k["state"] != "armed_wait" else "")
+
+
+def armed_bits(config, h: dict) -> str:
+    """"armed 1 lot · SL trigger 750 · resting on Kite" (the hint's Kite entry as armed)."""
+    k = ko.kstate(h)
+    arm = k.get("arm") or {}
+    return f"armed {lots_text(config, h, int(k.get('lots') or 1))} · {arm.get('text') or 'MARKET'} · {_tail(h)}"
+
+
+def state_line(config, h: dict) -> str:
+    """💡 The new call's last line (T3): "auto: armed 1 lot · SL trigger 750 · resting on Kite" | "auto: waits for the
+    plan" | "auto: not armed · <why>" | "auto: off"."""
+    if ko.mode(config) != "auto":
+        return "auto: off"
+    k = ko.kstate(h)
+    if k["state"] in ko.ARMED:
+        return ("auto DRY: " if k.get("dry") else "auto: ") + armed_bits(config, h)
+    if k["state"] == "entered":
+        return "auto: entered"
+    a = k.get("auto") or {}
+    if a.get("cause") == "plan":
+        return "auto: waits for the plan"
+    if a.get("why"):
+        return f"auto: not armed · {a['why']}"
+    return "auto: not armed"
 
 
 def auto_scan(config, client, now: Optional[datetime] = None, notify: bool = True) -> int:
@@ -280,6 +315,9 @@ def on_followup(config, client, hid: int, act: dict, text: str, now: Optional[da
     auto = ko.mode(config) == "auto"
     with ko._LOCK:
         if a == "add":
+            if act.get("size_lots"):                    # 📏 "2 lots\n\nAdd 2 lots near 700": the size first, then the add
+                _on_size(config, cl, h, {"lots": act["size_lots"]}, now)
+                h = bk.load(hid) or h
             return _on_add(config, cl, h, act, quote, now, notify)
         sized = _on_size(config, cl, h, act, now) if a in ("size", "active") and act.get("lots") else None
         if a == "size":
@@ -335,7 +373,7 @@ def _on_add(config, cl, h: dict, act: dict, quote: str, now: datetime, notify: b
         return out
     why = ko.add_block(config, cl, h, now) if k["state"] == "entered" else ("waits for the first fill" if k["state"] in ko.ARMED else None)
     out = f"{txt} · " + (f"not armed: {why}" if why and why != "waits for the first fill" else
-                         "armed after the first fill" if why else "Place add… on the card (your click)")
+                         "armed after the first fill" if why else f"Place add… on the card (your click) · reply add {h['id']}")
     _line(config, h, now, out, notify, "add")
     return out
 
@@ -495,7 +533,7 @@ def _follow_open(config, cl, h: dict, act: dict, quote: str, now: datetime, noti
     return None
 
 
-def on_new(config, client, hid: int, now: Optional[datetime] = None, notify: bool = True) -> Optional[dict]:
+def on_new(config, client, hid: int, now: Optional[datetime] = None, notify: bool = True, fold: Optional[str] = None) -> Optional[dict]:
     """A new hint, a completed plan, a symbol set: auto arms it when it is placeable."""
     if ko.mode(config) != "auto":
         return None
@@ -503,7 +541,7 @@ def on_new(config, client, hid: int, now: Optional[datetime] = None, notify: boo
     if not h:
         return None
     with ko._LOCK:
-        return auto_arm(config, client, h, now or _now(), notify)
+        return auto_arm(config, client, h, now or _now(), notify, fold)
 
 
 def on_edited(config, client, hid: int, before: dict, now: Optional[datetime] = None, notify: bool = True) -> Optional[str]:

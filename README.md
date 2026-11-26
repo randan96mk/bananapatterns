@@ -822,7 +822,10 @@ anything today, the value and the day's P&L always in the same place; a book wit
 
 Real: the value at the stop watch's last price, today = value − the previous close's equity (money added today left
 out), the stops sent today, the failed orders, and tomorrow's BUYs / EXITs once the evening has planned them. Paper is
-marked by the evening job, so until then its line says "today at the 6:30 PM mark". Options: the `options_days` row of
+marked by the evening job: with `alerts.day_summary_final` on (default) the 3:40 PM message has no unmarked paper line,
+one "📝 paper marked at 6:30 PM · full summary then" line instead, and the job `day_summary_final` sends the full summary
+("🌙 Day summary · Mon 16 Nov · full", key `{day}|day-summary-final`) at 6:35 PM (`job_time` + 5 min) once every paper
+book is marked (it waits 10 min at a time, until 10:30 PM); off: the old "today at the 6:30 PM mark" line. Options: the `options_days` row of
 the day. AI: what runs tonight, or "n notes · n suggestions · n rated" once the night has run. The options book's own
 3:35 PM summary line is **no longer sent** on its own: its data stays on the pages, in the API's alert list and in `options_days`. Settings: `alerts.day_summary` (on),
 `alerts.day_summary_time` (15:40). Tests: `tests/test_day_summary.py`.
@@ -1227,7 +1230,9 @@ the sold premium must be ≥ `min_premium` ₹20, else one strike nearer up to d
 India VIX > `vix_half` (20) halves (1 lot at least).
 
 **Exits** (checked every minute while open): the sold premium ≥ entry × (1 + `stop_pct`/100) (100% = 2×; `stop_pct_expiry`
-70% on expiry day), or — while `vwap_exit` is on — a 5-minute close back through VWAP against the bias; once the sold premium has decayed `be_after_pct`
+70% on expiry day), or — while `vwap_exit` is on — `vwap_stop_closes` (2) 5-minute closes in a row back through VWAP
+against the bias, or one close through it by at least `vwap_stop_margin_pts` (10 NIFTY points; 0 = off; closes 1 +
+margin 0 = the first close through, the old rule); once the sold premium has decayed `be_after_pct`
 (40%) the stop becomes **breakeven** (exit when the spread's value is back at the entry credit); **target** when the
 spread's value ≤ (1 − `target_pct`/100 = 40%) of the credit; **time exit** at `time_exit` (15:10); a **hard exit** at
 15:20 at the last known mids if the 15:10 one found no quote; the kill switch closes at once; **nothing is ever held
@@ -1282,8 +1287,8 @@ positions ("Options · paper"); Settings section `options` (Real hidden). Phone:
 
 **Alerts** (Telegram, tagged "paper"; `backend/alerts/messages.py` `options_*`, sent by `run_options_tick` right after
 the tick from the alerts the book recorded, each once — the key `day|opt-kind-key` in `sent_alerts`, so a restart never
-repeats one; no extra Kite call): 🧭 the bias found with the price line (range, VWAP, previous-day level), the SELL / BUY
-legs with lots and credit, stop / target / worst case, margin · sessions · VIX, the chain line; 🎯 target / 🛑 premium,
+repeats one; no extra Kite call): 🧭 the bias found in three lines: the SELL / BUY legs with lots and credit · stop /
+target / worst case · margin · sessions · VIX (the price line and the chain scoring are on the Options page); 🎯 target / 🛑 premium,
 VWAP or breakeven stop / ⏱ time or hard exit / ✋ closed by you with the P&L, the time held and "breakeven stop was armed
 at …"; 🧭 "no trade today" at 11:00 with the range, where VWAP sat and the next look; the 3:35 PM day summary (trades,
 P&L, book value and return since the start, days traded of days, win rate) is recorded for the API but no longer sent:
@@ -1302,6 +1307,7 @@ premium stop, the daily loss limit hit, no data on a trading day, no login with 
 | `hedge_points` / `max_delta` / `min_premium` / `otm_pct` | 250 / 0.30 / 20 / 1.0 | the hedge distance; the sold strike's delta cap, premium floor and OTM floor |
 | `stop_pct` / `stop_pct_expiry` / `be_after_pct` / `target_pct` | 100 / 70 / 40 / 60 | the premium stop (2×; 1.7× on expiry day), the breakeven switch, the target |
 | `vwap_exit` | on | the VWAP exit (a switch on the Options page too) |
+| `vwap_stop_closes` / `vwap_stop_margin_pts` | 2 / 10 | the VWAP stop: this many 5-minute closes through VWAP in a row, or one this many points through (paper) |
 | `time_exit` / `window_start` / `window_end` | 15:10 / 09:45 / 11:00 | the time exit; the bias window |
 | `max_trades_day` / `daily_loss_pct` / `max_gap_pct` | 3 / 1.5 / 1.0 | trades a day (re-entries count, the afternoon pair = 1; a saved 2 is raised to 3 once); the daily loss limit (% of capital); the gap filter |
 | `reentry_same_bias` | on | after a premium / VWAP / breakeven stop, the same bias once more (once per bias) on a close back over the range and VWAP (a switch on the Options page) |
@@ -1969,6 +1975,16 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
   it is a new call itself. A follow-up carrying the stop / targets the call lacked ("BUY SENSEX 82000 CE NEAR 460" then
   "SL 410 / TGT 520/550/600+" as a reply) completes the hint: the plan is rebuilt and the record run restarts (`complete_plan`),
   the line says "plan completed: stop 410 · targets 520/550/600+".
+  **Strong follow-ups by code** (before the model): avoid / not active / don't take / cancel, active / "cmp N", a result
+  (tgt N done, targets done, SL hit, century, all tgt done), a booking (book / exit / trail / TSL / NPNL) and a bare
+  "wait" / "wait for next level" (logged, no action). Results and bookings go to the newest hint filled / armed / with
+  its level reached, else the newest open one; avoid / active / wait to the newest hint not taken. Bare "Sl 530" / "Tgt
+  …" / "2 lots" posts go to the newest open call that **lacks** that piece (never a paused / avoided / closed one); a bare
+  list "625/660/700/750/800" within 15 min of a call without targets (all above a BUY's entry) is its targets. The same
+  call posted again within 15 min (symbol, strike, type, entry ± 0.5 %) is that hint's follow-up ("the call again · stop
+  470 · targets 625/…"), never a second hint. "2 lots / Add 2 lots near 700 …" in one post sets the size and logs the
+  add. An avoid pauses the record run in every not-taken state (waiting, allowed, level reached), never an open paper
+  position.
 - **Decode** (`decode.py`): side, symbol (BNF / BN / bank nifty → BANKNIFTY, FN → FINNIFTY, MIDCP → MIDCPNIFTY, SENSEX,
   NIFTY, CRUDE → MCX CRUDEOIL, stocks), strike + CE/PE, entry (at / zone "250-270" / "near 267 and 263" / above / below /
   cmp, "when comes"), stop (premium, or a spot level on 15-minute closes: "stop: spot 43,450 (15-min close)"; none = "no
@@ -1993,6 +2009,18 @@ reads its tables. Every number comes from code (quotes); the channel's "target d
   line each, "auto, as you set"). Once you override a position (your trail / exit) the channel is no longer followed
   for it.
 - Never automatic: taking a hint (Take / `take N`). Real orders only by your click (below, **Tips → Kite orders**).
+
+**Telegram, tidy** (`tips.push_level`: `normal`, the default, or `all` = every line as before)
+- The new call: one message — the call (a provisional stop reads "stop 562 (provisional −25 %) · the channel's SL
+  replaces it"), one `plan:` line ("no plan: …" once), the replies `take 27 · take 27 2 · skip 27 · stop 27 N`, and the
+  auto state last ("auto: armed 1 lot · SL trigger 750 · resting on Kite" | "auto: waits for the plan" | "auto: off");
+  no separate "🤖 Kite AUTO · not armed" message for it (a later change of the arm state still sends its own line). A
+  completed plan that auto then arms is one line: "#27 · stop 640 · targets 820/860/900 · armed 2 lots · SL trigger 750".
+- Card log only (normal): price / note / wait follow-ups and the channel's "Defensive Style …" summaries; "no target
+  reached on our quotes yet" is pushed once per hint and only for a hint you hold or armed; the channel's SL replacing
+  a provisional stop is pushed only when the hint is armed or filled.
+- The add line ends "· reply add 27"; **`add N`** on Telegram does what the card's Place add… does (the same guards).
+- The evening review's grades line lists the taken calls, then "N skipped (grades B×6 · D×3)".
 
 **🏠 Home · Tips · Kite** (`backend/tips/home.py`, `GET /api/home/tips`, stream topic `home_tips`; `HomeTips.jsx`)
 

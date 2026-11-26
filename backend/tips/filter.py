@@ -127,18 +127,90 @@ def code_link(text: str, hints: list[dict]) -> Optional[int]:
 
 
 PLAN_POST = re.compile(r"\b(sl|stop\s*loss|stoploss|tgt|target|targets|tg)s?\b", re.I)
+ARMED_STATES = ("armed", "armed_watch", "armed_wait")
+STOPPED = ("paused", "closed", "expired", "skipped")
+
+
+def _kite(h: dict) -> str:
+    k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
+    return k.get("state") or "none"
+
+
+def stopped(h: dict) -> bool:
+    """Paused / avoided / closed: never the target of a plan post."""
+    return h.get("status") in STOPPED or bool((h.get("run") or {}).get("paused"))
+
+
+def held(h: dict) -> bool:
+    """We hold it or have armed it: a paper take (armed / open) or a Kite entry armed / entered."""
+    pos = h.get("pos") or {}
+    return (bool(h.get("taken")) and pos.get("state") in ("armed", "open")) or _kite(h) in ARMED_STATES + ("entered",)
+
+
+def engaged(h: dict) -> bool:
+    """Filled / armed / level reached (the record run's entry filled on our quotes)."""
+    return held(h) or (h.get("run") or {}).get("state") == "active"
+
+
+def not_taken(h: dict) -> bool:
+    pos = h.get("pos") or {}
+    return not (h.get("taken") and pos.get("state") in ("open", "closed")) and _kite(h) not in ("entered", "closed") \
+        and h.get("status") not in ("closed", "expired", "skipped")
+
+
+def _lacks_stop(h: dict) -> bool:
+    return pl.stop_src(h.get("stop")) in (None,) + pl.REPLACEABLE     # 🛑 a provisional / your stop: the channel's SL replaces it
+
+
+def _age_ok(h: dict, posted: Optional[datetime], minutes: int) -> bool:
+    try:
+        return (posted or datetime.now(IST)) - datetime.fromisoformat(h["posted_at"]) <= timedelta(minutes=minutes)
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+BARE_TARGETS = re.compile(r"\s*\d+(?:\.\d+)?(?:\s*[/ ]\s*\d+(?:\.\d+)?)+\s*\+*\s*")
+
+
+def bare_targets(text: str, h: Optional[dict] = None) -> Optional[list]:
+    """🎯 A post that is only 2+ rising numbers separated by / or spaces ("625/660/700/750/800"): the list, else None.
+    With `h`: only when every figure sits on the target side of its entry (above for a BUY, below for a SELL)."""
+    t = (text or "").strip()
+    if not BARE_TARGETS.fullmatch(t):
+        return None
+    xs = [pl._val(x) for x in re.findall(r"\d+(?:\.\d+)?", t)]
+    up = all(b > a for a, b in zip(xs, xs[1:]))
+    if len(xs) < 2 or not (up or all(b < a for a, b in zip(xs, xs[1:]))):
+        return None
+    if h is not None:
+        e = h.get("entry") or {}
+        ref = pl.entry_level(h) or e.get("hi") or e.get("lo")
+        if not ref:
+            return None
+        sell = h.get("side") == "SELL"
+        if up == sell or any((x >= float(ref)) if sell else (x <= float(ref)) for x in xs):
+            return None
+    elif not up:
+        return None
+    return xs
 
 
 def plan_post(text: str, hints: list[dict], posted: Optional[datetime] = None) -> Optional[int]:
     """📌 A bare stop / targets post for an open call that lacks them ("Sl 530", "Tgt 830/880/940", posted as separate
     messages a minute after the call, 26 Nov): code decides, the model is not asked (it had sorted these as chatter).
-    Returns the hint id, or None when the post is not that."""
+    The newest open call that LACKS the piece wins (never a paused / avoided / closed one); code_link only when none
+    lacks it. A bare list ("625/660/700/750/800") within 15 min of a call with no targets: its targets. Returns the hint
+    id, or None when the post is not that."""
     t = text or ""
     if not hints:
         return None
     sz = size_post(t, hints, posted)                      # 📏 "2 lots" on its own line right after the call: its size
     if sz:
         return sz
+    live = [h for h in hints if not stopped(h)]
+    if BARE_TARGETS.fullmatch(t.strip()):
+        pick = [h for h in live if not h.get("targets") and _age_ok(h, posted, 15) and bare_targets(t, h)]
+        return pick[-1]["id"] if pick else None
     if not PLAN_POST.search(t) or FOLLOW_CODE.search(t) and re.search(r"\b(done|hit|exit|book)\b", t, re.I):
         return None
     d = dc.decode(t, posted or datetime.now(IST))
@@ -149,31 +221,95 @@ def plan_post(text: str, hints: list[dict], posted: Optional[datetime] = None) -
         return None
     if dc.looks_like_hint(d, t):
         return None
-    hid = code_link(t, hints)
-    h = next((x for x in hints if x["id"] == hid), None)
+    named = bool(dc.symbol_of(t) or dc.STRIKE_RE.search(t))
+    cands = [h for h in live if not named or check_link(t, h)]
+    lacking = [h for h in cands if (has_stop and _lacks_stop(h)) or (tg and not h.get("targets"))]
+    if lacking:
+        return lacking[-1]["id"]
+    if not cands:
+        return None
+    hid = code_link(t, cands)
+    h = next((x for x in cands if x["id"] == hid), None)
     if h is None:
         return None
-    lacks_stop = pl.stop_src(h.get("stop")) in (None,) + pl.REPLACEABLE     # 🛑 a provisional / your stop: the channel's SL replaces it
-    lacks_tg = not h.get("targets")
-    if (has_stop and lacks_stop) or (tg and (lacks_tg or recent_targets(h, posted))):
+    if tg and recent_targets(h, posted):
         return hid
     return None
 
 
 def size_post(text: str, hints: list[dict], posted: Optional[datetime] = None, minutes: int = 10) -> Optional[int]:
-    """A bare size post ("2 lots", "2-2 lots") within `minutes` of the newest open call that names no size: that call's
-    (26 Nov 10:53: the call, then "2 lots" as its own message)."""
-    from backend.tips import plan as pl
+    """A bare size post ("2 lots", "2-2 lots") within `minutes` of the newest open call that names no size (never a
+    paused / closed one): that call's (26 Nov 10:53: the call, then "2 lots" as its own message)."""
     t = (text or "").strip()
     if len(re.findall(r"\w+", t)) > 4 or not pl.size_of(t) or pl.size_of(t).get("action") != "size":
         return None
-    h = max(hints, key=lambda x: x["id"])
-    if h.get("size_hint") or h.get("taken"):
+    pick = [h for h in hints if not stopped(h) and not h.get("size_hint") and not h.get("taken") and _age_ok(h, posted, minutes)]
+    return pick[-1]["id"] if pick else None
+
+
+def repeat_call(d: dict, hints: list[dict], posted: Optional[datetime] = None, minutes: int = 15) -> Optional[int]:
+    """🔁 A call posted again: the same symbol / strike / option type and the same entry level (± 0.5 %) as an open
+    (not paused / closed) hint posted within `minutes` → that hint's id (a follow-up, never a second hint)."""
+    lv = pl.entry_level(d)
+    if lv is None or d.get("strike") is None:
         return None
-    try:
-        return h["id"] if (posted or datetime.now(IST)) - datetime.fromisoformat(h["posted_at"]) <= timedelta(minutes=minutes) else None
-    except (TypeError, ValueError):
+    for h in reversed(hints):
+        if stopped(h) or not _age_ok(h, posted, minutes) or _kite(h) == "closed" or (h.get("pos") or {}).get("state") == "closed":
+            continue
+        if (h.get("symbol"), h.get("opt_type")) != (d.get("symbol"), d.get("opt_type")) or h.get("strike") is None:
+            continue
+        if abs(float(h["strike"]) - float(d["strike"])) > 1e-6:
+            continue
+        hl = pl.entry_level(h)
+        if hl and abs(float(lv) - float(hl)) <= 0.005 * float(hl):
+            return h["id"]
+    return None
+
+
+# 💪 strong follow-ups, by code before the model (A1): avoid · active / cmp N · a result · a booking · a bare wait
+S_RESULT = re.compile(r"\b(?:tgt|target)s?\s*\d?\s*(?:(?:and|&|,|/)\s*\d\s*)?(?:done|hit|achieved)\b|\b(?:\d|all)\s*(?:tgts?|targets?)\s*(?:done|hit|achieved)\b|"
+                      r"\b(?:t?sl|stop\s*loss|stoploss)\s*(?:hit|triggered|gone)\b|\bcentury\b")
+S_BOOK = re.compile(r"\b(?:book|booking|exit|exited|trail|trailing|tsl|npnl)\b")
+S_ACTIVE = re.compile(r"(?<!not )\b(?:active|activated)\b|\bcmp\s*[:\-]?\s*\d")
+S_GENERAL = re.compile(r"\b(?:all|any)\s+(?:the\s+)?(?:trades|calls|positions)\b|\bexit them\b")     # a reminder to everyone, not one call
+
+
+def strong_kind(text: str) -> Optional[str]:
+    """result | book | avoid | active | wait | None."""
+    low = (text or "").lower().replace("’", "'")
+    if not low.strip() or S_GENERAL.search(low):
         return None
+    if S_RESULT.search(low):
+        return "result"
+    if S_BOOK.search(low):
+        return "book"
+    if pl.AVOID_RE.search(low):
+        return "avoid"
+    if S_ACTIVE.search(low) and len(re.findall(r"\w+", low)) <= 6:
+        return "active"
+    if pl.WAIT_RE.fullmatch(low):
+        return "wait"
+    return None
+
+
+def strong_followup(text: str, hints: list[dict], posted: Optional[datetime] = None) -> Optional[int]:
+    """💪 A strong follow-up decided by code (the model is not asked): the open hint it belongs to, else None. Results
+    and bookings go to the newest hint filled / armed / level-reached, else the newest open one; avoid / active / wait
+    to the newest hint not taken. A symbol / strike named in the text must be the hint's."""
+    if not hints:
+        return None
+    k = strong_kind(text)
+    if k is None:
+        return None
+    named = bool(dc.symbol_of(text) or dc.STRIKE_RE.search(text or ""))
+    hs = [h for h in hints if not named or check_link(text, h)]
+    if not hs:
+        return None
+    if k in ("result", "book"):
+        pick = [h for h in hs if engaged(h)] or [h for h in hs if not stopped(h)] or hs
+    else:
+        pick = [h for h in hs if not_taken(h)]
+    return pick[-1]["id"] if pick else None
 
 
 def recent_targets(h: dict, posted: Optional[datetime] = None, minutes: int = 15) -> bool:

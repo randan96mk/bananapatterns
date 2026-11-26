@@ -31,7 +31,7 @@ from backend.logging_config.logger import setup_logger
 
 logger = setup_logger("ai")
 
-PROMPT_V = "why-v1"
+PROMPT_V = "why-v2"                                     # v2: the one fact not already in the header
 LINE_MAX = 180
 GAP_PCT = 1.0
 FILING_DAYS = 3
@@ -233,10 +233,18 @@ def evidence(t: dict, day: str, config: Optional[AppConfig] = None) -> list[dict
 
 # --- the model's line --------------------------------------------------------------------------------------------------------
 
+def header_text(t: dict) -> str:
+    """What the evening message's trade line already says: the name, how it ended, the net per book."""
+    nets = " · ".join(f"{m['book']} net {m['net']:+,.0f}" for m in t.get("members") or [t] if m.get("net") is not None)
+    return " · ".join(x for x in (t["symbol"], str(t.get("label") or ""), nets) if x)
+
+
 def prompt(t: dict, ev: list[dict]) -> str:
     books = " + ".join(m["book"] for m in t.get("members") or [t])
     lines = [f"Trade: {t['symbol']} · {books} · {t['label']}", "Evidence:"] + [f"- {e['text']}" for e in ev]
-    lines.append('Write the one line "likely cause: ...". Quote only the numbers above.')
+    lines.append(f'The investor already sees this line: "{header_text(t)}". Write the one line "likely cause: ..." with the '
+                 "one fact from the evidence that is NOT already in that line (do not repeat the name, how it ended or the net). "
+                 "Quote only the numbers above.")
     return "\n".join(lines)
 
 

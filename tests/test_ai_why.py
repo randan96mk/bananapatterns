@@ -189,7 +189,7 @@ def test_run_night_writes_rows_and_the_evening_message_once(ollama, cfg):
     out = why.run_night(cfg, NIGHT, Notifier(cfg.alerts, fake))
     assert out == {"tokens": 36, "note": "4 why line(s) · 0 failed"} and len(ollama.calls) == 4
     rows = notes.list_notes(kind="why")["rows"]
-    assert rows and {r["symbol"] for r in rows} == {"RT", "PT", "NIFTY", "GAP"} and all(r["severity"] == "info" and r["prompt_version"] == "why-v1" for r in rows)
+    assert rows and {r["symbol"] for r in rows} == {"RT", "PT", "NIFTY", "GAP"} and all(r["severity"] == "info" and r["prompt_version"] == "why-v2" for r in rows)
     r = next(x for x in rows if x["symbol"] == "RT")
     assert r["title"] == "RT · stop hit" and r["text"].startswith("likely cause: the stock gapped -2.10%") and r["source_key"] == f"real:{ids['real']}"
     assert r["numbers_checked"] is True and r["book"] == "real" and r["alerted"] is True and r["day"] == DAY

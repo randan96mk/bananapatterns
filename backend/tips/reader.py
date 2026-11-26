@@ -195,19 +195,29 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             fresh = (datetime.now(IST) - at).total_seconds() <= PUSH_MAX_AGE_S
             try:
                 from backend.tips import kite_orders as ko
+                h0 = bk.load(out["hint_id"]) or {}
+                loud = flt.held(h0) or push_level(config) == "all"     # T6: the SL line pushed only for a hint armed / filled
                 ln = bk.channel_stop(config, out["hint_id"], out["channel_stop"], text, at, client=client,
-                                     kite=fresh and ko.mode(config) != "off", notify=push and fresh)
+                                     kite=fresh and ko.mode(config) != "off", notify=push and fresh and loud)
                 if ln:
                     out["line"] = ln
+                if not loud and out.get("push_if_unheld"):
+                    out["push"] = out["push_if_unheld"]
             except Exception:
                 logger.exception("Tips: the channel's SL not applied")
+        live = out.get("new") and source in ("live", "preview")
+        held_back = None                                  # T3 / T4: pushed after the Kite step, with its outcome folded in
+        if live and out.get("push") and (out.get("kind") == "hint" or (out.get("plan_line") and _auto(config))):
+            held_back = out.pop("push")
         for key in ("day_push", "push"):
             if out.get(key):
                 bk.push(config, out[key][0], out[key][1])
-        if out.get("new") and source in ("live", "preview"):
+        if live:
             from backend.tips import ai4                  # 🤖 the call grade (code) before any arming; never acts
             ai4.on_post(config, out)
-            kite_after(config, client, out, push)
+            armed = kite_after(config, client, out, push, fold=None if held_back is None else "all" if out.get("kind") == "hint" else "armed")
+            if held_back is not None:
+                bk.push(config, *folded(config, out, held_back, armed))
             if out.get("kind") == "hint" and out.get("hint_id"):
                 try:                                      # 📈 the market read: queued AFTER the plan and any arm, never waited on
                     from backend.market import reads as mr
@@ -245,14 +255,21 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             kind = "hint"                               # a new call posted as a reply
         else:
             kind, hint_id, by = "follow_up", quoted["id"], "reply"
+    repeat = False
     if kind is None:
         d = dc.decode(text, posted)
-        if dc.looks_like_hint(d, text):
+        rep = flt.repeat_call(d, hints, posted) if dc.looks_like_hint(d, text) else None
+        if rep:                                         # 🔁 the same call again within 15 min: that hint's follow-up
+            kind, hint_id, repeat = "follow_up", rep, True
+        elif dc.looks_like_hint(d, text):
             kind = "hint"
         else:
-            pp = flt.plan_post(text, hints, posted)      # 📌 "Sl 530" / "Tgt 830/880/940" for an open call lacking them: code, not the model
-            res = None if pp else (flt.model_classify(config, text, hints) if model and source != "import" else None)
-            if pp:
+            sf = flt.strong_followup(text, hints, posted)   # 💪 avoid / active / a result / a booking / wait: code, not the model
+            pp = None if sf else flt.plan_post(text, hints, posted)      # 📌 "Sl 530" / "Tgt 830/880/940" for an open call lacking them
+            res = None if (pp or sf) else (flt.model_classify(config, text, hints) if model and source != "import" else None)
+            if sf:
+                kind, hint_id = "follow_up", sf
+            elif pp:
                 kind, hint_id = "follow_up", pp
             elif res:
                 kind, hint_id, by, mdl, ms = res["kind"], res["hint_id"], "ai", res["model"], res["ms"]
@@ -263,6 +280,10 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
                         kind = "chatter"
             else:
                 kind, hint_id = flt.code_classify(text, hints)
+    elif kind == "chatter" and hints:                   # "wait for next level": no trade word, still the channel's word on a call
+        sf = flt.strong_followup(text, hints, posted)
+        if sf:
+            kind, hint_id = "follow_up", sf
     cur = conn.execute("INSERT INTO tips_posts (channel, post_id, posted_at, text, has_media, kind, hint_id, classified_by, model, ms, source, created, reply_to) "
                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (channel, int(post_id), posted.isoformat(timespec="seconds"), text, int(bool(has_media)),
                                                               kind, hint_id, by, mdl, ms, source, now_ist(), reply_to))
@@ -299,10 +320,11 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
     elif kind == "follow_up" and hint_id:
         h = bk.load(hint_id, conn)
         if h:
-            act = pl.followup_action(text)
+            act = pl.followup_action(text) if not repeat else {"action": "repeat", "lots": ((d or {}).get("size_hint") or {}).get("lots")}
             now = posted                                     # the post's own time (Telegram's clock, ~1 s behind)
             cst = channel_stop_of(h, text, posted, act)      # 🛑 the channel's SL over a provisional / your stop
-            done = complete_plan(config, h, text, posted, act)   # "SL 410 / TGT 520/550/600+" posted after the call
+            filled = complete_plan(config, h, text, posted, act)   # "SL 410 / TGT 520/550/600+" posted after the call
+            done = repeat_line(h, filled) if repeat else filled
             if source == "import":
                 bk.event(h, posted, f'channel: "{text[:80]}"', "channel")
                 line = "follow-up"
@@ -322,13 +344,88 @@ def ingest(config, channel: str, post_id: int, posted_at, text: str, has_media: 
             bk.save(h, conn)
             out["line"] = line
             out["act"], out["text"], out["at"] = act, text, posted.isoformat(timespec="seconds")
-            if push and source in ("live", "preview") and config.tips.push_followups and out.get("channel_stop") is None:
-                from backend.alerts import messages as msg       # (the channel's SL over a provisional / your stop pushes its own line)
-                out["push"] = (f"tips|fu|{channel}|{post_id}", msg.tips_followup(h, text, line, now, act))
+            out["plan_line"] = filled
+            out["quiet"] = quiet_followup(config, h, act, text, line, bool(filled or cst is not None or sz))
+            if push and source in ("live", "preview") and config.tips.push_followups and not out["quiet"]:
+                from backend.alerts import messages as msg
+                fu = (f"tips|fu|{channel}|{post_id}", msg.tips_followup(h, text, line, now, act))
+                if out.get("channel_stop") is None:
+                    out["push"] = fu
+                elif done:                                   # the channel's SL pushes its own line only when held (T6):
+                    out["push_if_unheld"] = (fu[0], msg.tips_followup(h, text, done, now, act))     # the plan line then
     return out
 
 
-def kite_after(config, client, out: dict, push: bool = True) -> None:
+QUIET_ACTS = ("price", "note", "wait")
+DEFENSIVE_SUMMARY = re.compile(r"^\W*defensive\s+style\b", re.I)
+NO_TARGET_YET = "no target reached on our quotes yet"
+
+
+def push_level(config) -> str:
+    """tips.push_level: normal (the quiet follow-ups go to the card log only) | all (every follow-up pushed, as before)."""
+    v = str(getattr(config.tips, "push_level", "normal") or "normal").lower()
+    return v if v in ("normal", "all") else "normal"
+
+
+def quiet_followup(config, h: dict, act: Optional[dict], text: str, line: str, changed: bool) -> bool:
+    """🔕 A follow-up logged on the card, not pushed (push_level normal): a price / note / wait post or the channel's
+    "Defensive Style …" summary that changed nothing (T1); "no target reached on our quotes yet" after its first time
+    on a hint, or on a hint we neither hold nor have armed (T2)."""
+    if push_level(config) == "all" or changed:
+        return False
+    a = (act or {}).get("action")
+    if a in QUIET_ACTS or a == "repeat" or DEFENSIVE_SUMMARY.match(text or ""):
+        return True
+    if (line or "").startswith(NO_TARGET_YET):
+        if not flt.held(h):
+            return True
+        return sum(NO_TARGET_YET in str(e.get("text") or "") for e in h.get("events") or []) > 1
+    return False
+
+
+def repeat_line(h: dict, done: Optional[str]) -> str:
+    """🔁 "the call again · stop 470 · targets 625/660/700/750/800" (what the repost filled, else the plan as it stands)."""
+    if done:
+        return "the call again · " + done.replace("plan completed: ", "", 1)
+    st = h.get("stop") or {}
+    bits = [f"stop {pl.fmt(st['value'])}" if st.get("value") is not None else "no stop"]
+    tg = h.get("targets") or []
+    bits.append("targets " + "/".join(pl.fmt(t) for t in tg) if tg else "no targets")
+    return "the call again · " + " · ".join(bits) + " · nothing new"
+
+
+def _auto(config) -> bool:
+    try:
+        from backend.tips import kite_orders as ko
+        return ko.mode(config) == "auto"
+    except Exception:
+        return False
+
+
+def folded(config, out: dict, held_back: tuple, armed: Optional[dict]) -> tuple:
+    """(key, html) of the message held back for the Kite step: the new call with its "auto: …" line last (T3), or a
+    completed plan that auto then armed as ONE line "#27 · stop 640 · targets 820/860/900 · armed 2 lots · SL trigger
+    750 · resting on Kite" (T4; the plan line alone when nothing was armed)."""
+    key, html = held_back
+    try:
+        from backend.tips import kite_auto as ka
+        h = bk.load(out["hint_id"]) if out.get("hint_id") else None
+        if not h:
+            return key, html
+        if out.get("kind") == "hint":
+            return key, html + "\n" + ka.state_line(config, h)
+        if armed:
+            st = h.get("stop") or {}
+            tg = h.get("targets") or []
+            bits = [f"#{h['id']}"] + ([f"stop {pl.fmt(st['value'])}"] if st.get("value") is not None else []) \
+                + (["targets " + "/".join(pl.fmt(t) for t in tg)] if tg else []) + [ka.armed_bits(config, h)]
+            return f"tips|kite|auto|{h['id']}|armed", ka.apfx(h) + " · ".join(bits)
+    except Exception:
+        logger.exception("Tips: the folded message failed")
+    return key, html
+
+
+def kite_after(config, client, out: dict, push: bool = True, fold: Optional[str] = None) -> Optional[dict]:
     """⚡ Tips → Kite (PR C), after the post is stored: a follow-up's Kite consequence (any mode: an add-on is never an
     order, avoid / SL hit before the fill cancel an unfilled entry, "active" sends an armed one; auto: the channel's exit
     / trail / SL / part booking on its own position) and, in auto, the hint armed when it is (now) placeable. Never
@@ -337,29 +434,34 @@ def kite_after(config, client, out: dict, push: bool = True) -> None:
         from backend.tips import kite_auto as ka
         from backend.tips import kite_orders as ko
         if ko.mode(config) == "off" and out.get("kind") != "follow_up":
-            return
+            return None
         now = datetime.fromisoformat(out["at"]) if out.get("at") else datetime.now(IST)   # the post's own time (~1 s behind)
         if (datetime.now(IST) - now).total_seconds() > PUSH_MAX_AGE_S:
-            return                                         # a caught-up old post never moves a Kite order
+            return None                                    # a caught-up old post never moves a Kite order
+        loud = push and not out.get("quiet")               # 🔕 a quiet follow-up (push_level normal): the card log only
         if out.get("kind") == "follow_up" and out.get("hint_id") and out.get("act") and out.get("channel_stop") is None:
-            kline = ka.on_followup(config, client, out["hint_id"], out["act"], out.get("text") or "", now, notify=push)
+            kline = ka.on_followup(config, client, out["hint_id"], out["act"], out.get("text") or "", now, notify=loud)
             try:                                           # 🤖 the AI second opinion (informational: never acts)
                 from backend.tips import kite_check as kc
-                kc.enqueue_followup(config, out["hint_id"], out.get("post_id"), out.get("text") or "", out["act"], kline or out.get("line"), notify=push)
+                kc.enqueue_followup(config, out["hint_id"], out.get("post_id"), out.get("text") or "", out["act"], kline or out.get("line"), notify=loud)
             except Exception:
                 logger.exception("Tips follow-up AI read not queued")
         if out.get("kind") in ("hint", "follow_up") and out.get("hint_id"):
-            ka.on_new(config, client, out["hint_id"], now, notify=push)
+            return ka.on_new(config, client, out["hint_id"], now, notify=push, fold=fold)
     except Exception:
         logger.exception("Tips Kite after the post failed")
+    return None
 
 
 def resize_hint(config, h: dict, act: dict, posted: datetime) -> Optional[str]:
     """📏 "2-2 lots" / "buy 2 lots here" (post mode, nothing filled yet): the hint's size becomes the channel's (the paper
     take and the Kite entry use it; an armed Kite entry is re-planned by kite_auto). After a fill: logged only."""
-    n = (act or {}).get("lots")
-    if not n or (act or {}).get("action") not in ("size", "active"):
+    a = (act or {}).get("action")
+    n = (act or {}).get("size_lots") if a == "add" else (act or {}).get("lots")     # 📏 "2 lots\n\nAdd 2 lots near 700": the size too
+    if not n or a not in ("size", "active", "add", "repeat"):
         return None
+    if a == "repeat" and (h.get("size_hint") or {}).get("lots"):
+        return None                                     # 🔁 the call again: fills a size the hint lacks, never changes one
     k = h.get("kite") if isinstance(h.get("kite"), dict) else {}
     if h.get("taken") or k.get("state") in ("entered", "closed"):
         return f"size {n} lots logged (already filled)"
@@ -401,6 +503,8 @@ def complete_plan(config, h: dict, text: str, posted: datetime, act: Optional[di
         return None
     d = dc.decode(text, posted)
     st, tg = d.get("stop") or {}, [t for t in (d.get("targets") or []) if t is not None]
+    if not tg and not h.get("targets"):
+        tg = flt.bare_targets(text, h) or []            # 🎯 "625/660/700/750/800" alone: the call's targets
     ref = (h.get("entry") or {}).get("lo") or (h.get("entry") or {}).get("hi")
     if ref and tg and any(t < 0.2 * ref for t in tg):                 # a target far under the entry is a count, not a price
         tg = []

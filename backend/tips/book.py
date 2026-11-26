@@ -780,13 +780,19 @@ def channel_action(config, h: dict, act: dict, text: str, now: datetime, ltp: Op
     ltp = ltp if ltp is not None else (run or {}).get("last_ltp")
     out = ""
     if a == "avoid":
-        for r in (run, (pos or {}).get("run")):
-            if r and r.get("state") == "waiting":
-                r["paused"] = True
-        if run and run.get("state") == "waiting":
+        # ⏸ every not-taken state: waiting, allowed ("active" said earlier) or level reached on the record run; never
+        # a paper position that is open (the Kite side disarms an unfilled entry: kite_auto)
+        if pos is not None and pos.get("state") == "open":
+            out = "noted (a paper position is open)"
+        elif run and run.get("state") != "closed":
+            for r in (run, (pos or {}).get("run")):
+                if r and r.get("state") != "closed":
+                    r["paused"], r["allowed"] = True, False
             out = "hint paused · no entry until the channel says enter"
         else:
             out = "noted"
+    elif a == "wait":
+        out = "the channel says wait · no action"
     elif a == "active":
         for r in (run, (pos or {}).get("run")):
             if r:

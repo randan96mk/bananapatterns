@@ -304,6 +304,7 @@ class AlertsConfig:
     # 🌙 one close-of-day message across the books (Real, Paper, Options, the AI)
     day_summary: bool = True               # the day summary on trading days (replaces the options day line)
     day_summary_time: str = "15:40"        # after the options book's 3:35 PM summary row
+    day_summary_final: bool = True         # the full summary 5 min after the evening job (6:35 PM) once paper is marked
 
 
 @dataclass
@@ -408,7 +409,12 @@ OPTIONS_TIMES = ("window_start", "window_end", "time_exit", "reentry_until", "af
 
 
 def check_options_times(sec: "OptionsConfig") -> None:
-    """🧩 The options book's clock keys are HH:MM (24-hour inside; the pages show them 12-hour)."""
+    """🧩 The options book's clock keys are HH:MM (24-hour inside; the pages show them 12-hour); the VWAP stop's closes
+    at least 1, its margin at least 0."""
+    if int(sec.vwap_stop_closes) < 1:
+        raise ValueError("vwap_stop_closes must be at least 1")
+    if float(sec.vwap_stop_margin_pts) < 0:
+        raise ValueError("vwap_stop_margin_pts must be 0 or more")
     for f in OPTIONS_TIMES:
         h, _, m = str(getattr(sec, f)).partition(":")
         if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
@@ -428,7 +434,9 @@ class OptionsConfig:
     otm_pct: float = 1.0                   # the sold strike: at least this % out of the money (50-strike grid)
     stop_pct: float = 100.0                # stop when the sold premium rises this % over the entry (100 = 2x) ...
     stop_pct_expiry: float = 70.0          # ... this on expiry day (70 = 1.7x)
-    vwap_exit: bool = True                 # the VWAP exit: a 5-minute close back through VWAP against the bias closes the spread
+    vwap_exit: bool = True                 # the VWAP exit: 5-minute closes back through VWAP against the bias close the spread ...
+    vwap_stop_closes: int = 2              # ... this many in a row (1 = the first close through) ...
+    vwap_stop_margin_pts: float = 10.0     # ... or one close through it by at least this many NIFTY points (0 = off)
     be_after_pct: float = 40.0             # after the sold premium has decayed this %, the stop becomes breakeven
     target_pct: float = 60.0               # target: the spread's value down this % from the entry credit
     time_exit: str = "15:10"               # the time exit (a hard exit at 15:20 if it failed; nothing is held overnight)
@@ -517,6 +525,8 @@ class TipsConfig:
     rupees: float = 20000.0                # the premium per taken hint in rupees mode
     push_hints: bool = True                # every new hint pushed to Telegram at once
     push_followups: bool = True            # each channel follow-up pushed as one line
+    push_level: str = "normal"             # 🔕 normal = price / note / wait follow-ups and "Defensive Style" summaries go to the
+                                           # card log only (and the SL / "no target yet" lines only for a hint you hold) | all = every line
     auto_follow_channel_exit: bool = True  # the paper book follows the channel's own exit / SL hit / SL change (you are told)
     intraday_time_stop: str = "15:14"      # option buys: anything still open is closed here (HH:MM; shown 12-hour); 3:14 PM, ahead of the 3:15 broker square-off window
     partial_at_t1: bool = True             # half the position booked at target 1
@@ -642,6 +652,8 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_auto_book_part must be channel or hold")
     if getattr(sec, "kite_reenter", "new call") not in ("new call", "never"):
         raise ValueError("kite_reenter must be 'new call' or 'never'")
+    if getattr(sec, "push_level", "normal") not in ("normal", "all"):
+        raise ValueError("push_level must be normal or all")
     if getattr(sec, "vision_mode", "report") not in ("report", "check"):
         raise ValueError("vision_mode must be report or check")
     if sec.kite_size_mode not in TIPS_KITE_SIZE_MODES:

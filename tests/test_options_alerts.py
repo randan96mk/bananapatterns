@@ -40,17 +40,21 @@ def test_inr_indian_grouping():
 
 
 def test_bias_message_is_the_mock():
+    """B6: the head and three lines (legs + credit + lots · stop + target + worst case · margin + expiry + VIX); the
+    chain scoring and the price line stay on the page."""
     t = msg.options_bias(MOCK_OPEN)
     lines = t.split("\n")
-    assert lines[0] == "🧭 <b>Options · paper · bias BULLISH · 9:52 AM</b>"
-    assert lines[1] == "NIFTY 26,131 above the 9:15–9:30 range (25,980–26,118) and VWAP 26,094 · prev high taken"
-    assert lines[2] == "SELL <b>25,900 PE</b> @ 48.50 · BUY 25,650 PE @ 12.00 · 1 lot · credit ₹2,738"
-    assert lines[3] == "stop 54.75 (+50%) or a 5-min close under VWAP · target 14.60 (60%) · worst case −₹13,350 · exits: premium 1.5× · VWAP on"
-    assert lines[4] == "<i>margin ~₹52,000 · 4 sessions to expiry · VIX 13.4</i>" and lines[5].startswith("<i>chain: support 25,800")
+    assert lines == ["🧭 <b>Options · paper · bias BULLISH · 9:52 AM</b>",
+                     "SELL <b>25,900 PE</b> @ 48.50 · BUY 25,650 PE @ 12.00 · 1 lot · credit ₹2,738",
+                     "stop 54.75 (+50%) or a 5-min close under VWAP · target 14.60 (60%) · worst case −₹13,350",
+                     "<i>margin ~₹52,000 · 4 sessions to expiry · VIX 13.4</i>"]
+    assert "chain" not in t and "PCR" not in t
     assert no_brokers(t)
     bear = msg.options_bias({**MOCK_OPEN, "bias": "BEARISH", "sold": {"strike": 26300.0, "type": "CE", "entry": 40.0}, "lots": 2, "sessions": 0, "n": 2})
-    assert "below the 9:15–9:30 range" in bear and "prev low taken" in bear and "2 lots" in bear and "expiry day" in bear and "re-entry" in bear
+    assert "2 lots" in bear and "expiry day" in bear and "re-entry" in bear and len(bear.split("\n")) == 5     # the re-entry line stays, one line
     assert "close over VWAP" in bear and "26,300 CE" in bear
+    two = msg.options_bias({**MOCK_OPEN, "vwap_closes": 2, "vwap_margin": 10.0})
+    assert two.split("\n")[2] == "stop 54.75 (+50%) or 2 5-min closes under VWAP (or one 10 pts under) · target 14.60 (60%) · worst case −₹13,350"
 
 
 def test_exit_messages():
@@ -136,8 +140,8 @@ def test_tick_sends_every_alert_once():
     bias, exit_ = (h for _, h in fake.sent)
     summ = msg.options_alert(state["alerts"][-1])                                     # its text is still built (the API lists it)
     assert bias.startswith("🧭 <b>Options · paper · bias BULLISH · 9:50 AM</b>") and "SELL <b>24,800 PE</b>" in bias and "BUY 24,550 PE" in bias
-    assert "2 lots" in bias and "above the 9:15–9:30 range (25,000–25,100)" in bias and "prev high taken" in bias and "5 sessions to expiry" in bias
-    assert "VIX 14.0" in bias and "chain:" in bias and "→ 3/3" in bias and "(+100%)" in bias and "exits: premium 2× · VWAP on" in bias and "(60%)" in bias
+    assert "2 lots" in bias and "5 sessions to expiry" in bias and len(bias.split("\n")) == 4                  # B6: the head + three lines
+    assert "VIX 14.0" in bias and "chain:" not in bias and "(+100%)" in bias and "or 2 5-min closes under VWAP (or one 10 pts under)" in bias and "(60%)" in bias
     t = book.trades()[0]
     assert exit_.startswith("🎯 <b>Options · paper · target</b> · 24,800 / 24,550 PE closed at") and msg.inr(t["net"], sign=True) in exit_
     assert "held" in exit_ and "breakeven stop was armed at" in exit_ and t["be_t"] in exit_
@@ -268,4 +272,6 @@ def test_attention_items():
 def test_bias_message_exits_line_follows_the_switch():
     t = msg.options_bias({**MOCK_OPEN, "stop_pct": 100.0, "stop_premium": 97.0, "vwap_exit": False})
     line = t.split("\n")[3]
-    assert line == "stop 97.00 (+100%) · target 14.60 (60%) · worst case −₹13,350 · exits: premium 2× · VWAP off" and "5-min close" not in line
+    assert line == "<i>margin ~₹52,000 · 4 sessions to expiry · VIX 13.4</i>"
+    line = t.split("\n")[2]
+    assert line == "stop 97.00 (+100%) · VWAP exit off · target 14.60 (60%) · worst case −₹13,350" and "5-min close" not in line

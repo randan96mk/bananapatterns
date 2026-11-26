@@ -17,7 +17,7 @@
   ask <question>               🤖 ask the app: the day model answers from one read-only tool ("thinking…" first)
   btc / btc quiet 2h / btc quiet off   ₿ BTC pivot patterns: the status line; pause the alerts for N hours (the
                                detections are stored "quiet" and listed in the digest); resume. Alerts only
-  tips / tip N / take N [lots|half] / skip N / exit N / trail N <px> / stop N <px> / pause N / resume N / tips channels
+  tips / tip N / take N [lots|half] / skip N / exit N / trail N <px> / stop N <px> / add N / pause N / resume N / tips channels
                                💡 Tips: the status line, a hint's card, take it into the Tips paper book (2 = lots),
                                skip it (still scored), close it, move its stop, pause / resume it, the channels read
 
@@ -49,7 +49,7 @@ OPTIONS_WORDS = ("close", "hold")
 AI_WORDS = ("stop", "start", "rerun")
 FILL_WORDS = ("filled", "unfilled")                         # 💰 Real: confirm a booked BUY's fill / remove one never filled
 SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
-TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume", "stop")   # 💡 with a hint number: "take 12 2", "skip 12"
+TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume", "stop", "add")   # 💡 with a hint number: "take 12 2", "skip 12"
 
 
 class BotCommands:
@@ -426,6 +426,16 @@ class BotCommands:
                 kl = h.get("stop_kite")
                 kt = (" · Kite: SL order modified" if kl.startswith("Kite: SL order modified") else f" · {msg.escape(kl)}") if kl else ""
                 return f"👤 #{hid} · stop set to {pl.fmt(h['stop']['value'])} (you){was}{kt}"
+            if word == "add":                                    # 📏 "add 27": the card's Place add… (the same guards, Kite)
+                from backend.tips import kite_orders as ko
+                h0 = tb.load(hid)
+                if not h0:
+                    return f"No hint #{hid}."
+                h = ko.place_add(cfg, ko.client_for(cfg, self.state, h0), hid, now=now, by="click", notify=False)
+                a = ko.kstate(h).get("add") or {}
+                n = int(a.get("lots") or 0)
+                return (f"📏 #{hid} · add armed · {ko.entry_side(h)} LIMIT {a.get('level'):g} ×{a.get('qty')} · {n} lot{'s' if n != 1 else ''} · "
+                        f"if it fills: avg {a.get('avg_if'):g} · {a.get('total_lots')} lots")
             if word in ("pause", "resume"):
                 tb.pause(cfg, hid, word == "pause", who="Telegram", now=now)
                 return msg.tips_line(hid, "paused · no entry until you resume" if word == "pause" else "resumed", now)
@@ -478,5 +488,5 @@ class BotCommands:
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
                                        "BUYs, before the send) · filled SYM / unfilled SYM (a real BUY's fill: confirm it, or remove it with yes) · opt / opt close / opt hold (the options "
-                                       "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / stop N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / stop N &lt;px&gt; / add N / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

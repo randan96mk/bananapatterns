@@ -472,14 +472,18 @@ def review_message(day: str, now: Optional[datetime] = None) -> Optional[str]:
     calls = bk.rows("posted_at >= ? AND posted_at < ? AND channel != 'rehearsal'", (day, nxt.isoformat()), order="id")
     all1 = round(sum(((h.get("score") or {}).get("pnl_lot") or 0.0) for h in calls if not (h.get("score") or {}).get("open")), 2)
     out.append(f"day: {len(hs)} taken · {bk.inr(round(total, 2), sign=True)} · all calls 1 lot {bk.inr(all1, sign=True)}")
-    gl = []
+    gl, skipped = [], {}
     for h in calls:
         g = latest("grade", h["id"])
         if not g:
             continue
         gr = (g.get("input_json") or {}).get("grade") or "–"
-        taken = ko.kstate(h).get("entry_px") is not None
-        gl.append(f"#{h['id']} {gr}" if taken else f"#{h['id']} skipped ({gr})")
+        if ko.kstate(h).get("entry_px") is not None:
+            gl.append(f"#{h['id']} {gr}")              # the taken calls, then the skipped ones counted by grade
+        else:
+            skipped[gr] = skipped.get(gr, 0) + 1
+    if skipped:
+        gl.append(f"{sum(skipped.values())} skipped (grades " + " · ".join(f"{g}×{n}" for g, n in sorted(skipped.items(), key=lambda x: ("ABCD–".find(x[0]) % 9, x[0]))) + ")")
     if gl:
         out.append("grades today: " + " · ".join(gl))
     return "\n".join(out)
