@@ -39,8 +39,20 @@ def _plural(n: int, w: str = "lot") -> str:
 def cfg_of(config) -> dict:
     t = config.tips
     return {"mode": str(getattr(t, "kite_size_mode", "post") or "post"), "lots": int(getattr(t, "lots", 1) or 1),
-            "cap": int(getattr(t, "kite_max_lots", 2) or 2), "risk": float(getattr(t, "kite_risk_per_trade", 6000.0) or 6000.0),
+            "cap": max_lots(config), "risk": risk_limit(config),
             "mult": mult_of(config)}
+
+
+def max_lots(config) -> int:
+    """The effective lots cap: kite_max_lots × kite_lot_multiplier (the cap is set for 1×; ×N scales it with the size)."""
+    t = getattr(config, "tips", None)
+    return int(getattr(t, "kite_max_lots", 2) or 2) * mult_of(config)
+
+
+def risk_limit(config) -> float:
+    """The effective per-trade risk: kite_risk_per_trade × kite_lot_multiplier (set for 1×; ×N scales it with the size)."""
+    t = getattr(config, "tips", None)
+    return float(getattr(t, "kite_risk_per_trade", 6000.0) or 6000.0) * mult_of(config)
 
 
 def mult_of(config) -> int:

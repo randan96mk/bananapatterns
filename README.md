@@ -2350,8 +2350,9 @@ has / had a position on the hint; a paper-only hint keeps its old look.
   the stop; the Telegram arm and fill lines say the lots and the qty.
 - **Lots ×N** (`kite_lot_multiplier`, 1–5, default 1; the "lots ×N" dropdown beside the kill switch, through a confirm):
   every size the app decides — the post's lots, the fallback, fixed, the channel's "2-2 lots" and its add — is
-  multiplied; the risk mode's own figure is not, and lots you type are literal. `kite_max_lots` and the risk guard apply
-  after. The size cell says "the post says 2 lots × 2 (lots ×2)", the arm line "BUY 4 lots (2 × 2)".
+  multiplied; in risk mode the rupee limit scales instead, and lots you type are literal. `kite_max_lots` and `kite_risk_per_trade`
+  are set for 1× and scale with it (cap 6 ×2 = 12 lots, risk ₹20,000 ×2 = ₹40,000; the strip shows both); the daily loss
+  cap does not. The size cell says "the post says 2 lots × 2 (lots ×2)", the arm line "BUY 4 lots (2 × 2)".
 - **Provisional stop** (`kite_default_stop`, 0 = off or 10–60 %, default 25; the "no-SL stop" dropdown): a call with no
   SL and a premium entry level gets a stop that far under the level (over it for a sell, on the 0.05 tick), marked
   provisional (amber tile, header chip) so the plan is complete and auto can arm it. An index level or a market entry

@@ -31,6 +31,7 @@ from backend.timefmt import ampm
 from backend.tips import book as bk
 from backend.tips import kite_orders as ko
 from backend.tips import plan as pl
+from backend.tips import sizing
 from backend.tips.book import TipsError
 
 logger = setup_logger("tips")
@@ -119,12 +120,11 @@ def placeable(h: dict) -> Optional[str]:
 
 
 def auto_lots(config, h: dict) -> int:
-    return max(1, min(ko.default_lots(config, h), int(config.tips.kite_max_lots)))
+    return max(1, min(ko.default_lots(config, h), sizing.max_lots(config)))
 
 
 def lots_text(config, h: dict, lots: int) -> str:
     """"4 lots (2 × 2)" with lots ×N (", capped at 6" when kite_max_lots cut it), else "2 lots"."""
-    from backend.tips import sizing
     n = int(lots)
     txt = f"{n} lot{'s' if n != 1 else ''}"
     try:
@@ -357,15 +357,14 @@ def _on_size(config, cl, h: dict, act: dict, now: datetime) -> Optional[str]:
         ko._log(k, now, f"Kite: the channel's size {n} lots · kite_size_mode {config.tips.kite_size_mode}: not used")
         ko.save_kite(h)
         return "size noted (not post mode)"
-    from backend.tips import sizing
     lot = int(h.get("lot_size") or 0) or 1
     m = sizing.mult_of(config)                          # 📏 the channel's "2-2 lots" × lots ×N, then the caps
     if m > 1:
         n *= m
     if k.get("by") == "auto":
-        n = max(1, min(n, int(config.tips.kite_max_lots)))
-    if n > int(config.tips.kite_max_lots):
-        why = f"{n} lots > the cap {int(config.tips.kite_max_lots)}"
+        n = max(1, min(n, sizing.max_lots(config)))
+    if n > sizing.max_lots(config):
+        why = f"{n} lots > the cap {sizing.max_lots(config)}"
     else:
         g = sizing.check(config, h, n, bk.last_ltp(h))
         why = sizing.held_text(g) if g["held"] else None

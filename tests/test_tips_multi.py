@@ -69,10 +69,10 @@ def test_multiplier_post_fallback_fixed_and_not_risk():
     c.tips.kite_size_mode, c.tips.lots = "fixed", 3
     assert sizing.size(c, hint(size_hint={"lots": 2}))["lots"] == 6
     c.tips.kite_size_mode, c.tips.kite_risk_per_trade = "risk", 6000.0
-    r = sizing.size(c, hint())                                    # 6000 ÷ (70 × 15) = 5.71 → 5: the rupee risk decides
-    assert (r["src"], r["raw"], r["lots"], r["mult"]) == ("risk", 5, 5, 1)
-    c1 = conf(kite_size_mode="risk", kite_max_lots=6)
-    assert sizing.size(c1, hint())["lots"] == r["lots"]
+    r = sizing.size(c, hint())                                    # the rupee risk decides, and the risk limit scales ×2: 12000 ÷ (70 × 15) = 11.4 → 11
+    assert (r["src"], r["raw"], r["lots"], r["mult"]) == ("risk", 11, 11, 1)
+    c1 = conf(kite_size_mode="risk", kite_max_lots=6, kite_risk_per_trade=6000.0)
+    assert sizing.size(c1, hint())["lots"] == 5                   # ×1: 6000 ÷ (70 × 15) = 5.71 → 5
 
 
 def test_multiplier_cell_text_and_the_lots_text():
@@ -91,7 +91,8 @@ def test_caps_apply_after_multiplying():
     assert sizing.size(c, h)["lots"] == 8
     g = sizing.check(conf(kite_risk_per_trade=6000.0), h, 8)          # 8 × 15 × 70 = 8,400 over 6,000
     assert g["held"] and "8 lots × 70 points × 15" in sizing.held_text(g)
-    assert ka.auto_lots(c, h) == 6                                     # auto: capped at kite_max_lots
+    assert ka.auto_lots(c, h) == 8                                     # auto: under the cap, which scales too (6 × 2 = 12)
+    assert ka.auto_lots(conf(kite_lot_multiplier=2, kite_max_lots=3, kite_risk_per_trade=99999.0), h) == 6   # capped at 3 × 2
 
 
 def test_paper_size_and_owner_lots_literal():
@@ -106,9 +107,9 @@ def test_add_lots_times_the_multiplier_then_the_cap():
     c = conf(kite_lot_multiplier=2, kite_max_lots=6, kite_risk_per_trade=99999.0)
     h = hint(kite={"state": "entered", "qty_open": 30, "entry_px": 262.0, "stop_px": 190.0}, plan={"stop": {"kind": "premium", "value": 190.0}})
     n, bad, nums = ko.add_size(c, h, {"lots": 2, "level": 250.0})
-    assert (n, bad) == (4, None)                                       # 2 × 2 = 4, with 2 open: 6 ≤ the cap
-    n, bad, _ = ko.add_size(conf(kite_lot_multiplier=3, kite_max_lots=6, kite_risk_per_trade=99999.0), h, {"lots": 2, "level": 250.0})
-    assert n == 4 and bad is None                                      # 6 wanted, 4 left under the cap
+    assert (n, bad) == (4, None)                                       # 2 × 2 = 4, with 2 open: 6 ≤ the cap (6 × 2 = 12)
+    n, bad, _ = ko.add_size(conf(kite_lot_multiplier=3, kite_max_lots=2, kite_risk_per_trade=99999.0), h, {"lots": 2, "level": 250.0})
+    assert n == 4 and bad is None                                      # 6 wanted, 4 left under the cap 2 × 3 = 6
 
 
 def test_settings_validation():
@@ -379,3 +380,19 @@ def test_telegram_stop_command():
     assert t[2] == "Stop at what? stop 1 &lt;price&gt;" and t[3] == "Not changed: no hint #9"
     h = bk.load(1)
     assert h["stop"]["value"] == 250 and h["pos"]["run"]["stop"] == 250
+
+
+def test_caps_scale_with_the_multiplier():
+    """The owner's ask: once lots ×N is set, kite_max_lots and kite_risk_per_trade scale with it on their own (they are set
+    for 1×); the daily loss cap does not. The strip payload carries both the base and the effective figures."""
+    from backend.tips import sizing, kite_orders as ko
+    c = cfg()
+    c.tips.kite_max_lots, c.tips.kite_risk_per_trade, c.tips.kite_lot_multiplier = 6, 20000.0, 1
+    assert (sizing.max_lots(c), sizing.risk_limit(c)) == (6, 20000.0)
+    c.tips.kite_lot_multiplier = 3
+    assert (sizing.max_lots(c), sizing.risk_limit(c)) == (18, 60000.0)
+    assert sizing.cfg_of(c)["cap"] == 18 and sizing.cfg_of(c)["risk"] == 60000.0
+    lite = ko.lite(c)
+    assert lite["caps"]["max_lots"] == 18 and lite["caps"]["max_lots_base"] == 6
+    assert lite["sizing"]["risk_per_trade"] == 60000.0 and lite["sizing"]["risk_per_trade_base"] == 20000.0
+    assert lite["caps"]["loss_cap"] == float(c.tips.kite_loss_cap)                 # unchanged

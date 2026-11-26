@@ -61,6 +61,7 @@ from backend.timefmt import ampm
 from backend.tips import book as bk
 from backend.tips import kite_sim
 from backend.tips import plan as pl
+from backend.tips import sizing
 from backend.tips.book import TipsError
 
 logger = setup_logger("tips")
@@ -328,7 +329,6 @@ def realised_today(day: str, dry: bool = False) -> float:
 def default_lots(config, h: dict) -> int:
     """The size of a hint's entry by tips.kite_size_mode (backend/tips/sizing.py): post = the post's size, else
     tips.lots (today's rule) · fixed = tips.lots · risk = kite_risk_per_trade at the stop, capped by kite_max_lots."""
-    from backend.tips import sizing
     return int(sizing.size(config, h, bk.last_ltp(h) if h.get("id") else None)["lots"])
 
 
@@ -471,10 +471,11 @@ def guards(config, client, h: dict, lots: Optional[int], now: Optional[datetime]
     filled_before = any(r["leg"] == "entry" and r["status"] == "complete" for r in mine)
     mixed = mix_block(h, dry, now)
     out = list(base)
-    out.append(_g(1 <= lots <= int(c.kite_max_lots), f"lots per order {lots} ≤ {int(c.kite_max_lots)}" if lots <= int(c.kite_max_lots)
-                  else f"lots per order {lots} > the cap {int(c.kite_max_lots)}", "lots"))
+    cap_eff = sizing.max_lots(config)
+    cap_txt = f"{int(c.kite_max_lots)} ×{sizing.mult_of(config)} = {cap_eff}" if sizing.mult_of(config) > 1 else str(cap_eff)
+    out.append(_g(1 <= lots <= cap_eff, f"lots per order {lots} ≤ {cap_txt}" if lots <= cap_eff
+                  else f"lots per order {lots} > the cap {cap_txt}", "lots"))
     if ok_plan and lots >= 1:                     # 📏 the per-trade risk guard (every mode): the loss at the stop ≤ kite_risk_per_trade
-        from backend.tips import sizing
         rg = sizing.check(config, h, lots, bk.last_ltp(h))
         out.append(_g(not rg["held"], sizing.guard_text(rg), "risk"))
     out.append(_g(ok_plan, "a complete plan (stop + target), a contract and a lot size" if ok_plan else
@@ -668,7 +669,6 @@ def place_entry(config, client, hid: int, lots: Optional[int] = None, by: str = 
         k.update(lots=n, qty=qty, qty_open=0, entry_px=None, stop_px=premium_stop(h), auto_rest=bool(auto_rest), reason=None,
                  by=by, day=now.date().isoformat(), arm=None, entry_at=None, stop_moves=[], check=None)
         try:                                            # 📏 the size cell as it was when armed (the mode may change later)
-            from backend.tips import sizing
             k["sizing"] = sizing.cell(config, h, bk.last_ltp(h), lots=n)
         except Exception:
             k["sizing"] = None
@@ -1125,9 +1125,8 @@ def add_size(config, h: dict, off: dict) -> tuple[int, Optional[str], dict]:
     lot = int(h.get("lot_size") or 0) or 1
     q0 = int(k.get("qty_open") or 0)
     cur = q0 // lot
-    from backend.tips import sizing
     want = int(off.get("lots") or config.tips.lots) * sizing.mult_of(config)     # 📏 the post's add × lots ×N, then the cap
-    cap = int(config.tips.kite_max_lots)
+    cap = sizing.max_lots(config)
     n = min(want, cap - cur)
     if n < 1:
         return 0, f"{cur} + {want} lots > kite_max_lots {cap}", {}
@@ -1137,7 +1136,7 @@ def add_size(config, h: dict, off: dict) -> tuple[int, Optional[str], dict]:
     avg = (e0 * q0 + x * n * lot) / tot
     stop = float(k.get("stop_px") if k.get("stop_px") is not None else premium_stop(h))
     risk = round((avg - stop) * tot * _sign(h), 2)
-    lim = float(getattr(config.tips, "kite_risk_per_trade", 6000.0))
+    lim = sizing.risk_limit(config)
     nums = {"lots": n, "qty": n * lot, "level": x, "avg": round(avg, 2), "total_qty": tot, "total_lots": tot // lot, "risk": risk, "stop": stop}
     if risk > lim + 1e-6:
         return 0, (f"(avg {pl.fmt(round(avg, 2))} − stop {pl.fmt(stop)}) × {tot} = {rupees(risk)} at the stop with {n} more lot{'s' if n != 1 else ''}, "
@@ -2353,10 +2352,9 @@ def today(config, client=None, now: Optional[datetime] = None) -> dict:
 
 def size_stop_guards(config) -> list[dict]:
     """The Guards panel's lines for lots ×N (when > 1) and the provisional stops on open hints."""
-    from backend.tips import sizing
     out = []
     m = sizing.mult_of(config)
-    cap = int(config.tips.kite_max_lots)
+    cap = sizing.max_lots(config)
     hs = bk.rows("status IN ('new', 'waiting', 'active', 'paused')", order="id DESC", limit=40)
     if m > 1:
         h = next((x for x in hs if x.get("lot_size")), None)
@@ -2414,9 +2412,9 @@ def lite(config, now: Optional[datetime] = None, rows: Optional[list] = None, us
     c = config.tips
     n = sum(1 for r in rows if counts_entry(r))
     return {"mode": mode(config), "kill": killed(), "open": sum(1 for r in rows if r["status"] in LIVE),
-            "caps": {"entries": n, "max_entries": int(c.kite_max_entries_day), "max_lots": int(c.kite_max_lots),
+            "caps": {"entries": n, "max_entries": int(c.kite_max_entries_day), "max_lots": sizing.max_lots(config), "max_lots_base": int(c.kite_max_lots),
                      "loss_cap": float(c.kite_loss_cap), "used_loss": round(min(used, 0.0), 2)},
-            "sizing": {"risk_per_trade": float(getattr(c, "kite_risk_per_trade", 6000.0)), "size_mode": getattr(c, "kite_size_mode", "post"),
+            "sizing": {"risk_per_trade": sizing.risk_limit(config), "risk_per_trade_base": float(getattr(c, "kite_risk_per_trade", 6000.0)), "size_mode": getattr(c, "kite_size_mode", "post"),
                        "book_part": getattr(c, "kite_book_part", "half"), "follow_adds": bool(getattr(c, "kite_follow_adds", False)),
                        "lots": int(c.lots), "lot_multiplier": int(getattr(c, "kite_lot_multiplier", 1) or 1),
                        "default_stop": int(getattr(c, "kite_default_stop", 0) or 0)},

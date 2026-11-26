@@ -256,7 +256,10 @@ const legTag = (lg) => {
 };
 export const kiteCaps = (k) => {
   const c = k?.caps || {};
-  return `today ${px(c.entries ?? 0)} of ${px(c.max_entries ?? 0)} entries · lots cap ${px(c.max_lots ?? 0)} · loss cap ${isNum(c.loss_cap) ? inr(Number(c.loss_cap)) : '—'} · used ${isNum(c.used_loss) ? (Number(c.used_loss) < 0 ? `−${inr(Math.abs(Number(c.used_loss)))}` : `−${inr(0)}`) : '—'}`;
+  const m = Number(k?.sizing?.lot_multiplier || 1);
+  const capTxt = m > 1 && isNum(c.max_lots_base) ? `${px(c.max_lots_base)} ×${m} = ${px(c.max_lots)}` : px(c.max_lots ?? 0);
+  const riskTxt = m > 1 && isNum(k?.sizing?.risk_per_trade_base) ? ` · risk ${inr(Number(k.sizing.risk_per_trade_base))} ×${m} = ${inr(Number(k.sizing.risk_per_trade))}` : '';
+  return `today ${px(c.entries ?? 0)} of ${px(c.max_entries ?? 0)} entries · lots cap ${capTxt}${riskTxt} · loss cap ${isNum(c.loss_cap) ? inr(Number(c.loss_cap)) : '—'} · used ${isNum(c.used_loss) ? (Number(c.used_loss) < 0 ? `−${inr(Math.abs(Number(c.used_loss)))}` : `−${inr(0)}`) : '—'}`;
 };
 
 // The bar under the Head: the mode (Off / By my click / Auto), the kill switch, the caps, "Orders today".
@@ -280,7 +283,7 @@ function KiteBar({ k, onDone, toOrders, onTest, testing }) {
   const setMult = (e) => {
     const v = Number(e.target.value);
     if (v === mult) return;
-    if (!window.confirm(`Lots ×${v}?\n\nEvery size the app decides (the post's lots, the fallback, fixed, the channel's "2-2 lots" and its add) is multiplied by ${v}. The risk mode's own figure is not. Lots you type are literal. kite_max_lots and the risk per trade apply after.`)) { e.target.value = String(mult); return; }
+    if (!window.confirm(`Lots ×${v}?\n\nEvery size the app decides (the post's lots, the fallback, fixed, the channel's "2-2 lots" and its add) is multiplied by ${v}. The risk mode's own figure is not. Lots you type are literal. kite_max_lots and kite_risk_per_trade scale with it (cap ${v} × ${px(k?.caps?.max_lots_base ?? k?.caps?.max_lots ?? 0)} lots, risk ${v} × ${isNum(k?.sizing?.risk_per_trade_base) ? inr(Number(k.sizing.risk_per_trade_base)) : '—'}); the loss cap does not.`)) { e.target.value = String(mult); return; }
     api.putTipsSettings({ kite_lot_multiplier: v }).then(() => { setMsg(''); onDone && onDone(); }).catch((x) => setMsg(`⚠ ${x.message}`));
   };
   const setDstop = (e) => {
