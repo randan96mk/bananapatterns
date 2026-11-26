@@ -102,6 +102,7 @@ def test_sizes_post_lots_half_rupees(pushed):
 
 def test_refusals(pushed):
     c, w = cfg(), world(**{KEY12: 262.0})
+    c.tips.kite_default_stop = 0                        # no provisional stop: today's "no plan: stop missing"
     with pytest.raises(bk.TipsError) as e:
         bk.take(c, 999)
     assert e.value.code == 404

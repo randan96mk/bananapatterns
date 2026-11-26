@@ -574,6 +574,50 @@ def _app_config():
     return AppConfig()
 
 
+def _was_text(w: Optional[dict], at: bool = True) -> str:
+    """"510 yours (9:31:05 AM)" / "499 provisional (−25 %)" / "530 the channel's"."""
+    from backend.tips import kite_orders as ko
+    if not w or w.get("value") is None:
+        return ""
+    src = w.get("src")
+    word = {"provisional": "provisional", "owner": "yours", "channel": "the channel's"}.get(src, src or "")
+    tail = f" (−{w['pct']} %)" if src == "provisional" and w.get("pct") else (f" ({ko.t12(w['at'], seconds=True)})" if at and w.get("at") else "")
+    return f"{pl.fmt(w['value'])} {word}{tail}".strip()
+
+
+def stop_tile(h: dict) -> Optional[dict]:
+    """🛑 The stop tile and the header chip, by code: {value_text, sub, cls (prov | mine | ""), src, chip, chip_tone, rev,
+    settable}. None for no stop at all (the page keeps "no usable stop")."""
+    from backend.tips import kite_orders as ko
+    st = h.get("stop") or {}
+    src = pl.stop_src(st)
+    k = ko.kstate(dict(h))
+    closed = h.get("status") in ("closed", "expired") or k.get("state") == "closed"
+    settable = not closed and h.get("instrument") != "cash" and bool(h.get("side"))
+    rev = bk.stop_rev(h)
+    if not src:
+        return {"value_text": None, "sub": None, "cls": "", "src": None, "chip": None, "chip_tone": None, "rev": rev, "settable": settable}
+    if st.get("kind") == "spot":
+        return {"value_text": None, "sub": None, "cls": "", "src": src, "chip": None, "chip_tone": None, "rev": rev, "settable": settable}
+    hist = [x for x in (st.get("hist") or []) if x.get("value") is not None]
+    v = pl.fmt(st.get("value"))
+    if src == "provisional":
+        return {"value_text": f"{v} · provisional", "cls": "prov", "src": src, "rev": rev, "settable": settable,
+                "sub": f"−{st.get('pct')} % of the entry level · replaced by the channel's SL when it comes · the risk guard uses it",
+                "chip": f"stop provisional −{st.get('pct')} % · waiting for the channel's SL", "chip_tone": "w"}
+    prev = list(reversed(hist[:-1]))                      # the stops before this one, newest first
+    sub = ""
+    if prev:
+        sub = "was " + _was_text(prev[0]) + (" · before that " + _was_text(prev[1]) if len(prev) > 1 else "")
+    if src == "owner":
+        return {"value_text": f"{v} · yours", "cls": "mine", "src": src, "rev": rev, "settable": settable,
+                "sub": (sub + " · " if sub else "") + "the channel's SL replaces it when it comes",
+                "chip": f"stop {v} · yours · set {ko.t12(st.get('at'), seconds=True)}" if st.get("at") else f"stop {v} · yours", "chip_tone": "b"}
+    chip = f"stop {v} · the channel's SL at {ko.t12(st.get('at'), seconds=True)}" if st.get("at") and prev else None
+    return {"value_text": v, "cls": "", "src": src, "rev": rev, "settable": settable, "sub": sub or None,
+            "chip": chip, "chip_tone": "ok" if chip else None}
+
+
 def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
     """One hint for the page (the keys the frontend reads). `kite`: the hint's Kite legs (⚡ Tips → Kite orders)."""
     from backend.timefmt import ampm
@@ -635,7 +679,7 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
             "expiry_label": (f"{date.fromisoformat(exp):%a} {date.fromisoformat(exp).day} {date.fromisoformat(exp):%b}" if exp else None),
             "expiry_src": h.get("expiry_src"), "tradingsymbol": h.get("tradingsymbol"), "exchange": h.get("exchange"),
             "lot_size": h.get("lot_size"), "entry": h.get("entry"), "entry_text": pl.entry_text(h.get("entry") or {}),
-            "stop": h.get("stop"), "stop_text": pl.stop_text(h.get("stop") or {}), "targets": h.get("targets") or [],
+            "stop": h.get("stop"), "stop_text": pl.stop_text(h.get("stop") or {}), "stop_tile": stop_tile(h), "targets": h.get("targets") or [],
             "targets_hit": hits, "targets_text": pl.targets_text(tg, bool(h.get("open_ended"))), "open_ended": bool(h.get("open_ended")),
             "size_hint": h.get("size_hint"), "decoded": h.get("decoded") or {}, "plan": h.get("plan"), "status": st, "ended": h.get("ended"),
             "taken": bool(h.get("taken")), "lots": h.get("lots"), "entry_px": h.get("entry_px"), "exit_px": h.get("exit_px"),

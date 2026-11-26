@@ -547,6 +547,10 @@ class TipsConfig:
     kite_size_mode: str = "post"
     kite_risk_per_trade: float = 6000.0    # ₹ at the stop per trade: the risk mode's figure AND a guard in every mode
     kite_book_part: str = "half"           # "book part" / T1 with 2+ lots: half = floor(lots ÷ 2) lots | one = one lot
+    kite_lot_multiplier: int = 1           # 📏 lots ×1…×5: the post's lots (or `lots`) multiplied in post / fixed mode (not risk);
+                                           # lots you type are literal; kite_max_lots and the risk guard apply after
+    kite_default_stop: int = 25            # 🛑 no SL in the post: a provisional stop this % under the entry level (0 = off: wait
+                                           # for the channel's SL); the channel's SL replaces it when it comes
     kite_t2_part: str = "all"              # 🎯 at T2 when the post names a 3rd target: all = close at T2 (today's rule) | half =
                                            # floor(open lots ÷ 2) | one = one lot; the rest rides to T3 with the stop at T1
     kite_follow_adds: bool = False         # follow the channel's "add 2 lots near 660": ONE extra LIMIT after the fill (opt-in)
@@ -648,6 +652,12 @@ def check_tips(sec: "TipsConfig") -> None:
         raise ValueError("kite_t2_part must be all, half or one")
     if float(sec.kite_risk_per_trade) <= 0:
         raise ValueError("kite_risk_per_trade must be positive")
+    if not (1 <= int(sec.kite_lot_multiplier) <= 5):
+        raise ValueError("kite_lot_multiplier must be 1 … 5")
+    sec.kite_lot_multiplier = int(sec.kite_lot_multiplier)
+    if not (int(sec.kite_default_stop) == 0 or 10 <= int(sec.kite_default_stop) <= 60):
+        raise ValueError("kite_default_stop must be 0 (off) or 10 … 60 (%)")
+    sec.kite_default_stop = int(sec.kite_default_stop)
     from backend.tips import sizing                  # 📏 lots × lot size × the usual stop distance vs the risk / loss caps
     bad = sizing.check_settings(sec)
     if bad:

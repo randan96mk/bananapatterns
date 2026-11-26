@@ -17,7 +17,7 @@
   ask <question>               🤖 ask the app: the day model answers from one read-only tool ("thinking…" first)
   btc / btc quiet 2h / btc quiet off   ₿ BTC pivot patterns: the status line; pause the alerts for N hours (the
                                detections are stored "quiet" and listed in the digest); resume. Alerts only
-  tips / tip N / take N [lots|half] / skip N / exit N / trail N <px> / pause N / resume N / tips channels
+  tips / tip N / take N [lots|half] / skip N / exit N / trail N <px> / stop N <px> / pause N / resume N / tips channels
                                💡 Tips: the status line, a hint's card, take it into the Tips paper book (2 = lots),
                                skip it (still scored), close it, move its stop, pause / resume it, the channels read
 
@@ -49,7 +49,7 @@ OPTIONS_WORDS = ("close", "hold")
 AI_WORDS = ("stop", "start", "rerun")
 FILL_WORDS = ("filled", "unfilled")                         # 💰 Real: confirm a booked BUY's fill / remove one never filled
 SUGG_WORDS = ("sugg", "accept", "yes", "dismiss", "why")     # 🤖 suggestions: "accept 3", "dismiss 3 wrong", "why 3"
-TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume")   # 💡 with a hint number: "take 12 2", "skip 12"
+TIPS_WORDS = ("tip", "take", "skip", "exit", "trail", "pause", "resume", "stop")   # 💡 with a hint number: "take 12 2", "skip 12"
 
 
 class BotCommands:
@@ -377,7 +377,7 @@ class BotCommands:
             return f"Not changed: {msg.escape(str(exc))}"
 
     def tips(self, word: str, args: list) -> str:
-        """💡 tips · tips channels · tip N · take N [lots|half] · skip N · exit N · trail N <px> · pause N · resume N. The
+        """💡 tips · tips channels · tip N · take N [lots|half] · skip N · exit N · trail N <px> · stop N <px> · pause N · resume N. The
         same functions the Tips page's buttons call; paper only."""
         from backend.tips import book as tb
         from backend.tips import reader as rd
@@ -414,6 +414,18 @@ class BotCommands:
                     return f"Trail to what? trail {hid} &lt;price&gt;"
                 tb.trail(cfg, hid, float(rest[0]), who="Telegram", now=now)
                 return msg.tips_line(hid, f"stop moved to {rest[0]} · trail on", now)
+            if word == "stop":                                   # 🛑 "stop 28 510": your stop (the channel's SL replaces it later)
+                if not rest:
+                    return f"Stop at what? stop {hid} &lt;price&gt;"
+                from backend.tips import plan as pl
+                old = tb.load(hid) or {}
+                ost = old.get("stop") or {}
+                h = tb.set_stop(cfg, hid, float(rest[0]), who="Telegram", now=now)
+                src = pl.stop_src(ost)
+                was = (f" · was {pl.fmt(ost.get('value'))} " + {"provisional": "provisional", "owner": "yours", "channel": "the channel's"}.get(src, "")).rstrip() if src else ""
+                kl = h.get("stop_kite")
+                kt = (" · Kite: SL order modified" if kl.startswith("Kite: SL order modified") else f" · {msg.escape(kl)}") if kl else ""
+                return f"👤 #{hid} · stop set to {pl.fmt(h['stop']['value'])} (you){was}{kt}"
             if word in ("pause", "resume"):
                 tb.pause(cfg, hid, word == "pause", who="Telegram", now=now)
                 return msg.tips_line(hid, "paused · no entry until you resume" if word == "pause" else "resumed", now)
@@ -466,5 +478,5 @@ class BotCommands:
             return self._say(notifier, "Commands: /login · /status · /top (next session's plan) · /watch [SYM] · "
                                        "/unwatch SYM · /mute SYM · /chart SYM · skip SYM / unskip SYM / hold / full SYM (today's real "
                                        "BUYs, before the send) · filled SYM / unfilled SYM (a real BUY's fill: confirm it, or remove it with yes) · opt / opt close / opt hold (the options "
-                                       "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
+                                       "book) · ai / ai stop / ai start / ai rerun (the local AI) · sugg / accept N / yes N / dismiss N [wrong|knew|later] / why N (the AI's suggestions) · ask &lt;question&gt; (ask the app) · tips / tip N / take N [lots|half] / skip N / exit N / trail N &lt;px&gt; / stop N &lt;px&gt; / pause N / resume N / tips channels (💡 Tips). Buttons under alerts: Watch, Mute, Chart, I bought.")
         return False

@@ -12,7 +12,9 @@ auto, the dry run), the paper book and the card's size cell; nothing here places
           size under the guard, through its confirm).
   check   check_settings (kite_mode not off): lots × lot size × the median stop distance of the last 30 days' calls per
           index (else a fixed table) must fit kite_risk_per_trade and kite_loss_cap, or the save is refused with the
-          arithmetic."""
+          arithmetic.
+  mult    tips.kite_lot_multiplier (1–5): post / fixed / risk_fallback lots × mult (the risk mode's own figure is never
+          multiplied: the rupee risk decides). Lots you type are literal. kite_max_lots and the guard apply after."""
 
 import math
 from datetime import datetime, timedelta
@@ -37,7 +39,17 @@ def _plural(n: int, w: str = "lot") -> str:
 def cfg_of(config) -> dict:
     t = config.tips
     return {"mode": str(getattr(t, "kite_size_mode", "post") or "post"), "lots": int(getattr(t, "lots", 1) or 1),
-            "cap": int(getattr(t, "kite_max_lots", 2) or 2), "risk": float(getattr(t, "kite_risk_per_trade", 6000.0) or 6000.0)}
+            "cap": int(getattr(t, "kite_max_lots", 2) or 2), "risk": float(getattr(t, "kite_risk_per_trade", 6000.0) or 6000.0),
+            "mult": mult_of(config)}
+
+
+def mult_of(config) -> int:
+    """tips.kite_lot_multiplier, 1–5 (1 when unset or out of range)."""
+    try:
+        m = int(getattr(getattr(config, "tips", None), "kite_lot_multiplier", 1) or 1)
+    except (TypeError, ValueError):
+        return 1
+    return m if 1 <= m <= 5 else 1
 
 
 def post_lots(h: dict) -> Optional[int]:
@@ -95,9 +107,18 @@ def size(config, h: dict, ltp: Optional[float] = None, entry: Optional[float] = 
         raw, src = pst or c["lots"], "risk_fallback"           # no premium stop: nothing to measure, the post / lots
     else:
         raw, src = (pst, "post") if pst else (c["lots"], "fallback")
+    base, mult = raw, (c["mult"] if src != "risk" else 1)
+    raw = base * mult                                       # 📏 lots ×N: never the risk mode's own figure; caps after
     lots = min(raw, c["cap"]) if c["mode"] == "risk" else raw
     return {**_guard(c, lot, lots, e, d), "mode": c["mode"], "raw": raw, "src": src, "post": pst, "fallback": c["lots"],
-            "cap": c["cap"], "ratio": ratio}
+            "cap": c["cap"], "ratio": ratio, "base": base, "mult": mult}
+
+
+def mult_text(s: dict) -> str:
+    """"4 lots (2 × 2)" when the multiplier applies, else "2 lots"."""
+    if int(s.get("mult") or 1) > 1:
+        return f"{_plural(int(s['raw']))} ({s['base']} × {s['mult']})"
+    return _plural(int(s.get("lots") or 0))
 
 
 def _guard(c: dict, lot: int, lots: int, e: Optional[float], d: Optional[float]) -> dict:
@@ -163,11 +184,22 @@ def cell(config, h: dict, ltp: Optional[float] = None, lots: Optional[int] = Non
     if s["mode"] == "risk" and s["src"] == "risk":
         why += f" · {loss}"
     held = bool(s["held"])
+    if int(s.get("mult") or 1) > 1:                      # "the post says 2 lots × 2 (lots ×2)"
+        m = s["mult"]
+        why = why.replace(f"the post says {_plural(s['post'])}", f"the post says {_plural(s['post'])} × {m} (lots ×{m})") \
+            if s["post"] and s["src"] in ("post", "risk_fallback") else why
+        if s["src"] == "fallback":
+            why = why.replace(f"the post names no size · {_plural(s['fallback'])}", f"the post names no size · {_plural(s['fallback'])} × {m} (lots ×{m})")
+        elif s["src"] == "fixed":
+            why = why.replace("fixed · ", f"fixed {_plural(s['fallback'])} × {m} (lots ×{m}) · ", 1)
+        elif s["src"] == "risk_fallback" and not s["post"]:
+            why = why.replace(f"fallback {_plural(s['fallback'])}", f"fallback {_plural(s['fallback'])} × {m} (lots ×{m})")
+        rule += f" · lots ×{m}"
     if held:
         rule = f"⛔ above risk {_inr(s['risk_cap'])} per trade · not armed"
     return {"line1": f"{_plural(n)} · {n * lot} qty", "line2": why, "line3": rule, "held": held,
             "held_text": held_text(s) if held else None, "max_ok": s["max_ok"], "lots": n, "qty": n * lot, "mode": s["mode"],
-            "risk_rs": s["risk_rs"], "premium": s["premium"]}
+            "risk_rs": s["risk_rs"], "premium": s["premium"], "mult": int(s.get("mult") or 1), "base": s.get("base")}
 
 
 # --- the settings check -----------------------------------------------------------------------------------------------------

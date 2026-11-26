@@ -172,6 +172,7 @@ export const tipsTake = (id, body = {}) => req('POST', `/api/tips/hints/${encode
 export const tipsSkip = (id) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/skip`, {});
 export const tipsExit = (id) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/exit`, {});
 export const tipsTrail = (id, to) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/trail`, { to });
+export const tipsSetStop = (id, value, rev) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/stop`, rev == null ? { value } : { value, rev });
 export const tipsSymbol = (id, symbol) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/symbol`, { symbol });
 // 📷 a screenshot strike mismatch: {strike, opt_type?, symbol?} = use the screenshot's · {keep: true} = keep the text's
 export const tipsStrike = (id, body) => req('POST', `/api/tips/hints/${encodeURIComponent(id)}/strike`, body);

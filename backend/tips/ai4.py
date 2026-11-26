@@ -569,7 +569,8 @@ def shape(h: dict) -> dict:
     stop = _num(st.get("value")) if st.get("kind") == "premium" else None
     sign = -1 if h.get("side") == "SELL" else 1
     out = {"entry": round(entry, 2) if entry is not None else None, "stop": stop, "target": tg[0] if tg else None, "rr": None,
-           "stop_pct": None, "target_pct": None, "stop_missing": (st.get("kind") or "none") == "none" or st.get("value") is None}
+           "stop_pct": None, "target_pct": None, "stop_missing": (st.get("kind") or "none") == "none" or st.get("value") is None,
+           "stop_src": st.get("src")}
     if entry and stop is not None:
         out["stop_pct"] = round((stop - entry) / entry * 100, 1)
     if entry and tg:
@@ -586,8 +587,8 @@ def wording(h: dict) -> list[dict]:
     out = [{"key": k, "text": t} for k, rx, t in WORDING if rx.search(raw)]
     plan = h.get("plan") or {}
     st = plan.get("stop") or h.get("stop") or {}
-    if (st.get("kind") or "none") == "none" or st.get("value") is None:
-        out.append({"key": "stop_missing", "text": "no stop in the post"})
+    if (st.get("kind") or "none") == "none" or st.get("value") is None or st.get("src") == "provisional":
+        out.append({"key": "stop_missing", "text": "no stop in the post"})   # 🛑 a provisional stop is the app's, not the call's
     return out
 
 
@@ -655,7 +656,7 @@ def grade_input(h: dict, now: datetime, config=None) -> dict:
             + ("" if rec["enough"] else " · too few calls like this"))
     bits = []
     if shp.get("stop_pct") is not None:
-        bits.append(f"stop {_pct(shp['stop_pct'])}")
+        bits.append(f"stop {_pct(shp['stop_pct'])}" + (" (provisional)" if shp.get("stop_src") == "provisional" else ""))
     if shp.get("target_pct") is not None:
         bits.append(f"target {_pct(shp['target_pct'])}")
     stxt = " and ".join(bits) + (f": R/R {shp['rr']:g}" if shp.get("rr") is not None else (": no R/R (stop missing or not a premium stop)" if bits or shp.get("stop_missing") else "no R/R"))

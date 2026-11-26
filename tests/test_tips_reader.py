@@ -323,6 +323,7 @@ def test_a_private_channel_is_found_by_title_or_id():
 def test_the_sensex_sequence_posted_as_replies(monkeypatch):
     """19 Nov: the call first, then the SL / targets, ACTIVATED and the booking advice as replies quoting it."""
     c, w = cfg(), world()
+    c.tips.kite_default_stop = 0                        # no provisional stop: the plan waits for the channel's SL
     ch = "index options buying with aakanksha"
     pushed = []
     monkeypatch.setattr(bk, "push", lambda config, key, html: pushed.append((key, html)) or True)
@@ -379,6 +380,7 @@ def test_old_or_broken_channel_values_move_to_the_default():
 def test_the_sensex_pe_sequence_with_the_plan_in_a_second_post(monkeypatch):
     """18 Nov 1:05 PM: the call, then a second post with the add-on, SL and five targets, then the running commentary."""
     c, w = cfg(), world()
+    c.tips.kite_default_stop = 0                        # no provisional stop: the plan waits for the channel's SL
     ch = "index options buying with aakanksha"
     monkeypatch.setattr(bk, "push", lambda *a, **k: True)
     seq = [(1, "13:05", "buy sensex 82400 pe above 685++\n\n2 lots"),
@@ -418,6 +420,7 @@ def test_26_nov_bare_sl_and_tgt_posts_complete_the_plan_even_when_the_model_says
     "no usable stop": code now decides these, the plan completes and the corrected targets win."""
     from backend.tips import filter as flt
     c, w = cfg(), world()
+    c.tips.kite_default_stop = 0                        # no provisional stop: the plan waits for the channel's SL
     ch = "index options buying with aakanksha"
     monkeypatch.setattr(rd, "PUSH_MAX_AGE_S", 10 ** 9)
     monkeypatch.setattr(flt, "model_allowed", lambda config: True)
@@ -449,6 +452,7 @@ def test_26_nov_two_calls_on_one_strike_with_bare_size_and_plan_posts(monkeypatc
     Tgt 565/600/635/700" · "Cmp 527" (reply) · "Avoid this" (reply to the first). Each line lands on the right call."""
     from backend.tips import filter as flt
     c, w = cfg(), world()
+    c.tips.kite_default_stop = 0                        # no provisional stop: the plan waits for the channel's SL
     ch = "index options buying with aakanksha"
     monkeypatch.setattr(rd, "PUSH_MAX_AGE_S", 10 ** 9)
     monkeypatch.setattr(flt, "model_allowed", lambda config: True)

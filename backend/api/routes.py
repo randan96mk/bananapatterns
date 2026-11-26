@@ -2074,6 +2074,11 @@ class TipsTrail(BaseModel):
     to: float
 
 
+class TipsStop(BaseModel):
+    value: float
+    rev: Optional[int] = None                  # the stop's change counter as the page saw it (a stale "Set" is refused)
+
+
 class TipsSymbol(BaseModel):
     symbol: str
 
@@ -2183,6 +2188,19 @@ def tips_strike(hid: int, req: TipsStrike):
 def tips_trail(hid: int, req: TipsTrail):
     from backend.tips import book as tb
     return _tips_act(tb.trail, hid, req.to, who="page")
+
+
+@router.post("/tips/hints/{hid}/stop")
+def tips_set_stop(hid: int, req: TipsStop):
+    """🛑 "Set stop…": your premium stop {value, rev?}. Before the fill it rewrites the plan (and an armed Kite entry's
+    stop); after the fill it modifies the SL order on Kite (one modify, its guards). The channel's SL replaces it when
+    it comes. 400 bad price / wrong side · 404 · 409 closed, a guard, Kite's refusal, or stale `rev`."""
+    from backend.tips import book as tb
+    from backend.tips import kite_orders as ko
+    st = S()
+    h0 = tb.load(hid)
+    cl = ko.client_for(st.config, st, h0) if h0 else None
+    return _tips_act(tb.set_stop, hid, req.value, who="page", rev=req.rev, client=cl)
 
 
 @router.post("/tips/hints/{hid}/pause")

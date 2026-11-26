@@ -323,22 +323,23 @@ def size_for(h: dict, config, lots: Optional[float] = None, rupees: Optional[flo
         if not ltp:
             raise TipsError(409, "no quote yet: give lots instead")
         return max(1, int(float(rupees) // (ltp * lot))), "rupees"
+    from backend.tips import sizing
     mode = str(getattr(config.tips, "kite_size_mode", "post") or "post")   # 📏 the same mode as the Kite orders
+    m = sizing.mult_of(config)                                              # 📏 lots ×N (never the risk figure, never yours)
     if mode == "fixed":
-        return int(config.tips.lots), "fixed"
+        return int(config.tips.lots) * m, "fixed"
     if mode == "risk":
-        from backend.tips import sizing
         sz = sizing.size(config, h, ltp)
         if sz["src"] == "risk":
             return int(sz["lots"]), "risk"
     sh = h.get("size_hint") or {}
     if sh.get("lots"):
-        return int(sh["lots"]), "post"
+        return int(sh["lots"]) * m, "post"
     if sh.get("qty"):
-        return max(1, int(sh["qty"]) // lot), "post"
+        return max(1, int(sh["qty"]) // lot) * m, "post"
     if config.tips.size_mode == "rupees" and ltp:
         return max(1, int(float(config.tips.rupees) // (ltp * lot))), "rupees"
-    return int(config.tips.lots), "default"
+    return int(config.tips.lots) * m, "default"
 
 
 INDEXES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX")
@@ -564,6 +565,190 @@ def trail(config, hid: int, to: float, who: str = "page", now: Optional[datetime
     return h
 
 
+# --- 🛑 the stop: provisional (the app's −N %), yours (the card / Telegram), the channel's --------------------------------
+
+def stop_rev(h: dict) -> int:
+    """The stop's change counter (the page sends it back with "Set stop…": a stale request is refused): the stored rev,
+    else 1 for a stop as decoded / provisional, 0 for none."""
+    st = h.get("stop") or {}
+    if st.get("rev") is not None:
+        return int(st["rev"])
+    return 1 if pl.stop_src(st) else 0
+
+
+def _t12s(iso: Optional[str]) -> str:
+    from backend.tips import kite_orders as ko
+    return ko.t12(iso, seconds=True)
+
+
+def escape_html(t: str) -> str:
+    from html import escape
+    return escape(t or "", quote=False)
+
+
+def _src_word(src: Optional[str]) -> str:
+    return {"provisional": "provisional", "owner": "yours", "channel": "the channel"}.get(src or "", src or "—")
+
+
+def _stop_change(h: dict, value: float, src: str, now: datetime) -> dict:
+    """h["stop"] = a premium stop from `src` with {at, rev + 1, was (the one before), hist [{src, value, at}]}."""
+    old = h.get("stop") or {}
+    osrc = pl.stop_src(old)
+    hist = list(old.get("hist") or [])
+    if not hist and osrc:
+        hist.append({"src": osrc, "value": old.get("value"), "at": old.get("at"), **({"pct": old["pct"]} if old.get("pct") else {})})
+    at = now.isoformat(timespec="seconds")
+    hist.append({"src": src, "value": float(value), "at": at})
+    was = ({"value": old.get("value"), "src": osrc, "pct": old.get("pct"), "at": old.get("at")} if osrc else None)
+    st = {"kind": "premium", "value": float(value), "src": src, "at": at, "rev": stop_rev(h) + 1, "was": was, "hist": hist[-12:]}
+    h["stop"] = st
+    return st
+
+
+def _apply_stop(config, h: dict, value: float, force: bool) -> None:
+    """The plan rebuilt with the new stop; the record run and the paper position follow it (an open one only when its
+    stop has not moved to cost / a trail, unless `force`: your own stop)."""
+    posted = datetime.fromisoformat(h["posted_at"]) if h.get("posted_at") else _now()
+    h["plan"] = pl.build(h, config.tips, posted)
+    run = h.get("run")
+    if run and run.get("state") != "closed" and (force or not run.get("stop_moved")):
+        run["stop"], run["spot_stop"] = float(value), None
+    pos = h.get("pos") if h.get("taken") else None
+    if pos and pos.get("state") in ("armed", "open") and (force or not pos["run"].get("stop_moved")):
+        pos["run"]["stop"], pos["run"]["spot_stop"] = float(value), None
+
+
+def _kite_client(h: dict, client=None):
+    from backend.tips import kite_auto as ka
+    from backend.tips import kite_orders as ko
+    k = ko.kstate(h)
+    return ko.sim() if k.get("dry") else (client if client is not None else ka.app_client())
+
+
+def _rmw(hid: int, fn) -> tuple[Optional[dict], object]:
+    """One read-modify-write of the hint row in ONE immediate transaction (no other writer between the read and the
+    save); `fn(h)` changes h in place and returns a value. The kite JSON is not written here (ko.save_kite)."""
+    with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        h = load(hid, conn)
+        if not h:
+            return None, None
+        out = fn(h)
+        refresh(h)
+        save(h, conn)
+    return h, out
+
+
+def set_stop(config, hid: int, value, who: str = "page", now: Optional[datetime] = None, rev: Optional[int] = None,
+             client=None) -> dict:
+    """"Set stop…": your premium stop for the hint (src "owner"). Before the fill the plan is rewritten (and an armed
+    Kite entry's stop_px); after the fill the SL order on Kite is modified (one modify through modify_stop's guards,
+    skipped when the trigger already is there) and the paper position's stop follows. 400 not a positive price / the
+    wrong side of the price · 404 · 409 over, closed on Kite, a guard, Kite's refusal, or `rev` stale (the stop changed
+    since the page loaded). The channel's SL, when it comes later, replaces it. Under kite_orders._LOCK (the same lock
+    as the channel's SL and the sync); the Kite call first (no DB connection open), then the hint in one transaction."""
+    from backend.tips import kite_orders as ko
+    now = now or _now()
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise TipsError(400, "set the stop to a price")
+    if v <= 0:
+        raise TipsError(400, "the stop must be a positive price")
+    with ko._LOCK:
+        h = _get(hid)
+        k = ko.kstate(h)
+        if h.get("status") in ("closed", "expired") or k["state"] == "closed":
+            raise TipsError(409, f"#{hid} is closed: the stop cannot change now")
+        st = h.get("stop") or {}
+        if rev is not None and int(rev) != stop_rev(h):
+            raise TipsError(409, f"the stop changed to {pl.fmt(st.get('value'))} ({_src_word(pl.stop_src(st))}) at {_t12s(st.get('at'))} · "
+                                 f"set again if you still want {pl.fmt(v)}")
+        pos = h.get("pos") if h.get("taken") else None
+        ltp = last_ltp(h)
+        filled = (pos and pos.get("state") == "open") or k["state"] == "entered" or (h.get("run") or {}).get("state") == "active"
+        if filled and ltp is not None and ((_sign(h) > 0 and v >= ltp) or (_sign(h) < 0 and v <= ltp)):
+            raise TipsError(400, f"the stop {pl.fmt(v)} is on the wrong side of the price {pl.fmt(ltp)}")
+        cl = _kite_client(h, client)
+        if k["state"] == "entered" and ((k["legs"].get("stop") or {}).get("status") in ko.LIVE):
+            ko._check(ko.guards(config, cl, h, None, now, "modify_stop"))
+        kline = ko.stop_to(config, cl, h, v, now, "you")          # Kite first: a refusal leaves the hint as it was
+        ko.save_kite(h)
+
+        def apply(x: dict) -> None:
+            old = dict(x.get("stop") or {})
+            _stop_change(x, v, "owner", now)
+            _apply_stop(config, x, v, force=True)
+            osrc = pl.stop_src(old)
+            whose = {"provisional": "the provisional", "channel": "the channel's"}.get(osrc or "", "your")
+            tail = f" · replaced {whose} {pl.fmt(old.get('value'))}" if osrc else ""
+            event(x, now, f"you set the stop to {pl.fmt(v)} ({who}) · {_t12s(now.isoformat())}{tail}" + (f" · {kline}" if kline else ""), "owner")
+        _rmw(hid, apply)
+        if kline:
+            try:
+                ko.after_event(config, load(hid) or h, now, notify=False)
+            except Exception:
+                logger.exception("Tips: the order check after your stop failed")
+        out = load(hid) or h
+        out["stop_kite"] = kline                                  # the Kite line for the Telegram reply (not stored)
+        return out
+
+
+def channel_stop(config, hid: int, value, text: str, now: datetime, client=None, kite: bool = True, notify: bool = True) -> Optional[str]:
+    """The channel's SL arrives for a hint whose stop is provisional or yours: applied at once, no click (the channel's
+    SL always replaces them). Before the fill: the plan (and an armed Kite entry's stop_px); after the fill: the Kite SL
+    modified once and the paper stop moved. A closed hint: logged only. One event line + one Telegram line. Returns the
+    line, or None when the stop is not provisional / yours any more. Under kite_orders._LOCK; the Kite call is made with
+    no DB connection open, the hint is then written in one transaction. Never raises a Kite error (logged + told)."""
+    from backend.tips import kite_orders as ko
+    v = float(value)
+    quote = (text or "").strip().replace("\n", " ")[:80]
+    with ko._LOCK:
+        h = load(hid)
+        if not h:
+            return None
+        st = h.get("stop") or {}
+        osrc = pl.stop_src(st)
+        if osrc not in pl.REPLACEABLE:
+            return None
+        k = ko.kstate(h)
+        what = f"stop {pl.fmt(st.get('value'))} (provisional)" if osrc == "provisional" else f"your {pl.fmt(st.get('value'))}"
+        if h.get("status") in ("closed", "expired") or k["state"] == "closed":
+            line = (f"the channel's SL {pl.fmt(v)} · logged · the trade closed at the "
+                    + ("provisional stop" if osrc == "provisional" else "your stop"))
+            _rmw(hid, lambda x: event(x, now, f'channel: "{quote}" · {line}', "channel"))
+            return line
+        kline = None
+        if kite:
+            try:
+                kline = ko.stop_to(config, _kite_client(h, client), h, v, now, "the channel's SL")
+            except Exception as exc:                    # never raises into the reader: logged + told
+                logger.exception("Tips: the channel's SL on Kite failed (#%s)", hid)
+                kline = f"Kite: the channel's SL {pl.fmt(v)} not applied on Kite: {str(exc)[:120]} · your call"
+                ko._log(k, now, kline)
+            ko.save_kite(h)
+        line = f"{what} → {pl.fmt(v)} (the channel's)"
+
+        def apply(x: dict) -> None:
+            if pl.stop_src(x.get("stop")) not in pl.REPLACEABLE:
+                return
+            _stop_change(x, v, "channel", now)
+            _apply_stop(config, x, v, force=False)
+            event(x, now, f'channel: "{quote}" · {line} · {_t12s(now.isoformat())}' + (" · replaced yours" if osrc == "owner" else "")
+                  + (f" · {kline} · applied on its own" if kline else ""), "channel")
+        h2, _ = _rmw(hid, apply)
+        if kline and kline.startswith("Kite: SL order modified"):
+            try:
+                ko.after_event(config, h2 or h, now, notify)
+            except Exception:
+                logger.exception("Tips: the order check after the channel's SL failed")
+    if notify:
+        ktxt = ("Kite: SL order modified" if kline.startswith("Kite: SL order modified") else kline) if kline else None
+        push(config, f"tips|stop|{hid}|{now.isoformat(timespec='seconds')}",
+             f'💡 #{hid} · channel: "{escape_html(quote)}" · {line}' + (f" · {escape_html(ktxt)}" if ktxt else "") + " · nothing to do")
+    return line + (f" · {kline}" if kline else "")
+
+
 def pause(config, hid: int, on: bool = True, who: str = "page", now: Optional[datetime] = None) -> dict:
     """Pause (no entry until resumed) / resume a hint. 409 when it is over."""
     now = now or _now()
@@ -626,7 +811,7 @@ def channel_action(config, h: dict, act: dict, text: str, now: datetime, ltp: Op
             and (h.get("kite") or {}).get("state") != "entered":
         # a stop revised before you are in ("210 revise sl 193"): the plan carries it, so a later entry uses it
         old = (h.get("stop") or {}).get("value")
-        h["stop"] = {"kind": "premium", "value": act["value"]}
+        _stop_change(h, act["value"], "channel", now)
         posted = datetime.fromisoformat(h["posted_at"]) if h.get("posted_at") else now
         allowed, paused = bool((run or {}).get("allowed")), bool((run or {}).get("paused"))
         h["plan"] = pl.build(h, config.tips, posted)

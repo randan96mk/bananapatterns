@@ -122,6 +122,20 @@ def auto_lots(config, h: dict) -> int:
     return max(1, min(ko.default_lots(config, h), int(config.tips.kite_max_lots)))
 
 
+def lots_text(config, h: dict, lots: int) -> str:
+    """"4 lots (2 × 2)" with lots ×N (", capped at 6" when kite_max_lots cut it), else "2 lots"."""
+    from backend.tips import sizing
+    n = int(lots)
+    txt = f"{n} lot{'s' if n != 1 else ''}"
+    try:
+        sz = sizing.size(config, h, bk.last_ltp(h) if h.get("id") else None)
+    except Exception:
+        return txt
+    if int(sz.get("mult") or 1) > 1 and sz["src"] != "risk":
+        txt += f" ({sz['base']} × {sz['mult']}" + (f" = {sz['raw']}, capped at {n}" if sz["raw"] != n else "") + ")"
+    return txt
+
+
 def _same_contract_today(h: dict, day: str, config=None) -> Optional[str]:
     """Why a second hint on the same contract may not arm: another hint on it is still armed / open (always), or — with
     tips.kite_reenter = "never" — any entry on it today at all. A fresh call after the earlier position closed arms by default
@@ -224,7 +238,7 @@ def auto_arm(config, client, h: dict, now: Optional[datetime] = None, notify: bo
         tail += " · activation words: the level decides"
     if notify:
         bk.push(config, f"tips|kite|auto|{h['id']}|armed",
-                f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {k['lots']} lot{'s' if k['lots'] != 1 else ''} · {k['qty']} qty {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
+                f"{apfx(h)}#{h['id']} armed · {ko.entry_side(h)} {lots_text(config, h, k['lots'])} · {k['qty']} qty {bk.title(h).split(' ', 1)[1]} · {arm.get('text') or 'MARKET'} · {tail}")
     return h
 
 
@@ -345,6 +359,9 @@ def _on_size(config, cl, h: dict, act: dict, now: datetime) -> Optional[str]:
         return "size noted (not post mode)"
     from backend.tips import sizing
     lot = int(h.get("lot_size") or 0) or 1
+    m = sizing.mult_of(config)                          # 📏 the channel's "2-2 lots" × lots ×N, then the caps
+    if m > 1:
+        n *= m
     if k.get("by") == "auto":
         n = max(1, min(n, int(config.tips.kite_max_lots)))
     if n > int(config.tips.kite_max_lots):

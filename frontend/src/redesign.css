@@ -814,3 +814,18 @@ body.btc-full-open { overflow: hidden; }
   .rd .tp-kbook .kscroll .ftab td:first-child { font-size: 12px; }
   .rd .tp-kbook .kscroll .ftab td:before { display: none; }
 }
+
+/* 🛑 the stop tile: provisional (amber) · yours (accent) · "Set stop…" in its corner, an inline price box under it */
+.rd .tp-dec > div.stc { height: auto; min-height: 46px; display: grid; align-content: start; gap: 1px; }
+.rd .tp-dec .stc .kk { display: flex; align-items: center; justify-content: space-between; gap: 6px; overflow: visible; }
+.rd .tp-dec .stc .sbtn { font-size: 10px; padding: 0 6px; line-height: 16px; height: 18px; text-transform: none; letter-spacing: 0; flex: none; }
+.rd .tp-dec .stc .s1 { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 14px; }
+.rd .tp-dec .stc .s1.down { color: var(--bad); }
+.rd .tp-dec .stc.prov { background: color-mix(in srgb, var(--warn) 10%, var(--hover)); border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border)); box-sizing: border-box; }
+.rd .tp-dec .stc.prov b { color: var(--warn); }
+.rd .tp-dec .stc.mine { background: color-mix(in srgb, var(--blue) 8%, var(--hover)); border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--border)); box-sizing: border-box; }
+.rd .tp-dec .stc.mine b { color: var(--blue); }
+.rd .tp-dec .stc .inl { display: flex; gap: 4px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.rd .tp-dec .stc .inl input { width: 72px; min-width: 0; font-size: 12px; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-variant-numeric: tabular-nums; }
+.rd .tp-dec .stc .inl .btn { font-size: 10.5px; padding: 0 7px; height: 20px; line-height: 18px; }
+.rd .tp-kbar .tp-ksel { width: auto; flex: none; font-size: 11.5px; padding: 2px 6px; }
