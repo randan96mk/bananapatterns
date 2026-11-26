@@ -86,12 +86,11 @@ const SRC = { channel: '📣', owner: '👤', code: '⚙', ai: '🤖', kite: '�
 // 🛑 The stop tile: the stop with its source (provisional amber · yours blue · the channel's plain) and, on an open hint
 // (not taken / armed / entered), "Set stop…": an inline price box (Enter sets, Esc cancels) and ONE confirm. The
 // server re-checks the side of the price and refuses a stale set (the stop changed since this page loaded: `rev`).
-function StopCell({ h, onDone }) {
+function useStopSet(h, onDone) {
   const [edit, setEdit] = useState(null);             // null = closed, else the box's text
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const t = h?.stop_tile || null;
-  const val = t?.value_text || stopText(h?.stop);
   const can = !!(onDone && h?.id != null && t?.settable);
   const set = () => {
     const raw = String(edit || '').trim();
@@ -102,18 +101,30 @@ function StopCell({ h, onDone }) {
     api.tipsSetStop(h.id, v, isNum(t?.rev) ? Number(t.rev) : undefined)
       .then(() => { setEdit(null); onDone(); }).catch((e) => setErr(`⚠ ${e.message}`)).finally(() => setBusy(false));
   };
+  const openBtn = can && edit == null ? <button type="button" className="btn ghost small sbtn" onClick={() => { setEdit(''); setErr(''); }}>Set stop…</button> : null;
+  const box = edit == null ? null : <span className="inl"><input aria-label={`set #${h.id}'s stop`} inputMode="decimal" placeholder="price" autoFocus value={edit}
+    onChange={(e) => setEdit(e.target.value.replace(/[^\d.]/g, '').slice(0, 10))}
+    onKeyDown={(e) => { if (e.key === 'Enter') set(); if (e.key === 'Escape') { setEdit(null); setErr(''); } }} />
+    <button type="button" className="btn small" disabled={busy} onClick={set}>Set</button>
+    <button type="button" className="btn ghost small" onClick={() => { setEdit(null); setErr(''); }} aria-label="cancel">✕</button></span>;
+  return { t, edit, err, openBtn, box };
+}
+function StopCell({ h, onDone }) {
+  const { t, edit, err, openBtn, box } = useStopSet(h, onDone);
+  const val = t?.value_text || stopText(h?.stop);
   return <div className={`stc ${t?.cls || ''}`} title={[val, t?.sub].filter(Boolean).join('\n')}>
     <div className="kk"><span>stop{isAi(h, 'stop') && <AiTag title="filled by the local model from the post's own text" />}</span>
-      {can && edit == null && <button type="button" className="btn ghost small sbtn" onClick={() => { setEdit(''); setErr(''); }}>Set stop…</button>}</div>
+      {openBtn}</div>
     <b className={val === 'no usable stop' ? 'warn' : ''}><span className="v">{val}</span></b>
-    {edit == null ? (t?.sub && <div className="s1">{t.sub}</div>)
-      : <span className="inl"><input aria-label={`set #${h.id}'s stop`} inputMode="decimal" placeholder="price" autoFocus value={edit}
-        onChange={(e) => setEdit(e.target.value.replace(/[^\d.]/g, '').slice(0, 10))}
-        onKeyDown={(e) => { if (e.key === 'Enter') set(); if (e.key === 'Escape') { setEdit(null); setErr(''); } }} />
-        <button type="button" className="btn small" disabled={busy} onClick={set}>Set</button>
-        <button type="button" className="btn ghost small" onClick={() => { setEdit(null); setErr(''); }} aria-label="cancel">✕</button></span>}
+    {edit == null ? (t?.sub && <div className="s1">{t.sub}</div>) : box}
     {err && <div className="s1 down">{err}</div>}
   </div>;
+}
+// 🧭 Card v2: the story row's Stop step carries the same "Set stop…" (the same hook, the same ONE confirm, the same `rev`).
+function StopSetCtl({ h, onDone }) {
+  const { err, openBtn, box } = useStopSet(h, onDone);
+  if (!openBtn && !box && !err) return null;
+  return <div className="tp-sset">{openBtn}{box}{err && <span className="down">{err}</span>}</div>;
 }
 
 export function Decoded({ h, onDone }) {
@@ -347,7 +358,7 @@ function KiteTest({ t, err, onClose }) {
 
 // The legs of one hint on Kite (entry / stop / target 1 / target 2), each with its status and its buttons; the row of
 // whole-hint actions under them. Every button confirms first; the numbers come from the server (GET /api/tips).
-function KiteLegs({ h, kinfo, onDone }) {
+function KiteLegs({ h, kinfo, onDone, part = 'legs' }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const k = h?.kite || {};
@@ -385,20 +396,16 @@ function KiteLegs({ h, kinfo, onDone }) {
   const addQty = isNum(ad.lots) ? Number(ad.lots) * Number(h?.lot_size || 0) : null;
   const placeAdd = () => run('add', {}, `${head("Place the channel's add on Kite")}add   ${L.entry?.side || 'BUY'} LIMIT ${px(ad.level)}${addQty ? ` ×${px(addQty)}` : ''} · ${k.add_text || ''}\n\nONE add per call: after the fill the stop's quantity goes up to the total (same trigger) and the entry price becomes the average. Capped by kite_max_lots and kite_risk_per_trade (blended average); cancelled with the window end, the time stop, any exit or a stop hit.\n\nAveraging doubles a bad day.\n\n${W}`, 'add armed');
   const toCost = () => run('modify_stop', { to: 'cost' }, T.moveStop('cost'), 'stop moved to cost');
-  const resync = () => { if (window.confirm('Re-sync with Kite?\n\nReads the Kite order book once (only the app\'s own Tips orders) and applies what changed.')) { setBusy(true); api.tipsKiteResync().then(() => { setMsg('re-synced'); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false)); } };
   const live = (leg) => LIVE_ST.includes(L[leg]?.status);
   const btn = (label, fn, extra = {}) => <button type="button" className={`btn ghost small ${extra.cls || ''}`} disabled={busy || extra.off} title={extra.title} onClick={fn}>{label}</button>;
   const legBtns = (lg) => {
     const out = [];
     if (lg.leg === 'entry') {
-      if (acts.includes('entry')) out.push(btn('Place entry…', entry, { key: 'e', off: held, title: held ? heldWhy : undefined }));
-      if (acts.includes('send_now')) out.push(btn('Send now…', sendNow, { title: "skip the channel's activation and send the entry now" }));
       if (acts.includes('cancel:entry')) out.push(btn('Cancel', () => cancel('entry')));
       if (lg.status === 'complete') out.push(<span key="d" className="dim small">done · by {lg.by === 'click' ? 'your click' : lg.by === 'dry' ? 'your click (dry run)' : lg.by}</span>);
     } else if (lg.leg === 'stop') {
       if (live('stop') && isNum(k.entry_px) && Number(lg.trigger) !== Number(k.entry_px) && acts.includes('modify_stop')) out.push(btn(`Modify → cost ${px(k.entry_px)}`, toCost));
       if (acts.includes('cancel:stop')) out.push(btn('Cancel', () => cancel('stop')));
-      if (!live('stop') && lg.status !== 'complete' && lg.placeable !== false && !lg.closed && k.state !== 'closed') out.push(btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }));
     } else if (lg.leg === 't1' || lg.leg === 't2' || lg.leg === 't3') {      // watched by the app: no order to place (a resting one from before can be cancelled)
       if (acts.includes(`cancel:${lg.leg}`)) out.push(btn('Cancel', () => cancel(lg.leg)));
     } else if (lg.leg === 'add') {
@@ -414,26 +421,47 @@ function KiteLegs({ h, kinfo, onDone }) {
         : k.state === 'armed' ? `entry ${k.arm?.kind === 'slm' || k.arm?.kind === 'limit' ? 'resting on Kite' : 'on Kite'} · waiting for the fill${k.auto_rest ? ' · then SL by the app' : ''}`
           : k.state === 'entered' ? `${px(k.qty_open)} open ${k.dry ? 'in the dry run' : 'on Kite'} · only the stop rests · targets watched by the app${k.beyond_t2 ? ` · targets past ${L.t3 ? 'T3' : 'T2'}: paper record only` : ''}${k.footer ? ` · ${k.footer}` : ''}`
             : k.sim ? 'dry run · every button opens a confirm · nothing reaches Kite' : 'every button opens a confirm · the paper book stays as it is';
+  // 🧭 Card v2: the whole-hint buttons (Place all / entry / Send now / SL / rest / add / Take N / Exit) sit in the card's
+  // bottom row (part "acts", visible without unfolding); the legs with their per-leg Cancel / Modify → cost sit in the
+  // fold (part "legs"). Re-sync sits on the fold line (ResyncBtn). Same handlers, same confirms.
+  const stopLeg = legs.find((lg) => lg.leg === 'stop');
+  const slOk = stopLeg && !live('stop') && stopLeg.status !== 'complete' && stopLeg.placeable !== false && !stopLeg.closed && k.state !== 'closed';
+  if (part === 'acts') {
+    const bs = [
+      acts.includes('all') && <button key="all" type="button" className="btn small" disabled={busy || held} title={held ? heldWhy : undefined} onClick={all}>⚡ Place all on Kite · entry + SL…</button>,
+      acts.includes('entry') && btn('Place entry…', entry, { off: held, title: held ? heldWhy : undefined }),
+      acts.includes('send_now') && btn('Send now…', sendNow, { title: "skip the channel's activation and send the entry now" }),
+      slOk && btn('Place SL…', stop, { off: !acts.includes('stop'), title: acts.includes('stop') ? undefined : 'after the entry fills on Kite' }),
+      acts.includes('add') && <button key="add" type="button" className="btn ghost small" disabled={busy} title={k.add_text || ''} onClick={placeAdd}>➕ Place add…</button>,
+      acts.includes('rest') && <button key="rest" type="button" className="btn small" disabled={busy} onClick={rest}>⚡ Place rest…</button>,
+      acts.includes('exit') && <button key="exit" type="button" className="btn ghost small tp-danger" disabled={busy} onClick={exit}>Exit on Kite now…</button>,
+    ].filter(Boolean);
+    if (!bs.length && !held && !msg) return null;
+    return <div className="tp-kite tp-kbot">
+      {held && <div className="tp-held" role="alert"><span className="tx">{SZ.held_text || SZ.line3}</span>
+        {nOk > 0 && acts.includes('all') && <button type="button" className="btn small" disabled={busy} onClick={takeN}>Take {plural(nOk, 'lot')}…</button>}</div>}
+      <div className="acts tp-kacts">{bs.map((x, i) => <React.Fragment key={i}>{x}</React.Fragment>)}
+        <span className="note">{msg ? note : k.state === 'closed' ? '' : note}</span></div>
+    </div>;
+  }
   return <div className="tp-kite">
     <div className="tp-legs">{legs.map((lg) => <div key={lg.leg} className={`tp-leg ${lg.status}`}>
       <div className="t"><span className="ic">{LEG_IC[lg.leg]}</span><b>{lg.name}</b><span className="ln">· {lg.side} {px(lg.qty)} · {lg.type_text}</span>{legTag(lg)}</div>
       <div className="d" title={lg.note || undefined}>{[lg.at, lg.order_id ? `order ${lg.order_id}` : '', lg.detail].filter(Boolean).join(' · ')}</div>
       {lg.now_text && <div className={`d nw ${lg.tone || ''}`} title={lg.now_text}>{lg.now_text}</div>}
       <div className="a">{legBtns(lg)}</div></div>)}</div>
-    {held && <div className="tp-held" role="alert"><span className="tx">{SZ.held_text || SZ.line3}</span>
-      {nOk > 0 && acts.includes('all') && <button type="button" className="btn small" disabled={busy} onClick={takeN}>Take {plural(nOk, 'lot')}…</button>}</div>}
     {k.add_text && !k.add && <div className="tp-addl" title={k.add_why || ''}>➕ {k.add_text} · {k.follow_adds ? (k.add_why ? `not armed: ${k.add_why}` : 'kite_follow_adds on · one add after the fill') : 'the app never adds unless kite_follow_adds is on'}</div>}
     <FactsRow f={h?.facts} />
-    <div className="acts tp-kacts">
-      {acts.includes('all') && <button type="button" className="btn small" disabled={busy || held} title={held ? heldWhy : undefined} onClick={all}>⚡ Place all on Kite · entry + SL…</button>}
-      {acts.includes('add') && <button type="button" className="btn ghost small" disabled={busy} title={k.add_text || ''} onClick={placeAdd}>➕ Place add…</button>}
-      {acts.includes('rest') && <button type="button" className="btn small" disabled={busy} onClick={rest}>⚡ Place rest…</button>}
-      {acts.includes('exit') && <button type="button" className="btn ghost small tp-danger" disabled={busy} onClick={exit}>Exit on Kite now…</button>}
-      <button type="button" className="btn ghost small" disabled={busy} onClick={resync}>Re-sync with Kite</button>
-      <span className="note">{note}</span>
-    </div>
-    <KiteCheck k={k} />
+    {msg ? <div className="tp-kmsg">{note}</div> : k.state === 'closed' && !h?.foot ? <div className="tp-kmsg dim">{note}</div> : null}
   </div>;
+}
+
+// Re-sync with Kite (the fold line's right side): reads the Kite order book once, behind its confirm.
+function ResyncBtn({ onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const resync = () => { if (window.confirm('Re-sync with Kite?\n\nReads the Kite order book once (only the app\'s own Tips orders) and applies what changed.')) { setBusy(true); api.tipsKiteResync().then(() => { setMsg('re-synced'); onDone && onDone(); }).catch((e) => setMsg(`⚠ ${e.message}`)).finally(() => setBusy(false)); } };
+  return <>{msg && <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>}<button type="button" className="tp-fl" disabled={busy} onClick={resync}>Re-sync with Kite</button></>;
 }
 
 // PR C: the order check under the legs: a red / amber line per item (code), then the AI read ([AI], 3 lines).
@@ -745,12 +773,51 @@ function KiteOrders({ kd, onDone }) {
   </Panel>;
 }
 
-// One hint: the raw post (kept as written), the decoded grid, the target bar, the timeline, the actions (each confirms).
-function HintCard({ h, defLots, onDone, kinfo }) {
+// 🧭 Card v2 (the server's h.state / h.story / h.fold_counts / h.foot; each falls back to today's blocks when missing):
+// header · the five-step story (post · entry · stop · targets · result | now) · the bar · warning lines · the fold line
+// (post text · legs · channel said next · log · AI, each remembered on this device: bp.tips.fold.<section>, closed by
+// default) · the actions (today's paper row + the Kite buttons). Nothing of today's card is removed: it is folded.
+const STATE_KINDS = ['live', 'wait', 'won', 'lost', 'off'];
+export function StateBadge({ s }) {
+  if (!s || !s.word) return null;
+  const k = STATE_KINDS.includes(s.kind) ? s.kind : 'off';
+  return <span className={`tp-state ${k}`} title={s.why || s.word}>{k === 'live' && <i className="pd" aria-hidden="true">●</i>}{s.word}</span>;
+}
+const STEP_L = { post: 'post', entry: 'entry', stop: 'stop', targets: 'targets', result: 'result', now: 'now' };
+function Step({ s, children }) {
+  const tn = ['up', 'down', 'warn', 'live'].includes(s?.tone) ? s.tone : '';
+  return <div className={`tp-step ${s?.done ? 'done' : ''} ${tn === 'live' ? 'live' : ''}`}>
+    <div className="sl"><span>{STEP_L[s?.step] || s?.step || '—'}</span><span className="st">{s?.t || ''}</span></div>
+    <div className={`sh ${tn !== 'live' ? tn : ''}`} title={s?.head || undefined}>{s?.head || '—'}</div>
+    <div className="ss" title={s?.sub || undefined}>{s?.sub || ''}</div>
+    {children}
+  </div>;
+}
+function Story({ h, onDone }) {
+  const st = arr(h?.story).filter((x) => x && typeof x === 'object');
+  if (!st.length) return null;
+  const t = h?.stop_tile;
+  return <div className="tp-story">{st.map((s, i) => <Step key={`${s.step}${i}`} s={s}>
+    {s.step === 'stop' && <>
+      {(t?.chip || s.warn) && <div className="sx">{t?.chip && <Tag c={t.chip_tone === 'b' ? 'a' : t.chip_tone || ''} title={t.sub || undefined}>{t.chip}</Tag>}
+        {s.warn && <span className="warn" title={s.warn}>⚠ {s.warn}</span>}</div>}
+      <StopSetCtl h={h} onDone={onDone} /></>}
+  </Step>)}</div>;
+}
+
+const FOLDS = ['post', 'legs', 'said_next', 'log', 'ai'];
+const FOLD_KEY = (s) => `bp.tips.fold.${s}`;
+const readFold = (s) => { try { return localStorage.getItem(FOLD_KEY(s)) === 'open'; } catch { return false; } };
+const saveFold = (s, open) => { try { localStorage.setItem(FOLD_KEY(s), open ? 'open' : 'closed'); } catch { /* private mode */ } };
+const firstLine = (x) => String(x || '').split('\n')[0];
+
+// One hint: the header, the story row, the bar, the fold, the actions (each confirms).
+function HintCard({ h, defLots, onDone, kinfo, onCompact }) {
   const [lots, setLots] = useState('');
   const [trail, setTrail] = useState(null);           // null = closed, else the field's text
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [fold, setFold] = useState(() => Object.fromEntries(FOLDS.map((s) => [s, readFold(s)])));
   const id = h?.id;
   const name = hintName(h);
   const open = OPEN.includes(h?.status);
@@ -810,33 +877,87 @@ function HintCard({ h, defLots, onDone, kinfo }) {
   };
   const raw = h?.text ?? h?.raw ?? '';
   const live = open && h?.taken && isNum(h?.ltp) ? `live ${px(h.ltp)}${isNum(h?.pnl) ? ` · ${money(h.pnl)}` : ''}` : '';
-  return <div className={`tp-hint ${h?.status === 'active' ? 'active' : ''} ${open ? '' : 'closed'}`} data-id={id}>
+  // --- v2 pieces -------------------------------------------------------------------------------------------------
+  const S = h?.state && typeof h.state === 'object' && h.state.word ? h.state : null;
+  const kind = S && STATE_KINDS.includes(S.kind) ? S.kind : '';
+  const k = h?.kite || {};
+  const kOn = !!(kinfo && kinfo.mode !== 'off' && h?.kite && (open || (k.state && k.state !== 'none')));
+  const kLive = k.state && k.state !== 'none';
+  const hasStory = arr(h?.story).length > 0;
+  const lotsN = kLive && isNum(k.lots) && Number(k.lots) > 0 ? Number(k.lots) : h?.taken && isNum(h?.lots) ? Number(h.lots) : null;
+  const qtyN = kLive && isNum(k.qty) && Number(k.qty) > 0 ? Number(k.qty) : lotsN != null && isNum(h?.lot_size) ? lotsN * Number(h.lot_size) : null;
+  const meta = [lotsN != null ? plural(px(lotsN), 'lot') : '', qtyN != null ? `${px(qtyN)} qty` : '', h?.expiry_label || (h?.expiry ? dayLabel(h.expiry) : '')].filter(Boolean).join(' · ');
+  const ps = h?.pnl_strip;
+  const resTxt = ps?.pnl_text || (h?.taken && isNum(h?.pnl) && Number(h.pnl) !== 0 ? money(h.pnl) : '');
+  const resTone = ps ? (ps.tone === 'up' || ps.tone === 'down' ? ps.tone : '') : tone(h?.pnl);
+  const endBits = (kind === 'live' ? [h?.now_tile?.value_text, ps?.pct_text, isNum(k.qty_open) && Number(k.qty_open) > 0 ? `${px(k.qty_open)} open` : '']
+    : kind === 'won' || kind === 'lost' ? [ps?.pct_text, k.reason || (h?.ended ? String(h.ended).replace('_', ' ') : '')] : []).filter(Boolean);
+  const events = arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : arr(h?.events);
+  const ai4 = h?.ai4 || {};
+  const aiBits = [ai4.review && (firstLine(arr(ai4.review.lines)[0]?.text) || 'review'), ai4.grade && `grade ${ai4.grade.grade}`, ai4.preflight && 'pre-flight', h?.market && (h.market.chip || 'market read'), h?.market?.entry && 'entry timing'].filter(Boolean);
+  const fc = h?.fold_counts && typeof h.fold_counts === 'object' ? h.fold_counts : {};
+  const cnt = (key, local) => (isNum(fc[key]) ? Number(fc[key]) : local);
+  const nLegs = cnt('legs', kOn ? arr(k.legs).length : arr(h?.facts).length);
+  const nSaid = cnt('said_next', arr(h?.said_next).length);
+  const nLog = cnt('log', events.length);
+  const secs = [
+    ['post', 'post text', true],
+    ['legs', `legs · ${px(nLegs)}`, kOn || arr(h?.facts).length > 0 || !!ps],
+    ['said_next', `channel said next · ${px(nSaid)}`, arr(h?.said_next).length > 0],
+    ['log', `log · ${px(nLog)}`, events.length > 0],
+    ['ai', `AI · ${aiBits.join(' · ')}`, aiBits.length > 0],
+  ].filter((x) => x[2]);
+  const allOpen = secs.every(([s]) => fold[s]);
+  const toggle = (s) => { const v = !fold[s]; setFold({ ...fold, [s]: v }); saveFold(s, v); };
+  const setAll = (v) => { const nx = { ...fold }; secs.forEach(([s]) => { nx[s] = v; saveFold(s, v); }); setFold(nx); };
+  const mismatch = shot?.state === 'mismatch';
+  const footTxt = h?.foot || (h?.taken ? `${money(h?.pnl)} · closed${h?.exit_px != null ? ` at ${px(h.exit_px)}` : ''}` : h?.kite?.footer ? `${h.kite.state === 'closed' ? `closed on Kite${h.kite.reason ? ` · ${h.kite.reason}` : ''} · ${money(h.kite.realised)} · ` : ''}${h.kite.footer}` : "scored for the channel's record only · you did not take it");
+  const cardCls = ['tp-hint', h?.status === 'active' ? 'active' : '', open ? '' : 'closed', kind ? `k-${kind}` : ''].filter(Boolean).join(' ');
+  return <div className={cardCls} data-id={id}>
     <div className="h"><span className="id">#{id ?? '?'}</span><b className="nm" title={name}>{name}</b>{isAi(h, 'symbol', 'strike', 'opt_type') && <AiTag title="filled by the local model from the post's own text" />}
-      {statusTag(h)}{h?.tracked === false && <Tag c="bad" title="no quotes for this instrument: it is not scored">{h.untracked_why || 'untracked · log in'}</Tag>}
+      {meta && <span className="meta" title={meta}>· {meta}</span>}
+      {S ? <StateBadge s={S} /> : statusTag(h)}
+      {resTxt && <b className={`res ${resTone}`} title={ps?.label || 'P&L'}>{resTxt}</b>}
+      {endBits.length > 0 && <Tag c={kind === 'won' ? 'ok' : kind === 'lost' ? 'bad' : 'a'} title={endBits.join(' · ')}>{endBits.join(' · ')}</Tag>}
+      {S?.why && !endBits.length && kind !== 'live' && <span className="why" title={S.why}>{S.why}</span>}
+      {h?.tracked === false && <Tag c="bad" title="no quotes for this instrument: it is not scored">{h.untracked_why || 'untracked · log in'}</Tag>}
       {symInferred && <Tag c="w" title="the post named no index: it was read from the strike level · set it by hand if the screenshot says otherwise">index from strike</Tag>}
       {h?.kite?.needs_activation && open && <Tag c="w" title="wait words and no level: the entry waits for the channel's active / activated">needs activation</Tag>}
       {h?.kite?.auto && <Tag c={h.kite.auto.state === 'not_armed' ? 'bad' : h.kite.auto.state === 'waiting' ? 'w' : 'ok'} title={h.kite.auto.text}><span className="tp-adot">●</span> {h.kite.auto.text}</Tag>}
-      {shotTag(shot)}
-      {h?.stop_tile?.chip && <Tag c={h.stop_tile.chip_tone === 'b' ? 'a' : h.stop_tile.chip_tone || ''} title={h.stop_tile.sub || undefined}>{h.stop_tile.chip}</Tag>}
       <GradeChip g={h?.ai4?.grade} />
-      {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px' }} title="the post named no index: pick it after looking at the channel's screenshot">
+      {shotTag(shot)}
+      {!hasStory && h?.stop_tile?.chip && <Tag c={h.stop_tile.chip_tone === 'b' ? 'a' : h.stop_tile.chip_tone || ''} title={h.stop_tile.sub || undefined}>{h.stop_tile.chip}</Tag>}
+      {canSym && <select className="tp-in" aria-label="set the index" defaultValue="" onChange={setSym} style={{ fontSize: 11, padding: '1px 4px', width: 'auto' }} title="the post named no index: pick it after looking at the channel's screenshot">
         <option value="">{h?.symbol ? 'change index…' : 'set index…'}</option>{['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].map((x) => <option key={x} value={x}>{x}</option>)}</select>}
-      <span className="who">{[h?.channel, when(h?.created ?? h?.posted_at)].filter(Boolean).join(' · ')}</span></div>
-    <PnlStrip s={h?.pnl_strip} />
-    <ReviewBlock r={h?.ai4?.review} />
-    {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
-    <Decoded h={h} onDone={onDone} />
-    <DistBar d={h?.dist} />
-    <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />
-    <TargetBar h={h} />
-    <SaidNext chips={h?.said_next} />
-    <Timeline id={id} defOpen={h?.log_open} events={arr(h?.kite?.log).length ? [...arr(h?.events), ...arr(h.kite.log)].sort((a, b) => String(a?.t || '').localeCompare(String(b?.t || ''))) : h?.events} />
-    {kinfo && kinfo.mode !== 'off' && h?.kite && (open || (h.kite.state && h.kite.state !== 'none')) ? <KiteLegs h={h} kinfo={kinfo} onDone={onDone} /> : <FactsRow f={h?.facts} />}
-    {/* the [AI] blocks sit below the trade: plan, bar, chips, log and legs come first */}
-    <GradeBlock g={h?.ai4?.grade} />
-    <PreflightBlock p={h?.ai4?.preflight} />
-    <MarketBlock m={h?.market} />
-    <EntryTiming e={h?.market?.entry} />
+      <span className="who">{[h?.channel, when(h?.created ?? h?.posted_at)].filter(Boolean).join(' · ')}</span>
+      {onCompact && <button type="button" className="tp-fl" onClick={onCompact} aria-label="fold back to one line">▴</button>}</div>
+    {hasStory ? <Story h={h} onDone={onDone} /> : <Decoded h={h} onDone={onDone} />}
+    <div className="tp-barl"><DistBar d={h?.dist} /><TargetBar h={h} /></div>
+    {mismatch && <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />}
+    {kOn && <KiteCheck k={k} />}
+    <div className="tp-fold">
+      {secs.map(([s, label]) => <button key={s} type="button" className={`tp-fb ${fold[s] ? 'on' : ''}`} aria-expanded={!!fold[s]} title={label} onClick={() => toggle(s)}>
+        <span className="ar" aria-hidden="true">{fold[s] ? '▾' : '▸'}</span><span className="lb">{label}</span></button>)}
+      <span className="r">{kOn && <ResyncBtn onDone={onDone} />}
+        <button type="button" className="tp-fl" onClick={() => setAll(!allOpen)}>{allOpen ? 'collapse all' : 'expand all'}</button></span>
+    </div>
+    {fold.post && <div className="tp-sec"><div className="t">post text <span className="m">as received</span></div>
+      {raw ? <div className="raw">{raw}</div> : <div className="raw dim">(no text)</div>}
+      {hasStory && <Decoded h={h} />}
+      {!mismatch && <ShotLine h={h} busy={busy} onUse={useShot} onKeep={keepText} />}</div>}
+    {fold.legs && secs.some((x) => x[0] === 'legs') && <div className="tp-sec"><div className="t">legs <span className="m">{kOn ? "the app's own Kite orders · one row each" : 'the trade facts'}</span></div>
+      <PnlStrip s={ps} />
+      {kOn ? <KiteLegs h={h} kinfo={kinfo} onDone={onDone} part="legs" /> : <FactsRow f={h?.facts} />}</div>}
+    {fold.said_next && arr(h?.said_next).length > 0 && <div className="tp-sec"><SaidNext chips={h?.said_next} /></div>}
+    {fold.log && events.length > 0 && <div className="tp-sec"><div className="t">log <span className="m">{plural(px(events.length), 'line')} · newest last</span></div>
+      <Timeline id={id} defOpen={h?.log_open} events={events} /></div>}
+    {fold.ai && aiBits.length > 0 && <div className="tp-sec ai">
+      <ReviewBlock r={h?.ai4?.review} />
+      <GradeBlock g={h?.ai4?.grade} />
+      <PreflightBlock p={h?.ai4?.preflight} />
+      <MarketBlock m={h?.market} />
+      <EntryTiming e={h?.market?.entry} /></div>}
+    {kOn && <KiteLegs h={h} kinfo={kinfo} onDone={onDone} part="acts" />}
     <div className="acts">
       {offer && <>
         <span className="lotf"><input inputMode="numeric" aria-label="lots" placeholder={String(n)} value={lots} onChange={(e) => setLots(e.target.value.replace(/[^\d]/g, '').slice(0, 3))} />lots</span>
@@ -852,11 +973,52 @@ function HintCard({ h, defLots, onDone, kinfo }) {
             onKeyDown={(e) => { if (e.key === 'Enter') doTrail(); if (e.key === 'Escape') setTrail(null); }} />
             <button type="button" className="btn small" disabled={busy} onClick={doTrail}>Trail</button>
             <button type="button" className="btn ghost small" onClick={() => setTrail(null)}>✕</button></span>}</>}
-      <span className="note">{msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>
+      <span className="note" title={typeof footTxt === 'string' ? footTxt : undefined}>{msg ? <span className={msg.startsWith('⚠') ? 'down' : 'up'}>{msg}</span>
         : live ? <span className={tone(h?.pnl)}>{live}</span>
-          : open ? (!offer ? (h?.plan?.text || '') : `${!stated && !h?.taken ? 'size not stated · you choose · ' : ''}Telegram: ${h?.telegram || `take ${id} · take ${id} 2 · skip ${id}`}`)
-            : h?.taken ? `${money(h?.pnl)} · closed${h?.exit_px != null ? ` at ${px(h.exit_px)}` : ''}` : h?.kite?.footer ? `${h.kite.state === 'closed' ? `closed on Kite${h.kite.reason ? ` · ${h.kite.reason}` : ''} · ${money(h.kite.realised)} · ` : ''}${h.kite.footer}` : "scored for the channel's record only · you did not take it"}</span>
+          : open ? (!offer ? (h?.foot || h?.plan?.text || '') : `${!stated && !h?.taken ? 'size not stated · you choose · ' : ''}Telegram: ${h?.telegram || `take ${id} · take ${id} 2 · skip ${id}`}`)
+            : footTxt}</span>
     </div></div>;
+}
+
+// 🧭 A not-taken card in one line (badge · title · one line · time); a click opens the full card.
+function MiniCard({ h, onOpen }) {
+  const S = h?.state && h.state.word ? h.state : null;
+  const line = [h?.entry_text || entryText(h?.entry), S?.why, h?.foot || h?.kite?.footer].filter(Boolean).join(' · ');
+  return <button type="button" className={`tp-mini k-${S && STATE_KINDS.includes(S.kind) ? S.kind : 'off'}`} onClick={onOpen} aria-label={`open #${h?.id}`}>
+    {S ? <StateBadge s={S} /> : statusTag(h)}
+    <b className="nm" title={hintName(h)}>#{h?.id} {hintName(h)}</b>
+    <span className="ln" title={line}>{line}</span>
+    <span className="who">{when(h?.created ?? h?.posted_at)}</span></button>;
+}
+function NotTaken({ h, ...rest }) {
+  const [full, setFull] = useState(false);
+  return full ? <HintCard h={h} {...rest} onCompact={() => setFull(false)} /> : <MiniCard h={h} onOpen={() => setFull(true)} />;
+}
+
+// 🧭 The page groups (data.groups from the server; else each card's state.group; else from its status).
+const GROUPS = [
+  ['live', 'Live', 'money on Kite right now · always first · never folded away'],
+  ['waiting', 'Waiting', "armed on Kite or waiting for the level / the channel's word · nothing filled yet"],
+  ['closed', 'Closed today', 'green edge won · red edge lost · the result and how it ended in the badge'],
+  ['not_taken', 'Not taken', 'cancelled · avoided · skipped · expired without a fill · dimmed, folded, scored for the record only'],
+];
+const GKEYS = GROUPS.map((g) => g[0]);
+function groupOf(h) {
+  if (GKEYS.includes(h?.state?.group)) return h.state.group;
+  const ks = h?.kite?.state;
+  if (ks === 'entered' || h?.position?.state === 'open' || (h?.status === 'active' && h?.taken)) return 'live';
+  if (ks === 'closed' || (h?.taken && !OPEN.includes(h?.status))) return 'closed';
+  if (OPEN.includes(h?.status)) return 'waiting';
+  return 'not_taken';
+}
+function groupHints(hints, groups) {
+  const out = Object.fromEntries(GKEYS.map((g) => [g, []]));
+  const g = groups && typeof groups === 'object' ? groups : {};
+  const where = new Map();
+  GKEYS.forEach((key) => arr(g[key]).forEach((x, i) => { if (!where.has(String(x))) where.set(String(x), [key, i]); }));
+  hints.forEach((h, i) => { const w = where.get(String(h.id)); out[w ? w[0] : groupOf(h)].push([w ? w[1] : 1e6 + i, h]); });
+  GKEYS.forEach((key) => { out[key] = out[key].sort((a, b) => a[0] - b[0]).map((x) => x[1]); });
+  return out;
 }
 
 // The channel feed: every post with its kind; chatter / promo / image dimmed and folded.
@@ -1115,6 +1277,8 @@ export default function TipsPage() {
   const showBooks = kOn || arr(data.kite_book?.trades).length > 0;
   const books = showBooks ? <div className="tp-books"><KiteBook kb={data.kite_book} /><Book book={book} /></div> : null;
   const shownHints = older ? hints : hints.slice(0, Math.max(6, openH.length));
+  const grouped = groupHints(shownHints, data.groups);
+  const kinfo2 = data.kite ? { ...data.kite, ...(kd || {}) } : null;
   const runTest = () => {
     setKtest({ busy: true, err: '', hidden: null });
     api.tipsKiteTest().then((r) => { setKd(r && typeof r === 'object' ? r : null); setKtest({ busy: false, err: '', hidden: null }); reload0(); })
@@ -1163,7 +1327,11 @@ export default function TipsPage() {
         {reader.state === 'logged_out' && <LoginPanel reader={reader} onDone={reload} />}
         {tryOpen && <TryPost onClose={() => setTryOpen(false)} />}
         {!hints.length && <Panel title="Hints"><p className="muted small rempty">No hints yet. A call in the channel becomes a card here with its decoded plan; nothing is taken without you.</p></Panel>}
-        {shownHints.map((h) => <HintCard key={h.id} h={h} defLots={defLots} onDone={reload} kinfo={data.kite ? { ...data.kite, ...(kd || {}) } : null} />)}
+        {GROUPS.map(([g, title, cap]) => { const xs = grouped[g]; if (!xs.length) return null; let lastDay = null;
+          return <React.Fragment key={g}><div className={`tp-grp g-${g}`}><b>{title}</b><span className="n">{px(xs.length)}</span><i /><span className="cap" title={cap}>{cap}</span></div>
+            {xs.map((h) => { const dl = (g === 'closed' || g === 'not_taken') && h.day_label && h.day_label !== 'today' && h.day_label !== lastDay ? h.day_label : null; if (dl) lastDay = dl;
+              const p = { h, defLots, onDone: reload, kinfo: kinfo2 };
+              return <React.Fragment key={h.id}>{dl && <div className="tp-day">{dl}</div>}{g === 'not_taken' ? <NotTaken {...p} /> : <HintCard {...p} />}</React.Fragment>; })}</React.Fragment>; })}
         {hints.length > shownHints.length && <button type="button" className="btn ghost small tp-more" onClick={() => setOlder(true)}>show {hints.length - shownHints.length} older</button>}
       </div>
       <div className="tp-col">

@@ -2301,6 +2301,25 @@ has / had a position on the hint; a paper-only hint keeps its old look.
 `test_tips_telegram.py` (12), `test_tips_kite.py` (10: a fake broker, the whole Kite flow, rejection, kill switch, guards, caps, routes), `test_tips_vision.py` (18: OCR facts on hand-written line sets, a fake engine, mismatch / report vs check / the 2-day rule; one real-engine test when installed). The fixture is 30 real posts (links replaced by example.com); no secrets in any fixture.
 
 
+### 💡 Tips card v2 · the state badge, the story row, the fold, the page groups
+
+`backend/tips/card2.py` (pure, by code; no quote, Kite or model call) adds four keys to every hint of `GET /api/tips`:
+**`state`** `{kind live|wait|won|lost|off, word, why, group}` — the badge word from the hint, its Kite state, the paper
+position and the status: `LIVE`, `ARMED · RESTING`, `WAITING · STOP MISSING` / `LEVEL` / `CHANNEL'S WORD`, `PAUSED · AVOID`,
+`CLOSED · TARGET 2` / `STOP` / `CHANNEL'S EXIT` / `TIME STOP` / `YOUR EXIT` (won when the realised ₹ ≥ 0, else lost),
+`CANCELLED · AVOID` / `WINDOW END` / `KILL SWITCH`, `NO FILL · TIME STOP`, `SKIPPED BY YOU`, `EXPIRED`, and `PAPER · OPEN` /
+`PAPER · CLOSED` for a paper-only take (`DRY · ` in front in a dry run); **`story`** — always five steps (post · entry ·
+stop · targets · result once closed or not taken, now while open or waiting), each `{step, t, head, sub, tone, done}`
+with a 12-hour time ("2:04" today, "Thu 2:04 PM" before) and "—" for a missing figure; the stop step carries the stop
+tile (`settable`, `rev`) so "Set stop…" lives there; **`fold_counts`** `{legs, said_next, log, ai}` for the fold line
+(post text, legs, channel said next, log, AI · review · grade · market read: every block still there, folded); **`foot`**
+— the footer line in one place. `summary()` adds **`groups`** `{live, waiting, closed, not_taken}` of hint ids (live
+newest first, waiting by posted time, closed newest close first, not taken newest first) for the page's Live / Waiting /
+Closed today / Not taken groups. The same word shows on Home (`GET /api/home/tips` `today[].state`, `rows[].state_word`)
+and in Telegram (`tip N`, the new-hint line's "now …", the Kite "unfilled entry cancelled" line). Tests:
+`tests/test_tips_card2.py`.
+
+
 ### ⚡ Tips · the Kite ledger and the 🎯 T3 runner
 
 - **The Kite ledger** (`backend/tips/kite_book.py`, table `tips_kite_trades`): one row per closed Kite hint, written when

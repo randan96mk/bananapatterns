@@ -8,12 +8,13 @@ from backend.config import AppConfig
 from backend.engine import health
 from tests.tips_world import BN12, KEY12, cfg, seed, world
 
-SUMMARY_KEYS = {"enabled", "reader", "channels", "cards", "hints", "feed", "record", "book", "settings", "quotes_at", "any_open", "at", "kite", "kite_book"}
+SUMMARY_KEYS = {"enabled", "reader", "channels", "cards", "hints", "feed", "record", "book", "settings", "quotes_at", "any_open", "at", "kite", "kite_book", "groups"}
 HINT_KEYS = {"id", "channel", "post_id", "posted_at", "time", "day", "day_label", "raw", "title", "symbol", "side", "instrument", "strike",
              "opt_type", "expiry", "expiry_label", "expiry_src", "tradingsymbol", "exchange", "lot_size", "entry", "entry_text", "stop",
              "stop_text", "stop_tile", "targets", "targets_hit", "targets_text", "open_ended", "size_hint", "decoded", "plan", "status", "ended", "taken",
              "lots", "entry_px", "exit_px", "pnl", "ltp", "events", "tracked", "untracked_why", "score", "position", "actions", "telegram", "source", "kite", "shot", "now",
-             "pnl_strip", "now_tile", "dist", "said_next", "facts", "trade_facts", "ai4", "market", "log_open", "sizing"}
+             "pnl_strip", "now_tile", "dist", "said_next", "facts", "trade_facts", "ai4", "market", "log_open", "sizing",
+             "state", "story", "fold_counts", "foot"}
 
 
 @pytest.fixture
@@ -38,6 +39,11 @@ def test_summary_and_hint_keys(api):
     assert set(d) == SUMMARY_KEYS
     assert set(d["reader"]) >= {"state", "account_masked", "last_post_at", "channels", "lag_ms"} and d["reader"]["state"] == "logged_out"
     assert set(d["hints"][0]) == HINT_KEYS and d["hints"][0]["title"] == "BUY BANKNIFTY 50300 PE"
+    h0 = d["hints"][0]                                   # 💡 card v2: the state, the five steps, the fold counts, the footer, the groups
+    assert h0["state"]["word"] == "WAITING · LEVEL" and h0["state"]["group"] == "waiting" and h0["state"]["kind"] == "wait"
+    assert [s["step"] for s in h0["story"]] == ["post", "entry", "stop", "targets", "now"]
+    assert set(h0["fold_counts"]) == {"legs", "said_next", "log", "ai"} and isinstance(h0["foot"], str) and h0["foot"]
+    assert d["groups"] == {"live": [], "waiting": [1], "closed": [], "not_taken": []}
     assert set(d["book"]) >= {"positions", "trades", "equity", "capital"} and d["book"]["capital"] == 100000.0
     assert set(d["record"]) >= {"by_instrument", "by_hour", "totals", "untracked"}
     rows = api.get("/api/tips/hints", params={"status": "new,waiting", "days": 3650}).json()["rows"]

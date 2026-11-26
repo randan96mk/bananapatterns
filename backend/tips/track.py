@@ -672,14 +672,15 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
         cb["sizing"] = None
     kv["taken"] = (h.get("kite") or {}).get("taken") if isinstance(h.get("kite"), dict) else None
     kv["footer"] = bk.kite_taken_text(h)
-    return {**cb, "id": h["id"], "channel": h["channel"], "post_id": h["post_id"], "posted_at": h["posted_at"],
+    tile, nowc = stop_tile(h), ko.now_cell(h)
+    v = {**cb, "id": h["id"], "channel": h["channel"], "post_id": h["post_id"], "posted_at": h["posted_at"],
             "time": ampm(posted), "day": posted.date().isoformat(), "day_label": "today" if posted.date() == now.date() else f"{posted:%a %d %b}",
             "raw": h.get("raw") or "", "title": dc.title(h), "symbol": h.get("symbol"), "side": h.get("side"),
             "instrument": h.get("instrument"), "strike": h.get("strike"), "opt_type": h.get("opt_type"), "expiry": exp,
             "expiry_label": (f"{date.fromisoformat(exp):%a} {date.fromisoformat(exp).day} {date.fromisoformat(exp):%b}" if exp else None),
             "expiry_src": h.get("expiry_src"), "tradingsymbol": h.get("tradingsymbol"), "exchange": h.get("exchange"),
             "lot_size": h.get("lot_size"), "entry": h.get("entry"), "entry_text": pl.entry_text(h.get("entry") or {}),
-            "stop": h.get("stop"), "stop_text": pl.stop_text(h.get("stop") or {}), "stop_tile": stop_tile(h), "targets": h.get("targets") or [],
+            "stop": h.get("stop"), "stop_text": pl.stop_text(h.get("stop") or {}), "stop_tile": tile, "targets": h.get("targets") or [],
             "targets_hit": hits, "targets_text": pl.targets_text(tg, bool(h.get("open_ended"))), "open_ended": bool(h.get("open_ended")),
             "size_hint": h.get("size_hint"), "decoded": h.get("decoded") or {}, "plan": h.get("plan"), "status": st, "ended": h.get("ended"),
             "taken": bool(h.get("taken")), "lots": h.get("lots"), "entry_px": h.get("entry_px"), "exit_px": h.get("exit_px"),
@@ -691,7 +692,14 @@ def hint_view(h: dict, now: Optional[datetime] = None, config=None) -> dict:
                           "charges": pos.get("charges"), "ended": pos.get("ended"), "override": pos.get("override"),
                           "booked": pos.get("booked") or [], "who": pos.get("who"), "size_src": pos.get("size_src")} if pos else None),
             "actions": acts, "telegram": f"take {h['id']} · take {h['id']} 2 · skip {h['id']}", "source": h.get("source"),
-            "kite": kv, "shot": vs.shot_view(h), "now": ko.now_cell(h)}
+            "kite": kv, "shot": vs.shot_view(h), "now": nowc}
+    try:                                              # 💡 card v2: the state badge, the story row, the fold counts, the footer
+        from backend.tips import card2
+        v.update(card2.card(h, kv, {**cb, "now": nowc}, now, cfg, tile))
+    except Exception:
+        logger.exception("Tips card v2 #%s failed", h.get("id"))
+        v.update(state=None, story=None, fold_counts=None, foot=None)
+    return v
 
 
 def feed_rows(kind: Optional[str] = None, limit: int = 50, channel: Optional[str] = None) -> list[dict]:
@@ -751,7 +759,7 @@ def hints_list(status: Optional[str] = None, days: Optional[int] = None, channel
 
 def summary(config, now: Optional[datetime] = None) -> dict:
     """GET /api/tips: {enabled, reader, channels, cards {open, book, channel30, you_vs_all, kite}, hints, feed, record, book,
-    settings, quotes_at, any_open, at, kite (⚡ Tips → Kite orders: mode, kill, caps, open), kite_book (the Kite ledger)}."""
+    settings, quotes_at, any_open, at, kite (⚡ Tips → Kite orders: mode, kill, caps, open), kite_book (the Kite ledger), groups (the page groups: live / waiting / closed / not_taken ids)}."""
     from backend.tips import kite_orders as ko
     from backend.tips import reader as rd
     now = now or datetime.now(IST)
@@ -791,7 +799,9 @@ def summary(config, now: Optional[datetime] = None) -> dict:
     }
     reader = rd.status()
     reader["channels"] = rd.channels_of(config)
+    from backend.tips import card2
     return {"enabled": bool(config.tips.enabled), "reader": reader, "channels": rd.channels_of(config), "cards": cards, "hints": views,
+            "groups": card2.groups(views),
             "feed": feed_rows(limit=50), "record": rec, "book": book, "settings": asdict(config.tips),
             "quotes_at": quotes_at, "any_open": bool(open_h), "at": now.isoformat(timespec="seconds"), "kite": ko.lite(config, now),
             "kite_book": kbook}

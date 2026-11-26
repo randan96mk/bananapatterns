@@ -751,6 +751,15 @@ def _fire(config, client, h: dict, now: datetime, by: str, why: str, notify: boo
     return h
 
 
+def _word(h: dict) -> str:
+    """' · CANCELLED · WINDOW END': the card's state word (backend/tips/card2.py) for a Telegram line, '' on any doubt."""
+    try:
+        from backend.tips import card2
+        return f" · {card2.state_of(h)['word']}"
+    except Exception:
+        return ""
+
+
 def disarm(config, client, h: dict, now: datetime, why: str, notify: bool = True) -> bool:
     """An unfilled entry ends: the resting order cancelled (armed) or the arm dropped (armed_watch / armed_wait).
     Never counted toward the caps. One log line + one Telegram line. False when nothing was armed."""
@@ -769,7 +778,7 @@ def disarm(config, client, h: dict, now: datetime, why: str, notify: bool = True
     _log(k, now, f"Kite: the unfilled entry cancelled · {why}")
     save_kite(h)
     if notify:
-        _push(config, f"tips|kite|{h['id']}|disarm|{now.isoformat(timespec='seconds')}", f"{pfx(h)}#{h['id']} unfilled entry cancelled · {why}")
+        _push(config, f"tips|kite|{h['id']}|disarm|{now.isoformat(timespec='seconds')}", f"{pfx(h)}#{h['id']} unfilled entry cancelled · {why}{_word(h)}")
     after_event(config, h, now, notify)
     return True
 
