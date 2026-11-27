@@ -225,3 +225,4 @@ export const cryptoCandles = (tf, range, win) => req('GET', `/api/crypto/candles
 export const cryptoQuiet = (hours) => req('POST', '/api/crypto/quiet', { hours });
 export const cryptoRefresh = () => req('POST', '/api/crypto/refresh');
 export const cryptoScan = () => req('POST', '/api/crypto/scan');
+export const cryptoScores = (days) => req('GET', `/api/crypto/scores?days=${encodeURIComponent(days)}`);   // the tiles' 1 d · 7 d · 30 d toggle

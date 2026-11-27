@@ -31,6 +31,78 @@ const STATE_C = { sent: 'ok', quiet: 'w', mark: '', confirm_wait: 'a', dropped: 
 const muted = (s) => s.state !== 'sent' && s.state !== 'confirm_wait';
 const filters = (s) => [s.ema_ok == null ? 'EMA —' : `EMA ${s.ema_len || ''} ${s.ema_ok ? '✓' : '✗'}`, s.vol_x != null ? `vol ${s.vol_x}× ${s.vol_ok ? '✓' : '✗'}` : null].filter(Boolean).join(' · ');
 
+// outcome · grade · forecast (every key optional: an older server renders the page as before)
+const OUT_C = { up: 'ok', down: 'bad', warn: 'w', dim: '' };
+const outcomeTag = (o) => (o?.chip ? <Tag c={OUT_C[o.tone] ?? ''} title={o.r != null ? `${o.r > 0 ? '+' : ''}${o.r} R${o.mins != null ? ` · ${o.mins} min` : ''}` : ''}>{o.chip}</Tag> : <span className="muted">—</span>);
+const gradeBadge = (g) => {
+  if (!g) return <span className="muted">—</span>;
+  const step = g.model_step ? ` · candle model ${g.model_step > 0 ? '+1' : '−1'}` : '';
+  if (g.few || !g.g) return <span className="btc-g gN" title={g.why || `too few like this${g.n != null ? ` (${g.n})` : ''}`}>—</span>;
+  return <span className={`btc-g g${g.g}`} title={`${g.why || ''}${step}`}>{g.g}</span>;
+};
+const fcTag = (f) => (f?.chip ? <Tag c={f.p != null && Math.abs(f.p - 0.5) < 0.05 ? '' : 'a'} title={f.exp_px != null ? `${px(f.exp_px)} ± ${px(f.exp_range)} · stop first ${Math.round((f.touch_stop ?? 0) * 100)} % · 1R first ${Math.round((f.touch_r1 ?? 0) * 100)} %` : ''}>{f.chip}</Tag> : <span className="muted">—</span>);
+const isFc = (s) => s?.kind === 'forecast';
+const shadowRow = (s) => isFc(s) && s.state === 'quiet';
+const pctS = (v) => (v == null ? '—' : `${Math.round(v)} %`);
+const rS = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(+v).toFixed(1)} R`);
+const coneWord = (f) => (f ? [f.horizon_min ? `${f.horizon_min} min` : null, f.p != null ? `${Math.round(f.p * 100)} % ${f.dir === 'long' ? 'up' : 'down'}` : null,
+  f.exp_range != null ? `±${px(f.exp_range)}` : null].filter(Boolean).join(' · ') : '');
+
+// The forecast cone (candle model, shadow) from the signal candle: the p10–p90 and p25–p75 bands as filled polygons
+// (a series primitive on the candles); the median is a dashed line series whose points also put the future times on
+// the time scale, so the bands can be placed past the last candle. Fades toward the horizon.
+class ConePrim {
+  constructor() { this.c = null; this.chart = null; this.series = null; this.req = null; const me = this; this.view = { zOrder: () => 'bottom', renderer: () => ({ draw: (t) => me.draw(t, false) }) };
+    this.top = { zOrder: () => 'top', renderer: () => ({ draw: (t) => me.draw(t, true) }) }; }
+  attached({ chart, series, requestUpdate }) { this.chart = chart; this.series = series; this.req = requestUpdate; }
+  detached() { this.chart = null; this.series = null; this.req = null; }
+  set(c) { this.c = c; if (this.req) this.req(); }
+  updateAllViews() {}
+  paneViews() { return [this.view, this.top]; }
+  draw(target, label) {   // the bands under the candles, the label over them
+    const c = this.c;
+    if (!c || !this.chart || !this.series) return;
+    const ts = this.chart.timeScale();
+    const x = (t) => ts.timeToCoordinate(t);
+    const y = (v) => this.series.priceToCoordinate(v);
+    const x0 = x(c.t0), y0 = y(c.anchor);
+    if (x0 == null || y0 == null) return;
+    target.useMediaCoordinateSpace(({ context: ctx }) => {
+      const xs = c.ts.map(x);
+      if (xs.some((v) => v == null)) return;
+      const xe = xs[xs.length - 1];
+      const band = (lo, hi, a) => {
+        if (!lo || !hi) return;
+        const g = ctx.createLinearGradient(x0, 0, Math.max(x0 + 1, xe), 0);
+        g.addColorStop(0, `rgba(91,108,255,${a})`); g.addColorStop(1, `rgba(91,108,255,${a * 0.45})`);
+        ctx.beginPath(); ctx.moveTo(x0, y0);
+        hi.forEach((v, i) => ctx.lineTo(xs[i], y(v)));
+        for (let i = lo.length - 1; i >= 0; i--) ctx.lineTo(xs[i], y(lo[i]));
+        ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+      };
+      if (!label) { band(c.p10, c.p90, 0.12); band(c.p25, c.p75, 0.2); return; }
+      if (c.label) {
+        const lows = [c.p10, c.p25, c.med].find(Boolean);
+        const yl = y(Math.min(...lows)) ?? y0;
+        ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace'; ctx.fillStyle = '#5b6cff'; ctx.textAlign = 'right';
+        ctx.fillText(c.label, xe, yl + 16);
+      }
+    });
+  }
+}
+function coneOf(s, off, step) {
+  const f = s?.forecast; const P = f?.paths; const med = P?.median;
+  if (!Array.isArray(med) || !med.length || s?.t == null) return null;
+  const n = med.length;
+  const dt = f.horizon_min ? Math.max(1, Math.round((+f.horizon_min * 60) / n)) : step;
+  const keep = med.map((_, i) => i).filter((i) => ((i + 1) * dt) % step === 0);   // on a coarser chart only the points on its candle grid
+  if (!keep.length) return null;
+  const arr = (k) => (Array.isArray(P[k]) && P[k].length === n ? keep.map((i) => +P[k][i]) : null);
+  const t0 = s.t + off;
+  return { t0, anchor: +(s.entry ?? med[0]), ts: keep.map((i) => t0 + (i + 1) * dt), med: keep.map((i) => +med[i]),
+    p25: arr('p25'), p75: arr('p75'), p10: arr('p10'), p90: arr('p90'), label: coneWord(f) };
+}
+
 function palette() {
   return { bg: cssVar('--panel'), text: cssVar('--text'), grid: cssVar('--grid'), border: cssVar('--border'), up: cssVar('--ok') || '#1f9d61',
     down: cssVar('--bad') || '#d64545', blue: cssVar('--blue') || '#2a63d4', muted: cssVar('--muted') || '#9aa3ad', level: '#e08a2e', ema: '#5b6cff' };
@@ -38,7 +110,7 @@ function palette() {
 
 // The chart: candles, the EMA, the pivot levels per period (a gap at each new period), the markers, the selected
 // detection's entry / stop / 1R lines. Fixed height; the tooltip shows the detection under the cursor.
-function BtcChart({ data, sel, onPick }) {
+function BtcChart({ data, sel, alt, onPick }) {
   const box = useRef(null);
   const h = useRef(null);
   const theme = useTheme();
@@ -61,7 +133,10 @@ function BtcChart({ data, sel, onPick }) {
       color: n === 'P' ? pal.muted : pal.level, lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
       autoscaleInfoProvider: () => null })]));                          // the price scale follows the candles, not R5 / S5
     const markers = createSeriesMarkers(candles, []);
-    h.current = { chart, candles, ema, levels, markers, pal, lines: [], LineStyle, sigs: [] };
+    const cone = new ConePrim();
+    candles.attachPrimitive(cone);
+    const median = chart.addSeries(LineSeries, { color: '#5b6cff', lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    h.current = { chart, candles, ema, levels, markers, pal, lines: [], LineStyle, sigs: [], cone, median };
     chart.subscribeCrosshairMove((p) => {
       const s = p?.time != null ? (h.current?.sigs || []).find((x) => x.mt === p.time) : null;
       setTip(s && p.point ? { x: p.point.x, y: p.point.y, s } : null);
@@ -94,11 +169,28 @@ function BtcChart({ data, sel, onPick }) {
     const rank = (s) => (s.id === sel ? 0 : s.state === 'dropped' ? 3 : muted(s) ? 2 : 1);
     const best = new Map();
     c.sigs.forEach((s) => { const k = `${s.mt}${s.dir}`; const o = best.get(k); if (!o || rank(s) < rank(o)) best.set(k, s); });
-    c.markers.setMarkers([...best.values()].sort((a, b) => a.mt - b.mt).map((s) => ({
+    const mk = [...best.values()].sort((a, b) => a.mt - b.mt).map((s) => ({
       time: s.mt, position: s.dir === 'long' ? 'belowBar' : 'aboveBar', shape: 'circle',
       size: s.id === sel ? 1.6 : s.state === 'dropped' ? 0.7 : 1,
-      color: s.state === 'dropped' ? `${c.pal.muted}99` : muted(s) ? `${s.dir === 'long' ? c.pal.up : c.pal.down}66` : (s.dir === 'long' ? c.pal.up : c.pal.down) })));
-    const s = data.signals.find((x) => x.id === sel);
+      color: s.state === 'dropped' ? `${c.pal.muted}99` : muted(s) ? `${s.dir === 'long' ? c.pal.up : c.pal.down}66` : (s.dir === 'long' ? c.pal.up : c.pal.down) }));
+    const s0 = data.signals.find((x) => x.id === sel);
+    const s = s0 && alt && alt.id === s0.id ? { ...alt, ...s0, forecast: s0.forecast?.paths ? s0.forecast : alt.forecast, outcome: s0.outcome || alt.outcome } : s0;
+    const step0 = data.candles.length > 1 ? data.candles[1].time - data.candles[0].time : 300;
+    // the selected detection's cone (when its model read carries paths) and its scored outcome written at the 1R / stop candle
+    const cn = s ? coneOf(s, off, step0) : null;
+    c.cone.set(cn);
+    c.median.setData(cn ? [{ time: cn.t0, value: cn.anchor }, ...cn.ts.map((t, i) => ({ time: t, value: cn.med[i] }))] : []);
+    const o = s?.outcome;
+    if (s && o && o.state !== 'open' && o.mins != null && o.chip) {
+      const at = s.t + off + o.mins * 60;
+      const bar = data.candles.find((b) => b.time >= at) || data.candles[data.candles.length - 1];
+      if (bar && bar.time >= s.t + off) {
+        const above = (s.dir === 'long') === (o.state === 'won');
+        mk.push({ time: bar.time, position: above ? 'aboveBar' : 'belowBar', shape: 'square', size: 0.6, text: o.chip,
+          color: o.tone === 'up' ? c.pal.up : o.tone === 'down' ? c.pal.down : o.tone === 'warn' ? c.pal.level : c.pal.muted });
+      }
+    }
+    c.markers.setMarkers(mk.sort((a, b) => a.time - b.time));
     if (s) {
       [[s.entry, c.pal.blue, 'entry'], [s.stop, c.pal.down, 'stop'], [s.r1, c.pal.up, '1R']].forEach(([p, color, title]) => c.lines.push(c.candles.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: c.LineStyle.Solid, axisLabelVisible: true, title })));
       const step = data.candles.length > 1 ? data.candles[1].time - data.candles[0].time : 300;
@@ -106,7 +198,7 @@ function BtcChart({ data, sel, onPick }) {
     } else if (data.candles.length) {
       c.chart.timeScale().fitContent();
     }
-  }, [data, sel, lw, theme]);
+  }, [data, sel, alt, lw, theme]);
 
   return <div className="btc-chart" ref={box}>
     {data && !data.candles.length && <div className="btc-empty muted small">No {TF_WORD[data.tf] || data.tf} candles stored for this range yet.</div>}
@@ -185,6 +277,16 @@ function Inputs({ d, onSaved }) {
     <K l="cooldown (candles)">{num('cooldown_candles')}</K>
     <K l="stop pad (points)">{num('stop_pad')}</K>
     <K l="max stop (points)">{num('max_stop')}</K>
+    {'score_after_min' in draft && <>
+      <G>Outcomes · grade · forecast alerts</G>
+      <K l="score outcomes after (min)" title="each detection is scored by code this long after it: 1R first won, stop first lost, else the R at the end"><Seg small opts={[[30, '30'], [60, '60'], [120, '120']]} v={+draft.score_after_min} set={(v) => set('score_after_min', v)} /></K>
+      {'min_alert_grade' in draft && <K l="min alert grade" title="the grade shows on every alert either way · an alert under it is stored quiet"><Seg small opts={[['all', 'all'], ['C', 'C'], ['B', 'B'], ['A', 'A']]} v={draft.min_alert_grade} set={(v) => set('min_alert_grade', v)} /></K>}
+      {'forecast_alerts' in draft && <K l="forecast alerts" title={d.scores?.forecast?.gate?.why || 'send needs the gate: 40 scored · 55 % won'}><Seg small opts={[['shadow', 'shadow'], ['send', 'send']]} v={draft.forecast_alerts} set={(v) => set('forecast_alerts', v)} /></K>}
+      {draft.forecast_alerts === 'send' && d.scores?.forecast?.gate && !d.scores.forecast.gate.ok && <div className="btc-gate warn small" title={d.scores.forecast.gate.why}>{d.scores.forecast.gate.why || 'held in shadow until the gate passes'}</div>}
+      {'forecast_p' in draft && <K l="forecast odds threshold" title="the candle model's odds one way, at least"><Seg small opts={[[58, '58 %'], [62, '62 %'], [66, '66 %']]} v={+draft.forecast_p} set={(v) => set('forecast_p', v)} /></K>}
+      {'forecast_move_atr' in draft && <K l="forecast move ≥" title="the expected range against the ATR"><Seg small opts={[[0.6, '0.6 × ATR'], [1, '1.0 × ATR']]} v={+draft.forecast_move_atr} set={(v) => set('forecast_move_atr', v)} /></K>}
+      {'forecast_cone' in draft && <K l="forecast cone on alerts" title="the cone on the Telegram snapshot (the page chart always shows it for a selected detection)">{sw('forecast_cone')}</K>}
+    </>}
     <G>AI</G>
     <K l="market read at a detection" title="code facts + the candle model (shadow) + one [AI] line; never gates an alert">{sw('ai_read')}</K>
     <div className="btc-save"><button type="button" className="btn small" disabled={!changed.length} onClick={save}>Save</button>
@@ -223,6 +325,18 @@ export default function CryptoPage() {
     api.cryptoCandles(vtf, range, win).then((x) => { if (alive) setCh(x); }).catch((e) => alive && setErr(e.message));
     return () => { alive = false; };
   }, [vtf, range, lastT, win]);
+  // the scores (outcomes scored by code): the summary carries 30 d; the Direction tile's toggle reads 1 d / 7 d
+  const [sdays, setSdays] = useState(30);
+  const [sc1, setSc1] = useState(null);
+  useEffect(() => {
+    if (sdays === 30) { setSc1(null); return undefined; }
+    let alive = true;
+    api.cryptoScores(sdays).then((x) => { if (alive) setSc1(x); }).catch(() => { if (alive) setSc1(null); });
+    return () => { alive = false; };
+  }, [sdays, lastT]);
+  const SC = d?.scores || null;
+  const SD = (sdays !== 30 && sc1) || SC;
+  const modelChip = SC?.model_chip || d?.ai?.model_chip || 'candle model · off';
   const H = d?.health || {};
   const P = d?.pivots?.levels || {};
   const T = d?.today || {};
@@ -261,15 +375,22 @@ export default function CryptoPage() {
     };
   }, [full]);
 
-  const cols = [{ h: 'When (IST)' }, { h: 'Pattern', w: 112, ell: true }, { h: 'Dir', w: 54 }, { h: 'Level', w: 104, ell: true },
-    { h: 'Entry · stop · 1R', w: 176, ell: true }, { h: 'Filters', w: 118, ell: true, lo: true }, { h: 'State', w: 150, ell: true }, { h: 'AI', w: 90, ell: true, lo: true }, { h: '', w: 100 }];
+  // the grade / forecast / outcome columns appear once the server sends those keys (an older server: the table as before)
+  const hasG = sigs.some((x) => 'grade' in x), hasF = sigs.some((x) => 'forecast' in x), hasO = sigs.some((x) => 'outcome' in x);
+  const cols = [{ h: 'When (IST)' }, { h: 'Pattern', w: hasF ? 150 : 112, ell: true }, { h: 'Dir', w: 54 }, { h: 'Level', w: 104, ell: true },
+    { h: 'Entry · stop · 1R', w: 176, ell: true }, hasG && { h: 'Grade', w: 66 }, hasF && { h: 'Forecast', w: 180, ell: true },
+    !hasO && { h: 'Filters', w: 118, ell: true, lo: true }, { h: 'State', w: 150, ell: true }, hasO && { h: 'Outcome', w: 190, ell: true },
+    { h: 'AI', w: 90, ell: true, lo: true }, { h: '', w: 100, lo: hasO }].filter(Boolean);
   const rows = sigs.map((x) => ({ key: x.id, onClick: () => pick(x.id), cls: `${x.id === sel ? 'btc-sel-row' : ''} ${x.state === 'dropped' ? 'dim' : ''}`, title: x.text,
-    cells: [x.when, x.label, <span className={x.dir === 'long' ? 'up' : 'down'}>{x.dir}</span>, `${x.level} ${px(x.level_px)}`,
-      `${px(x.entry)} · ${px(x.stop)}${x.capped ? ' (cap)' : ''} · ${px(x.r1)}`, filters(x),
-      <Tag c={STATE_C[x.state] || ''} title={x.why || ''}>{stateWord(x)}</Tag>,
+    cells: [x.when, isFc(x) ? <span><Tag c="a">forecast</Tag> {x.label}</span> : x.label, <span className={x.dir === 'long' ? 'up' : 'down'}>{x.dir}</span>, `${x.level} ${px(x.level_px)}`,
+      `${px(x.entry)} · ${px(x.stop)}${x.capped ? ' (cap)' : ''} · ${px(x.r1)}`, ...(hasG ? [gradeBadge(x.grade)] : []), ...(hasF ? [fcTag(x.forecast)] : []), ...(hasO ? [] : [filters(x)]),
+      shadowRow(x) ? <Tag c="w" title={x.why || 'forecast alerts are held in shadow until their gate passes'}>shadow · not sent</Tag> : <Tag c={STATE_C[x.state] || ''} title={[x.why, hasO ? filters(x) : ''].filter(Boolean).join(' · ')}>{stateWord(x)}</Tag>,
+      ...(hasO ? [outcomeTag(x.outcome)] : []),
       x.ai?.line ? <span title={x.ai.line}><AiTag /> {x.ai.verdict || ''}</span> : <span className="muted">{x.ai?.verdict || '—'}</span>,
       x.png ? <a className="btn ghost small" href={`/api/crypto/snap/${x.id}.png`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Snapshot</a> : <span className="muted">—</span>] }));
 
+  const bpCols = [{ h: 'Pattern', ell: true }, { h: 'Dir', w: 60 }, { h: 'Signals', w: 80, n: true }, { h: 'Won', w: 100, n: true }, { h: 'Avg R', w: 80, n: true },
+    { h: 'At R1', w: 100, n: true, lo: true }, { h: 'At S1', w: 100, n: true, lo: true }, { h: 'At P', w: 100, n: true, lo: true }];
   const stateChip = !d ? <Chip>loading…</Chip> : d.enabled
     ? <Chip dot={H.behind ? 'warn' : 'ok'} c={H.behind ? 'warn' : 'ok'} title={H.last_error || ''}>{d.running ? 'running' : 'starting'} · {TF_WORD[d.tf]} · Delta · {H.last_label ? `last candle ${H.last_label}` : 'no candles yet'}</Chip>
     : <Chip title="Inputs › feed on (crypto.enabled)">off · {TF_WORD[d.tf]} · Delta{H.last_label ? ` · last candle ${H.last_label}` : ''}</Chip>;
@@ -294,12 +415,14 @@ export default function CryptoPage() {
         <Panel title="Chart" right={<>
           {s ? <Chip title={s.text}>{s.label} {s.when.split(' ').slice(-2).join(' ')} on {s.level} {px(s.level_px)}</Chip> : <Chip>click a marker or a row</Chip>}
           {s && <Chip>entry {px(s.entry)} · stop {px(s.stop)}{s.capped ? ' (cap)' : ''} · 1R {px(s.r1)}</Chip>}
+          {s?.forecast && !phone && <Chip c="fc" title="the candle model's read for this candle · shadow: never gates an alert">{modelChip}</Chip>}
           {full && <><Seg small opts={TFS} v={vtf} set={setTf} /><Seg small opts={RANGES} v={range} set={setRange} /></>}
           <button type="button" className="btn ghost small" onClick={() => setFull(!full)} title={full ? 'exit full screen (Esc)' : 'full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button></>}>
-          <BtcChart data={ch} sel={sel} onPick={pick} />
+          <BtcChart data={ch} sel={sel} alt={s} onPick={pick} />
           <div className="btc-leg"><span><i style={{ background: '#e08a2e' }} />pivots R1–R5 / S1–S5</span><span><i style={{ background: '#9aa3ad' }} />P</span>
             <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span><span><i className="dotm grey" />formed but filtered (EMA · volume · day · cooldown)</span>
             <span><i style={{ background: 'var(--blue)' }} />entry</span><span><i style={{ background: 'var(--bad)' }} />stop</span><span><i style={{ background: 'var(--ok)' }} />1R</span>
+            {s?.forecast?.paths && <span><i className="cone" />forecast cone · median dashed · 50 % / 80 % bands (shadow)</span>}
             <span className="muted">{d?.symbol || 'BTCUSD'} · Delta Exchange · {TF_WORD[vtf]} · IST</span></div>
         </Panel>
         </div>
@@ -309,19 +432,44 @@ export default function CryptoPage() {
           <Card unit="n" label="Today's detections" value={`${T.sent || 0} sent`} sub={`${T.quiet || 0} quiet · ${T.mark || 0} mark · ${T.dropped || 0} dropped`}
             fact={`${T.confirm_wait || 0} waiting for confirmation`} />
           <Card unit="n" label={`Pivots · ${/^\d{4}-\d\d-\d\d$/.test(d?.pivots?.from || '') ? `${+d.pivots.from.slice(8)} ${MON[+d.pivots.from.slice(5, 7) - 1]}` : (d?.pivots?.from || 'today')}`} value={`P ${px(P.P)}`} sub={`R1 ${px(P.R1)} · R2 ${px(P.R2)}`} fact={`S1 ${px(P.S1)} · S2 ${px(P.S2)}`} />
-          <Card unit="n" label="AI" value={d?.ai?.read ? 'read on' : 'off'} sub={d?.ai?.model_chip || 'candle model · off'}
+          <Card unit="n" label="AI" value={d?.ai?.read ? 'read on' : 'off'} sub={modelChip}
             fact={d?.ai?.last ? `${d.ai.last.when} · ${d.ai.last.line}` : (d?.ai?.local_ai ? 'no read yet' : 'local AI off · code facts only')} title={d?.ai?.last?.line || ''} />
         </Cards>
+        {SC && <div className="btc-scores"><Cards n={3}>
+          <Card unit="n" label={<>Direction · {sdays} d <span className="btc-dd">{[1, 7, 30].map((k) => <button key={k} type="button" className={sdays === k ? 'on' : ''}
+            onClick={(e) => { e.stopPropagation(); setSdays(k); }}>{k} d</button>)}</span></>}
+            value={`long ${rS(SD?.direction?.long?.r)} · short ${rS(SD?.direction?.short?.r)}`}
+            sub={`long ${SD?.direction?.long?.n ?? 0} signals · ${SD?.direction?.long?.won ?? 0} won · short ${SD?.direction?.short?.n ?? 0} · ${SD?.direction?.short?.won ?? 0} won`}
+            fact="sent · quiet · mark · dropped all scored · R only, no money" title="every detection scored by code after crypto.score_after_min: 1R first +1 R, stop first −1 R, else the R at the end" />
+          <Card unit="n" label={`By grade · ${SC.days || 30} d`} value={['A', 'B', 'C', 'D'].map((g) => `${g} ${pctS(SC.by_grade?.[g]?.pct)}`).join(' · ')}
+            sub={`${['A', 'B', 'C', 'D'].map((g, i) => `${g} ${SC.by_grade?.[g]?.n ?? 0}${i ? '' : ' signals'}`).join(' · ')} · min grade to send: ${d?.settings?.min_alert_grade ?? 'all'}`}
+            title={['A', 'B', 'C', 'D'].map((g) => `${g} ${pctS(SC.by_grade?.[g]?.pct)} won of ${SC.by_grade?.[g]?.n ?? 0}`).join(' · ')}
+            fact={(d?.settings?.min_alert_grade ?? 'all') === 'all' ? 'set crypto.min_alert_grade to B to quiet the C and D alerts' : `alerts under grade ${d.settings.min_alert_grade} are stored quiet`} />
+          <Card unit="n" label={`Forecast alerts · ${d?.settings?.forecast_alerts === 'send' && SC.forecast?.gate?.ok ? 'sending' : 'shadow'}`}
+            value={`${SC.forecast?.scored ?? 0} scored · ${pctS(SC.forecast?.pct)} won`}
+            sub={(SC.forecast?.buckets || []).length ? SC.forecast.buckets.map((b) => `${b.lo}${b.hi != null ? `–${b.hi}` : '+'} %: ${b.n}${b.pct != null ? ` · ${Math.round(b.pct)} % won` : ''}`).join(' · ') : 'no forecast candidate scored yet'}
+            fact={`${SC.forecast?.gate?.why || (SC.forecast?.gate?.ok ? 'gate passed' : 'held in shadow')} · crypto.forecast_alerts ${d?.settings?.forecast_alerts ?? 'shadow'}`}
+            k={SC.forecast?.gate?.ok ? 'up' : ''} title={SC.forecast?.gate?.why || ''} />
+        </Cards></div>}
         <div className="btc-ai">
-          <div className="t"><AiTag /><b>Market read{s ? ` · ${s.label} ${s.when}` : ''}</b><Chip>{d?.ai?.model_chip || 'candle model · off'}</Chip><Chip>never gates an alert</Chip></div>
+          <div className="t"><AiTag /><b>Market read{s ? ` · ${s.label} ${s.when}` : ''}</b><Chip c={SC?.model_chip ? 'fc' : ''}>{modelChip}</Chip><Chip>never gates an alert</Chip></div>
           <div className="l"><span>shape</span><div title={s?.ai?.facts || ''}>{s ? (s.ai?.facts || s.text) : 'pick a detection: its code facts, the model read (shadow) and the one [AI] line'}</div></div>
-          <div className="l"><span>model</span><div>{s?.ai?.model ? 'stored in shadow · scored before it shows' : 'no model read'}</div></div>
+          <div className="l"><span>model</span><div title={s?.forecast?.chip || ''}>{s?.forecast?.chip
+            ? <>{s.forecast.chip}{s.forecast.exp_px != null ? ` · ${px(s.forecast.exp_px)} ± ${px(s.forecast.exp_range)}` : ''}{s.forecast.touch_stop != null ? ` · stop first ${Math.round(s.forecast.touch_stop * 100)} %` : ''} <span className="muted">· shadow</span></>
+            : s?.ai?.model ? 'stored in shadow · scored before it shows' : 'no model read'}</div></div>
           <div className="l"><span>read</span><div title={s?.ai?.line || ''}>{s?.ai?.line ? <><AiTag /> {s.ai.line} </> : <span className="muted">{s ? (s.ai?.state === 'off' ? 'the local AI is off' : 'no line yet') : '—'} </span>}
             {s?.ai?.verdict && <span className={/supports/.test(s.ai.verdict) ? 'up' : /against/.test(s.ai.verdict) ? 'down' : 'muted'}>· {s.ai.verdict}</span>}</div></div>
         </div>
         <Panel title="Detections" meta={sigs.length || null} right={`newest first · every row stays${phone ? '' : ' · click a row: the chart jumps to it'}`}>
           <div className="btc-table"><FixedTable cols={cols} rows={rows} empty="No detections yet: they appear here as the candles close." /></div>
         </Panel>
+        {Array.isArray(SC?.by_pattern) && <Panel title={`By pattern and level · ${SC.days || 30} d`} right="R and win rate · code-scored">
+          <FixedTable cols={bpCols} rows={SC.by_pattern.map((b, i) => ({ key: `${b.pattern}${b.dir}${i}`, cells: [
+            (d?.patterns || []).find((p) => p.key === b.pattern)?.label || b.label || b.pattern, <span className={b.dir === 'long' ? 'up' : 'down'}>{b.dir}</span>,
+            b.n ?? 0, `${b.won ?? 0} · ${pctS(b.pct)}`, <span className={b.avg_r > 0 ? 'up' : b.avg_r < 0 ? 'down' : ''}>{b.avg_r == null ? '—' : `${b.avg_r > 0 ? '+' : b.avg_r < 0 ? '−' : ''}${Math.abs(b.avg_r).toFixed(1)}`}</span>,
+            ...['R1', 'S1', 'P'].map((k) => (b.at?.[k]?.n ? `${b.at[k].n} · ${pctS(b.at[k].pct)}` : '—'))] }))}
+            empty="Nothing scored yet: each detection is scored by code after crypto.score_after_min." />
+        </Panel>}
       </div>
       {inputsOpen && <Inputs d={d} onSaved={load} />}
     </div>

@@ -790,6 +790,19 @@ body.btc-full-open { overflow: hidden; }
 .rd .btc-days button:last-child { border-right: 0; } .rd .btc-days button.on { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
 .rd .btc-save { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--rowline); height: 48px; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
 .rd .btc-set .rnote { padding: 6px 12px 8px; height: 40px; box-sizing: border-box; overflow: hidden; }
+/* outcome · grade · forecast (shadow): the grade letter badge, the cone legend swatch, the model chip, the scores tiles' day toggle */
+.rd .btc-g { display: inline-block; width: 18px; height: 18px; line-height: 18px; border-radius: 4px; text-align: center; font-size: 11px; font-weight: 700; color: #fff; vertical-align: middle; }
+.rd .btc-g.gA { background: var(--ok); } .rd .btc-g.gB { background: color-mix(in srgb, var(--ok) 62%, #ffffff); }
+.rd .btc-g.gC { background: var(--warn); } .rd .btc-g.gD { background: var(--bad); }
+.rd .btc-g.gN { background: none; color: var(--muted); font-weight: 400; cursor: help; }
+.rd .rchip.fc { border-color: color-mix(in srgb, #5b6cff 45%, var(--border)); color: #5b6cff; }
+.rd .btc-leg i.cone { height: 8px; background: rgba(91, 108, 255, .25); border-top: 1px dashed #5b6cff; }
+.rd .btc-dd { display: inline-flex; margin-left: 6px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; vertical-align: 1px; }
+.rd .btc-dd button { font: inherit; font-size: 9.5px; line-height: 13px; height: 15px; min-height: 0; padding: 0 5px; border: 0; border-right: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
+.rd .btc-dd button:last-child { border-right: 0; } .rd .btc-dd button.on { background: var(--blue); color: #fff; }
+.rd .btc-scores .hcard .vrow { overflow: hidden; } .rd .btc-scores .hcard .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+@media (max-width: 760px) { .rd .btc-scores .kpis { grid-template-columns: minmax(0, 1fr); } .rd .btc-scores .hcard .v { font-size: 15px; } }
+.rd .btc-set .btc-gate { padding: 0 12px 6px; height: 22px; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1100px) { .rd .btc-grid, .rd .btc-grid.open { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) {
   .rd .btc-chart { height: 62vh; min-height: 360px; }

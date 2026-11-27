@@ -4,7 +4,7 @@ Kronos-mini once and answers on 127.0.0.1 only. It runs at nice 10 with 2 torch 
   GET  /health  {state loading|ready|error, version, load_s, error}
   POST /read    {symbol, interval 1m|5m|1d, candles [{at, o, h, l, c, v}], horizon, horizons?, samples, levels?}
                 (the interval sets the timestamps of the steps ahead: minutes, 5 minutes or weekdays; horizons are steps)
-                -> {p_up, exp_range, paths_summary {q10, q50, q90}, touch {level: prob}, ms, version, reads [one per
+                -> {p_up, exp_range, paths_summary {q10, q25, q50, q75, q90}, touch {level: prob}, ms, version, reads [one per
                 horizon]} (the top-level keys are the longest horizon's). The sampled paths are summarised by
                 backend/market/paths.py; nothing else is computed here and nothing leaves the server.
 

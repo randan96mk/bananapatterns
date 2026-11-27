@@ -559,6 +559,7 @@ def init_db(path: Optional[str] = None) -> None:
         _add_column(conn, "market_reads", "book", "TEXT NULL")       # 📈 "real": a read on a Real position (NULL: Tips / index rows)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_market_reads_book ON market_reads(book, interval, symbol, at)")
         _drop_track_record(conn)
+        _migrate_crypto_scores(conn)
         n = conn.execute("DELETE FROM guard_positions WHERE source = 'kite'").rowcount   # Kite holdings: never again
         if n:
             print(f"Removed {n} guard position(s) that came from Kite holdings (the app no longer reads them)")
@@ -848,6 +849,17 @@ def _migrate_ai_notes(conn) -> None:
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_source ON ai_notes(kind, source_key, prompt_version) "
                  "WHERE source_key IS NOT NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_notes_symbol ON ai_notes(symbol, created)")
+
+
+def _migrate_crypto_scores(conn) -> None:
+    """₿ Outcomes, grade, forecast rows: columns added behind a PRAGMA check, nothing dropped. outcome_json {state won |
+    lost | neither, r, mins, px_at, scored_at} (never rescored) · grade / grade_json (the record + the context at insert) ·
+    kind pattern | forecast · fc_json (the candle model's read for this signal, shadow; `right` once scored)."""
+    _add_column(conn, "crypto_signals", "outcome_json", "TEXT")
+    _add_column(conn, "crypto_signals", "grade", "TEXT")
+    _add_column(conn, "crypto_signals", "grade_json", "TEXT")
+    _add_column(conn, "crypto_signals", "kind", "TEXT DEFAULT 'pattern'")
+    _add_column(conn, "crypto_signals", "fc_json", "TEXT")
 
 
 def _migrate_scan_tables(conn) -> None:

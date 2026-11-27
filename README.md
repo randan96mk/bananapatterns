@@ -2635,6 +2635,43 @@ the same keys as Settings › ₿ BTC patterns). API: `GET /api/crypto`, `GET /a
 `GET /api/crypto/signals`, `GET /api/crypto/snap/{id}.png`, `POST /api/crypto/quiet`, `POST /api/crypto/refresh`; stream
 topic `crypto`.
 
+**Outcomes** (`backend/crypto/outcomes.py`). Every signal (any state, any kind) is scored once, `crypto.score_after_min`
+(60; 30 | 60 | 120) minutes after its candle closed, from the stored 5-minute candles after it: the stop touched first →
+lost −1 R, 1R first → won +1 R, both inside one candle → lost (conservative), neither → "neither" with the R at the last
+close. Stored in `crypto_signals.outcome_json`, never rescored; at start the older rows are backfilled from the stored
+candles. The table shows `✓ 1R hit · 20 min · +1.0 R`, `✗ stop · 10 min · −1.0 R`, `neither · +0.3 R at 60 min` or
+`open · 7 min to score`. R and points only, no money.
+
+**Grade** (`backend/crypto/grade.py`, code from the record, stored at insert). The last 30 days of scored rows of the
+same pattern family (hammer / inverted hammer / dragonfly · engulfing / tweezer / piercing / dark cloud · stars · harami ·
+forecast), level kind (R, S, P), direction and IST session (00–08, 08–16, 16–24), plus the live context (EMA side,
+volume ≥ 1.2×, room to the next pivot ≥ 0.6 × ATR): A ≥ 60 % won, avg R > 0 and 3/3 · B ≥ 50 % and 2/3 · C ≥ 40 % or 1/3 ·
+D else; under 10 like it → no letter ("too few like this"). The candle model moves it one step (touch 1R − touch stop
+≥ ±0.15) only once its BTC scorecard passes (≥ 40 scored reads, direction ≥ 55 %), else the why says "shadow +1".
+`crypto.min_alert_grade` (all | C | B | A): a pattern alert graded below it is stored "quiet" with why `grade C < min B`
+(on the chart, not sent, not in the digest). An alert with a grade carries `grade C` in its head and the line
+`record: … → grade C`.
+
+**The candle model on BTC** (`backend/crypto/forecast.py`, shadow). After the alerts of a candle (never before, its own
+thread) the model reads every new pattern signal (touch levels = its stop and 1R) into `fc_json` (odds, expected price
+± range in 30 min, stop first, 1R first, the paths); its direction is scored by code against the close 30 minutes later
+(the BTC scorecard, `scores.model_chip`). **Forecast alerts**: in the service thread after the pattern step, one read
+with the pivots near the close; a row kind `forecast` ("forecast 66 % down") when the odds one way ≥ `crypto.forecast_p`
+(62; 58 | 62 | 66), the expected move ≥ `crypto.forecast_move_atr` × ATR (0.6 | 1.0), the close within 0.6 × ATR of a
+pivot, the EMA side agrees, inside the alert hours and no forecast on that level within the cooldown; entry = the close,
+stop beyond the pivot or 1 × ATR (the nearer), 1R mirrored. Stored "quiet" (shadow) unless `crypto.forecast_alerts` is
+`send` AND the forecast gate passes (≥ 40 scored forecast rows, ≥ 55 % won); then sent through the same alert path.
+The worker down: skipped silently. Nothing in the alert path waits on the model (`tests/test_crypto_scores.py`, a 5 s
+stub worker: the alert goes within 1 s).
+
+**The cone** (`crypto.forecast_cone`, on). The snapshot draws the model's median (dashed) and the p25–p75 / p10–p90
+bands forward from the signal candle, with the entry / stop / 1R lines across it, and the alert adds `📈 candle model
+(shadow): 64 % down · 61,180 ± 160 in 30 min · stop first 28 % · 1R first 47 %` — when the read is already made (a
+forecast row). Otherwise the plain snapshot goes and, when the read lands, the PNG is re-rendered once under the same
+name, so the cone shows on the card. API: `GET /api/crypto/scores?days=1|7|30` (direction, by grade, the forecast rows
+with their buckets and gate, by pattern and level, the model chip; also `scores` in `GET /api/crypto`); the candles route
+carries each signal's forecast paths with their chart times.
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs
