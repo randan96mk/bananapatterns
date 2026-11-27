@@ -42,7 +42,7 @@ def test_hint_line_per_the_mock():
     assert lines[0] == "💡 <b>Tip #1 · aakankshatrading · " + msg._tip_t(h["posted_at"]) + "</b>"
     assert lines[1].startswith("BUY BANKNIFTY 50300 PE · near 250–270 when comes · SL 190 · Tgt 320 / 350 / 400++ · expiry Wed 25 Nov")
     assert lines[2] == "<i>plan: wait for the zone · half out at 320, SL to cost, rest to 350 / trail · time stop 3:14 PM · skipped if the zone never comes</i>"
-    assert "<b>take 1</b> · <b>take 1 2</b> (lots) · <b>skip 1</b> · <b>tip 1</b>" in lines[-1] and "size not stated → <b>take 1 N</b>" in lines[-1]
+    assert lines[-1] == "reply <b>take 1</b> · <b>take 1 2</b> · <b>skip 1</b> · <b>stop 1 N</b> · size not stated"
     assert msg._tip_t(datetime(2026, 11, 16, 14, 0, tzinfo=IST)).endswith("2:00 PM")
 
 
@@ -50,7 +50,7 @@ def test_take_n_2_and_half_and_skip_routing(monkeypatch):
     w = world(**{KEY12: 262.0})
     b, n, fake, st = bot(["take 1 2", "take 2 half", "skip 3", "skip NMDC"], w)
     seed(st.config, w, BN12, "09:43", 1)
-    seed(st.config, w, BN12, "09:44", 2)
+    seed(st.config, w, BN12.replace("250-270", "250-275"), "09:44", 2)       # another level: not the same call posted again
     seed(st.config, w, BN13, "09:46", 3)
     tr.poll(st.config, w, at("09:50"))
     called = []

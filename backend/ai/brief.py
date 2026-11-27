@@ -292,9 +292,21 @@ def send(note_id: int, f: dict, lines: list[str], config: AppConfig, notifier=No
         code.append(rr.brief_line(config))
     except Exception:
         logger.exception("brief: the candle-model line failed")
-    sent = notifier.send(f"{f['day']}|ai-brief", "system", msg.ai_brief(f["day"], f["at"], lines, code))
+    plan = None
+    try:                                                    # ☀️ the 8:50 plan rides in front when the brief carries it
+        from datetime import date as _date
+        from backend.alerts import jobs as aj
+        if aj.brief_carries_plan(config) and not notifier.already_sent(f"{f['day']}|morning"):
+            plan, _ = aj.morning_plan_html(config, _date.fromisoformat(f["day"]))
+    except Exception:
+        logger.exception("brief: the morning plan failed")
+    html = msg.ai_brief(f["day"], f["at"], lines, code)
+    sent = notifier.send(f"{f['day']}|ai-brief", "system", f"{plan}\n\n{html}" if plan else html)
     if sent:
         notes.mark_alerted(note_id)
+        if plan:
+            from backend.alerts import jobs as aj
+            aj.mark_sent(f"{f['day']}|morning", "plan", "sent with the morning brief")
     flush = getattr(notifier, "flush_quiet", None)          # 🤖 quiet hours: the night's held AI messages follow the brief
     if callable(flush):
         try:

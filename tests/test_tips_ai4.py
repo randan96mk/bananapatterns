@@ -160,7 +160,7 @@ def test_review_telegram_shape_once_a_day_and_hidden_when_nothing_taken(queued, 
                    f"#{b['id']} DRY NIFTY 25400 CE · −₹75 · stop\n"
                    "[AI] no usable read\n"
                    "day: 2 taken · +₹1,066 · all calls 1 lot +₹1,425\n"
-                   f"grades today: #{a['id']} B · #{b['id']} C · #{skipped['id']} skipped (D)"]
+                   f"grades today: #{a['id']} B · #{b['id']} C · 1 skipped (grades D×1)"]
     assert not ai4.send_review_day(c, DAY.isoformat(), at("18:35"))                         # once a day
 
 
@@ -243,8 +243,8 @@ def test_auto_ignores_the_grade_arming_identical_with_grade_d(pushed, queued, mo
     assert ai4.grade_letter(r["hint_id"]) == "D"
     k = bk.load(r["hint_id"])["kite"]
     assert k["state"] == "armed" and k["by"] == "auto" and ko.rows_for(r["hint_id"])[0]["order_type"] == "SL"
-    assert [p for p in pushed if "armed" in p] == [
-        "🤖 Kite AUTO DRY · #1 armed · BUY 1 lot · 20 qty SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
+    line = [p for p in pushed if "armed" in p]                          # the call's message carries the arm (T3)
+    assert len(line) == 1 and line[0].split("\n")[-1] == "auto DRY: armed 1 lot · SL trigger 370 · resting on Kite · activation words: the level decides"
     src = (ROOT / "backend/tips/kite_auto.py").read_text() + (ROOT / "backend/tips/kite_orders.py").read_text()
     assert "grade" not in src.replace("upgrade", "")                                         # the arming code never reads it
 

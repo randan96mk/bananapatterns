@@ -15,7 +15,9 @@
             alert on index additions/removals
   top_setups  trading days from top_setups_time (19:00), after the evening scan: rank the Forming
             setups, save the plan, send the Top N with charts
-  morning_plan  trading days morning_plan_time (08:50) until noon: the saved plan's triggers
+  morning_plan  trading days morning_plan_time (08:50) until noon: the saved plan's triggers; with the AI
+            brief on (brief_carries_plan) it rides in the 9:00 AM brief as one message, alone at 9:15 if none came
+  day_summary_final  trading days job_time + 5 min (18:35): the full day summary once paper is marked
   gap_check  trading days gap_check_time (09:10) until 10:00: how the plan names opened
   login     each of login_times (06:01, 08:45): if Kite doesn't accept a session, send a
             one-time login link (missed slots catch up as one link when the app wakes)
@@ -82,6 +84,42 @@ def login_slots_due(now: datetime, cfg: AlertsConfig, done_today: set, day_ok: b
     return sorted((s for s in cfg.login_times if hm(s) <= now.time() and f"login@{s}" not in done_today), key=hm)
 
 
+FINAL_SUMMARY_AFTER = timedelta(minutes=5)              # 🌙 the full day summary: this long after the evening job (6:30 → 6:35 PM)
+FINAL_SUMMARY_LAST = time(22, 30)                       # past this it goes even if a paper book is still unmarked
+
+
+def final_summary_time(cfg: AlertsConfig) -> time:
+    """The full day summary's time: alerts.job_time + 5 min (6:35 PM by default)."""
+    return (datetime.combine(date(2000, 1, 1), hm(cfg.job_time)) + FINAL_SUMMARY_AFTER).time()
+
+
+def brief_carries_plan(config, now: Optional[datetime] = None) -> bool:
+    """☀️ The 8:50 plan rides in the 9:00 AM brief: the AI brief is on, written at or after the plan's time and before the
+    brief window ends (ai.guard.BRIEF_END). With `now`, also only while that window is still open. Pure."""
+    from backend.ai.guard import BRIEF_END
+    a, ai = config.alerts, config.ai
+    if not (a.morning_plan and ai.enabled and ai.brief) or not (hm(a.morning_plan_time) <= hm(ai.brief_time) < BRIEF_END):
+        return False
+    return now is None or now.time() < BRIEF_END
+
+
+def morning_plan_html(config, today: date, mc: Optional[MarketContext] = None) -> tuple[Optional[str], list]:
+    """(the ☀️ Today's plan message or None when no plan is saved, the plan items)."""
+    plan_as_of, items = pl.latest_plan(before=today.isoformat())
+    if not plan_as_of:
+        return None, items
+    mc = mc or MarketContext.load(config.alerts)
+    return decorate(msg.morning_plan(items, plan_as_of, today.isoformat(), config.alerts.intraday_start,
+                                     config.alerts.close_check_time), "plan", None, mc), items
+
+
+def mark_sent(key: str, kind: str, note: str) -> None:
+    """Record `key` as handled in sent_alerts (so a later send under it is skipped), e.g. the plan sent inside the brief."""
+    with get_db() as conn:
+        conn.execute("INSERT INTO sent_alerts (key, sent_at, kind, symbol, text, ok, error) VALUES (?,?,?,?,?,1,NULL) "
+                     "ON CONFLICT(key) DO NOTHING", (key, now_ist(), kind, None, note))
+
+
 def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
              last_intraday: Optional[datetime] = None, not_before: Optional[dict] = None,
              last_login_check: Optional[datetime] = None, last_filings: Optional[datetime] = None) -> list[str]:
@@ -105,6 +143,9 @@ def due_jobs(now: datetime, cfg: AlertsConfig, done_today: set, trading: bool,
         jobs.append("close_check")
     if trading and cfg.day_summary and ready("day_summary") and hm(cfg.day_summary_time) <= t < time(23, 0):
         jobs.append("day_summary")                         # 🌙 one close-of-day message across the books
+    if (trading and cfg.day_summary and cfg.day_summary_final and ready("day_summary_final")
+            and final_summary_time(cfg) <= t < time(23, 0)):
+        jobs.append("day_summary_final")                   # 🌙 the full summary once the evening job has marked paper
     if (trading and (cfg.top_setups or cfg.alert_style == "summary") and ready("top_setups")
             and hm(cfg.top_setups_time) <= t < time(23, 0)):             # summary style: the evening report
         jobs.append("top_setups")
@@ -1131,13 +1172,15 @@ class Scheduler:
         writes); key {day}|day-summary, kind "summary" (never held). Recorded once a day in job_runs."""
         from backend.alerts import daysum
         today, started = now.date(), now_ist()
+        a = self.state.config.alerts
         try:
             try:                                   # 📈 today's 9:20 AM reads on the Real positions scored for the candle-model line
                 from backend.market import real_reads as rr
                 rr.score(now, self.state.client)
             except Exception:
                 logger.exception("Day summary: the Real read scoring failed")
-            text = msg.day_summary(daysum.parts(self.state.config, today.isoformat()), today.isoformat())
+            text = msg.day_summary(daysum.parts(self.state.config, today.isoformat()), today.isoformat(),
+                                   a.job_time if a.day_summary_final else None)
             sent = bool(text) and self.notifier().send(f"{today}|day-summary", "summary", text)
         except Exception as exc:
             logger.exception("Day summary failed")
@@ -1145,6 +1188,28 @@ class Scheduler:
             return {"status": "failed", "error": str(exc)[:200]}
         note = "sent" if sent else "nothing to report" if not text else "not sent (Telegram off or sent already)"
         self.record("day_summary", today, "ok", note, started)
+        return {"status": "ok", "sent": sent, "text": text}
+
+    def run_day_summary_final(self, now: datetime) -> dict:
+        """🌙 The full day summary (alerts.day_summary_final, job_time + 5 min): every book with its number, sent once the
+        evening job has marked the paper books (it waits 10 min at a time while one is unmarked, until 10:30 PM); key
+        {day}|day-summary-final, kind "summary"."""
+        from backend.alerts import daysum
+        today, started = now.date(), now_ist()
+        try:
+            parts = daysum.parts(self.state.config, today.isoformat())
+            unmarked = [p for p in parts.get("paper") or [] if p.get("today") is None]
+            if unmarked and now.time() < FINAL_SUMMARY_LAST:
+                self.not_before["day_summary_final"] = now + timedelta(minutes=10)
+                return {"status": "waiting", "sent": False, "text": None}
+            text = msg.day_summary(parts, today.isoformat(), full=True)
+            sent = bool(text) and self.notifier().send(f"{today}|day-summary-final", "summary", text)
+        except Exception as exc:
+            logger.exception("Full day summary failed")
+            self.record("day_summary_final", today, "failed", str(exc)[:200], started)
+            return {"status": "failed", "error": str(exc)[:200]}
+        note = "sent" if sent else "nothing to report" if not text else "not sent (Telegram off or sent already)"
+        self.record("day_summary_final", today, "ok", note, started)
         return {"status": "ok", "sent": sent, "text": text}
 
     def run_real_evening(self) -> int:
@@ -1295,16 +1360,21 @@ class Scheduler:
         threading.Thread(target=tb.run, args=(self.state.config,), name="breakout-daily", daemon=True).start()
 
     def run_morning_plan(self, now: datetime) -> dict:
+        """☀️ Today's plan at morning_plan_time; when the AI brief carries it (brief_carries_plan) it waits for the brief,
+        which sends plan + AI lines as one message, and goes alone at the brief window's end if the brief did not."""
+        from backend.ai.guard import BRIEF_END
         today, started = now.date(), now_ist()
-        plan_as_of, items = pl.latest_plan(before=today.isoformat())
+        notifier = self.notifier()
+        if brief_carries_plan(self.state.config, now) and not notifier.already_sent(f"{today}|ai-brief"):
+            self.not_before["morning_plan"] = datetime.combine(today, BRIEF_END, now.tzinfo)
+            return {"status": "waiting", "items": 0, "sent": False, "note": f"goes with the {ampm(self.state.config.ai.brief_time)} brief"}
+        if notifier.already_sent(f"{today}|morning"):
+            self.record("morning_plan", today, "ok", "sent with the morning brief", started)
+            return {"status": "ok", "items": 0, "sent": False, "note": "sent with the morning brief"}
         mc, _ = self._market()
-        sent = self.notifier().send(f"{today}|morning", "plan",
-                                    decorate(msg.morning_plan(items, plan_as_of or "no", today.isoformat(),
-                                                     self.state.config.alerts.intraday_start,
-                                                     self.state.config.alerts.close_check_time), "plan",
-                                             None, mc)) if plan_as_of else False
-        self.record("morning_plan", today, "ok", f"{len(items)} triggers; sent {sent}" if plan_as_of
-                    else "no saved plan yet", started)
+        html, items = morning_plan_html(self.state.config, today, mc)
+        sent = notifier.send(f"{today}|morning", "plan", html) if html else False
+        self.record("morning_plan", today, "ok", f"{len(items)} triggers; sent {sent}" if html else "no saved plan yet", started)
         return {"status": "ok", "items": len(items), "sent": sent}
 
     def run_gap_check(self, now: datetime) -> dict:

@@ -254,8 +254,8 @@ def test_auto_arms_a_placeable_hint_with_one_telegram_line(pushed):
     k = bk.load(r["hint_id"])["kite"]
     assert k["state"] == "armed" and k["by"] == "auto" and k["arm"]["kind"] == "slm" and k["auto_rest"]
     assert ko.rows_for(r["hint_id"])[0]["order_type"] == "SL"            # NOT gated by "WAIT FOR ACTIVATION"
-    line = [p for p in pushed if "armed" in p]
-    assert line == ["🤖 Kite AUTO DRY · #1 armed · BUY 1 lot · 20 qty SENSEX 82300 CE · SL trigger 370 · resting on Kite · activation words: the level decides"]
+    line = [p for p in pushed if "armed" in p]                          # T3: the call's own message carries the arm (one message)
+    assert len(line) == 1 and line[0].startswith("💡 <b>Tip #1 · ") and line[0].split("\n")[-1] == "auto DRY: armed 1 lot · SL trigger 370 · resting on Kite · activation words: the level decides"
     v = tr.hint_view(bk.load(r["hint_id"]), config=c)["kite"]
     assert v["auto"] == {"state": "armed", "text": "auto · armed"}
 

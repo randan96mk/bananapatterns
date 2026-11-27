@@ -298,7 +298,7 @@ def test_the_two_telegram_lines(world):
     assert rr.brief_line(cfg(), now_at("09:00")) is None                                    # no read yet
     rr.nightly(cfg(), now_at("19:05", "2026-11-18"))
     line = rr.brief_line(cfg(), now_at("09:00"))
-    assert line == "candle model (shadow): 1 of 2 lean down over 3 d · DEF stop-first 52 % · ABC up 62 %"
+    assert line == "candle model (shadow): 1 of 2 held names lean down · nearest to its stop: DEF (52 % odds of the stop first)"
     assert rr.brief_line(cfg(kronos_show="cards"), now_at("09:00")).startswith("candle model (cards):")
     text = msg.ai_brief(TODAY, "09:00", ["one line"], [line])
     assert "📈 candle model (shadow): 1 of 2" in text and text.count("AI ·") == 1               # the code line carries no AI mark

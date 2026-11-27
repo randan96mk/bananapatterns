@@ -1,7 +1,9 @@
 """Telegram message text (HTML parse mode). Every value is escaped."""
 
+import re
 from datetime import datetime
 from html import escape
+from html import unescape as html_unescape
 from typing import Optional
 
 from backend.timefmt import ampm, ampm_date
@@ -165,8 +167,8 @@ LOGIN_WHY = {
 def login_link_alert(reason: str, expires: datetime, intraday_start: str = "09:20") -> str:
     why = LOGIN_WHY.get(reason, reason).replace("{start}", ampm(intraday_start))
     return (f"🔑 <b>Kite login needed</b>\n{escape(why)}\n"
-            f"Tap <b>Log in to Kite</b>: works once, until {ampm(expires)}. "
-            "Gives a fresh session until 6:00 AM IST tomorrow.")
+            f"Tap <b>Log in to Kite</b> before {ampm(expires)} (the link works once); "
+            "the session then lasts until 6:00 AM IST tomorrow.")
 
 
 def login_heads_up(first_slot: str) -> str:
@@ -323,7 +325,11 @@ def _pace(pace: Optional[float]) -> str:
 def close_summary(items: list[dict], shown: set, check_time: str = "15:15") -> str:
     """One message for the close-check names not sent individually. items: {symbol, verdict, ltp, pivot, pace}."""
     groups = {"holding": "✅ Also holding", "weak": "🟡 Above pivot, weak", "extended": "⛔ Extended, don't chase"}
-    lines = [f"🕒 <b>{ampm(check_time)} check</b>: {len(items)} names above their pivot"]
+    n = len(items)
+    lines = [f"🕒 <b>{ampm(check_time)} check</b>: " + ("1 name above its pivot" if n == 1 else f"{n} names above their pivot")]
+    sent = [escape(i["symbol"]) for i in items if i["symbol"] in shown]
+    if sent:                                                # the names sent on their own above, so the count adds up
+        lines.append("sent above: " + ", ".join(sent))
     for v, title in groups.items():
         names = [f"{'🅱️ ' if i.get('tier') == 'B' else ''}{escape(i['symbol'])} "
                  f"({(i['ltp'] / i['pivot'] - 1) * 100:+.1f}%, {_pace(i.get('pace'))})"
@@ -859,38 +865,34 @@ def _day_label(iso: Optional[str]) -> str:
     return f"{d:%a} {d.day} {d:%b}"
 
 
+def _vwap_stop_words(o: dict, bull: bool) -> str:
+    """'or 2 5-min closes under VWAP (or one 10 pts under)' from the spread's recorded VWAP stop settings; a spread
+    recorded before them (or closes 1) reads 'or a 5-min close under VWAP'."""
+    side = "under" if bull else "over"
+    n, m = int(o.get("vwap_closes") or 1), float(o.get("vwap_margin") or 0)
+    if n <= 1:
+        return f"or a 5-min close {side} VWAP"
+    return f"or {n} 5-min closes {side} VWAP" + (f" (or one {m:g} pts {side})" if m > 0 else "")
+
+
 def options_bias(o: dict, tag: str = "paper") -> str:
-    """🧭 The bias found and the spread sold: the price line (the range, VWAP, the previous day's level), the two legs with
-    the lots and the credit, stop / target / worst case, margin / sessions / VIX dim, the chain line. `o` is the open
-    spread the book recorded (plus range / prev / vix / close)."""
+    """🧭 The spread sold, three lines under the head: the two legs with the lots and the credit · stop / target / worst
+    case · margin / sessions / VIX (dim). The chain scoring and the price line stay on the Options page (the payload
+    keeps them). `o` is the open spread the book recorded (plus range / prev / vix / close)."""
     bias, s, h = o["bias"], o["sold"], o["hedge"]
     bull = bias == "BULLISH"
-    rng, prev = o.get("range") or {}, o.get("prev") or {}
-    px = o.get("close") or o.get("spot_at_entry") or o.get("spot")
-    line = [f"NIFTY {px:,.0f}" if px else "NIFTY", f"{'above' if bull else 'below'} the 9:15–9:30 range"
-            + (f" ({rng['low']:,.0f}–{rng['high']:,.0f})" if rng else "")]
-    if o.get("vwap_at_entry") or o.get("vwap"):
-        line.append(f"and VWAP {(o.get('vwap_at_entry') or o.get('vwap')):,.0f}")
-    price = " ".join(line)
-    lvl = prev.get("high") if bull else prev.get("low")
-    if lvl:
-        price += f" · prev {'high' if bull else 'low'} taken"
     lots = o["lots"]
     legs = (f"SELL <b>{_strike(s)}</b> @ {s['entry']:.2f} · BUY {_strike(h)} @ {h['entry']:.2f} · {lots} lot{'s' if lots != 1 else ''} · "
             f"credit {inr(o['credit_rs'])}")
     vwap = o.get("vwap_exit", True)
-    stop = (f"stop {o['stop_premium']:.2f} (+{o['stop_pct']:g}%)" + (f" or a 5-min close {'under' if bull else 'over'} VWAP" if vwap else "") + " · "
+    stop = (f"stop {o['stop_premium']:.2f} (+{o['stop_pct']:g}%)" + (f" {_vwap_stop_words(o, bull)}" if vwap else " · VWAP exit off") + " · "
             f"target {o['target_value']:.2f} ({o.get('target_pct', 60):g}%) · worst case {inr(-o['worst_case'], sign=True)}")
-    from backend.options.book import exits_text
-    stop += f" · {exits_text(o['stop_pct'], vwap)}"
     dim = [f"margin ~{inr(o['margin_est'])}"]
     if o.get("sessions") is not None:
         dim.append("expiry day" if o["sessions"] == 0 else f"{o['sessions']} session{'s' if o['sessions'] != 1 else ''} to expiry")
     if o.get("vix"):
         dim.append(f"VIX {o['vix']:.1f}")
-    out = [f"🧭 {_opt_head(tag, f'bias {bias}', o.get('opened_t'))}", escape(price), legs, escape(stop), f"<i>{escape(' · '.join(dim))}</i>"]
-    if o.get("chain_line"):
-        out.append(f"<i>chain: {escape(o['chain_line'])}</i>")
+    out = [f"🧭 {_opt_head(tag, f'bias {bias}', o.get('opened_t'))}", legs, escape(stop), f"<i>{escape(' · '.join(dim))}</i>"]
     n = o.get("n") or 1
     if n > 1:
         of = f" ({n} of {o['max_trades']})" if o.get("max_trades") else ""
@@ -1238,12 +1240,36 @@ def _why_head(n: dict) -> str:
     return f"{icons} <b>{escape(n['symbol'])}</b>" + (f" · {escape(label)}" if label else "") + (f" · {nets}" if nets else "")
 
 
+_WHY_TAG = re.compile(r"<[^>]+>")
+_WHY_WORD = re.compile(r"[a-z]+|\d+(?:\.\d+)?")
+WHY_STOP = frozenset("likely cause a an the of on in at to for and or by with from was were is are it its this that as "
+                     "today day trade net its".split())
+WHY_REPEAT = 0.7                                          # this share of the AI line's content words already in the header → dropped
+
+
+def _why_words(text: str) -> list:
+    t = html_unescape(_WHY_TAG.sub(" ", text or "")).lower().replace(",", "")
+    return [w for w in _WHY_WORD.findall(t) if w not in WHY_STOP]
+
+
+def why_repeats_header(line: str, head: str) -> bool:
+    """True when the AI line adds nothing: ≥ 70 % of its content words (numbers without commas, the filler words out)
+    are already in the trade line (or it has none)."""
+    words, seen = _why_words(line), set(_why_words(head))
+    return not words or sum(w in seen for w in words) / len(words) >= WHY_REPEAT
+
+
 def ai_why_evening(rows: list, day: str) -> str:
     """🧾 [AI] Today's exits, explained: one line per stock closed today (the book or books, the name, how it ended, the
-    net per book) with the AI's "likely cause" under it."""
+    net per book) with the AI's "likely cause" under it; an AI line that only repeats the trade line is dropped, the
+    trade line then ends "· no added cause" (dim)."""
     lines = [f"🧾 <b>{AI_HEAD}Today's exits, explained</b> · {_day_full(day, '%a %d %b')}"]
     for n in rows:
-        lines.append(f"{_why_head(n)}\n   🤖 {ai_mark(n['text'])}")
+        head = _why_head(n)
+        if why_repeats_header(n.get("text") or "", head):
+            lines.append(f"{head} <i>· no added cause</i>")
+        else:
+            lines.append(f"{head}\n   🤖 {ai_mark(n['text'])}")
     lines.append("<i>written from the trade rows, the day's bars and the filings · no action taken</i>")
     return "\n".join(lines)
 
@@ -1353,18 +1379,25 @@ def _sum_kronos(k: dict) -> str:
 DAY_SUMMARY_ORDER = (("real", _sum_real), ("kronos", _sum_kronos), ("paper", _sum_paper), ("options", _sum_options), ("ai", _sum_ai))
 
 
-def day_summary(parts: dict, day: str) -> Optional[str]:
+def day_summary(parts: dict, day: str, final_at: Optional[str] = None, full: bool = False) -> Optional[str]:
     """🌙 Day summary · Mon 16 Nov: one line per book that had anything today, in a fixed order (Real, Paper, Options,
     the AI), the value and the day's P&L always in the same place; a book with nothing is
-    left out (`parts` has no key for it; paper is a list, one per account). None when no book has a line."""
-    lines = []
+    left out (`parts` has no key for it; paper is a list, one per account). None when no book has a line.
+    `final_at` (the full summary's time, alerts.day_summary_final on): a paper book not marked yet has no line, one
+    'paper marked at 6:30 PM · full summary then' line says when its number comes. `full`: the header of that summary."""
+    lines, pending = [], None
     for key, line in DAY_SUMMARY_ORDER:
         part = parts.get(key)
         for p in (part if isinstance(part, list) else [part] if part else []):
+            if final_at and key == "paper" and p.get("today") is None:
+                pending = p.get("marks_at") or "18:30"
+                continue
             lines.append(line(p))
+        if key == "paper" and pending:
+            lines.append(f"📝 paper marked at {ampm(pending)} · full summary then")
     if not lines:
         return None
-    return "\n".join([f"🌙 <b>Day summary · {_day_full(day, '%a %d %b')}</b>", *lines])
+    return "\n".join([f"🌙 <b>Day summary · {_day_full(day, '%a %d %b')}{' · full' if full else ''}</b>", *lines])
 
 
 def quiet_flushed(n: int) -> str:
@@ -1394,19 +1427,23 @@ def _expiry_label(iso: Optional[str]) -> str:
     return f"{d:%a} {d.day} {d:%b}"
 
 
-def tips_hint_body(h: dict) -> str:
-    """'BUY BANKNIFTY 50300 PE · near 250–270 when comes · SL 190 · Tgt 320 / 350 / 400++ · expiry Wed 19 Nov <i>AI</i>'."""
+def tips_hint_body(h: dict, call: bool = False) -> str:
+    """'BUY BANKNIFTY 50300 PE · near 250–270 when comes · SL 190 · Tgt 320 / 350 / 400++ · expiry Wed 19 Nov <i>AI</i>'.
+    `call` (the new-call message): a provisional stop reads "stop 562 (provisional −25 %) · the channel's SL replaces
+    it" and "no plan: …" is left to the plan line."""
     from backend.tips import decode as dc
     from backend.tips import plan as pl
     p = h.get("plan") or {}
     dec = h.get("decoded") or {}
     ai = any(v == "ai" for v in dec.values()) or h.get("expiry_src") == "ai"
-    bits = [escape(dc.title(h)), escape(pl.entry_text(h.get("entry") or {})), escape(pl.stop_text(h.get("stop") or {})),
+    st = h.get("stop") or {}
+    stop = escape(pl.stop_text(st)) + (" · the channel's SL replaces it" if call and st.get("src") == "provisional" else "")
+    bits = [escape(dc.title(h)), escape(pl.entry_text(h.get("entry") or {})), stop,
             escape(pl.targets_text(h.get("targets") or [], bool(h.get("open_ended"))))]
     if h.get("expiry"):
         bits.append("expiry " + _expiry_label(h["expiry"]) + (" (computed)" if h.get("expiry_src") == "computed" else ""))
     out = " · ".join(bits) + (" <i>AI</i>" if ai else "")
-    if not p.get("ok", True):
+    if not p.get("ok", True) and not call:
         out += f" · <b>no plan: {escape(p.get('why') or '')}</b>"
     return out
 
@@ -1427,17 +1464,20 @@ def tips_state_word(h: dict) -> Optional[str]:
 def tips_hint(h: dict, ltp: Optional[float] = None) -> str:
     """💡 Tip #12 · channel · 9:43 AM / the call / the plan / the replies (the mock's first card)."""
     n = h["id"]
-    lines = [f"{TIP} <b>Tip #{n} · {escape(h.get('channel') or '')} · {_tip_t(h['posted_at'])}</b>", tips_hint_body(h)]
+    lines = [f"{TIP} <b>Tip #{n} · {escape(h.get('channel') or '')} · {_tip_t(h['posted_at'])}</b>", tips_hint_body(h, call=True)]
     p = h.get("plan") or {}
-    if p.get("text"):
-        lines.append(f"<i>plan: {escape(p['text'])}</i>")
+    parts = [x for x in (p.get("lines") or ([p["text"]] if p.get("text") else []))
+             if not str(x).startswith(("provisional stop ", "no plan: "))]       # the stop line says it; "no plan" once, last
+    if parts or not p.get("ok", True):
+        lines.append("<i>plan: " + escape(" · ".join(parts)) + "</i>"
+                     + ("" if p.get("ok", True) else f"{' · ' if parts else ''}<b>no plan: {escape(p.get('why') or '')}</b>"))
     if not h.get("tradingsymbol"):
         lines.append(f"<i>not tracked: {escape(h.get('untracked_why') or 'no instrument')}</i>")
     elif h.get("untracked_why"):
         lines.append(f"<i>quotes start after you {escape(h['untracked_why'])}</i>")
-    size = "" if (h.get("size_hint") or {}) else f" · size not stated → <b>take {n} N</b>"
+    size = "" if (h.get("size_hint") or {}) else " · size not stated"
     now = f" · now {ltp:g} · {escape(tips_state_word(h) or 'waiting')}" if ltp is not None else ""
-    lines.append(f"reply <b>take {n}</b> · <b>take {n} 2</b> (lots) · <b>skip {n}</b> · <b>tip {n}</b>{size}{now}")
+    lines.append(f"reply <b>take {n}</b> · <b>take {n} 2</b> · <b>skip {n}</b> · <b>stop {n} N</b>{size}{now}")
     return "\n".join(lines)
 
 

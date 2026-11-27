@@ -120,7 +120,7 @@ def rules_text(c) -> list[str]:
     if more:
         out[8] = "More entries: " + " · ".join(more) + f" · all count toward {c.max_trades_day} trades a day (the pair = 1)"
     out[5] = (f"Exits: sold premium {1 + c.stop_pct / 100:g}× its entry (+{c.stop_pct:g}%; +{c.stop_pct_expiry:g}% on expiry day) · "
-              + ("a 5-minute close back through VWAP" if c.vwap_exit else "VWAP exit off") + f" · breakeven after a {c.be_after_pct:g}% decay · "
+              + (vwap_rule_text(c) if c.vwap_exit else "VWAP exit off") + f" · breakeven after a {c.be_after_pct:g}% decay · "
               f"target at {c.target_pct:g}% of the credit · {c.time_exit} time exit · 15:20 hard exit")
     return out
 
@@ -739,6 +739,7 @@ def _spread(c, d: dict, now: datetime, bias: str, q: dict, sel: dict, lots: int,
          "worst_case": round(sel["width"] * qty - credit * qty, 2), "margin_est": round(c.margin_per_lot * lots, 2), "charges_in": round(ch_in, 2),
          "opened_at": now.isoformat(timespec="seconds"), "opened_t": ampm(now), "spot_at_entry": q["spot"], "vwap_at_entry": d.get("vwap"),
          "value": credit, "pnl": round(-ch_in, 2), "spot": q["spot"], "vwap_checked": [], "n": d["trades"] + 1, "vwap_exit": bool(vwap_exit),
+         "vwap_closes": int(c.vwap_stop_closes), "vwap_margin": float(c.vwap_stop_margin_pts), "vwap_through": 0,
          "exits": exits_text(stop_pct, vwap_exit)}
     return o, ch_in
 
@@ -989,9 +990,29 @@ def _mark(st: dict, config: AppConfig, client, now: datetime) -> Optional[str]:
         if bar and vw:
             st["day"]["vwap"] = vw
             o["vwap"] = vw
-            if (o["bias"] == bs.BULLISH and bar["c"] < vw) or (o["bias"] == bs.BEARISH and bar["c"] > vw):
+            if vwap_stop_fires(o, c, bar["c"], vw):
                 return "vwap stop"
     return None
+
+
+def vwap_stop_fires(o: dict, c, close: float, vw: float) -> bool:
+    """The VWAP stop on one 5-minute close: through VWAP against the bias counts (o["vwap_through"], reset by a close
+    on the bias side); it fires on vwap_stop_closes such closes in a row, or on one close through by at least
+    vwap_stop_margin_pts NIFTY points (0 = no margin rule). closes 1 + margin 0 = the first close through (the old rule)."""
+    dist = (vw - close) if o["bias"] == bs.BULLISH else (close - vw) if o["bias"] == bs.BEARISH else 0.0
+    if dist <= 0:
+        o["vwap_through"] = 0
+        return False
+    o["vwap_through"] = int(o.get("vwap_through") or 0) + 1
+    margin = float(getattr(c, "vwap_stop_margin_pts", 0) or 0)
+    return o["vwap_through"] >= max(1, int(getattr(c, "vwap_stop_closes", 1) or 1)) or (margin > 0 and dist >= margin)
+
+
+def vwap_rule_text(c) -> str:
+    """'2 5-minute closes back through VWAP in a row, or one 10 pts through' (the VWAP stop's two settings)."""
+    n, m = max(1, int(c.vwap_stop_closes)), float(c.vwap_stop_margin_pts)
+    first = "a 5-minute close back through VWAP" if n == 1 else f"{n} 5-minute closes back through VWAP in a row"
+    return first + (f", or one {m:g} pts through" if m > 0 and n > 1 else "")
 
 
 def _exit(st: dict, config: AppConfig, client, now: datetime, why: str, force: bool = False) -> Optional[dict]:

@@ -427,6 +427,10 @@ DAY_CLOSE_RE = re.compile(r"\b(?:temporarily\s+)?clos(?:e|ing)\s+(?:the\s+|for\s
                           r"\bthat\s+is\s+it\s+for\s+today\b")
 
 
+AVOID_RE = re.compile(r"\b(avoid|don'?t (enter|take)|not now|cancel|not\s+activ(?:e|ated))\b")
+WAIT_RE = re.compile(r"\s*wait(?:ing)?(?:\s+for\s+(?:the\s+)?(?:next|right)?\s*level(?:\s+to\s+activ(?:e|ate))?)?\W*")
+
+
 def add_of(text: str) -> Optional[dict]:
     """The add a post names, by code: {lots N | None, level X | None, cond "after activation" | None}, or None."""
     low = (text or "").lower()
@@ -477,8 +481,9 @@ def day_closed(text: str) -> bool:
 
 
 def followup_action(text: str) -> dict:
-    """What a follow-up says, by code: {action: exit|sl_hit|stop|trail|partial|add|active|avoid|targets|price|note, n,
-    value, spot, cost, rest_stop, lots, level}. Precedence inside ONE post: SL hit / exit (full; "book 156 full") > partial
+    """What a follow-up says, by code: {action: exit|sl_hit|stop|trail|partial|add|active|avoid|wait|targets|price|note,
+    n, value, spot, cost, rest_stop, lots, level, size_lots}. "wait" / "wait for next level" = wait (logged, no action);
+    "not active" = avoid; "Century done" = a result (targets); "2 lots\n\nAdd 2 lots near 700" = the add with size_lots 2. Precedence inside ONE post: SL hit / exit (full; "book 156 full") > partial
     (book part / half / "book" alone) > stop change > add (lots, level) > size ("2-2 lots"; "buy 2 lots here" = active
     with lots) > trail > targets > avoid > active > price > note. A booking with a stop figure is a partial whose
     remainder takes that stop ("book part ... rest sl 440" -> {partial, rest_stop 440}); a stop figure alone is a stop.
@@ -499,7 +504,11 @@ def followup_action(text: str) -> dict:
         return {"action": "stop", "value": fig, "spot": "spot" in low}
     ad = add_of(low)
     if ad:                                              # "add more near 440": logged; acted on only with kite_follow_adds
-        return {"action": "add", "lots": ad["lots"], "level": ad["level"], "cond": ad["cond"]}
+        out = {"action": "add", "lots": ad["lots"], "level": ad["level"], "cond": ad["cond"]}
+        lead = SIZE_RE.match(low.split("\n", 1)[0]) if "\n" in low.strip() else None
+        if lead and not ADD_ANY_RE.search(low.split("\n", 1)[0]):     # 📏 "2 lots\n\nAdd 2 lots near 700 …": the size, then the add
+            out["size_lots"] = int(lead.group(1))
+        return out
     sz = size_of(low)
     if sz:                                              # "buy 2 lots here" / "2-2 lots": the size before the fill
         return sz
@@ -507,13 +516,18 @@ def followup_action(text: str) -> dict:
         return {"action": "trail", "cost": cost}
     if re.search(r"\b(t?sl|stop\s*loss|stoploss)\s*(?:to|at)\s*cost\b", low):
         return {"action": "trail", "cost": True}
-    m = re.search(r"\b(\d|all)\s*(?:targets?|tgts?)\s*(?:done|hit|achieved)|\b(?:target|tgt)\s*(\d)\s*(?:done|hit|achieved)|hit\s*tgt\s*(\d)", low)
+    m = re.search(r"\b(\d|all)\s*(?:targets?|tgts?)\s*(?:done|hit|achieved)|\b(?:target|tgt)s?\s*(\d)\s*(?:(?:and|&|,|/)\s*(\d)\s*)?(?:done|hit|achieved)|"
+                  r"hit\s*tgt\s*(\d)", low)
     if m:
-        n = m.group(1) or m.group(2) or m.group(3)
+        n = m.group(1) or m.group(3) or m.group(2) or m.group(4)       # "Target 1 and 2 done": the higher one
         return {"action": "targets", "n": None if n == "all" else int(n)}
-    if re.search(r"\b(avoid|don'?t (enter|take)|not now|cancel)\b", low) or re.fullmatch(r"\s*wait\W*", low):
+    if re.search(r"\bcentury\b", low):                  # "Century done": a result (+100 points), never a level
+        return {"action": "targets", "n": None, "century": True}
+    if AVOID_RE.search(low):
         return {"action": "avoid"}
-    if re.search(r"\b(active|activated|triggered|start taking|enter now|entry done|take it)\b", low) or re.search(r"\bcmp\b", low):
+    if WAIT_RE.fullmatch(low):                          # "wait" / "wait for next level": no action, logged
+        return {"action": "wait"}
+    if re.search(r"(?<!not )\b(active|activated|triggered|start taking|enter now|entry done|take it)\b", low) or re.search(r"\bcmp\b", low):
         m = re.search(r"\bcmp\b\D{0,20}(\d+(?:\.\d+)?)", low)
         return {"action": "active", "value": float(m.group(1)) if m else None}
     if re.search(r"\d", low):
