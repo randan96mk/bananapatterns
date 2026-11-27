@@ -82,6 +82,37 @@ def forecast_view(r: dict, times: bool = False) -> Optional[dict]:
     return out
 
 
+def _chip_of(chip: Optional[str]) -> str:
+    """'candle model · shadow · BTC hit rate 52 % over 38' -> 'shadow · BTC hit rate 52 % over 38'."""
+    chip = chip or "candle model · off"
+    return chip[len("candle model · "):] if chip.startswith("candle model · ") else chip
+
+
+def forecast_now(config, minutes: int = 30, now_ts: Optional[float] = None, model_chip: Optional[str] = None) -> dict:
+    """GET /api/crypto/forecast_now: the latest per-candle read kept by backend/crypto/forecast.py (LATEST; this never
+    calls the worker) + model_chip, next_at_label (the next candle close), stale (older than 2 candles) and the candle's
+    label; {"worker": "down", ...} when the last read failed with nothing kept, {"empty": true, ...} when nothing is cached."""
+    from backend.crypto import forecast
+    from backend.crypto import outcomes
+    c = config.crypto
+    now_ts = _time.time() if now_ts is None else now_ts
+    s = pv.TF_SECONDS.get(c.tf, 300)
+    nxt = (int(now_ts) // s + 1) * s
+    if model_chip is None:
+        try:
+            model_chip = outcomes.model_chip(config)
+        except Exception:
+            model_chip = None
+    base = {"horizon_min": int(minutes), "tf": c.tf, "model_chip": _chip_of(model_chip), "next_at": nxt,
+            "next_at_label": ampm(datetime.fromtimestamp(nxt, IST))}
+    r = forecast.LATEST.get(int(minutes))
+    if not r or r.get("symbol") != c.symbol or r.get("tf") != c.tf:
+        return {**base, "empty": True, "worker": None, "stale": False}
+    t = int(r["t"])
+    stale = now_ts - (t + s) > 2 * s
+    return {**r, **base, "empty": False, "stale": bool(stale), "candle_label": ampm(datetime.fromtimestamp(t, IST)), "when": when(t)}
+
+
 def row_view(r: dict, after_min: int = 60, now_ts: Optional[float] = None, times: bool = False) -> dict:
     f = r.get("facts_json") or {}
     aj = r.get("ai_json") or {}
@@ -115,6 +146,7 @@ def summary(config, service=None, now_ts: Optional[float] = None) -> dict:
     q = sg.quiet_until(now)
     from backend.market import reads as rd
     last_ai = next((r for r in rs if (r.get("ai_json") or {}).get("line")), None)
+    sc = _scores(config, 30, now_ts)
     return {"enabled": bool(c.enabled), "running": bool(service and getattr(service, "running", False)), "symbol": c.symbol, "tf": c.tf,
             "source": feed.SOURCE, "health": h, "now_label": ampm(now),
             "pivots": {"type": c.pivot_type, "period": pv.auto_period(c.tf, c.pivot_tf), "pivot_tf": c.pivot_tf, "boundary": c.day_boundary,
@@ -125,7 +157,8 @@ def summary(config, service=None, now_ts: Optional[float] = None) -> dict:
             "today": counts, "today_total": len(today),
             "ai": {"read": bool(c.ai_read), "local_ai": bool(getattr(config.ai, "enabled", False)), "model_chip": rd.chip(config) if rd.on(config) else "candle model · off",
                    "last": {"id": last_ai["id"], "when": when(last_ai["t"]), "line": last_ai["ai_json"]["line"]} if last_ai else None},
-            "signals": [row_view(r, int(c.score_after_min), now_ts) for r in rs], "scores": _scores(config, 30, now_ts), "settings": asdict(c), "defaults": asdict(CryptoConfig()),
+            "signals": [row_view(r, int(c.score_after_min), now_ts) for r in rs], "scores": sc,
+            "forecast_now": forecast_now(config, 30, now_ts, (sc or {}).get("model_chip")), "settings": asdict(c), "defaults": asdict(CryptoConfig()),
             "patterns": [{"key": p, "label": pt.LABEL[p], "dir": pt.direction(p), "confirm": f"confirm_{p}" in asdict(c)} for p in (*pt.BULLISH, *pt.BEARISH)]}
 
 

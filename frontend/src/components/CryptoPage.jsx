@@ -90,18 +90,33 @@ class ConePrim {
     });
   }
 }
-function coneOf(s, off, step) {
-  const f = s?.forecast; const P = f?.paths; const med = P?.median;
-  if (!Array.isArray(med) || !med.length || s?.t == null) return null;
+// One cone from a read's paths, its start candle (t0, chart time) and its step times (chart times; else from horizon_min):
+// the detection cone and the live "forecast now" cone both go through here.
+function coneFrom({ paths, t0, times, horizonMin, anchor, label }, step) {
+  const med = paths?.median;
+  if (!Array.isArray(med) || !med.length || t0 == null) return null;
   const n = med.length;
-  const dt = f.horizon_min ? Math.max(1, Math.round((+f.horizon_min * 60) / n)) : step;
-  const keep = med.map((_, i) => i).filter((i) => ((i + 1) * dt) % step === 0);   // on a coarser chart only the points on its candle grid
+  const dt = horizonMin ? Math.max(1, Math.round((+horizonMin * 60) / n)) : step;
+  const ts0 = Array.isArray(times) && times.length === n ? times.map(Number) : med.map((_, i) => t0 + (i + 1) * dt);
+  const keep = ts0.map((_, i) => i).filter((i) => (ts0[i] - t0) % step === 0);   // on a coarser chart only the points on its candle grid
   if (!keep.length) return null;
-  const arr = (k) => (Array.isArray(P[k]) && P[k].length === n ? keep.map((i) => +P[k][i]) : null);
-  const t0 = s.t + off;
-  return { t0, anchor: +(s.entry ?? med[0]), ts: keep.map((i) => t0 + (i + 1) * dt), med: keep.map((i) => +med[i]),
-    p25: arr('p25'), p75: arr('p75'), p10: arr('p10'), p90: arr('p90'), label: coneWord(f) };
+  const arr = (k) => (Array.isArray(paths[k]) && paths[k].length === n ? keep.map((i) => +paths[k][i]) : null);
+  return { t0, anchor: +(anchor ?? med[0]), ts: keep.map((i) => ts0[i]), med: keep.map((i) => +med[i]),
+    p25: arr('p25'), p75: arr('p75'), p10: arr('p10'), p90: arr('p90'), label };
 }
+const coneOf = (s, off, step) => (s?.forecast && s.t != null ? coneFrom({ paths: s.forecast.paths, t0: s.t + off, times: s.forecast.times,
+  horizonMin: s.forecast.horizon_min, anchor: s.entry, label: coneWord(s.forecast) }, step) : null);
+// the live cone (no entry / stop / 1R: only the cone and the pivots) from GET /api/crypto/forecast_now
+const liveCone = (f, step) => (f?.paths ? coneFrom({ paths: f.paths, t0: f.t0, times: f.times, horizonMin: f.horizon_min, anchor: f.last,
+  label: coneWord(f) }, step) : null);
+const fcNowText = (f) => {
+  if (!f || f.empty) return null;
+  const pv = (x) => (x ? `${x.name} ${px(x.px)}` : '—');
+  const pc = f.p_up != null ? Math.round(Math.max(f.p_up, 1 - f.p_up) * 100) : null;
+  return { head: `📈 now · ${f.candle_label || '—'} candle · ${f.horizon_min} min: `,
+    odds: pc == null ? '—' : Math.abs(f.p_up - 0.5) < 0.02 ? `${pc} % · flat` : `${pc} % ${f.p_up > 0.5 ? 'up' : 'down'}`,
+    tail: ` · ${px(f.exp_px)} ± ${px(f.exp_range)} · next pivot ${pv(f.next_pivots?.above)} above · ${pv(f.next_pivots?.below)} below` };
+};
 
 function palette() {
   return { bg: cssVar('--panel'), text: cssVar('--text'), grid: cssVar('--grid'), border: cssVar('--border'), up: cssVar('--ok') || '#1f9d61',
@@ -110,7 +125,7 @@ function palette() {
 
 // The chart: candles, the EMA, the pivot levels per period (a gap at each new period), the markers, the selected
 // detection's entry / stop / 1R lines. Fixed height; the tooltip shows the detection under the cursor.
-function BtcChart({ data, sel, alt, onPick }) {
+function BtcChart({ data, sel, alt, live, onPick }) {
   const box = useRef(null);
   const h = useRef(null);
   const theme = useTheme();
@@ -177,7 +192,7 @@ function BtcChart({ data, sel, alt, onPick }) {
     const s = s0 && alt && alt.id === s0.id ? { ...alt, ...s0, forecast: s0.forecast?.paths ? s0.forecast : alt.forecast, outcome: s0.outcome || alt.outcome } : s0;
     const step0 = data.candles.length > 1 ? data.candles[1].time - data.candles[0].time : 300;
     // the selected detection's cone (when its model read carries paths) and its scored outcome written at the 1R / stop candle
-    const cn = s ? coneOf(s, off, step0) : null;
+    const cn = s ? coneOf(s, off, step0) : liveCone(live, step0);   // a selected detection's cone takes over from the live one
     c.cone.set(cn);
     c.median.setData(cn ? [{ time: cn.t0, value: cn.anchor }, ...cn.ts.map((t, i) => ({ time: t, value: cn.med[i] }))] : []);
     const o = s?.outcome;
@@ -198,7 +213,7 @@ function BtcChart({ data, sel, alt, onPick }) {
     } else if (data.candles.length) {
       c.chart.timeScale().fitContent();
     }
-  }, [data, sel, alt, lw, theme]);
+  }, [data, sel, alt, live, lw, theme]);
 
   return <div className="btc-chart" ref={box}>
     {data && !data.candles.length && <div className="btc-empty muted small">No {TF_WORD[data.tf] || data.tf} candles stored for this range yet.</div>}
@@ -346,6 +361,30 @@ export default function CryptoPage() {
   const refresh = async () => { try { const r = await api.cryptoRefresh(); if (!r.ok) setErr(r.why); load(); } catch (e) { setErr(e.message); } };
   const scan = async () => { try { const r = await api.cryptoScan(); if (!r.ok) setErr(r.why); else setErr(`history scan: ${r.marked} marked over ${r.scanned} candles (${r.days} d) · nothing sent`); load(); } catch (e) { setErr(e.message); } };
   const pick = (id) => { setSel(id === sel ? null : id); };
+  // 📈 Forecast now: the candle model's latest per-candle read (cached by the service; this only reads it) as a live cone
+  // from the last closed candle. Off by default; the toggle and the horizon are remembered.
+  const lsGet = (k, dflt) => { try { return localStorage.getItem(k) ?? dflt; } catch { return dflt; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+  const [fcOn, setFcOn] = useState(() => lsGet('bp.btc.fcnow', '0') === '1');
+  const [fcH, setFcH] = useState(() => (lsGet('bp.btc.fcnow.h', '30') === '60' ? 60 : 30));
+  const toggleFc = () => setFcOn((v) => { lsSet('bp.btc.fcnow', v ? '0' : '1'); return !v; });
+  const pickFcH = (v) => { lsSet('bp.btc.fcnow.h', String(v)); setFcH(v); };
+  const [fcNow, setFcNow] = useState(null);
+  const sumFc = d?.forecast_now;
+  useEffect(() => { if (fcH === 30 && sumFc && !fcNow) setFcNow(sumFc); }, [sumFc, fcH]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!fcOn) return undefined;
+    let alive = true;
+    const get = () => api.cryptoForecastNow(fcH).then((x) => { if (alive) setFcNow(x); }).catch(() => {});
+    get();
+    const id = setInterval(get, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [fcOn, fcH, lastT]);
+  const fcCur = fcNow && fcNow.horizon_min === fcH ? fcNow : null;
+  const fcDraw = fcOn && fcCur && !fcCur.empty && fcCur.worker === 'ok' && !fcCur.stale && fcCur.paths && fcCur.tf === vtf ? fcCur : null;
+  const fcKey = fcDraw ? `${fcDraw.t}|${fcDraw.horizon_min}` : '';
+  const liveFc = useMemo(() => fcDraw, [fcKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fcTxt = fcNowText(fcCur);
   // ⛶ full screen: the chart panel fills the window (the browser's fullscreen when it allows it, else a fixed overlay); Esc leaves
   const [full, setFull] = useState(false);
   // ⚙ Inputs: a drawer beside the chart (closed by default so the chart takes the whole row); the choice is remembered
@@ -416,13 +455,26 @@ export default function CryptoPage() {
           {s ? <Chip title={s.text}>{s.label} {s.when.split(' ').slice(-2).join(' ')} on {s.level} {px(s.level_px)}</Chip> : <Chip>click a marker or a row</Chip>}
           {s && <Chip>entry {px(s.entry)} · stop {px(s.stop)}{s.capped ? ' (cap)' : ''} · 1R {px(s.r1)}</Chip>}
           {s?.forecast && !phone && <Chip c="fc" title="the candle model's read for this candle · shadow: never gates an alert">{modelChip}</Chip>}
+          <button type="button" className={`btn ghost small btc-fcbtn ${fcOn ? 'on' : ''}`} onClick={toggleFc} aria-pressed={fcOn}
+            title="the candle model's read on the last closed candle, drawn as a cone · shadow · never an alert">Forecast now · {fcOn ? 'on' : 'off'}</button>
+          {fcOn && <Seg small opts={[[30, '30 min'], [60, '60 min']]} v={fcH} set={pickFcH} />}
           {full && <><Seg small opts={TFS} v={vtf} set={setTf} /><Seg small opts={RANGES} v={range} set={setRange} /></>}
           <button type="button" className="btn ghost small" onClick={() => setFull(!full)} title={full ? 'exit full screen (Esc)' : 'full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button></>}>
-          <BtcChart data={ch} sel={sel} alt={s} onPick={pick} />
+          <BtcChart data={ch} sel={sel} alt={s} live={liveFc} onPick={pick} />
+          {fcOn && <div className="btc-fcnow">
+            {!fcCur || fcCur.empty ? <Chip>📈 now · no read yet{fcCur?.next_at_label ? ` · ${fcCur.next_at_label} next` : ''}</Chip> : <>
+              <Chip c="fc" title={fcCur.when ? `the read on the ${fcCur.when} candle · paths p10–p90 · shadow` : ''}><span>{fcTxt.head}<b>{fcTxt.odds}</b>{fcTxt.tail}</span></Chip>
+              <Chip c="warn" title="the candle model's BTC scorecard · shadow: never gates or sends an alert">{fcCur.model_chip || 'shadow'} · not an alert</Chip></>}
+            {fcCur && !fcCur.empty && fcCur.worker === 'down' ? <Chip c="warn" title="the candle-model worker did not answer on the last closed candle">worker down · {fcCur.next_at_label} next</Chip>
+              : fcCur && fcCur.stale ? <Chip c="warn" title="older than 2 candles">stale · {fcCur.next_at_label} next</Chip>
+                : <Chip>refreshes at each closed candle · {fcCur?.next_at_label || '—'} next</Chip>}
+            {fcCur && !fcCur.empty && fcCur.tf && fcCur.tf !== vtf && <Chip>cone on the {TF_WORD[fcCur.tf] || fcCur.tf} chart</Chip>}
+          </div>}
           <div className="btc-leg"><span><i style={{ background: '#e08a2e' }} />pivots R1–R5 / S1–S5</span><span><i style={{ background: '#9aa3ad' }} />P</span>
             <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span><span><i className="dotm grey" />formed but filtered (EMA · volume · day · cooldown)</span>
             <span><i style={{ background: 'var(--blue)' }} />entry</span><span><i style={{ background: 'var(--bad)' }} />stop</span><span><i style={{ background: 'var(--ok)' }} />1R</span>
             {s?.forecast?.paths && <span><i className="cone" />forecast cone · median dashed · 50 % / 80 % bands (shadow)</span>}
+            {!s?.forecast?.paths && (fcOn || liveFc) && <span className="fc">▰ forecast cone (candle model · shadow)</span>}
             <span className="muted">{d?.symbol || 'BTCUSD'} · Delta Exchange · {TF_WORD[vtf]} · IST</span></div>
         </Panel>
         </div>
