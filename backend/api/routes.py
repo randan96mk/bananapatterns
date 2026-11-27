@@ -2622,6 +2622,16 @@ def crypto_scores(days: int = Query(30)):
     return cv.scores(S().config, days)
 
 
+@router.get("/crypto/forecast_now")
+def crypto_forecast_now(horizon: int = Query(30)):
+    """₿ "Forecast now": the candle model's latest per-candle read (30 | 60 min) kept in memory by the service thread,
+    the BTC scorecard chip, the next candle close, stale. Reads the cache only: the worker is never called from here."""
+    from backend.crypto import view as cv
+    if horizon not in (30, 60):
+        raise HTTPException(400, "horizon must be 30 or 60")
+    return cv.forecast_now(S().config, horizon)
+
+
 @router.get("/crypto/signals")
 def crypto_signals(limit: int = Query(300, ge=1, le=5000)):
     from backend.crypto import signals as sg

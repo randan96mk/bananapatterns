@@ -9,6 +9,9 @@
                 ≥ forecast_move_atr × ATR, the close within NEAR_ATR × ATR of a pivot, the EMA side agrees, inside the alert
                 hours and no forecast on that level within the cooldown. State 'quiet' (shadow) unless forecast_alerts
                 is send AND the forecast gate passes (outcomes.forecast_card), then 'sent' through the same alert path.
+  forecast now  that same per-candle call asks for 30 AND 60 minutes (one worker call, `horizons`); each read is kept in
+                memory (LATEST[30 | 60]: the cone from the last closed candle + the next pivot above / below) for
+                GET /api/crypto/forecast_now. A request handler only reads LATEST: it never calls the worker.
 A worker that is down, slow or wrong gives None: nothing is stored, nothing else changes. Alerts only."""
 
 import threading
@@ -22,12 +25,13 @@ from backend.logging_config.logger import setup_logger
 logger = setup_logger("crypto")
 
 HORIZON_MIN = 30
+NOW_MINUTES = (30, 60)                                 # the "forecast now" horizons (minutes), one worker call per candle
 NEAR_ATR = 0.6
 CONTEXT = 120
 
 
-def horizon_steps(tf: str) -> int:
-    return max(1, HORIZON_MIN * 60 // pv.TF_SECONDS.get(tf, 300))
+def horizon_steps(tf: str, minutes: int = HORIZON_MIN) -> int:
+    return max(1, int(minutes) * 60 // pv.TF_SECONDS.get(tf, 300))
 
 
 def atr_of(candles: list[dict]) -> Optional[float]:
@@ -35,21 +39,26 @@ def atr_of(candles: list[dict]) -> Optional[float]:
     return chart.atr([{"h": b["h"], "l": b["l"], "c": b["c"]} for b in candles[-60:]])
 
 
-def call(config, symbol: str, tf: str, candles: list[dict], levels: list[float]) -> Optional[dict]:
-    """One worker read on the last CONTEXT candles: {p_up, exp_range, paths_summary, touch, last} or None."""
+def call(config, symbol: str, tf: str, candles: list[dict], levels: list[float], minutes: tuple = (HORIZON_MIN,)) -> Optional[dict]:
+    """One worker read on the last CONTEXT candles: {p_up, exp_range, paths_summary, touch, last, by_min} or None. The
+    top-level keys are the HORIZON_MIN read; by_min holds each asked horizon's read (minutes -> read or None)."""
     from backend.market import reads as rd
     if not rd.on(config) or tf not in ("1m", "5m") or len(candles) < 30:
         return None
-    h = horizon_steps(tf)
-    payload = {"symbol": symbol, "interval": tf, "horizon": h, "horizons": [h], "samples": int(config.market.samples),
+    hs = sorted({horizon_steps(tf, m) for m in minutes})
+    h = max(hs)
+    payload = {"symbol": symbol, "interval": tf, "horizon": h, "horizons": hs, "samples": int(config.market.samples),
                "candles": [{"at": datetime.fromtimestamp(b["t"], IST).strftime("%Y-%m-%d %H:%M"), "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"],
                             "v": b.get("v") or 0} for b in candles[-CONTEXT:]],
                "levels": [float(x) for x in levels]}
     res = rd.call_worker(config, payload)
     if not res:
         return None
-    one = (res.get("reads") or [res])[-1]
-    return {**one, "p_up": one.get("p_up", res.get("p_up")), "ms": res.get("ms"), "last": candles[-1]["c"]}
+    reads = res.get("reads") or [res]
+    by = {int(r.get("horizon") or 0): r for r in reads if isinstance(r, dict)}
+    one = by.get(horizon_steps(tf)) or reads[-1]
+    by_min = {int(m): by.get(horizon_steps(tf, m)) for m in minutes}
+    return {**one, "p_up": one.get("p_up", res.get("p_up")), "ms": res.get("ms"), "last": candles[-1]["c"], "by_min": by_min}
 
 
 def fc_of(one: dict, tf: str, stop: Optional[float] = None, r1: Optional[float] = None) -> dict:
@@ -144,6 +153,49 @@ def drain(timeout: float = 15.0) -> None:
         th.join(timeout)
 
 
+# --- forecast now: the latest per-candle read, kept in memory ------------------------------------------------------------------
+
+LATEST: dict = {}                                      # minutes -> the latest read (forecast.step fills it; the API only reads it)
+
+
+def next_pivots(levels: Optional[dict], close: float) -> dict:
+    """The nearest pivot above and below the close: {above: {name, px} | None, below: ...}."""
+    lv = [(k, float(v)) for k, v in (levels or {}).items() if v is not None]
+    up = min((x for x in lv if x[1] > close), key=lambda x: x[1], default=None)
+    dn = max((x for x in lv if x[1] < close), key=lambda x: x[1], default=None)
+    return {"above": {"name": up[0], "px": up[1]} if up else None, "below": {"name": dn[0], "px": dn[1]} if dn else None}
+
+
+def now_read(one: dict, symbol: str, tf: str, t: int, minutes: int, close: float, levels: Optional[dict]) -> dict:
+    """LATEST[minutes] from one worker read on the candle closed at `t` (times = the chart's x: IST-shifted unix)."""
+    s = pv.TF_SECONDS.get(tf, 300)
+    ps = one.get("paths_summary") or {}
+    paths = {"median": ps.get("q50"), "p25": ps.get("q25"), "p75": ps.get("q75"), "p10": ps.get("q10"), "p90": ps.get("q90")}
+    med = paths["median"] or []
+    p_up = float(one["p_up"])
+    return {"symbol": symbol, "tf": tf, "t": int(t), "at": datetime.now(IST).isoformat(timespec="seconds"),
+            "p_up": round(p_up, 3), "p_down": round(1 - p_up, 3), "p": round(max(p_up, 1 - p_up), 3), "dir": "long" if p_up > 0.5 else "short",
+            "exp_px": med[-1] if med else None, "exp_range": one.get("exp_range"), "paths": paths,
+            "times": [int(t) + (j + 1) * s + pv.IST_OFFSET for j in range(len(med))], "t0": int(t) + pv.IST_OFFSET,
+            "horizon_min": int(minutes), "n": len(med), "last": close, "next_pivots": next_pivots(levels, close), "worker": "ok"}
+
+
+def remember(config, t: int, cs: list[dict], one: Optional[dict], levels: Optional[dict]) -> None:
+    """Fill LATEST from the per-candle read (None: the worker is down; a kept read is marked down, not dropped)."""
+    c = config.crypto
+    for m in NOW_MINUTES:
+        r = (one or {}).get("by_min", {}).get(m)
+        if r and r.get("p_up") is not None:
+            LATEST[m] = now_read(r, c.symbol, c.tf, t, m, cs[-1]["c"], levels)
+            continue
+        prev = LATEST.get(m)
+        if prev and prev.get("symbol") == c.symbol and prev.get("tf") == c.tf and prev.get("paths"):
+            LATEST[m] = {**prev, "worker": "down", "down_t": int(t)}
+        else:
+            LATEST[m] = {"symbol": c.symbol, "tf": c.tf, "t": int(t), "at": datetime.now(IST).isoformat(timespec="seconds"),
+                         "horizon_min": m, "worker": "down"}
+
+
 # --- the forecast candidates ----------------------------------------------------------------------------------------------
 
 def _pivot_near(levels: dict, close: float, atr: float) -> Optional[tuple]:
@@ -212,16 +264,20 @@ def step(config, t: int, cs: list[dict], now_ts: float) -> Optional[int]:
     cs = [b for b in cs if b["t"] <= t]
     if not cs or cs[-1]["t"] != t:
         return None
-    if sg.rows("symbol = ? AND tf = ? AND t = ? AND kind = 'forecast'", (c.symbol, c.tf, t), limit=1):
-        return None
+    done = bool(sg.rows("symbol = ? AND tf = ? AND t = ? AND kind = 'forecast'", (c.symbol, c.tf, t), limit=1))
+    lat = LATEST.get(HORIZON_MIN) or {}
+    if lat.get("t") == t and lat.get("symbol") == c.symbol and lat.get("tf") == c.tf and (done or lat.get("worker") == "ok"):
+        return None                                          # this candle's read is made already: once per candle
     lvs = sg.levels_for(config, t)
-    if not lvs:
-        return None
-    levels = lvs["levels"]
+    levels = (lvs or {}).get("levels") or {}
     close = cs[-1]["c"]
     near = sorted(levels.values(), key=lambda v: abs(v - close))[:4]
-    one = call(config, c.symbol, c.tf, cs, near)
-    if not one or one.get("p_up") is None:
+    one = call(config, c.symbol, c.tf, cs, near, NOW_MINUTES)       # one call: the candidate's 30 min + forecast now's 30 / 60
+    try:
+        remember(config, t, cs, one, levels)
+    except Exception:
+        logger.exception("₿ forecast now: keeping the read failed")
+    if done or not lvs or not one or one.get("p_up") is None:
         return None
     now = datetime.fromtimestamp(now_ts, IST)
     ev = evaluate(config, cs, levels, one, now)

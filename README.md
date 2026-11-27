@@ -2672,6 +2672,9 @@ name, so the cone shows on the card. API: `GET /api/crypto/scores?days=1|7|30` (
 with their buckets and gate, by pattern and level, the model chip; also `scores` in `GET /api/crypto`); the candles route
 carries each signal's forecast paths with their chart times.
 
+**Forecast now** (chart header toggle, off by default, remembered; 30 | 60 min): the same per-candle read asks the worker for 30 and 60 minutes in one call and keeps it in memory; the chart draws it as a live cone from the last closed candle (no entry / stop / 1R) with the next pivot above / below, shadow, never an alert; a selected detection's cone takes over.
+API: `GET /api/crypto/forecast_now?horizon=30|60` (cache only, the worker is never called from a request; `stale` after 2 candles, `worker: down`, `empty`); also `forecast_now` (30 min) in `GET /api/crypto`.
+
 ## REST API
 
 Interactive docs: http://localhost:8000/docs

@@ -796,6 +796,11 @@ body.btc-full-open { overflow: hidden; }
 .rd .btc-g.gC { background: var(--warn); } .rd .btc-g.gD { background: var(--bad); }
 .rd .btc-g.gN { background: none; color: var(--muted); font-weight: 400; cursor: help; }
 .rd .rchip.fc { border-color: color-mix(in srgb, #5b6cff 45%, var(--border)); color: #5b6cff; }
+.rd .btc-fcnow { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 8px 14px 2px; min-width: 0; }
+.rd .btc-fcnow .rchip { max-width: 100%; white-space: normal; }
+.rd .btc-fcnow .rchip.fc b { color: #5b6cff; }
+.rd .btc-leg span.fc { color: #5b6cff; }
+.rd .btn.btc-fcbtn.on { border-color: color-mix(in srgb, #5b6cff 45%, var(--border)); color: #5b6cff; }
 .rd .btc-leg i.cone { height: 8px; background: rgba(91, 108, 255, .25); border-top: 1px dashed #5b6cff; }
 .rd .btc-dd { display: inline-flex; margin-left: 6px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; vertical-align: 1px; }
 .rd .btc-dd button { font: inherit; font-size: 9.5px; line-height: 13px; height: 15px; min-height: 0; padding: 0 5px; border: 0; border-right: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
