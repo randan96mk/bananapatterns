@@ -2,8 +2,8 @@
 
   code   the shape facts, the level, the EMA side, the volume multiple, ATR(14) and its expected 30-minute range
          (backend/market/chart.py), the stop and 1R: all numbers
-  model  the candle model worker (backend/market/reads.call_worker; touch levels = the stop and 1R) when
-         market.kronos is on: stored in shadow, never in the text model's input
+  model  the candle model worker (backend/crypto/forecast.py; touch levels = the stop and 1R) when market.kronos is
+         on, started after the alert went: stored in shadow (fc_json), never in the text model's input
   line   ONE "read:" sentence from the local text model through the existing AI queue (kind "crypto_read", the AI
          guard decides when it runs); a line whose figures are not in the code input is dropped. Shown tagged [AI].
 The verdict word (supports the long / short · against · mixed) is set by code, from the EMA side and the volume.
@@ -11,7 +11,6 @@ Everything lands in crypto_signals.ai_json."""
 
 import json
 import re
-import threading
 import time as _time
 from datetime import datetime
 from typing import Callable, Optional
@@ -53,7 +52,7 @@ def facts_text(r: dict, candles: list[dict]) -> str:
     sh = f.get("shape") or {}
     b5 = [{"h": b["h"], "l": b["l"], "c": b["c"]} for b in candles[-60:]]
     a = chart.atr(b5)
-    bits = [f"{pt.LABEL[r['pattern']]} on {r['level_name']} {px(r['level_px'])} ({r['dir']} bias), {TF_LABEL.get(r['tf'], r['tf'])} candle at {ampm(ist(r['t']))}"]
+    bits = [f"{pt.LABEL.get(r['pattern'], r['pattern'])} on {r['level_name']} {px(r['level_px'])} ({r['dir']} bias), {TF_LABEL.get(r['tf'], r['tf'])} candle at {ampm(ist(r['t']))}"]
     if sh.get("wick_x") is not None:
         bits.append(f"long wick {sh['wick_x']}x the body, {sh.get('wick_pct')}% of the range")
     if f.get("ema") is not None:
@@ -97,30 +96,13 @@ def _set(sid: int, **kw) -> dict:
 
 
 def model_read(config, sid: int, candles: list[dict]) -> Optional[dict]:
-    """The candle model on the BTC candles (6 steps ahead, touch levels = the stop and 1R): {p_up, stop_first,
-    r1_first, ms} stored in shadow, or None (off / down / slow: nothing else changes)."""
-    from backend.crypto import signals
-    from backend.market import paths as pth
-    from backend.market import reads as rd
-    if not rd.on(config):
+    """The candle model on the BTC candles (touch levels = the stop and 1R), stored in shadow (fc_json + ai_json.model):
+    backend/crypto/forecast.signal_read. None (off / down / slow: nothing else changes)."""
+    from backend.crypto import forecast
+    fc = forecast.signal_read(config, sid, candles)
+    if not fc:
         return None
-    r = signals.load(sid)
-    if not r or len(candles) < 30:
-        return None
-    tf = r["tf"] if r["tf"] in ("1m", "5m") else "5m"
-    payload = {"symbol": r["symbol"], "interval": tf, "horizon": 6, "horizons": [6], "samples": int(config.market.samples),
-               "candles": [{"at": datetime.fromtimestamp(b["t"], IST).strftime("%Y-%m-%d %H:%M"), "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"],
-                            "v": b.get("v") or 0} for b in candles[-120:]],
-               "levels": [float(r["stop"]), float(r["r1"])]}
-    res = rd.call_worker(config, payload)
-    if not res:
-        return None
-    one = (res.get("reads") or [res])[-1]
-    t = one.get("touch") or {}
-    out = {"p_up": one.get("p_up"), "stop_first": t.get(pth.level_key(r["stop"])), "r1_first": t.get(pth.level_key(r["r1"])),
-           "ms": res.get("ms"), "at": datetime.now(IST).isoformat(timespec="seconds"), "show": "shadow"}
-    _set(sid, model=out)
-    return out
+    return {"p_up": fc["p_up"], "stop_first": fc["touch_stop"], "r1_first": fc["touch_r1"], "ms": fc.get("ms"), "at": fc["at"], "show": "shadow"}
 
 
 def _generate(config, src: str) -> tuple[str, str]:
@@ -160,8 +142,7 @@ def start(config, sid: int, candles: list[dict]) -> Optional[int]:
     if not r or not c.ai_read:
         return None
     src = facts_text(r, candles)
-    _set(sid, facts=src, verdict=verdict(r), state="pending")
-    threading.Thread(target=lambda: _safe(model_read, config, sid, list(candles)), name=f"crypto-model-{sid}", daemon=True).start()
+    _set(sid, facts=src, verdict=verdict(r), state="pending")       # the candle model's read: forecast.read_async, after the alert
     if not getattr(config.ai, "enabled", False):
         _set(sid, state="off", why="the local AI is off")
         return None

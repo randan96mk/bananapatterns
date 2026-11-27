@@ -167,6 +167,9 @@ def test_candle_model_read_in_shadow(monkeypatch):
     m = sg.load(r["id"])["ai_json"]["model"]
     assert m["p_up"] == 0.61 and m["stop_first"] == 0.24 and m["r1_first"] == 0.47 and m["show"] == "shadow"
     assert got[0]["levels"] == [59055.0, 59155.0] and got[0]["interval"] == "5m" and got[0]["candles"][-1]["at"] == "2026-11-24 10:00"
+    from backend.crypto import forecast
+    forecast.drain()
+    assert sg.load(r["id"])["fc_json"]["touch_r1"] == 0.47                     # the same read stored as fc_json (the BTC scorecard)
 
 
 def test_forming_heads_up(monkeypatch):

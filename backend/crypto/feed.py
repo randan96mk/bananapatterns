@@ -200,8 +200,9 @@ def attention_items(config, now_ts: Optional[float] = None) -> list:
 
 class CryptoService:
     """The 24×7 loop (its own daemon thread), started with the app; idle while crypto.enabled is off. Each pass:
-    backfill once per symbol / timeframe, the daily candles once a day, the last few candles, every newly closed candle
-    to the signals, the forming heads-up (when on), the quiet-hours digest. Never raises out of its loop."""
+    backfill once per symbol / timeframe (then the outcomes and grades of the older rows), the daily candles once a day,
+    the last few candles, every newly closed candle to the signals, then the forecast candidate (after the alerts), the
+    outcomes now due, the forming heads-up (when on), the quiet-hours digest. Never raises out of its loop."""
 
     def __init__(self, state, client: Optional[DeltaClient] = None, clock: Callable[[], float] = _time.time):
         self.state = state
@@ -290,6 +291,19 @@ class CryptoService:
             set_setting(conn, key, day)
         return n
 
+    def _score(self, now_ts: float, backfill: bool = False) -> dict:
+        """The outcomes due (every candle; at start also the backfill and the grades of the older rows). Never raises."""
+        from backend.crypto import grade, outcomes
+        try:
+            out = outcomes.score_due(self.config, now_ts)
+            if backfill:
+                out["graded"] = grade.backfill(self.config)
+                logger.info("₿ outcomes backfill: %d scored, %d model reads, %d graded", out["scored"], out["model"], out["graded"])
+            return out
+        except Exception:
+            logger.exception("₿ outcome scoring failed")
+            return {"scored": 0, "model": 0}
+
     def tick(self, now_ts: Optional[float] = None) -> dict:
         """One pass (see the class doc). {fetched, processed [t], forming, digest}."""
         from backend.crypto import signals
@@ -307,6 +321,7 @@ class CryptoService:
                     logger.info("₿ history scan %s %s: %d candles, %d marked", sym, tf, sc["scanned"], sc["marked"])
                 except Exception:
                     logger.exception("₿ history scan failed")
+                self._score(now_ts, backfill=True)       # the older rows: outcomes from the stored candles, then their grades
             self.refresh_daily(now_ts)
             fresh = self.client.candles(sym, tf, int(now_ts) - 6 * s, int(now_ts))
             upsert(sym, tf, fresh)
@@ -323,6 +338,13 @@ class CryptoService:
                 out["processed"].append(t)
                 with get_db() as conn:
                     set_setting(conn, key, str(t))
+            for t in new[-1:]:                            # the forecast candidate: AFTER the pattern step and its alerts
+                try:
+                    from backend.crypto import forecast
+                    out["forecast"] = forecast.step(self.config, t, load(sym, tf, end=t, limit=signals.WINDOW), now_ts)
+                except Exception:
+                    logger.exception("₿ forecast step failed")
+            out["scored"] = self._score(now_ts)
             if c.forming and fresh:
                 cur = fresh[-1]
                 frac = (now_ts - cur["t"]) / s

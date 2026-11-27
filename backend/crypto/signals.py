@@ -10,7 +10,10 @@ States
   mark          a mark-only pattern: on the chart and in the table, never on Telegram
   confirm_wait  a weak pattern waiting for the next candle to close in the direction (then sent / quiet or dropped)
   dropped       a filter failed (EMA, volume, prior trend, day), the cooldown, or no confirmation: `why`
-Dedupe: one alert per (level, direction) per crypto.cooldown_candles. The [AI] line (backend/crypto/read.py) never
+Dedupe: one alert per (level, direction) per crypto.cooldown_candles. Each row is graded at insert (backend/crypto/
+grade.py: code from the record); a pattern alert graded below crypto.min_alert_grade is stored "quiet" (why "grade C <
+min B"). Every row is scored later (outcomes.py); the candle model's read is stored with every pattern signal on a
+background thread after the alert (forecast.py; fc_json), and forecast rows (kind 'forecast') wait in shadow. The [AI] line (backend/crypto/read.py) never
 gates an alert: appended when ready within AI_WAIT_S, else sent as a second message. Every number in a line comes from
 code. Times are 12-hour IST. ALERTS ONLY: nothing here places, sizes or books an order."""
 
@@ -74,12 +77,15 @@ def ist(t: int) -> datetime:
 
 def _decode(r) -> dict:
     d = dict(r)
-    for k in ("ai_json", "facts_json"):
+    for k in JSON_COLS:
         try:
             d[k] = json.loads(d[k]) if d.get(k) else None
         except (TypeError, ValueError):
             d[k] = None
     return d
+
+
+JSON_COLS = ("ai_json", "facts_json", "outcome_json", "grade_json", "fc_json")
 
 
 def rows(where: str = "1", args: tuple = (), order: str = "t DESC, id DESC", limit: Optional[int] = None) -> list[dict]:
@@ -93,14 +99,20 @@ def load(sid: int) -> Optional[dict]:
 
 
 def update(sid: int, **cols) -> None:
-    for k in ("ai_json", "facts_json"):
+    for k in JSON_COLS:
         if k in cols and not isinstance(cols[k], (str, type(None))):
             cols[k] = json.dumps(cols[k])
     with get_db() as conn:
         conn.execute(f"UPDATE crypto_signals SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?", (*cols.values(), sid))
 
 
-def insert(config, det: dict, state: str, why: Optional[str], lv: Optional[dict]) -> int:
+def label(r: dict) -> str:
+    """'hammer' · 'forecast 66 % down' (a forecast row's pattern is its own words)."""
+    return pt.LABEL.get(r["pattern"], r["pattern"])
+
+
+def insert(config, det: dict, state: str, why: Optional[str], lv: Optional[dict], kind: str = "pattern", fc: Optional[dict] = None,
+           grade: Optional[dict] = None) -> int:
     c = config.crypto
     facts = {"candles": det["candles"], "ema": det["ema"], "ema_len": det["ema_len"], "vol_x": det["vol_x"], "capped": det["capped"],
              "t0": det["t0"], "close": det["candles"][-1]["c"], "shape": det["facts"], "trend_ok": det["trend_ok"], "day_ok": det["day_ok"],
@@ -108,10 +120,11 @@ def insert(config, det: dict, state: str, why: Optional[str], lv: Optional[dict]
              "pivot_type": c.pivot_type}
     with get_db() as conn:
         return conn.execute("INSERT INTO crypto_signals (symbol, tf, t, pattern, dir, level_name, level_px, entry, stop, r1, ema_ok, vol_ok, state, "
-                            "why, facts_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            "why, facts_json, created_at, kind, fc_json, grade, grade_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (c.symbol, c.tf, det["t"], det["pattern"], det["dir"], det["level_name"], det["level_px"], det["entry"], det["stop"],
                              det["r1"], None if det["ema_ok"] is None else int(det["ema_ok"]), None if det["vol_ok"] is None else int(det["vol_ok"]),
-                             state, why, json.dumps(facts), now_ist())).lastrowid
+                             state, why, json.dumps(facts), now_ist(), kind, json.dumps(fc) if fc else None,
+                             (grade or {}).get("g"), json.dumps(grade) if grade else None)).lastrowid
 
 
 # --- the levels ------------------------------------------------------------------------------------------------------------
@@ -188,8 +201,11 @@ def line(r: dict, confirmed_t: Optional[int] = None) -> str:
     volume 1.3×' (every figure from the row)."""
     f = r.get("facts_json") or {}
     long_ = r["dir"] == "long"
-    bits = [f"₿ {pt.LABEL[r['pattern']]} on {r['level_name']} {px(r['level_px'])}", TF_LABEL.get(r["tf"], r["tf"]), ampm(ist(r["t"])),
-            f"{'long' if long_ else 'short'} bias", f"stop {'under' if long_ else 'over'} {px(r['stop'])}", f"1R {px(r['r1'])}"]
+    g = r.get("grade") or (r.get("grade_json") or {}).get("g")
+    on = "near" if r.get("kind") == "forecast" else "on"
+    bits = [f"₿ {label(r)} {on} {r['level_name']} {px(r['level_px'])}", TF_LABEL.get(r["tf"], r["tf"]), ampm(ist(r["t"])),
+            f"{'long' if long_ else 'short'} bias"] + ([f"grade {g}"] if g else []) + \
+        [f"stop {'under' if long_ else 'over'} {px(r['stop'])}", f"1R {px(r['r1'])}"]
     if f.get("ema") is not None:
         side = "above" if f["close"] > f["ema"] else "below"
         bits.append(f"EMA {f.get('ema_len', 20)} {side} {'✓' if r.get('ema_ok') else '✗'}")
@@ -198,6 +214,35 @@ def line(r: dict, confirmed_t: Optional[int] = None) -> str:
     if confirmed_t:
         bits.append(f"confirmed {ampm(ist(confirmed_t))}")
     return " · ".join(bits)
+
+
+def pct(v) -> str:
+    return "—" if v is None else f"{round(100 * float(v))} %"
+
+
+def model_line(fc: Optional[dict], gate_ok: bool = False) -> Optional[str]:
+    """'📈 candle model (shadow): 64 % down · 61,180 ± 160 in 30 min · stop first 28 % · 1R first 47 %' (all from fc_json)."""
+    if not fc or fc.get("p_up") is None:
+        return None
+    up = float(fc["p_up"]) > 0.5
+    bits = [f"{pct(fc['p_up'] if up else fc.get('p_down', 1 - float(fc['p_up'])))} {'up' if up else 'down'}"]
+    if fc.get("exp_px") is not None:
+        bits.append(f"{px(fc['exp_px'])}" + (f" ± {px(round(float(fc['exp_range'])))}" if fc.get("exp_range") is not None else "")
+                    + f" in {fc.get('horizon_min') or 30} min")
+    if fc.get("touch_stop") is not None:
+        bits.append(f"stop first {pct(fc['touch_stop'])}")
+    if fc.get("touch_r1") is not None:
+        bits.append(f"1R first {pct(fc['touch_r1'])}")
+    return f"📈 candle model ({'in the grade' if gate_ok else 'shadow'}): " + " · ".join(bits)
+
+
+def grade_line(r: dict) -> Optional[str]:
+    """'record: tweezer/engulfing shorts at R levels 4:00 PM–12:00 AM · 9 of 22 won · −0.3 R avg · context 2/3 → grade C'."""
+    gj = r.get("grade_json") or {}
+    g = r.get("grade") or gj.get("g")
+    if not g or not gj.get("why"):
+        return None
+    return f"record: {gj['why']} → grade {g}"
 
 
 def caption(r: dict, config) -> str:
@@ -216,7 +261,8 @@ def _cooldown_hit(config, det: dict) -> Optional[dict]:
     if n <= 0:
         return None
     since = det["t"] - n * pv.TF_SECONDS[c.tf]
-    r = rows("symbol = ? AND tf = ? AND level_name = ? AND dir = ? AND state IN ('sent', 'quiet', 'confirm_wait') AND t > ? AND t <= ?",
+    r = rows("symbol = ? AND tf = ? AND level_name = ? AND dir = ? AND state IN ('sent', 'quiet', 'confirm_wait') AND t > ? AND t <= ? "
+             "AND COALESCE(kind, 'pattern') = 'pattern' AND (why IS NULL OR why NOT LIKE 'grade %')",
              (c.symbol, c.tf, det["level_name"], det["dir"], since, det["t"]), limit=1)
     return r[0] if r else None
 
@@ -241,30 +287,57 @@ def process(config, t: int, now_ts: Optional[float] = None, candles: Optional[li
     dets = pt.detect(cs, pv.pattern_levels(lv["levels"], c.use_p), c)
     dets.sort(key=lambda d: 0 if d["state_set"] == "alert" else 1)
     ids = []
+    atr = _atr(cs)
     for det in dets:
         with get_db() as conn:
             if conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = ?",
                             (c.symbol, c.tf, t, det["pattern"])).fetchone():
                 continue
+        gj = _grade(config, det, lv, atr, now_ts)
         if det["why"]:
-            ids.append(insert(config, det, "dropped", det["why"], lv))
+            ids.append(insert(config, det, "dropped", det["why"], lv, grade=gj))
             continue
         if det["state_set"] == "mark":
-            ids.append(insert(config, det, "mark", None, lv))
+            ids.append(insert(config, det, "mark", None, lv, grade=gj))
             continue
         hit = _cooldown_hit(config, det)
         if hit:
-            ids.append(insert(config, det, "dropped", f"cooldown · {pt.LABEL[hit['pattern']]} on {hit['level_name']} at {ampm(ist(hit['t']))}", lv))
+            ids.append(insert(config, det, "dropped", f"cooldown · {label(hit)} on {hit['level_name']} at {ampm(ist(hit['t']))}", lv, grade=gj))
+            continue
+        from backend.crypto import grade as gd
+        if gd.below((gj or {}).get("g"), c.min_alert_grade):
+            ids.append(insert(config, det, "quiet", f"grade {gj['g']} < min {c.min_alert_grade}", lv, grade=gj))
             continue
         if _needs_confirm(config, det["pattern"]):
-            ids.append(insert(config, det, "confirm_wait", None, lv))
+            ids.append(insert(config, det, "confirm_wait", None, lv, grade=gj))
             continue
-        sid = insert(config, det, "sent", None, lv)
+        sid = insert(config, det, "sent", None, lv, grade=gj)
         ids.append(sid)
         fire(config, sid, now_ts, cs)
     if _forming_get():
         forming_close(config, t)
+    if ids:                                          # the candle model's read for every new signal: AFTER the alerts, its own thread
+        try:
+            from backend.crypto import forecast
+            forecast.read_async(config, ids, cs)
+        except Exception:
+            logger.exception("₿ candle model reads not started")
     return ids
+
+
+def _atr(cs: list[dict]) -> Optional[float]:
+    from backend.market import chart
+    return chart.atr([{"h": b["h"], "l": b["l"], "c": b["c"]} for b in cs[-60:]])
+
+
+def _grade(config, det: dict, lv: Optional[dict], atr: Optional[float], now_ts: float) -> Optional[dict]:
+    """The grade at insert (code from the record; never raises into the alert path)."""
+    from backend.crypto import grade as gd
+    try:
+        return gd.grade_for(config, det, now_ts, levels=(lv or {}).get("levels"), atr=atr)
+    except Exception:
+        logger.exception("₿ grade failed")
+        return None
 
 
 def scan_history(config, days: Optional[int] = None, now_ts: Optional[float] = None) -> dict:
@@ -339,6 +412,9 @@ def fire(config, sid: int, now_ts: float, cs: list[dict], confirmed_t: Optional[
     job = read.start(config, sid, cs)
     png = _snapshot(config, r, cs)
     text = escape(line(r, confirmed_t))
+    extra = [x for x in (model_line(r.get("fc_json"), _model_gate(config)) if r.get("fc_json") else None, grade_line(r)) if x]
+    if extra:
+        text += "\n" + "\n".join(escape(x) for x in extra)
     ai_line = None
     if job is not None:
         ai_line = read.wait_line(sid, max(0.0, AI_WAIT_S - (_time.monotonic() - t0)))
@@ -368,6 +444,14 @@ def fire(config, sid: int, now_ts: float, cs: list[dict], confirmed_t: Optional[
     return out
 
 
+def _model_gate(config) -> bool:
+    try:
+        from backend.crypto import outcomes
+        return outcomes.fc_gate_ok(config)
+    except Exception:
+        return False
+
+
 def send_ai_late(config, sid: int, text: str) -> bool:
     """The [AI] line that missed the AI_WAIT_S window: a second message under the alert."""
     with _LOCK:
@@ -383,7 +467,7 @@ def send_ai_late(config, sid: int, text: str) -> bool:
     n = notifier(config)
     if not getattr(n, "ready", False):
         return False
-    return n.send(f"crypto|ai|{sid}", KIND, f"₿ {escape(pt.LABEL[r['pattern']])} on {r['level_name']} · {ampm(ist(r['t']))}\n[AI] {escape(text)}")
+    return n.send(f"crypto|ai|{sid}", KIND, f"₿ {escape(label(r))} on {r['level_name']} · {ampm(ist(r['t']))}\n[AI] {escape(text)}")
 
 
 def _snapshot(config, r: dict, cs: list[dict]) -> Optional[Path]:
@@ -410,7 +494,8 @@ def digest_if_due(config, now_ts: Optional[float] = None) -> int:
     now = datetime.fromtimestamp(now_ts, IST)
     if not c.digest or not in_hours(config, now):
         return 0
-    rs = rows("symbol = ? AND state = 'quiet' AND digest_at IS NULL", (c.symbol,), order="t")
+    rs = rows("symbol = ? AND state = 'quiet' AND digest_at IS NULL AND COALESCE(kind, 'pattern') = 'pattern' "
+              "AND (why IS NULL OR why NOT LIKE 'grade %')", (c.symbol,), order="t")
     if not rs:
         return 0
     head = f"₿ quiet hours · {len(rs)} detection{'s' if len(rs) != 1 else ''}"

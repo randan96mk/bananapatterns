@@ -4,7 +4,7 @@
 lows the same shape). For each horizon h (minutes, at most the path length):
   p_up          the share of paths whose close at h is above `last`
   exp_range     half the q10..q90 spread of the close at h (shown as ± points)
-  paths_summary {q10, q50, q90}: the close quantiles at every step up to h
+  paths_summary {q10, q25, q50, q75, q90}: the close quantiles at every step up to h (q25 / q75: the ₿ cone's inner band)
   touch         {level: share of paths where that level is the FIRST of `levels` crossed by h} (a path touches a level
                 above `last` when its high reaches it, below when its low does; two levels crossed in the same minute:
                 the one nearer `last` counts first). A single level: the share of paths that touch it at all.
@@ -50,7 +50,7 @@ def summarise(last: float, closes: list[list[float]], highs: Optional[list[list[
     for h in sorted({int(x) for x in (horizons or [steps]) if 0 < int(x) <= steps}):
         end = [p[h - 1] for p in closes]
         up = sum(1 for v in end if v > last)
-        summ = {k: [round(_q([p[j] for p in closes], q), 2) for j in range(h)] for k, q in (("q10", 0.1), ("q50", 0.5), ("q90", 0.9))}
+        summ = {k: [round(_q([p[j] for p in closes], q), 2) for j in range(h)] for k, q in (("q10", 0.1), ("q25", 0.25), ("q50", 0.5), ("q75", 0.75), ("q90", 0.9))}
         touch, anyt = {}, {}
         if lv:
             firsts = [first_touch(last, highs[i], lows[i], lv, h) for i in range(n)]

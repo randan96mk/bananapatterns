@@ -734,6 +734,12 @@ CRYPTO_PATTERNS = ("hammer", "bullish_engulfing", "piercing_line", "morning_star
                    "evening_star", "bearish_harami", "gravestone_doji", "tweezer_top", "hanging_man")
 CRYPTO_CONFIRM = ("bullish_harami", "bearish_harami", "inverted_hammer", "hanging_man", "dragonfly_doji", "gravestone_doji")
 CRYPTO_TFS = ("1m", "5m", "15m", "1h")
+CRYPTO_SCORE_AFTER = (30, 60, 120)
+CRYPTO_MIN_GRADES = ("all", "C", "B", "A")
+CRYPTO_FORECAST_P = (58, 62, 66)
+CRYPTO_FORECAST_ATR = (0.6, 1.0)
+FORECAST_GATE_N = 40                   # ₿ forecast alerts send only after ≥ 40 scored forecast rows …
+FORECAST_GATE_PCT = 55                 # … won ≥ 55 % (the candle model's grade step: ≥ 40 scored BTC reads, direction ≥ 55 %)
 CRYPTO_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 PIVOT_TYPES = ("traditional", "fibonacci", "woodie", "classic", "camarilla", "dm")
 
@@ -801,6 +807,12 @@ class CryptoConfig:
     stop_pad: float = 10.0                 # suggested stop = pattern low − this (points; information only)
     max_stop: float = 50.0                 # the stop at most this many points from the entry level
     ai_read: bool = True                   # the market read (code facts + the candle model + one [AI] line); never gates an alert
+    score_after_min: int = 60              # every signal scored this many minutes after its candle: 1R first won, stop first lost, else neither (30 | 60 | 120)
+    min_alert_grade: str = "all"           # all | C | B | A: a pattern alert graded below this is stored "quiet" (never dropped from the chart)
+    forecast_alerts: str = "shadow"        # shadow (stored, never sent) | send (only once the forecast gate passes)
+    forecast_p: int = 62                   # a forecast candidate needs the candle model's odds ≥ this % one way (58 | 62 | 66)
+    forecast_move_atr: float = 0.6         # … and its expected move ≥ this × ATR (0.6 | 1.0)
+    forecast_cone: bool = True             # the candle model's cone on the alert snapshot (when the read is already made)
 
 
 def check_crypto(sec: "CryptoConfig") -> None:
@@ -831,6 +843,16 @@ def check_crypto(sec: "CryptoConfig") -> None:
     for k, (lo, hi) in ranges.items():
         if not lo <= int(getattr(sec, k)) <= hi:
             raise ValueError(f"{k} must be {lo} … {hi}")
+    if int(sec.score_after_min) not in CRYPTO_SCORE_AFTER:
+        raise ValueError(f"score_after_min must be one of {list(CRYPTO_SCORE_AFTER)}")
+    if sec.min_alert_grade not in CRYPTO_MIN_GRADES:
+        raise ValueError(f"min_alert_grade must be one of {list(CRYPTO_MIN_GRADES)}")
+    if sec.forecast_alerts not in ("shadow", "send"):
+        raise ValueError("forecast_alerts must be shadow or send")
+    if int(sec.forecast_p) not in CRYPTO_FORECAST_P:
+        raise ValueError(f"forecast_p must be one of {list(CRYPTO_FORECAST_P)}")
+    if float(sec.forecast_move_atr) not in CRYPTO_FORECAST_ATR:
+        raise ValueError(f"forecast_move_atr must be one of {list(CRYPTO_FORECAST_ATR)}")
     franges = {"wick_mult": (0.5, 10), "wick_min": (0.1, 1), "opp_wick_max": (0, 1), "body_zone": (0.1, 1), "doji_body": (0.01, 0.5),
                "doji_wick": (0.3, 1), "star_body": (0.05, 1), "eq_tol_pct": (0, 2), "touch_points": (0, 5000), "vol_mult": (0.1, 10),
                "stop_pad": (0, 5000), "max_stop": (1, 50000)}

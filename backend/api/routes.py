@@ -2612,11 +2612,22 @@ def crypto_candles(tf: Optional[str] = None, start: Optional[int] = Query(None, 
     return cv.candles(S().config, tf, start, end, range)
 
 
+@router.get("/crypto/scores")
+def crypto_scores(days: int = Query(30)):
+    """₿ The tiles' numbers for the last 1 | 7 | 30 days: direction, by grade, the forecast rows and their gate, by pattern
+    and level, the candle model's BTC chip (the same object as GET /api/crypto's "scores")."""
+    from backend.crypto import view as cv
+    if days not in (1, 7, 30):
+        raise HTTPException(400, "days must be 1, 7 or 30")
+    return cv.scores(S().config, days)
+
+
 @router.get("/crypto/signals")
 def crypto_signals(limit: int = Query(300, ge=1, le=5000)):
     from backend.crypto import signals as sg
     from backend.crypto import view as cv
-    return {"signals": [cv.row_view(r) for r in sg.rows("symbol = ?", (S().config.crypto.symbol,), limit=limit)]}
+    c = S().config.crypto
+    return {"signals": [cv.row_view(r, int(c.score_after_min)) for r in sg.rows("symbol = ?", (c.symbol,), limit=limit)]}
 
 
 @router.get("/crypto/snap/{sid}.png")

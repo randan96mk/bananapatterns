@@ -24,7 +24,65 @@ def when(t: int) -> str:
     return f"{d:%a} {d.day} {d:%b} {ampm(d)}"
 
 
-def row_view(r: dict) -> dict:
+def _r(v) -> str:
+    return f"{float(v):+.1f} R".replace("-", "−")
+
+
+def outcome_view(r: dict, after_min: int = 60, now_ts: Optional[float] = None) -> dict:
+    """{state, chip, r, mins, tone}: won / lost / neither once scored, else open with the minutes left."""
+    o = r.get("outcome_json")
+    if isinstance(o, dict) and o.get("state"):
+        st, rr, mins = o["state"], o.get("r"), o.get("mins")
+        if st == "won":
+            chip, tone = f"✓ 1R hit · {mins} min · {_r(1)}", "up"
+        elif st == "lost":
+            chip, tone = f"✗ stop · {mins} min · {_r(-1)}", "down"
+        else:
+            chip, tone = f"neither · {_r(rr) if rr is not None else '—'} at {mins} min", "warn"
+        return {"state": st, "chip": chip, "r": rr, "mins": mins, "tone": tone}
+    now_ts = _time.time() if now_ts is None else now_ts
+    left = int(r["t"]) + pv.TF_SECONDS.get(r.get("tf") or "5m", 300) + int(after_min) * 60 - now_ts
+    chip = f"open · {max(1, -(-int(left) // 60))} min to score" if left > 0 else "open · waiting for the candles"
+    return {"state": "open", "chip": chip, "r": None, "mins": None, "tone": "dim"}
+
+
+def grade_view(r: dict) -> dict:
+    gj = r.get("grade_json") if isinstance(r.get("grade_json"), dict) else {}
+    if not gj:
+        return {"g": None, "why": "not graded yet", "n": 0, "few": True, "model_step": None}
+    return {"g": r.get("grade") or gj.get("g"), "why": gj.get("why"), "n": gj.get("n") or 0, "few": bool(gj.get("few")),
+            "model_step": gj.get("model_step")}
+
+
+def forecast_view(r: dict, times: bool = False) -> Optional[dict]:
+    """The candle model's read for this row: {chip, p, dir, exp_px, exp_range, touch_stop, touch_r1, horizon_min, paths
+    (+ times: the chart's x for each step, IST-shifted unix)} or None."""
+    fc = r.get("fc_json") if isinstance(r.get("fc_json"), dict) else None
+    if not fc or fc.get("p_up") is None:
+        return None
+    p_up = float(fc["p_up"])
+    p = max(p_up, 1 - p_up)
+    pc = round(100 * p)
+    if abs(p_up - 0.5) < 0.02:
+        chip = f"{pc} % · flat"
+    else:
+        chip = f"{pc} % {'up' if p_up > 0.5 else 'down'}"
+        if r.get("kind") == "forecast" and fc.get("exp_range") is not None:
+            chip += f" · ±{sg.px(round(float(fc['exp_range'])))}"
+        elif fc.get("touch_r1") is not None:
+            chip += f" · 1R first {round(100 * float(fc['touch_r1']))} %"
+    out = {"chip": chip, "p": round(p, 3), "dir": "long" if p_up > 0.5 else "short", "exp_px": fc.get("exp_px"), "exp_range": fc.get("exp_range"),
+           "touch_stop": fc.get("touch_stop"), "touch_r1": fc.get("touch_r1"), "horizon_min": fc.get("horizon_min"), "paths": fc.get("paths"),
+           "n": len((fc.get("paths") or {}).get("median") or []), "right": fc.get("right")}
+    if times:
+        med = (fc.get("paths") or {}).get("median") or []
+        s = pv.TF_SECONDS.get(r.get("tf") or "5m", 300)
+        out["times"] = [int(r["t"]) + (j + 1) * s + pv.IST_OFFSET for j in range(len(med))]
+        out["t0"] = int(r["t"]) + pv.IST_OFFSET
+    return out
+
+
+def row_view(r: dict, after_min: int = 60, now_ts: Optional[float] = None, times: bool = False) -> dict:
     f = r.get("facts_json") or {}
     aj = r.get("ai_json") or {}
     model = aj.get("model") or {}
@@ -36,7 +94,8 @@ def row_view(r: dict) -> dict:
             "png": bool(r.get("png_path")), "t0": f.get("t0") or r["t"],
             "ai": {"line": aj.get("line"), "verdict": aj.get("verdict"), "state": aj.get("state"), "facts": aj.get("facts"),
                    "model": {"p_up": model.get("p_up"), "stop_first": model.get("stop_first"), "r1_first": model.get("r1_first")} if model else None},
-            "text": sg.line(r)}
+            "text": sg.line(r), "kind": r.get("kind") or "pattern", "grade": grade_view(r), "forecast": forecast_view(r, times),
+            "outcome": outcome_view(r, after_min, now_ts)}
 
 
 def summary(config, service=None, now_ts: Optional[float] = None) -> dict:
@@ -66,7 +125,7 @@ def summary(config, service=None, now_ts: Optional[float] = None) -> dict:
             "today": counts, "today_total": len(today),
             "ai": {"read": bool(c.ai_read), "local_ai": bool(getattr(config.ai, "enabled", False)), "model_chip": rd.chip(config) if rd.on(config) else "candle model · off",
                    "last": {"id": last_ai["id"], "when": when(last_ai["t"]), "line": last_ai["ai_json"]["line"]} if last_ai else None},
-            "signals": [row_view(r) for r in rs], "settings": asdict(c), "defaults": asdict(CryptoConfig()),
+            "signals": [row_view(r, int(c.score_after_min), now_ts) for r in rs], "scores": _scores(config, 30, now_ts), "settings": asdict(c), "defaults": asdict(CryptoConfig()),
             "patterns": [{"key": p, "label": pt.LABEL[p], "dir": pt.direction(p), "confirm": f"confirm_{p}" in asdict(c)} for p in (*pt.BULLISH, *pt.BEARISH)]}
 
 
@@ -101,4 +160,18 @@ def candles(config, tf: Optional[str] = None, start: Optional[int] = None, end: 
             s["end"] = (segs[i + 1]["start"] if i + 1 < len(segs) else cs[-1]["t"] + off)
     rs = sg.rows("symbol = ? AND t >= ? AND t <= ?", (c.symbol, start, end), limit=500) if cs else []
     return {"symbol": c.symbol, "tf": tf, "start": start, "end": end, "offset": off, "candles": out_c, "ema": out_e, "ema_len": int(c.ema_len),
-            "pivots": segs, "signals": [row_view(r) for r in rs if r["tf"] == tf]}
+            "pivots": segs, "signals": [row_view(r, int(c.score_after_min), times=True) for r in rs if r["tf"] == tf]}
+
+
+def _scores(config, days: int, now_ts: Optional[float] = None) -> Optional[dict]:
+    from backend.crypto import outcomes
+    try:
+        return outcomes.scores(config, days, now_ts)
+    except Exception:
+        return None
+
+
+def scores(config, days: int = 30, now_ts: Optional[float] = None) -> dict:
+    """GET /api/crypto/scores?days=1|7|30: the tiles' numbers (outcomes.scores)."""
+    from backend.crypto import outcomes
+    return outcomes.scores(config, days, now_ts)
