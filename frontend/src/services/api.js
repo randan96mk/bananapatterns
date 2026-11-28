@@ -226,4 +226,4 @@ export const cryptoQuiet = (hours) => req('POST', '/api/crypto/quiet', { hours }
 export const cryptoRefresh = () => req('POST', '/api/crypto/refresh');
 export const cryptoScan = () => req('POST', '/api/crypto/scan');
 export const cryptoForecastNow = (horizon) => req('GET', `/api/crypto/forecast_now?horizon=${encodeURIComponent(horizon)}`);   // the cached per-candle read (never calls the model)
-export const cryptoScores = (days) => req('GET', `/api/crypto/scores?days=${encodeURIComponent(days)}`);   // the tiles' 1 d · 7 d · 30 d toggle
+export const cryptoScores = (days, counted = true) => req('GET', `/api/crypto/scores?days=${encodeURIComponent(days)}&counted=${counted ? 1 : 0}`);   // the tiles' 1 d · 7 d · 30 d toggle

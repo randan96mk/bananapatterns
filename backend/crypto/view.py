@@ -274,13 +274,13 @@ def _scores(config, days: int, now_ts: Optional[float] = None) -> Optional[dict]
         return None
 
 
-def scores(config, days: int = 30, now_ts: Optional[float] = None) -> dict:
+def scores(config, days: int = 30, now_ts: Optional[float] = None, counted_only: bool = True) -> dict:
     """GET /api/crypto/scores?days=1|7|30: the tiles' numbers (outcomes.scores) + by_level_kind (the sweeps per level
     family), by_session (Asia · London · New York, every scored pattern row) and counted {counted, not, alerts, marks}
     (every pattern row of the window, scored or not)."""
     from backend.crypto import grade as gd
     from backend.crypto import outcomes
-    out = outcomes.scores(config, days, now_ts)
+    out = outcomes.scores(config, days, now_ts, counted_only)
     now_ts = _time.time() if now_ts is None else now_ts
     since = int(now_ts) - int(out["days"]) * 86400
     allr = sg.rows("symbol = ? AND t >= ? AND COALESCE(kind, 'pattern') = 'pattern'", (config.crypto.symbol, since))

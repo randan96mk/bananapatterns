@@ -387,3 +387,23 @@ def test_outcome_chips():
     assert view.outcome_view({**base, "outcome_json": {"state": "neither", "r": 0.3, "mins": 60}})["chip"] == "neither · +0.3 R at 60 min"
     o = view.outcome_view(base, 60, now_ts=T_DAY + 300 + 53 * 60)
     assert o == {"state": "open", "chip": "open · 7 min to score", "r": None, "mins": None, "tone": "dim"}
+
+
+def test_by_pattern_counts_counted_rows_only_by_default_and_splits_by_level_family(api):  # noqa: F811
+    """28 Nov: the table lumped 2,344 sweep rows, counted and not, under three pivot columns. Default = counted only (the rows the
+    alerts come from); the level columns are the five families; ?counted=0 shows every row."""
+    c = cfg()
+    now = int(time.time())
+    a = _row(now - 3600, pattern="sweep", d="short", outcome="won", c=c)
+    b = _row(now - 3000, pattern="sweep", d="short", outcome="lost", c=c)
+    with get_db() as conn:
+        conn.execute("UPDATE crypto_signals SET counted = 0, why = 'drift' WHERE id = ?", (b,))
+        conn.execute("UPDATE crypto_signals SET levels_json = ? WHERE id = ?", (json.dumps([{"kind": "PDL", "family": "pd", "px": 59000.0}]), a))
+    s1 = outcomes.scores(c, 30, now)
+    row = next(x for x in s1["by_pattern"] if x["pattern"] == "sweep")
+    assert s1["counted_only"] is True and row["n"] == 1 and row["won"] == 1 and set(row["at"]) == {"pd"}
+    s2 = outcomes.scores(c, 30, now, counted_only=False)
+    row2 = next(x for x in s2["by_pattern"] if x["pattern"] == "sweep")
+    assert s2["counted_only"] is False and row2["n"] == 2 and set(row2["at"]) == {"pd", "pivot"}
+    assert api.get("/api/crypto/scores?days=30&counted=0").json()["counted_only"] is False
+    assert api.get("/api/crypto/scores?days=30").json()["counted_only"] is True
