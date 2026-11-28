@@ -237,7 +237,7 @@ function palette() {
 
 // The chart: candles, the EMA, the pivot levels per period (a gap at each new period), the markers, the selected
 // detection's entry / stop / 1R lines. Fixed height; the tooltip shows the detection under the cursor.
-function BtcChart({ data, sel, alt, live, onPick, lv = {}, shade = true, showNc = false, dstep = 300, levelsNow = null, sessNow = null, sesW = null }) {
+function BtcChart({ data, sel, alt, live, onPick, lv = {}, shade = true, showNc = false, dstep = 300, levelsNow = null, sessNow = null, sesW = null, viewKey = "" }) {
   const box = useRef(null);
   const h = useRef(null);
   const theme = useTheme();
@@ -278,6 +278,11 @@ function BtcChart({ data, sel, alt, live, onPick, lv = {}, shade = true, showNc 
     const c = h.current;
     if (!c || !data) return;
     const off = data.offset || 0;
+    // the view: fit (or jump to the selected detection) only when the timeframe / range / selection changes; a live refresh, a
+    // forecast tick or a toggle keeps the user's zoom and scroll (the chart used to snap back on every refresh, 28 Nov)
+    const sameView = c.viewKey === viewKey && c.viewKey !== undefined;
+    let keep = null;
+    if (sameView) { try { keep = c.chart.timeScale().getVisibleLogicalRange(); } catch { keep = null; } }
     c.candles.setData(data.candles);
     c.ema.setData(data.ema);
     const pivOn = lv.pivot !== false;
@@ -384,11 +389,15 @@ function BtcChart({ data, sel, alt, live, onPick, lv = {}, shade = true, showNc 
     if (s) {
       [[s.entry, c.pal.blue, 'entry'], [s.stop, c.pal.down, 'stop'], [s.r1, c.pal.up, '1R']].forEach(([p, color, title]) => c.lines.push(c.candles.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: c.LineStyle.Solid, axisLabelVisible: true, title })));
       const step = data.candles.length > 1 ? data.candles[1].time - data.candles[0].time : 300;
-      try { c.chart.timeScale().setVisibleRange({ from: s.t + off - 45 * step, to: s.t + off + 25 * step }); } catch { /* outside the data */ }
+      if (keep) { try { c.chart.timeScale().setVisibleLogicalRange(keep); } catch { /* ignore */ } }
+      else { try { c.chart.timeScale().setVisibleRange({ from: s.t + off - 45 * step, to: s.t + off + 25 * step }); } catch { /* outside the data */ } }
+    } else if (keep) {
+      try { c.chart.timeScale().setVisibleLogicalRange(keep); } catch { /* ignore */ }
     } else if (data.candles.length) {
       c.chart.timeScale().fitContent();
     }
-  }, [data, sel, alt, live, lw, theme, lv, shade, showNc, dstep, levelsNow, sessNow, sesW]);
+    c.viewKey = viewKey;
+  }, [data, sel, alt, live, lw, theme, lv, shade, showNc, dstep, levelsNow, sessNow, sesW, viewKey]);
 
   return <div className="btc-chart" ref={box}>
     {data && !data.candles.length && <div className="btc-empty muted small">No {TF_WORD[data.tf] || data.tf} candles stored for this range yet.</div>}
@@ -705,7 +714,8 @@ export default function CryptoPage() {
               title="detections that did not count (no approach · drift · session weight · ATR floor · touches cap), faded grey">show not-counted marks · {showNc ? 'on' : 'off'}</button>
             {DN?.chip && <Chip c={/stretched/.test(DN.funding_state || '') ? 'warn' : 'fc'} title={`Delta ticker${DN.at_label ? ` · ${DN.at_label}` : ''}${DN.mark != null ? ` · mark ${px(DN.mark)}` : ''}`}>{DN.chip}</Chip>}
           </div>}
-          <BtcChart data={ch} sel={sel} alt={s} live={liveFc} onPick={pick} lv={lv} shade={shade} showNc={showNc} dstep={dstep} levelsNow={d?.levels_now || null} sessNow={d?.sessions || null} sesW={sesW} />
+          <BtcChart data={ch} sel={sel} alt={s} live={liveFc} onPick={pick} lv={lv} shade={shade} showNc={showNc} dstep={dstep} levelsNow={d?.levels_now || null} sessNow={d?.sessions || null} sesW={sesW}
+            viewKey={`${vtf}|${range}|${win ? `${win.from}-${win.to}` : ''}|${sel ?? ''}|${full ? 'f' : ''}`} />
           {fcOn && <div className="btc-fcnow">
             {!fcCur || fcCur.empty ? <Chip>📈 now · no read yet{fcCur?.next_at_label ? ` · ${fcCur.next_at_label} next` : ''}</Chip> : <>
               <Chip c="fc" title={fcCur.when ? `the read on the ${fcCur.when} candle · paths p10–p90 · shadow` : ''}><span>{fcTxt.head}<b>{fcTxt.odds}</b>{fcTxt.tail}</span></Chip>
