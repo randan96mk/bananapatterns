@@ -15,10 +15,10 @@ from backend.crypto import feed, forecast, outcomes, view
 from backend.crypto import grade as gd
 from backend.crypto import signals as sg
 from backend.database.models import get_db
-from tests.crypto_world import DAY1, T_DAY, T_NIGHT, FakeDelta, cfg, flat, hammer_world, k, seed_daily, telegram
+from tests.crypto_world import TOUCH, DAY1, T_DAY, T_NIGHT, FakeDelta, cfg, flat, hammer_world, k, seed_daily, telegram
 from tests.test_crypto_api import api  # noqa: F401  (the API fixture)
 
-QUIET = dict(vol_len=20, dragonfly_doji="off", tweezer_bottom="off")
+QUIET = dict(vol_len=20, dragonfly_doji="off", tweezer_bottom="off", **TOUCH)   # the old rule, Asia alerting
 S = 300
 
 
@@ -354,7 +354,7 @@ def test_settings_defaults_and_validation():
 
 def test_payload_keys(api, monkeypatch):  # noqa: F811
     telegram(monkeypatch)
-    c = cfg(vol_len=20)
+    c = cfg(vol_len=20, **TOUCH)
     hammer_world()
     sg.process(c, T_DAY, now_ts=T_DAY + 303)
     sid = _row(T_DAY, pattern="forecast 66 % down", d="short", kind="forecast", state="quiet",

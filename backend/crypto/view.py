@@ -7,7 +7,9 @@ from datetime import datetime
 from typing import Optional
 
 from backend.config import IST, CryptoConfig
+from backend.crypto import derivs as dv
 from backend.crypto import feed
+from backend.crypto import levels as lvm
 from backend.crypto import patterns as pt
 from backend.crypto import pivots as pv
 from backend.crypto import signals as sg
@@ -113,11 +115,34 @@ def forecast_now(config, minutes: int = 30, now_ts: Optional[float] = None, mode
     return {**r, **base, "empty": False, "stale": bool(stale), "candle_label": ampm(datetime.fromtimestamp(t, IST)), "when": when(t)}
 
 
+def approach_view(r: dict) -> Optional[dict]:
+    """{atr, n, text '1.6 × ATR / 9', from_t (unix: the approach point's candle), from_px (its high for a long / low for a
+    short)} (the farthest distance in ATRs within the approach window, n candles before the signal)."""
+    a = r.get("approach_atr")
+    if a is None:
+        return None
+    n = r.get("approach_n")
+    s = pv.TF_SECONDS.get(r.get("tf") or "5m", 300)
+    return {"atr": a, "n": n, "text": f"{float(a):g} × ATR" + (f" / {n}" if n is not None and r.get("trigger") == "sweep" else ""),
+            "from_t": int(r["t"]) - int(n) * s if n is not None else None, "from_px": (r.get("facts_json") or {}).get("approach_px")}
+
+
 def row_view(r: dict, after_min: int = 60, now_ts: Optional[float] = None, times: bool = False) -> dict:
     f = r.get("facts_json") or {}
     aj = r.get("ai_json") or {}
     model = aj.get("model") or {}
-    return {"id": r["id"], "t": r["t"], "when": when(r["t"]), "pattern": r["pattern"], "label": pt.LABEL.get(r["pattern"], r["pattern"]),
+    ls = r.get("levels_json") if isinstance(r.get("levels_json"), list) else []
+    sess = r.get("session") or lvm.session_of(r["t"])
+    counted = bool(1 if r.get("counted") is None else r.get("counted"))
+    trig = r.get("trigger") or ("touch" if (r.get("kind") or "pattern") == "pattern" else None)
+    shape = r.get("shape")
+    v2 = {"trigger": trig, "shape": shape, "shape_label": pt.LABEL.get(shape, shape) if shape else None,
+          "trigger_text": (" · ".join(x for x in (sg.SWEEP_LABEL if trig == "sweep" else trig, pt.LABEL.get(shape, shape) if shape else None) if x)
+                           if trig else None),
+          "levels": [x.get("label") for x in ls], "levels_text": sg.levels_text(r), "session": sess, "session_label": lvm.SESSION_LABEL.get(sess),
+          "approach": approach_view(r), "derivs": dv.row_view(r.get("derivs_json") if isinstance(r.get("derivs_json"), dict) else None, r["dir"]),
+          "counted": counted}
+    return {**v2, "id": r["id"], "t": r["t"], "when": when(r["t"]), "pattern": r["pattern"], "label": sg.label(r),
             "dir": r["dir"], "tf": r["tf"], "level": r["level_name"], "level_px": r["level_px"], "entry": r["entry"], "stop": r["stop"], "r1": r["r1"],
             "capped": bool(f.get("capped")), "ema_ok": None if r["ema_ok"] is None else bool(r["ema_ok"]), "vol_ok": None if r["vol_ok"] is None else bool(r["vol_ok"]),
             "vol_x": f.get("vol_x"), "ema_len": f.get("ema_len"), "state": r["state"], "state_word": STATE_WORD.get(r["state"], r["state"]),
@@ -147,7 +172,13 @@ def summary(config, service=None, now_ts: Optional[float] = None) -> dict:
     from backend.market import reads as rd
     last_ai = next((r for r in rs if (r.get("ai_json") or {}).get("line")), None)
     sc = _scores(config, 30, now_ts)
-    return {"enabled": bool(c.enabled), "running": bool(service and getattr(service, "running", False)), "symbol": c.symbol, "tf": c.tf,
+    t_now = int(now_ts) - int(now_ts) % pv.TF_SECONDS[c.tf]
+    try:
+        levels_now = [{**x, "span": {"start": x["start"], "end": x["end"]}} for x in lvm.levels_at(config, t_now, pivots=lv)]
+    except Exception:
+        levels_now = []
+    return {"levels_now": levels_now, "sessions": lvm.sessions_info(now_ts), "derivs_now": dv.now(config, now_ts),
+            "enabled": bool(c.enabled), "running": bool(service and getattr(service, "running", False)), "symbol": c.symbol, "tf": c.tf,
             "source": feed.SOURCE, "health": h, "now_label": ampm(now),
             "pivots": {"type": c.pivot_type, "period": pv.auto_period(c.tf, c.pivot_tf), "pivot_tf": c.pivot_tf, "boundary": c.day_boundary,
                        "from": (lv or {}).get("from"), "levels": (lv or {}).get("levels")},
@@ -193,18 +224,77 @@ def candles(config, tf: Optional[str] = None, start: Optional[int] = None, end: 
             s["end"] = (segs[i + 1]["start"] if i + 1 < len(segs) else cs[-1]["t"] + off)
     rs = sg.rows("symbol = ? AND t >= ? AND t <= ?", (c.symbol, start, end), limit=500) if cs else []
     return {"symbol": c.symbol, "tf": tf, "start": start, "end": end, "offset": off, "candles": out_c, "ema": out_e, "ema_len": int(c.ema_len),
-            "pivots": segs, "signals": [row_view(r, int(c.score_after_min), times=True) for r in rs if r["tf"] == tf]}
+            "pivots": segs, "signals": [row_view(r, int(c.score_after_min), times=True) for r in rs if r["tf"] == tf],
+            **_chart_extras(config, tf, cs)}
+
+
+def _chart_extras(config, tf: str, cs: list[dict]) -> dict:
+    ls, vw = chart_levels(config, tf, cs)
+    return {"levels": ls, "levels_time": "unix", "vwap": vw, "sessions": chart_sessions(cs)}
+
+
+def chart_levels(config, tf: str, cs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(levels, vwap): the levels_all list after the last candle, each with span {start, end} in unix seconds (PD levels
+    the day, session H/L their session, VWAP / profile up to the range end); vwap = [{t (unix), vwap, up, dn}] over the
+    day so far."""
+    if not cs:
+        return [], []
+    c = config.crypto
+    t = cs[-1]["t"] + pv.TF_SECONDS[tf]
+    day0 = pv.period_start(t - 1, "daily", c.day_boundary)
+    lo = min(day0 - 86400, t - 86400)
+    allc = feed.load(c.symbol, tf, lo, t)
+    daily = feed.load(c.symbol, "1d", lo - 86400, t) if c.day_boundary == "utc" else None
+    try:
+        ls = lvm.levels_all(config, allc, t, daily)
+    except Exception:
+        return [], []
+    out = []
+    for x in ls:
+        d = {k: v for k, v in x.items() if k not in ("start", "end")}
+        d["span"] = {"start": int(x["start"]), "end": min(int(x["end"]), int(t))}
+        out.append(d)
+    ser = lvm.vwap_series(allc, day0, t) if any(x["family"] == "vwap" for x in ls) else []
+    return out, ser
+
+
+def chart_sessions(cs: list[dict]) -> list[dict]:
+    """Every session window visible over the candles: [{name, label, start, end}] in unix seconds, clipped to the range."""
+    if not cs:
+        return []
+    lo, hi = cs[0]["t"], cs[-1]["t"] + 1
+    return [{"name": s["key"], "label": s["label"], "start": max(s["start"], lo), "end": min(s["end"], hi)}
+            for s in lvm.instances(lo, hi) if s["end"] > lo and s["start"] < hi]
 
 
 def _scores(config, days: int, now_ts: Optional[float] = None) -> Optional[dict]:
-    from backend.crypto import outcomes
     try:
-        return outcomes.scores(config, days, now_ts)
+        return scores(config, days, now_ts)
     except Exception:
         return None
 
 
 def scores(config, days: int = 30, now_ts: Optional[float] = None) -> dict:
-    """GET /api/crypto/scores?days=1|7|30: the tiles' numbers (outcomes.scores)."""
+    """GET /api/crypto/scores?days=1|7|30: the tiles' numbers (outcomes.scores) + by_level_kind (the sweeps per level
+    family), by_session (Asia · London · New York, every scored pattern row) and counted {counted, not, alerts, marks}
+    (every pattern row of the window, scored or not)."""
+    from backend.crypto import grade as gd
     from backend.crypto import outcomes
-    return outcomes.scores(config, days, now_ts)
+    out = outcomes.scores(config, days, now_ts)
+    now_ts = _time.time() if now_ts is None else now_ts
+    since = int(now_ts) - int(out["days"]) * 86400
+    allr = sg.rows("symbol = ? AND t >= ? AND COALESCE(kind, 'pattern') = 'pattern'", (config.crypto.symbol, since))
+    pat = [r for r in allr if isinstance(r.get("outcome_json"), dict) and r["outcome_json"].get("state")]
+
+    def tile(xs):
+        won = sum(1 for r in xs if r["outcome_json"]["state"] == "won")
+        return {"n": len(xs), "won": won, "pct": round(100 * won / len(xs)) if xs else None,
+                "r": round(sum(float(r["outcome_json"].get("r") or 0) for r in xs), 1)}
+    sweeps = [r for r in pat if r["pattern"] == "sweep"]
+    out["by_level_kind"] = {f: {**tile([r for r in sweeps if gd.level_family_of(r) == f]), "label": lvm.FAMILY_WORD[f]} for f in lvm.FAMILIES}
+    out["by_session"] = {k: {**tile([r for r in pat if (r.get("session") or lvm.session_of(r["t"])) == k]), "label": lab, "short": sh,
+                             "weight": getattr(config.crypto, f"session_{k}", "alerts")} for k, lab, sh, _, _ in lvm.SESSIONS}
+    cnt = [r for r in allr if (1 if r.get("counted") is None else int(r["counted"]))]
+    out["counted"] = {"counted": len(cnt), "not": len(allr) - len(cnt), "alerts": sum(1 for r in cnt if r["state"] in ("sent", "quiet")),
+                      "marks": sum(1 for r in allr if r["state"] == "mark")}
+    return out

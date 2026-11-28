@@ -14,6 +14,7 @@ DAY1 = DAY0 + 86400                                                 # Mon 23 Nov
 T_DAY = int(datetime(2026, 11, 24, 4, 30, tzinfo=UTC).timestamp())    # Tue 24 Nov 10:00 AM IST (inside the alert hours)
 T_NIGHT = int(datetime(2026, 11, 23, 20, 40, tzinfo=UTC).timestamp())  # Tue 24 Nov 2:10 AM IST (quiet hours)
 H, L, C = 61000.0, 59000.0, 60000.0                                 # the previous day: P 60,000 · S1 59,000 · R1 61,000
+TOUCH = dict(trigger="touch", session_asia="alerts")                # the old rule (a pattern at a pivot) with Asia alerting (T_DAY is Asia)
 
 
 def cfg(**crypto) -> AppConfig:
@@ -50,14 +51,22 @@ def hammer_world(t: int = T_DAY, store: bool = True) -> list[dict]:
 
 
 class FakeDelta:
-    """Delta's /v2/history/candles over a stored series: newest first, [start, end] inclusive, PAGE at most."""
+    """Delta's /v2/history/candles over a stored series: newest first, [start, end] inclusive, PAGE at most; and
+    /v2/tickers/<symbol> from `ticker` (a dict of the result; None = the call fails)."""
 
-    def __init__(self, series: dict):
+    def __init__(self, series: dict, ticker=None):
         self.series = series                     # resolution -> candles oldest first
         self.calls = []
         self.fail = 0
+        self.ticker = ticker
+        self.ticker_calls = []
 
     def __call__(self, url, params):
+        if "/tickers/" in url:
+            self.ticker_calls.append(url)
+            if self.ticker is None:
+                raise feed.FeedError("HTTP 503")
+            return {"success": True, "result": dict(self.ticker)}
         self.calls.append(dict(params))
         if self.fail:
             self.fail -= 1
