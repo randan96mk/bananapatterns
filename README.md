@@ -2593,6 +2593,36 @@ candle's close + 3 s (24×7, its own thread, off until `crypto.enabled`). Candle
 day at 5:30 AM IST (Delta's day starts 00:00 UTC; `crypto.day_boundary` utc (default, as TradingView) or ist). A Home
 "Needs a look" item appears when the feed is more than 3 candles behind.
 
+**v2 · levels that matter, sweep · reclaim, sessions, Delta OI / funding** (all on by default, as the mock).
+*Levels* (`backend/crypto/levels.py`, from our own stored candles, each from the candles before the signal candle):
+PDH / PDL / PDC (the previous day, `crypto.day_boundary`), the session highs / lows (the running one and the last
+finished Asia / London / New York), the day's VWAP ±1σ, the 24 h volume profile (20-point bins: POC, VAH / VAL = 70 %
+value area) and the pivots; each family switches (`levels_pd` · `levels_sessions` · `levels_vwap` · `levels_profile` ·
+`levels_pivots`). *Sessions* (IST): Asia 5:30 AM–1:30 PM · London 1:30–6:30 PM · New York 6:30 PM–3:30 AM (the 3:30–5:30
+AM gap counts as New York). *Trigger* (`backend/crypto/trigger.py`, `crypto.trigger` sweep | touch): a long sweep ·
+reclaim = the candle before closed above the level, the low goes through it (0.02 % tolerance), the close is back
+above; it counts when the price was ≥ `approach_atr` (1.0) × ATR(14) away within `approach_candles` (12), ATR ≥
+`atr_floor` (40), it is one of the first `touches_per_session` (2) of that level and direction in the session, and the
+session weight (`session_asia` marks · `session_london` / `session_ny` alerts) is "alerts". Not counted → state "mark",
+`counted` 0, why ("drift · Asia", "no approach", "ATR 32 < 40", "touch 3 of the session (first 2)"); every row is still
+scored. Levels within 0.05 % merge ("PDL 59,760 + S1 59,755"); the 16 patterns are a `shape` tag. In sweep mode the old
+rule's patterns are stored as not-counted marks (trigger "touch") unless a sweep took that candle. "touch" keeps the old
+rule (then only the session weight decides `counted`). The EMA / volume / trend filters do not drop a sweep (EMA and
+volume stay grade context; the weekday filter still applies). *Stop* (`stop_mode`): wick = the sweep wick ∓
+`stop_wick_pad` (10), at most `stop_cap_atr` (1) × ATR from the entry (the signal candle's close); fixed = `stop_pad` /
+`max_stop`. *Derivatives* (`backend/crypto/derivs.py`, `crypto.derivs`): one GET of Delta's
+`/v2/tickers/BTCUSD` per closed candle right after the candle poll (3 s timeout; a failure is logged and skipped,
+nothing retries), stored in `crypto_ticks` (never deleted): OI change 30 min / 24 h, funding (8 h, stretched at
+|0.03 %|), oi_state flushed (≤ −0.3 % in 30 min) / building (≥ +0.3 %) / flat. *Grade*: a sweep's record is the counted
+sweeps of the same level family, direction and session; OI flushed +1 step, building −1, funding stretched against the
+trade +1. An alert sends only when counted, the session alerts and the grade ≥ `min_alert_grade`; the Telegram card:
+head · approach / wick / close / shape / volume · entry / stop / 1R / the 3 next levels · derivatives · record · [AI] ·
+candle model (shadow). Old rows were backfilled once: trigger "touch", counted 1, the session from t. API: `GET
+/api/crypto` adds `levels_now`, `sessions`, `derivs_now`, scores `by_level_kind` / `by_session` / `counted`; rows add
+trigger, shape, levels, levels_text, session, approach {atr, n, text, from_t, from_px}, derivs, counted; `GET
+/api/crypto/candles` adds `levels` (with `span` {start, end}, unix: `levels_time`), `vwap` [{t, vwap, up, dn}] and
+`sessions` [{name, label, start, end}].
+
 **Pivots** (`backend/crypto/pivots.py`): TradingView's `ta.pivot_point_levels` from the previous closed period:
 Traditional (default), Fibonacci, Woodie, Classic, Camarilla, DM. Pivot timeframe Auto (daily for ≤ 15 min, weekly
 above), Daily, Weekly or Monthly. Bullish patterns count only at S1–S3, bearish at R1–R3 (P optional, off).

@@ -15,7 +15,7 @@ import pytest
 from backend.config import IST, AppConfig, CryptoConfig, PERSISTED_SECTIONS
 from backend.crypto import signals as sg
 from backend.database import archive
-from tests.crypto_world import T_DAY, cfg, hammer_world, telegram
+from tests.crypto_world import TOUCH, T_DAY, cfg, hammer_world, telegram
 
 ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN = ("backend.tips.kite_orders", "backend.tips.kite_auto", "backend.tips.kite_sim", "backend.tips.book", "backend.engine.paper",
@@ -41,7 +41,7 @@ def api(monkeypatch, fake_kite, make_client):
 
 def _seed(monkeypatch, c=None):
     telegram(monkeypatch)
-    c = c or cfg(vol_len=20)
+    c = c or cfg(vol_len=20, **TOUCH)
     hammer_world()
     sg.process(c, T_DAY, now_ts=T_DAY + 303)
     return c

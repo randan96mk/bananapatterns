@@ -6,7 +6,8 @@ job moves rows older than crypto.archive_days), read 24×7 by CryptoService on i
 
 At the first start (per symbol / timeframe) the history is backfilled crypto.history_days deep, paged (PAGE candles a
 call, ≤ 2 calls a second). Then the loop wakes on the timeframe boundary + 3 s, fetches the last few candles, upserts
-them and hands every newly CLOSED candle to backend.crypto.signals. The daily candles (resolution 1d, 60 days) for the
+them, polls Delta's ticker once (backend/crypto/derivs.py: OI · funding · mark; a failure is skipped) and hands every
+newly CLOSED candle to backend.crypto.signals. The daily candles (resolution 1d, 60 days) for the
 pivots are refreshed once a day after 5:30 AM IST (Delta's day starts 00:00 UTC). Health: the last candle, the lag in
 candles and the fetch errors (a Home "Needs a look" item when the feed is more than LAG_WARN candles behind).
 Alerts only: this module reads prices, nothing else."""
@@ -55,24 +56,29 @@ class DeltaClient:
         self._lock = threading.Lock()
         self.calls = 0
 
-    def _http(self, url: str, params: dict) -> dict:
+    def _http(self, url: str, params: dict, timeout: float = 15) -> dict:
         import httpx
-        r = httpx.get(url, params=params, timeout=15)
+        r = httpx.get(url, params=params, timeout=timeout)
         if r.status_code != 200:
             raise FeedError(f"HTTP {r.status_code}: {r.text[:120]}")
         return r.json()
 
-    def candles(self, symbol: str, resolution: str, start: int, end: int) -> list[dict]:
-        """[{t, o, h, l, c, v}] oldest first (parsed; bad rows skipped)."""
+    def get(self, url: str, params: dict, timeout: Optional[float] = None) -> dict:
+        """One paced GET (the injected fake's `get(url, params)` when there is one, else httpx)."""
         with self._lock:
             wait = MIN_GAP_S - (_time.monotonic() - self._last)
             if wait > 0:
                 self.sleep(wait)
             self._last = _time.monotonic()
             self.calls += 1
-            params = {"resolution": resolution, "symbol": symbol, "start": int(start), "end": int(end)}
-            body = (self._get or self._http)(URL, params)
-        return parse(body)
+            if self._get is not None:
+                return self._get(url, params)
+            return self._http(url, params, timeout or 15)
+
+    def candles(self, symbol: str, resolution: str, start: int, end: int) -> list[dict]:
+        """[{t, o, h, l, c, v}] oldest first (parsed; bad rows skipped)."""
+        params = {"resolution": resolution, "symbol": symbol, "start": int(start), "end": int(end)}
+        return parse(self.get(URL, params))
 
 
 def parse(body) -> list[dict]:
@@ -325,6 +331,10 @@ class CryptoService:
             self.refresh_daily(now_ts)
             fresh = self.client.candles(sym, tf, int(now_ts) - 6 * s, int(now_ts))
             upsert(sym, tf, fresh)
+            if c.derivs:                                  # Delta's ticker, right after the candle poll: one GET, a failure skipped
+                from backend.crypto import derivs
+                last_closed = (int(now_ts) // s) * s - s
+                derivs.poll(self.client, sym, last_closed)
             key = f"crypto.processed.{sym}.{tf}"
             with get_db() as conn:
                 last = int(get_setting(conn, key) or 0)

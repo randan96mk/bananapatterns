@@ -518,6 +518,8 @@ CREATE TABLE IF NOT EXISTS crypto_signals (
     state TEXT NOT NULL CHECK(state IN ('sent', 'quiet', 'mark', 'confirm_wait', 'dropped')),
     sent_at TEXT, ai_json TEXT, png_path TEXT, why TEXT, facts_json TEXT, created_at TEXT, digest_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_crypto_signals_t ON crypto_signals(symbol, tf, t);
+CREATE TABLE IF NOT EXISTS crypto_ticks (symbol TEXT NOT NULL, t INTEGER NOT NULL, oi REAL, funding REAL, mark REAL,
+    PRIMARY KEY (symbol, t));
 CREATE TABLE IF NOT EXISTS ingest_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -860,6 +862,15 @@ def _migrate_crypto_scores(conn) -> None:
     _add_column(conn, "crypto_signals", "grade_json", "TEXT")
     _add_column(conn, "crypto_signals", "kind", "TEXT DEFAULT 'pattern'")
     _add_column(conn, "crypto_signals", "fc_json", "TEXT")
+    # ₿ v2 (levels that matter · sweep & reclaim · sessions · Delta OI / funding): added, never dropped. Old rows: trigger
+    # 'touch', counted 1, the session from t (IST: Asia 5:30 AM–1:30 PM · London –6:30 PM · New York the rest); no re-detection.
+    for col, decl in (("trigger", "TEXT"), ("shape", "TEXT"), ("levels_json", "TEXT"), ("session", "TEXT"), ("approach_atr", "REAL"),
+                      ("approach_n", "INTEGER"), ("derivs_json", "TEXT"), ("counted", "INTEGER DEFAULT 1")):
+        _add_column(conn, "crypto_signals", col, decl)
+    conn.execute("UPDATE crypto_signals SET trigger = 'touch' WHERE trigger IS NULL")
+    conn.execute("UPDATE crypto_signals SET counted = 1 WHERE counted IS NULL")
+    conn.execute("UPDATE crypto_signals SET session = CASE WHEN (t + 19800) % 86400 >= 19800 AND (t + 19800) % 86400 < 48600 THEN 'asia' "
+                 "WHEN (t + 19800) % 86400 >= 48600 AND (t + 19800) % 86400 < 66600 THEN 'london' ELSE 'ny' END WHERE session IS NULL")
 
 
 def _migrate_scan_tables(conn) -> None:

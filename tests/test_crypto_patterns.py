@@ -7,7 +7,7 @@ import pytest
 from backend.crypto import feed
 from backend.crypto import patterns as pt
 from backend.crypto import signals as sg
-from tests.crypto_world import T_DAY, cfg, hammer_world, k, seed_daily, telegram
+from tests.crypto_world import TOUCH, T_DAY, cfg, hammer_world, k, seed_daily, telegram
 
 UP3 = [k(0, 90, 91, 89, 91), k(1, 91, 93, 90, 93), k(2, 93, 95, 92, 95)]       # a rise before the pattern
 DOWN3 = [k(0, 110, 111, 104, 105), k(1, 105, 106, 102, 103), k(2, 103, 104, 100, 101)]   # a decline
@@ -137,7 +137,7 @@ def test_ema_matches_tradingview_seed():
 
 def test_cooldown_dedupes_per_level_and_direction(monkeypatch):
     telegram(monkeypatch)
-    c = cfg(vol_len=20, dragonfly_doji="off", tweezer_bottom="off")
+    c = cfg(vol_len=20, dragonfly_doji="off", tweezer_bottom="off", **TOUCH)
     cs = hammer_world()
     sg.process(c, T_DAY, now_ts=T_DAY + 303)
     second = [k(T_DAY + 300, 59100, 59110, 59090, 59100), k(T_DAY + 600, 59090, 59105, 58990, 59100, 130)]
@@ -155,7 +155,7 @@ def test_cooldown_dedupes_per_level_and_direction(monkeypatch):
 
 def test_confirmation_wait_then_sent_or_dropped(monkeypatch):
     tg = telegram(monkeypatch)
-    c = cfg(bullish_harami="alert", hammer="off", dragonfly_doji="off", tweezer_bottom="off", ema_on=False, vol_len=20)
+    c = cfg(bullish_harami="alert", hammer="off", dragonfly_doji="off", tweezer_bottom="off", ema_on=False, vol_len=20, **TOUCH)
     seed_daily()
     base = [k(T_DAY - (30 - i) * 300, 59300, 59310, 59290, 59300) for i in range(29)]
     harami = [k(T_DAY - 300, 59300, 59310, 58990, 59000), k(T_DAY, 59050, 59200, 59040, 59150)]     # prior low on S1 59,000

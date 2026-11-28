@@ -9,7 +9,12 @@
            n < MIN_N: no letter ("too few like this (n)")
   model    the candle model's touch_r1 − touch_stop ≥ +0.15 → +1, ≤ −0.15 → −1: applied (one step) only once its BTC
            scorecard passes the gate (outcomes.model_card), else shown as "shadow +1" in the why.
-grade_json = {g, why, n, won, pct, avg_r, few, ctx {ema, vol, room}, ctx_n, model_step, model_applied, family, kind, bucket}."""
+  sweeps   (trigger "sweep") the record is the counted sweeps of the same level family (pd · session · vwap · profile ·
+           pivot, the first of the merged levels), the same direction and the same session (Asia · London · New York)
+  derivs   Delta's OI flushed into the sweep +1 step, building against it −1; funding stretched against the trade
+           (longs into crowded shorts) +1 (derivs.steps; by code, applied on a letter)
+grade_json = {g, why, n, won, pct, avg_r, few, ctx {ema, vol, room}, ctx_n, model_step, model_applied, family, kind, bucket,
+derivs_step {oi, funding}} (+ level_family, session for a sweep)."""
 
 from datetime import datetime
 from typing import Optional
@@ -105,6 +110,46 @@ def record(config, fam: str, lk: str, direction: str, bk: int, now_ts: float, ex
     return {"n": n, "won": won, "pct": round(100 * won / n) if n else None, "avg_r": round(sum(rr) / len(rr), 2) if rr else None}
 
 
+def record_sweep(config, level_family: str, direction: str, session: str, now_ts: float, exclude_id: Optional[int] = None) -> dict:
+    """The counted, scored sweeps like this one in the DAYS before now_ts: {n, won, pct, avg_r}."""
+    from backend.crypto import pivots as pv
+    from backend.crypto import signals as sg
+    known = int(now_ts) - pv.TF_SECONDS.get(config.crypto.tf, 300) - int(config.crypto.score_after_min) * 60
+    rs = sg.rows("symbol = ? AND dir = ? AND pattern = 'sweep' AND COALESCE(counted, 1) = 1 AND outcome_json IS NOT NULL AND t >= ? AND t <= ?",
+                 (config.crypto.symbol, direction, int(now_ts) - DAYS * 86400, known), order="t")
+    xs = [r for r in rs if r["id"] != exclude_id and isinstance(r.get("outcome_json"), dict) and r.get("session") == session
+          and level_family_of(r) == level_family]
+    n = len(xs)
+    won = sum(1 for r in xs if r["outcome_json"]["state"] == "won")
+    rr = [float(r["outcome_json"]["r"]) for r in xs if r["outcome_json"].get("r") is not None]
+    return {"n": n, "won": won, "pct": round(100 * won / n) if n else None, "avg_r": round(sum(rr) / len(rr), 2) if rr else None}
+
+
+def level_family_of(r: dict) -> str:
+    """The family of a detection's first (merged) level: pd · session · vwap · profile · pivot."""
+    ls = r.get("levels") if isinstance(r.get("levels"), list) else r.get("levels_json")
+    if isinstance(ls, list) and ls and isinstance(ls[0], dict):
+        return ls[0].get("family") or "pivot"
+    return "pivot"
+
+
+def derivs_steps(det: dict) -> dict:
+    from backend.crypto import derivs
+    dj = det.get("derivs") if isinstance(det.get("derivs"), dict) else det.get("derivs_json")
+    return derivs.steps(dj if isinstance(dj, dict) else None, det["dir"])
+
+
+def _derivs_why(st: dict) -> str:
+    out = ""
+    if st["oi"] > 0:
+        out += " · OI flushed +1"
+    elif st["oi"] < 0:
+        out += " · OI building −1"
+    if st["funding"] > 0:
+        out += " · funding against the crowd +1"
+    return out
+
+
 def _r(v: Optional[float]) -> str:
     if v is None:
         return "—"
@@ -115,20 +160,31 @@ def grade_for(config, det: dict, now_ts: float, levels: Optional[dict] = None, a
               gate_ok: Optional[bool] = None, exclude_id: Optional[int] = None) -> dict:
     """The grade of a detection (a detect() dict or a stored row) at now_ts: grade_json (see the module doc)."""
     kind = det.get("kind") or ("forecast" if str(det.get("pattern", "")).startswith("forecast") else "pattern")
-    fam = family(det["pattern"], kind)
-    lk, bk = level_kind(det.get("level_name")), bucket(det["t"])
-    rec = record(config, fam, lk, det["dir"], bk, now_ts, exclude_id)
+    sweep = det.get("pattern") == "sweep"
+    side = "longs" if det["dir"] == "long" else "shorts"
+    if sweep:
+        from backend.crypto import levels as lvm
+        fam, lk = "sweep", level_family_of(det)
+        bk = det.get("session") or lvm.session_of(det["t"])
+        rec = record_sweep(config, lk, det["dir"], bk, now_ts, exclude_id)
+        head = f"sweeps of {lvm.FAMILY_WORD.get(lk, lk)} {side} in {lvm.SESSION_LABEL.get(bk, bk)}"
+    else:
+        fam = family(det["pattern"], kind)
+        lk, bk = level_kind(det.get("level_name")), bucket(det["t"])
+        rec = record(config, fam, lk, det["dir"], bk, now_ts, exclude_id)
+        lw = {"R": "R levels", "S": "S levels", "P": "P"}[lk]
+        head = f"{FAMILY_WORD.get((fam, det['dir']), fam)} {side} at {lw} {bucket_word(bk)}"
     ctx = context(det, levels, atr)
     ctx_n = sum(ctx.values())
     step = model_step(fc)
     if gate_ok is None and step:
         from backend.crypto import outcomes
         gate_ok = outcomes.fc_gate_ok(config)
-    side = "longs" if det["dir"] == "long" else "shorts"
-    lw = {"R": "R levels", "S": "S levels", "P": "P"}[lk]
-    head = f"{FAMILY_WORD.get((fam, det['dir']), fam)} {side} at {lw} {bucket_word(bk)}"
+    dst = derivs_steps(det) if kind == "pattern" else {"oi": 0, "funding": 0}
     out = {"n": rec["n"], "won": rec["won"], "pct": rec["pct"], "avg_r": rec["avg_r"], "ctx": ctx, "ctx_n": ctx_n, "model_step": step,
-           "model_applied": False, "family": fam, "kind": lk, "bucket": bk}
+           "model_applied": False, "family": fam, "kind": lk, "bucket": bk, "derivs_step": dst}
+    if sweep:
+        out.update({"level_family": lk, "session": bk})
     if rec["n"] < MIN_N:
         return {**out, "g": None, "few": True, "why": f"too few like this ({rec['n']})"}
     g = letter(rec["pct"] or 0, rec["avg_r"] or 0, ctx_n)
@@ -140,6 +196,9 @@ def grade_for(config, det: dict, now_ts: float, levels: Optional[dict] = None, a
             why += f" · model {step:+d}"
         else:
             why += f" · shadow {step:+d}"
+    if dst["oi"] or dst["funding"]:
+        g = shift(g, dst["oi"] + dst["funding"])
+        why += _derivs_why(dst)
     return {**out, "g": g, "few": False, "why": why}
 
 

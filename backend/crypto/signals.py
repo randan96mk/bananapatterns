@@ -1,6 +1,12 @@
-"""₿ Detections and alerts. Each newly CLOSED candle: the pivot levels in force, the 16 patterns (backend/crypto/
-patterns.py), the filters, the state, one crypto_signals row per detection (never deleted), and for an alert the
-Telegram line + the chart snapshot (kind "crypto").
+"""₿ Detections and alerts. Each newly CLOSED candle: the levels in force (backend/crypto/levels.py: PDH/PDL/PDC, the
+session highs / lows, VWAP ±1σ, POC / VAH / VAL, the pivots), the trigger (backend/crypto/trigger.py: crypto.trigger
+"sweep" = sweep · reclaim with the approach / ATR floor / touches / session weight checks, the candle shape a tag; "touch"
+= the 16 patterns at a pivot, the old rule), the state, one crypto_signals row per detection (never deleted), and for an
+alert the Telegram lines + the chart snapshot (kind "crypto"). In sweep mode the old rule's patterns are still stored,
+as not-counted marks ("drift · Asia"), unless a sweep took that candle and direction (then the pattern is its shape tag).
+counted = 0 rows (failed approach / ATR floor / touches / the session weight "marks") are state "mark"; an alert sends
+only when counted, the session weight is "alerts" and the grade ≥ crypto.min_alert_grade. Each detection carries the
+Delta derivatives of its candle (backend/crypto/derivs.py) when crypto.derivs.
 
 States
   sent          an alert-state pattern inside the alert hours (sent_at = when Telegram took it; `why` says when it
@@ -27,8 +33,10 @@ from typing import Optional
 
 from backend.config import IST, db_path
 from backend.crypto import feed
+from backend.crypto import levels as lvm
 from backend.crypto import patterns as pt
 from backend.crypto import pivots as pv
+from backend.crypto import trigger as tg
 from backend.database.models import get_db, get_setting, now_ist, set_setting
 from backend.logging_config.logger import setup_logger
 from backend.timefmt import ampm
@@ -85,7 +93,8 @@ def _decode(r) -> dict:
     return d
 
 
-JSON_COLS = ("ai_json", "facts_json", "outcome_json", "grade_json", "fc_json")
+JSON_COLS = ("ai_json", "facts_json", "outcome_json", "grade_json", "fc_json", "levels_json", "derivs_json")
+SWEEP_LABEL = "sweep · reclaim"
 
 
 def rows(where: str = "1", args: tuple = (), order: str = "t DESC, id DESC", limit: Optional[int] = None) -> list[dict]:
@@ -107,7 +116,9 @@ def update(sid: int, **cols) -> None:
 
 
 def label(r: dict) -> str:
-    """'hammer' · 'forecast 66 % down' (a forecast row's pattern is its own words)."""
+    """'hammer' · 'sweep · reclaim' · 'forecast 66 % down' (a forecast row's pattern is its own words)."""
+    if r["pattern"] == "sweep":
+        return SWEEP_LABEL
     return pt.LABEL.get(r["pattern"], r["pattern"])
 
 
@@ -118,13 +129,25 @@ def insert(config, det: dict, state: str, why: Optional[str], lv: Optional[dict]
              "t0": det["t0"], "close": det["candles"][-1]["c"], "shape": det["facts"], "trend_ok": det["trend_ok"], "day_ok": det["day_ok"],
              "levels": (lv or {}).get("levels"), "period": (lv or {}).get("period"), "pivot_from": (lv or {}).get("from"),
              "pivot_type": c.pivot_type}
+    if det.get("trigger") == "sweep":
+        facts["sweep"] = det["facts"]
+    if det.get("next") is not None:
+        facts["next"] = det["next"]
+    if det.get("approach_px") is not None:
+        facts["approach_px"] = det["approach_px"]
+    trig = det.get("trigger") or ("touch" if kind == "pattern" else None)
     with get_db() as conn:
         return conn.execute("INSERT INTO crypto_signals (symbol, tf, t, pattern, dir, level_name, level_px, entry, stop, r1, ema_ok, vol_ok, state, "
-                            "why, facts_json, created_at, kind, fc_json, grade, grade_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            "why, facts_json, created_at, kind, fc_json, grade, grade_json, trigger, shape, levels_json, session, approach_atr, "
+                            "approach_n, derivs_json, counted) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             (c.symbol, c.tf, det["t"], det["pattern"], det["dir"], det["level_name"], det["level_px"], det["entry"], det["stop"],
                              det["r1"], None if det["ema_ok"] is None else int(det["ema_ok"]), None if det["vol_ok"] is None else int(det["vol_ok"]),
                              state, why, json.dumps(facts), now_ist(), kind, json.dumps(fc) if fc else None,
-                             (grade or {}).get("g"), json.dumps(grade) if grade else None)).lastrowid
+                             (grade or {}).get("g"), json.dumps(grade) if grade else None, trig,
+                             det.get("shape") or (det["pattern"] if trig == "touch" else None),
+                             json.dumps(det["levels"]) if det.get("levels") else None, det.get("session") or lvm.session_of(det["t"]),
+                             det.get("approach_atr"), det.get("approach_n"), json.dumps(det["derivs"]) if det.get("derivs") else None,
+                             int(det.get("counted", 1)))).lastrowid
 
 
 # --- the levels ------------------------------------------------------------------------------------------------------------
@@ -196,9 +219,51 @@ def hours_text(config, now: Optional[datetime] = None) -> str:
 
 # --- the words -----------------------------------------------------------------------------------------------------------------
 
+def levels_text(r: dict) -> str:
+    """'PDL 59,760 + S1 59,755' (the merged levels), else 'S1 60,010'."""
+    ls = r.get("levels_json") if isinstance(r.get("levels_json"), list) else None
+    if ls:
+        return tg.merged_text(ls)
+    return f"{r['level_name']} {px(r['level_px'])}"
+
+
+def sweep_lines(r: dict) -> list[str]:
+    """The sweep alert's lines (the mock): the head, the approach / wick / close / shape / volume, entry / stop / 1R /
+    the next levels, the derivatives (every figure from the row)."""
+    f = r.get("facts_json") or {}
+    sw = f.get("sweep") or {}
+    long_ = r["dir"] == "long"
+    g = r.get("grade") or (r.get("grade_json") or {}).get("g")
+    head = f"₿ {SWEEP_LABEL} of {levels_text(r)} · {'long' if long_ else 'short'} · {ampm(ist(r['t']))}" + (f" · grade {g}" if g else "")
+    bits = []
+    if r.get("approach_atr") is not None:
+        bits.append(f"approach {r['approach_atr']:g} × ATR in {r.get('approach_n')} candles")
+    if sw.get("beyond") is not None:
+        bits.append(f"wick {px(sw['beyond'])} {'under' if long_ else 'over'}")
+    bits.append(f"close back {'above' if long_ else 'below'}")
+    if r.get("shape"):
+        bits.append(f"{pt.LABEL.get(r['shape'], r['shape'])} shape")
+    if f.get("vol_x") is not None:
+        bits.append(f"volume {f['vol_x']:g}×")
+    if f.get("capped"):
+        stop_w = f"capped at {px(abs(float(r['entry']) - float(r['stop'])))} from the entry"
+    else:
+        stop_w = f"{px(sw.get('pad') or 0)} {'under' if long_ else 'over'} the wick"
+    lv3 = [f"{x['name']} {px(x['px'])}" for x in (f.get("next") or [])]
+    plan = [f"entry {px(r['entry'])}", f"stop {px(r['stop'])} ({stop_w})", f"1R {px(r['r1'])}"]
+    if lv3:
+        plan.append(f"next levels {'above' if long_ else 'below'}: " + " · ".join(lv3))
+    from backend.crypto import derivs
+    sess = r.get("session") or lvm.session_of(r["t"])
+    return [head, " · ".join(bits), " · ".join(plan),
+            derivs.alert_line(r.get("derivs_json"), r["dir"], lvm.SESSION_LABEL.get(sess), bool(r.get("counted", 1)))]
+
+
 def line(r: dict, confirmed_t: Optional[int] = None) -> str:
     """'₿ hammer on S1 60,010 · 5 min · 2:10 AM · long bias · stop under 59,980 · 1R 60,320 · EMA 20 above ✓ ·
-    volume 1.3×' (every figure from the row)."""
+    volume 1.3×' (every figure from the row); a sweep: its four lines (sweep_lines)."""
+    if r.get("pattern") == "sweep":
+        return "\n".join(sweep_lines(r))
     f = r.get("facts_json") or {}
     long_ = r["dir"] == "long"
     g = r.get("grade") or (r.get("grade_json") or {}).get("g")
@@ -237,7 +302,8 @@ def model_line(fc: Optional[dict], gate_ok: bool = False) -> Optional[str]:
 
 
 def grade_line(r: dict) -> Optional[str]:
-    """'record: tweezer/engulfing shorts at R levels 4:00 PM–12:00 AM · 9 of 22 won · −0.3 R avg · context 2/3 → grade C'."""
+    """'record: tweezer/engulfing shorts at R levels 4:00 PM–12:00 AM · 9 of 22 won · −0.3 R avg · context 2/3 → grade C'
+    (a sweep: 'record: sweeps of PDH/PDL/PDC longs in New York · 11 of 16 won · …')."""
     gj = r.get("grade_json") or {}
     g = r.get("grade") or gj.get("g")
     if not g or not gj.get("why"):
@@ -271,9 +337,50 @@ def _needs_confirm(config, pattern: str) -> bool:
     return bool(getattr(config.crypto, f"confirm_{pattern}", False))
 
 
+def candidates(config, cs: list[dict], t: int, lv: Optional[dict], levels: Optional[list[dict]] = None) -> list[dict]:
+    """The detections of the closed candle `cs[-1]` (at t): the sweeps (sweep mode) and the old rule's patterns, each
+    with trigger / shape / levels / session / approach / counted / nc_why, and derivs (crypto.derivs)."""
+    c = config.crypto
+    atr = tg.atr14(cs[:-1])
+    sweep_mode = c.trigger == "sweep"
+    out, sw = [], []
+    if sweep_mode:
+        lvls = levels if levels is not None else lvm.levels_at(config, t, pivots=lv)
+        sw = tg.sweeps(config, cs, lvls, atr)
+        for d in sw:
+            d["ctx_levels"] = {x["name"]: x["px"] for x in lvls}
+        out += sw
+    if lv:
+        for d in pt.detect(cs, pv.pattern_levels(lv["levels"], c.use_p), c):
+            if sweep_mode and any(x["dir"] == d["dir"] for x in sw):
+                continue                                   # the sweep took this candle: the pattern is its shape tag
+            d.update(tg.touch_judge(config, cs, d, atr, sweep_mode))
+            out.append(d)
+    if c.derivs and out:
+        try:
+            from backend.crypto import derivs
+            dj = derivs.for_detection(c.symbol, t)
+        except Exception:
+            logger.exception("₿ derivatives read failed")
+            dj = None
+        for d in out:
+            d["derivs"] = dj
+    return out
+
+
+def _exists(config, det: dict) -> bool:
+    c = config.crypto
+    with get_db() as conn:
+        if det["pattern"] == "sweep":
+            return bool(conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = 'sweep' AND dir = ? AND level_name = ?",
+                                     (c.symbol, c.tf, det["t"], det["dir"], det["level_name"])).fetchone())
+        return bool(conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = ?",
+                                 (c.symbol, c.tf, det["t"], det["pattern"])).fetchone())
+
+
 def process(config, t: int, now_ts: Optional[float] = None, candles: Optional[list[dict]] = None) -> list[int]:
     """The closed candle opening at `t`: resolve the waiting confirmations, then detect. Returns the new row ids.
-    Idempotent: a (t, pattern) already stored is skipped."""
+    Idempotent: a (t, pattern) already stored is skipped (a sweep: (t, direction, levels))."""
     c = config.crypto
     now_ts = _now_ts() if now_ts is None else now_ts
     cs = candles if candles is not None else feed.load(c.symbol, c.tf, end=t, limit=WINDOW)
@@ -282,20 +389,21 @@ def process(config, t: int, now_ts: Optional[float] = None, candles: Optional[li
         return []
     _resolve_waits(config, cs, now_ts)
     lv = levels_for(config, t)
-    if not lv:
+    if not lv and c.trigger != "sweep":
         return []
-    dets = pt.detect(cs, pv.pattern_levels(lv["levels"], c.use_p), c)
-    dets.sort(key=lambda d: 0 if d["state_set"] == "alert" else 1)
+    dets = candidates(config, cs, t, lv)
+    dets.sort(key=lambda d: 0 if (d["state_set"] == "alert" and d.get("counted", 1)) else 1)
     ids = []
     atr = _atr(cs)
     for det in dets:
-        with get_db() as conn:
-            if conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = ?",
-                            (c.symbol, c.tf, t, det["pattern"])).fetchone():
-                continue
+        if _exists(config, det):
+            continue
         gj = _grade(config, det, lv, atr, now_ts)
         if det["why"]:
             ids.append(insert(config, det, "dropped", det["why"], lv, grade=gj))
+            continue
+        if not det.get("counted", 1):
+            ids.append(insert(config, det, "mark", det.get("nc_why"), lv, grade=gj))
             continue
         if det["state_set"] == "mark":
             ids.append(insert(config, det, "mark", None, lv, grade=gj))
@@ -308,7 +416,7 @@ def process(config, t: int, now_ts: Optional[float] = None, candles: Optional[li
         if gd.below((gj or {}).get("g"), c.min_alert_grade):
             ids.append(insert(config, det, "quiet", f"grade {gj['g']} < min {c.min_alert_grade}", lv, grade=gj))
             continue
-        if _needs_confirm(config, det["pattern"]):
+        if det["pattern"] != "sweep" and _needs_confirm(config, det["pattern"]):
             ids.append(insert(config, det, "confirm_wait", None, lv, grade=gj))
             continue
         sid = insert(config, det, "sent", None, lv, grade=gj)
@@ -334,16 +442,18 @@ def _grade(config, det: dict, lv: Optional[dict], atr: Optional[float], now_ts: 
     """The grade at insert (code from the record; never raises into the alert path)."""
     from backend.crypto import grade as gd
     try:
-        return gd.grade_for(config, det, now_ts, levels=(lv or {}).get("levels"), atr=atr)
+        return gd.grade_for(config, det, now_ts, levels=det.get("ctx_levels") or (lv or {}).get("levels"), atr=atr)
     except Exception:
         logger.exception("₿ grade failed")
         return None
 
 
 def scan_history(config, days: Optional[int] = None, now_ts: Optional[float] = None) -> dict:
-    """Mark the patterns in the stored candles of the last `days` (crypto.scan_days): every detection is stored as "mark"
-    with why "history scan" so the chart and the table show what the rules would have found. Nothing is sent, no
-    confirmation waits, no AI read, no cooldown (the markers are the point). Idempotent per (t, pattern)."""
+    """Mark the detections in the stored candles of the last `days` (crypto.scan_days) by the trigger in force: every
+    detection is stored as "mark" with why "history scan" (not counted: "history scan · <why>", counted = 0) so the
+    chart and the table show what the rules would have found. Nothing is sent, no confirmation waits, no AI read, no
+    cooldown (the markers are the point). Idempotent per (t, pattern) (a sweep: (t, direction, levels))."""
+    import bisect
     c = config.crypto
     now_ts = _now_ts() if now_ts is None else now_ts
     days = int(c.scan_days if days is None else days)
@@ -351,8 +461,11 @@ def scan_history(config, days: Optional[int] = None, now_ts: Optional[float] = N
         return {"scanned": 0, "marked": 0}
     s = pv.TF_SECONDS.get(c.tf, 300)
     start = int(now_ts) - days * 86400
-    cs = feed.load(c.symbol, c.tf, start - WINDOW * s, int(now_ts))
+    lo = min(start - WINDOW * s, pv.period_start(start, "daily", c.day_boundary) - 86400)
+    cs = feed.load(c.symbol, c.tf, lo, int(now_ts))
     done = [b for b in cs if b["t"] + s <= now_ts]
+    ts = [b["t"] for b in done]
+    daily = feed.load(c.symbol, "1d", lo - 86400, int(now_ts)) if c.day_boundary == "utc" else None
     marked, scanned = 0, 0
     lv_cache: dict = {}
     for i, b in enumerate(done):
@@ -364,15 +477,20 @@ def scan_history(config, days: Optional[int] = None, now_ts: Optional[float] = N
         if day not in lv_cache:
             lv_cache[day] = levels_for(config, b["t"])
         lv = lv_cache[day]
-        if not lv:
+        levels = None
+        if c.trigger == "sweep":
+            back = done[bisect.bisect_left(ts, min(b["t"] - 86400, pv.period_start(b["t"], "daily", c.day_boundary) - 86400)): i + 1]
+            levels = lvm.levels_all(config, back, b["t"], daily, lv)
+        elif not lv:
             continue
-        for det in pt.detect(win, pv.pattern_levels(lv["levels"], c.use_p), c):
-            with get_db() as conn:
-                if conn.execute("SELECT 1 FROM crypto_signals WHERE symbol = ? AND tf = ? AND t = ? AND pattern = ?",
-                                (c.symbol, c.tf, b["t"], det["pattern"])).fetchone():
-                    continue
+        for det in candidates(config, win, b["t"], lv, levels):
+            if _exists(config, det):
+                continue
             if det["why"]:                                   # formed but filtered: a grey marker on the chart, like a live drop
                 insert(config, det, "dropped", f"history scan · {det['why']}", lv)
+                continue
+            if not det.get("counted", 1):
+                insert(config, det, "mark", f"history scan · {det.get('nc_why')}", lv)
                 continue
             insert(config, det, "mark", "history scan", lv)
             marked += 1
@@ -412,7 +530,9 @@ def fire(config, sid: int, now_ts: float, cs: list[dict], confirmed_t: Optional[
     job = read.start(config, sid, cs)
     png = _snapshot(config, r, cs)
     text = escape(line(r, confirmed_t))
-    extra = [x for x in (model_line(r.get("fc_json"), _model_gate(config)) if r.get("fc_json") else None, grade_line(r)) if x]
+    mline = model_line(r.get("fc_json"), _model_gate(config)) if r.get("fc_json") else None
+    sweep = r.get("pattern") == "sweep"
+    extra = [x for x in ((grade_line(r),) if sweep else (mline, grade_line(r))) if x]
     if extra:
         text += "\n" + "\n".join(escape(x) for x in extra)
     ai_line = None
@@ -426,6 +546,8 @@ def fire(config, sid: int, now_ts: float, cs: list[dict], confirmed_t: Optional[
             update(sid, ai_json={**(r.get("ai_json") or {}), "inline": True})
         elif job is not None:
             LATE[sid] = True
+    if sweep and mline:                                  # the mock's order: record · [AI] · the candle model (shadow)
+        text += "\n" + escape(mline)
     out = {"state": "sent", "sent": False, "ai": bool(ai_line)}
     if not c.telegram:
         update(sid, why="Telegram off (crypto.telegram)")
@@ -467,7 +589,7 @@ def send_ai_late(config, sid: int, text: str) -> bool:
     n = notifier(config)
     if not getattr(n, "ready", False):
         return False
-    return n.send(f"crypto|ai|{sid}", KIND, f"₿ {escape(label(r))} on {r['level_name']} · {ampm(ist(r['t']))}\n[AI] {escape(text)}")
+    return n.send(f"crypto|ai|{sid}", KIND, f"₿ {escape(label(r))} {'of' if r['pattern'] == 'sweep' else 'on'} {r['level_name']} · {ampm(ist(r['t']))}\n[AI] {escape(text)}")
 
 
 def _snapshot(config, r: dict, cs: list[dict]) -> Optional[Path]:
@@ -499,7 +621,7 @@ def digest_if_due(config, now_ts: Optional[float] = None) -> int:
     if not rs:
         return 0
     head = f"₿ quiet hours · {len(rs)} detection{'s' if len(rs) != 1 else ''}"
-    body = "\n".join("• " + escape(line(r)) for r in rs[:30])
+    body = "\n".join("• " + escape(line(r).split("\n")[0]) for r in rs[:30])
     ok = True
     if c.telegram:
         n = notifier(config)

@@ -13,10 +13,10 @@ from backend.config import IST, db_path
 from backend.crypto import feed
 from backend.crypto import read
 from backend.crypto import signals as sg
-from tests.crypto_world import T_DAY, T_NIGHT, cfg, hammer_world, k, telegram
+from tests.crypto_world import TOUCH, T_DAY, T_NIGHT, cfg, hammer_world, k, telegram
 
 LINE = "₿ hammer on S1 59,000 · 5 min · 10:00 AM · long bias · stop under 59,055 · 1R 59,155 · EMA 20 above ✓ · volume 1.28×"
-QUIET = dict(vol_len=20, dragonfly_doji="off", tweezer_bottom="off")
+QUIET = dict(vol_len=20, dragonfly_doji="off", tweezer_bottom="off", **TOUCH)   # the old rule, Asia alerting
 
 
 def _hammer(c, t=T_DAY):
@@ -45,12 +45,12 @@ def test_sent_inside_the_hours_with_the_line_and_the_snapshot(monkeypatch):
 
 def test_mark_only_and_dropped_rows_never_on_telegram(monkeypatch):
     tg = telegram(monkeypatch)
-    c = cfg(vol_len=20, hammer="mark")
+    c = cfg(vol_len=20, hammer="mark", **TOUCH)
     _hammer(c)
     states = {r["pattern"]: r["state"] for r in sg.rows()}
     assert states["hammer"] == "mark" and states["dragonfly_doji"] == "mark" and states["tweezer_bottom"] == "mark"
     assert tg.sent == []
-    c2 = cfg(vol_len=20, ema_len=20)
+    c2 = cfg(vol_len=20, ema_len=20, **TOUCH)
     hammer_world(T_DAY + 3600)
     feed.upsert("BTCUSD", "5m", [k(T_DAY + 3600, 59090, 59105, 58990, 59000, 130)])     # a red close under the EMA: not a hammer + EMA fails
     sg.process(c2, T_DAY + 3600, now_ts=T_DAY + 3903)

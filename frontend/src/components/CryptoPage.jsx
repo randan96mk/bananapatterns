@@ -48,6 +48,118 @@ const rS = (v) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Mat
 const coneWord = (f) => (f ? [f.horizon_min ? `${f.horizon_min} min` : null, f.p != null ? `${Math.round(f.p * 100)} % ${f.dir === 'long' ? 'up' : 'down'}` : null,
   f.exp_range != null ? `±${px(f.exp_range)}` : null].filter(Boolean).join(' · ') : '');
 
+// ── v2: the levels that matter, the sessions, the sweep · reclaim trigger, Delta OI / funding (every key optional:
+// an older server renders the page as before) ──
+const LV_FAMS = [['pd', 'PDH/PDL/PDC'], ['session', 'sessions'], ['vwap', 'VWAP'], ['profile', 'profile'], ['pivot', 'pivots']];
+const LV_CFG = [['levels_pd', 'PDH/PDL/PDC'], ['levels_sessions', 'sessions H/L'], ['levels_vwap', 'VWAP ±1σ'], ['levels_profile', 'POC · VA'], ['levels_pivots', 'pivots']];
+const SES_NAME = { asia: 'Asia', london: 'London', ny: 'New York' };
+const SES_SHORT = { asia: 'Asia', london: 'Lon', ny: 'NY' };
+const SES_FILL = { asia: 'rgba(154,163,173,0.13)', london: 'rgba(224,166,46,0.08)', ny: 'rgba(31,157,97,0.035)' };
+const SES_INK = { asia: '#9aa3ad', london: '#b7791f', ny: '#1f9d61' };
+const famOf = (l) => l?.family || (/^PD/.test(l?.kind) ? 'pd' : /^SES/.test(l?.kind) ? 'session' : /^VWAP/.test(l?.kind) ? 'vwap'
+  : /^(POC|VAH|VAL)$/.test(l?.kind) ? 'profile' : 'pivot');
+const sesKey = (v) => { const k = String(v || '').toLowerCase().replace(/[^a-z]/g, ''); return k === 'newyork' ? 'ny' : k; };
+const sesWord = (v) => SES_NAME[sesKey(v)] || v || '—';
+const lvShort = (l) => (/^SES_/.test(l.kind) && l.name ? l.name : l.kind === 'VWAP+1' ? 'VWAP +1σ' : l.kind === 'VWAP-1' ? 'VWAP −1σ'
+  : /^SES_/.test(l.kind) ? `${SES_SHORT[sesKey(l.session)] || 'ses'} ${l.kind.slice(4)}` : l.kind);
+function lvStyle(l, LS) {
+  const f = famOf(l);
+  if (f === 'pd') return { color: l.kind === 'PDL' ? '#1f9d61' : '#c0392b', lineStyle: LS.Solid, lineWidth: 1 };
+  if (f === 'session') return { color: '#9aa3ad', lineStyle: LS.Dotted, lineWidth: 1 };
+  if (f === 'vwap') return l.kind === 'VWAP' ? { color: '#e08a2e', lineStyle: LS.Solid, lineWidth: 1 } : { color: '#e0a62e', lineStyle: LS.Dotted, lineWidth: 1 };
+  if (f === 'profile') return l.kind === 'POC' ? { color: '#5b6cff', lineStyle: LS.Dashed, lineWidth: 1 } : { color: '#8a93b8', lineStyle: LS.SparseDotted ?? LS.Dotted, lineWidth: 1 };
+  return { color: '#e08a2e', lineStyle: LS.Dashed, lineWidth: 1 };
+}
+const spanOf = (o) => [o?.start ?? o?.from ?? o?.t0 ?? null, o?.end ?? o?.to ?? o?.t1 ?? null];
+const ptsOf = (l) => (Array.isArray(l?.points) ? l.points : Array.isArray(l?.series) ? l.series : null);
+const ptT = (p) => (Array.isArray(p) ? p[0] : p?.time ?? p?.t);
+const ptV = (p, kind) => (Array.isArray(p) ? p[1] : kind === 'VWAP+1' && p?.up != null ? p.up : kind === 'VWAP-1' && p?.dn != null ? p.dn
+  : p?.value ?? p?.vwap ?? p?.v ?? p?.px);
+const sessList = (x) => {
+  const a = Array.isArray(x) ? x : Array.isArray(x?.windows) ? x.windows : Array.isArray(x?.list) ? x.list
+    : x && typeof x === 'object' ? Object.entries(x).filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v)).map(([k, v]) => ({ key: k, ...v })) : [];
+  return a.filter((s) => s && typeof s === 'object');
+};
+const notCounted = (s) => s?.counted === 0 || s?.counted === false;
+const trigWord = (s) => (s?.trigger === 'sweep' ? 'sweep · reclaim' : s?.trigger === 'touch' ? 'touch' : s?.trigger || '');
+const levelsText = (s) => s?.levels_text || (Array.isArray(s?.levels) && s.levels.length ? s.levels.join(' + ') : `${s?.level || ''} ${px(s?.level_px)}`);
+const approachText = (a) => (!a ? '—' : a.text || (a.atr != null ? `${a.atr} × ATR${a.n != null ? ` / ${a.n}` : ''}` : '—'));
+const TONE_C = { up: 'ok', ok: 'ok', good: 'ok', down: 'bad', bad: 'bad', warn: 'w', w: 'w', against: 'w', dim: '' };
+const sgnPct = (v, dp = 1) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(+v).toFixed(dp)} %`);
+const rowsOf = (o) => (!o ? [] : (Array.isArray(o) ? o : Object.entries(o).map(([k, v]) => ({ kind: k, ...(v || {}) }))))
+  .map((r) => ({ k: r.kind || r.key || r.session || r.label || '?', n: r.n ?? 0, pct: r.pct, r: r.r ?? r.sum_r ?? r.avg_r ?? null }));
+
+// The translucent bands under the candles (the sessions, the value area) and, over them, the selected sweep's approach path.
+class OverlayPrim {
+  constructor() { this.o = null; this.chart = null; this.series = null; this.req = null; const me = this;
+    this.under = { zOrder: () => 'bottom', renderer: () => ({ draw: (t) => me.draw(t, false) }) };
+    this.over = { zOrder: () => 'top', renderer: () => ({ draw: (t) => me.draw(t, true) }) }; }
+  attached({ chart, series, requestUpdate }) { this.chart = chart; this.series = series; this.req = requestUpdate; }
+  detached() { this.chart = null; this.series = null; this.req = null; }
+  set(o) { this.o = o; if (this.req) this.req(); }
+  updateAllViews() {}
+  paneViews() { return [this.under, this.over]; }
+  draw(target, top) {
+    const o = this.o;
+    if (!o || !this.chart || !this.series) return;
+    const ts = this.chart.timeScale();
+    const half = (ts.options().barSpacing || 6) / 2;
+    const x = (t) => ts.timeToCoordinate(t);
+    const y = (v) => this.series.priceToCoordinate(v);
+    target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+      ctx.font = '10px Inter, system-ui, sans-serif';
+      if (!top) {
+        (o.bands || []).forEach((b) => {
+          const x0 = x(b.t0), x1 = x(b.t1);
+          if (x0 == null || x1 == null) return;
+          const y0 = b.hi != null ? y(b.hi) : 0, y1 = b.lo != null ? y(b.lo) : mediaSize.height;
+          if (y0 == null || y1 == null) return;
+          ctx.fillStyle = b.fill; ctx.fillRect(x0 - half, Math.min(y0, y1), x1 - x0 + 2 * half, Math.abs(y1 - y0));
+          if (b.label) {   // the label stays inside its band (a band scrolled mostly off the left edge does not stack its label on the next one)
+            ctx.save(); ctx.beginPath(); ctx.rect(x0 - half, 0, x1 - x0 + 2 * half, 20); ctx.clip();
+            ctx.fillStyle = b.ink; ctx.textAlign = 'left'; ctx.fillText(b.label, Math.max(x0 - half + 6, 6), 13); ctx.restore();
+          }
+        });
+        return;
+      }
+      (o.paths || []).forEach((p) => {
+        const xa = x(p.ta), ya = y(p.pa), xb = x(p.tb), yb = y(p.pb);
+        if ([xa, ya, xb, yb].some((v) => v == null)) return;
+        ctx.save(); ctx.strokeStyle = p.color; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(xa, ya); ctx.bezierCurveTo(xa + (xb - xa) * 0.4, ya, xb - (xb - xa) * 0.2, yb, xb, yb); ctx.stroke(); ctx.restore();
+        ctx.beginPath(); ctx.arc(xa, ya, 2.5, 0, 2 * Math.PI); ctx.fillStyle = p.color; ctx.fill();
+        if (p.label) { ctx.fillStyle = p.color; ctx.textAlign = 'left'; ctx.fillText(p.label, Math.max(4, xa - 20), p.up ? ya - 7 : ya + 14); }
+      });
+    });
+  }
+}
+// snap a span to the candle times on the chart (first candle at / after the start, last at / before the end)
+function snapSpan(times, a, b) {
+  if (!times.length) return null;
+  const lo = a == null ? times[0] : times.find((t) => t >= a);
+  let hi = null;
+  for (let i = times.length - 1; i >= 0; i--) if (b == null || times[i] <= b) { hi = times[i]; break; }
+  return lo == null || hi == null || hi < lo ? null : [lo, hi];
+}
+// one level → its line points on the candle grid: VWAP-like levels follow their points (carried between them), the rest are flat over their span
+function levelPoints(l, times) {
+  const pts = ptsOf(l);
+  if (pts && pts.length) {
+    const m = pts.map((p) => [+ptT(p) + (l.shift || 0), +ptV(p, l.kind)]).filter(([t, v]) => Number.isFinite(t) && Number.isFinite(v)).sort((p, q) => p[0] - q[0]);
+    if (!m.length) return [];
+    const out = []; let k = 0, cur = null;
+    times.forEach((t) => {
+      if (t < m[0][0] || t > m[m.length - 1][0] + 3600) return;
+      while (k < m.length && m[k][0] <= t) { cur = m[k][1]; k += 1; }
+      if (cur != null) out.push({ time: t, value: cur });
+    });
+    return out;
+  }
+  if (l.px == null) return [];
+  const sp = snapSpan(times, ...spanOf(l).map((t) => (t == null ? t : t + (l.shift || 0))));
+  return sp ? times.filter((t) => t >= sp[0] && t <= sp[1]).map((t) => ({ time: t, value: +l.px })) : [];
+}
+
 // The forecast cone (candle model, shadow) from the signal candle: the p10–p90 and p25–p75 bands as filled polygons
 // (a series primitive on the candles); the median is a dashed line series whose points also put the future times on
 // the time scale, so the bands can be placed past the last candle. Fades toward the horizon.
@@ -125,7 +237,7 @@ function palette() {
 
 // The chart: candles, the EMA, the pivot levels per period (a gap at each new period), the markers, the selected
 // detection's entry / stop / 1R lines. Fixed height; the tooltip shows the detection under the cursor.
-function BtcChart({ data, sel, alt, live, onPick }) {
+function BtcChart({ data, sel, alt, live, onPick, lv = {}, shade = true, showNc = false, dstep = 300, levelsNow = null, sessNow = null, sesW = null }) {
   const box = useRef(null);
   const h = useRef(null);
   const theme = useTheme();
@@ -151,7 +263,9 @@ function BtcChart({ data, sel, alt, live, onPick }) {
     const cone = new ConePrim();
     candles.attachPrimitive(cone);
     const median = chart.addSeries(LineSeries, { color: '#5b6cff', lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-    h.current = { chart, candles, ema, levels, markers, pal, lines: [], LineStyle, sigs: [], cone, median };
+    const overlay = new OverlayPrim();
+    candles.attachPrimitive(overlay);
+    h.current = { chart, candles, ema, levels, markers, pal, lines: [], LineStyle, LineSeries, sigs: [], cone, median, overlay, lvs: [] };
     chart.subscribeCrosshairMove((p) => {
       const s = p?.time != null ? (h.current?.sigs || []).find((x) => x.mt === p.time) : null;
       setTip(s && p.point ? { x: p.point.x, y: p.point.y, s } : null);
@@ -166,6 +280,8 @@ function BtcChart({ data, sel, alt, live, onPick }) {
     const off = data.offset || 0;
     c.candles.setData(data.candles);
     c.ema.setData(data.ema);
+    const pivOn = lv.pivot !== false;
+    SHOWN.forEach((n) => c.levels[n].applyOptions({ visible: pivOn }));
     const segOf = (t) => { let k = -1; data.pivots.forEach((s, i) => { if (t >= s.start) k = i; }); return k; };
     const firsts = new Set(data.pivots.map((s) => s.start));
     SHOWN.forEach((n) => c.levels[n].setData(data.candles.map((b, i) => {
@@ -177,17 +293,57 @@ function BtcChart({ data, sel, alt, live, onPick }) {
     c.lines.forEach((l) => c.candles.removePriceLine(l));
     c.lines = [];
     const lastSeg = data.pivots[data.pivots.length - 1];
-    if (lastSeg) ['P', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3'].forEach((n) => { if (lastSeg.levels[n] != null) c.lines.push(c.candles.createPriceLine({ price: lastSeg.levels[n], color: n === 'P' ? c.pal.muted : c.pal.level, lineVisible: false, axisLabelVisible: true, title: n })); });
+    if (lastSeg && pivOn) ['P', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3'].forEach((n) => { if (lastSeg.levels[n] != null) c.lines.push(c.candles.createPriceLine({ price: lastSeg.levels[n], color: n === 'P' ? c.pal.muted : c.pal.level, lineVisible: false, axisLabelVisible: true, title: n })); });
     const times = new Set(data.candles.map((b) => b.time));
-    // every formed pattern gets a marker: sent / confirm wait full colour, quiet / mark-only faded, filtered (dropped) grey
-    c.sigs = data.signals.map((s) => ({ ...s, mt: s.t + off })).filter((s) => times.has(s.mt));
-    const rank = (s) => (s.id === sel ? 0 : s.state === 'dropped' ? 3 : muted(s) ? 2 : 1);
+    const tl = data.candles.map((b) => b.time);
+    // v2 levels (PD / session H/L / VWAP ±1σ / POC · VA; the pivots stay the series above): one line series each over its span
+    c.lvs.forEach((x) => { try { c.chart.removeSeries(x); } catch { /* gone with the chart */ } });
+    c.lvs = [];
+    const lastT0 = tl.length ? tl[tl.length - 1] : 0;
+    // the spans may come as unix seconds or as chart times (unix + the IST offset): a session starts at 5:30 AM / 1:30 PM / 6:30 PM
+    // IST, i.e. on a whole UTC hour in unix, on a half hour in chart time, so the first session start tells which
+    const sesAll = sessList(data.sessions ?? sessNow).filter((w) => { const [a, b] = spanOf(w); return a != null && b != null; });
+    const lvRaw = Array.isArray(data.levels) ? data.levels : Array.isArray(levelsNow) ? levelsNow : [];
+    const probe = sesAll.length ? +spanOf(sesAll[0])[0] : lvRaw.filter((l) => /^SES_/.test(l?.kind || '')).map((l) => +spanOf(l)[0]).find((t) => Number.isFinite(t));
+    const shift = data.levels_time === 'chart' ? 0 : data.levels_time === 'unix' ? off : Number.isFinite(probe) && probe % 3600 === 0 ? off : 0;
+    const vwapPts = Array.isArray(data.vwap) ? data.vwap : null;
+    const lvSrc = (Array.isArray(data.levels) ? data.levels : Array.isArray(levelsNow) ? levelsNow : [])
+      .map((l) => ({ ...l, shift, ...(vwapPts && famOf(l) === 'vwap' && !ptsOf(l) ? { points: vwapPts } : {}),
+        ...(!Array.isArray(data.levels) && l.start == null ? { start: lastT0 - 86400 - shift } : {}) }));
+    const lvList = lvSrc.filter((l) => l && l.kind && famOf(l) !== 'pivot' && lv[famOf(l)] !== false);
+    const bands = [];
+    lvList.forEach((l) => {
+      const pts = levelPoints(l, tl);
+      if (!pts.length) return;
+      const st = lvStyle(l, c.LineStyle);
+      const ser = c.chart.addSeries(c.LineSeries, { ...st, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+      ser.setData(pts);
+      ser.createPriceLine({ price: pts[pts.length - 1].value, color: st.color, lineVisible: false, axisLabelVisible: true, title: lvShort(l) });
+      c.lvs.push(ser);
+    });
+    const vah = lvList.find((l) => l.kind === 'VAH'), val = lvList.find((l) => l.kind === 'VAL');
+    if (vah && val && vah.px != null && val.px != null) {
+      const sp2 = snapSpan(tl, ...spanOf(vah).map((t) => (t == null ? t : t + shift)));
+      if (sp2) bands.push({ t0: sp2[0], t1: sp2[1], hi: +vah.px, lo: +val.px, fill: 'rgba(91,108,255,0.06)' });
+    }
+    // the session bands (Asia · London · New York), labelled; off with the "sessions shading" toggle
+    if (shade) sesAll.forEach((w) => {
+      const k = sesKey(w.key || w.name || w.session || w.label);
+      const sp = snapSpan(tl, ...spanOf(w).map((t) => +t + shift));
+      if (!sp || !SES_FILL[k]) return;
+      bands.push({ t0: sp[0], t1: sp[1], fill: SES_FILL[k], ink: SES_INK[k], label: `${w.label || w.text || SES_NAME[k]}${sesW?.[k] === 'marks' && !/marks/.test(w.label || '') ? ' · marks only' : ''}` });
+    });
+    // every formed pattern gets a marker: sent / confirm wait full colour, quiet / mark-only faded, filtered (dropped) grey;
+    // a v2 row that is not counted (no approach · drift · session · ATR floor · touches cap) is hidden unless "show not-counted marks"
+    c.sigs = data.signals.map((s) => ({ ...s, mt: s.t + off })).filter((s) => times.has(s.mt) && (showNc || s.id === sel || !notCounted(s)));
+    const rank = (s) => (s.id === sel ? 0 : notCounted(s) ? 4 : s.state === 'dropped' ? 3 : muted(s) ? 2 : 1);
     const best = new Map();
     c.sigs.forEach((s) => { const k = `${s.mt}${s.dir}`; const o = best.get(k); if (!o || rank(s) < rank(o)) best.set(k, s); });
     const mk = [...best.values()].sort((a, b) => a.mt - b.mt).map((s) => ({
       time: s.mt, position: s.dir === 'long' ? 'belowBar' : 'aboveBar', shape: 'circle',
-      size: s.id === sel ? 1.6 : s.state === 'dropped' ? 0.7 : 1,
-      color: s.state === 'dropped' ? `${c.pal.muted}99` : muted(s) ? `${s.dir === 'long' ? c.pal.up : c.pal.down}66` : (s.dir === 'long' ? c.pal.up : c.pal.down) }));
+      size: s.id === sel ? 1.6 : notCounted(s) ? 0.6 : s.state === 'dropped' ? 0.7 : 1,
+      ...(s.id === sel && s.trigger ? { text: [`${trigWord(s)} ${levelsText(s)}`, s.dir, s.grade?.g].filter(Boolean).join(' · ') } : {}),
+      color: notCounted(s) && s.id !== sel ? `${c.pal.muted}88` : s.state === 'dropped' ? `${c.pal.muted}99` : muted(s) ? `${s.dir === 'long' ? c.pal.up : c.pal.down}66` : (s.dir === 'long' ? c.pal.up : c.pal.down) }));
     const s0 = data.signals.find((x) => x.id === sel);
     const s = s0 && alt && alt.id === s0.id ? { ...alt, ...s0, forecast: s0.forecast?.paths ? s0.forecast : alt.forecast, outcome: s0.outcome || alt.outcome } : s0;
     const step0 = data.candles.length > 1 ? data.candles[1].time - data.candles[0].time : 300;
@@ -206,6 +362,25 @@ function BtcChart({ data, sel, alt, live, onPick }) {
       }
     }
     c.markers.setMarkers(mk.sort((a, b) => a.time - b.time));
+    // the selected sweep's approach: a dotted path from where the price came from (the extreme of the approach candles,
+    // or the server's approach point) down / up to the sweep wick
+    const paths = [];
+    const ap = s?.approach;
+    if (s && ap && (ap.n != null || ap.t != null)) {
+      const ts0 = s.t + off, long = s.dir !== 'short';
+      const sw = data.candles.find((b) => b.time === ts0) || data.candles.filter((b) => b.time <= ts0).pop();
+      let ta = ap.t != null ? +ap.t + off : null, pa = ap.px ?? null;
+      if (ta == null || pa == null) {
+        const win = data.candles.filter((b) => b.time < ts0 && b.time >= ts0 - (+ap.n || 0) * dstep);
+        const ex = win.reduce((m, b) => (!m || (long ? b.high > m.high : b.low < m.low) ? b : m), null);
+        if (ex) { ta = ex.time; pa = long ? ex.high : ex.low; }
+      } else {
+        const b = data.candles.filter((x) => x.time <= ta).pop(); ta = b ? b.time : null;
+      }
+      if (sw && ta != null && pa != null && ta < sw.time) paths.push({ ta, pa: +pa, tb: sw.time, pb: long ? sw.low : sw.high, up: long,
+        color: long ? c.pal.up : c.pal.down, label: ap.atr != null && ap.n != null ? `approach ${ap.atr} × ATR in ${ap.n} candles` : `approach ${approachText(ap)}` });
+    }
+    c.overlay.set({ bands, paths });
     if (s) {
       [[s.entry, c.pal.blue, 'entry'], [s.stop, c.pal.down, 'stop'], [s.r1, c.pal.up, '1R']].forEach(([p, color, title]) => c.lines.push(c.candles.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: c.LineStyle.Solid, axisLabelVisible: true, title })));
       const step = data.candles.length > 1 ? data.candles[1].time - data.candles[0].time : 300;
@@ -213,12 +388,12 @@ function BtcChart({ data, sel, alt, live, onPick }) {
     } else if (data.candles.length) {
       c.chart.timeScale().fitContent();
     }
-  }, [data, sel, alt, live, lw, theme]);
+  }, [data, sel, alt, live, lw, theme, lv, shade, showNc, dstep, levelsNow, sessNow, sesW]);
 
   return <div className="btc-chart" ref={box}>
     {data && !data.candles.length && <div className="btc-empty muted small">No {TF_WORD[data.tf] || data.tf} candles stored for this range yet.</div>}
     {tip && <div className="btc-tip" style={{ left: Math.min(tip.x + 12, (box.current?.clientWidth || 300) - 250), top: Math.max(4, tip.y - 44) }}>
-      <b>{tip.s.label}</b> · {tip.s.level} {px(tip.s.level_px)} · stop {px(tip.s.stop)} · 1R {px(tip.s.r1)}<br /><span className="muted">{tip.s.when} · {stateWord(tip.s)}</span></div>}
+      <b>{tip.s.trigger ? `${trigWord(tip.s)}${tip.s.shape ? ` · ${tip.s.shape}` : ''}` : tip.s.label}</b> · {tip.s.trigger ? levelsText(tip.s) : `${tip.s.level} ${px(tip.s.level_px)}`} · stop {px(tip.s.stop)} · 1R {px(tip.s.r1)}<br /><span className="muted">{tip.s.when} · {notCounted(tip.s) ? `not counted${tip.s.why ? ` · ${tip.s.why}` : ''}` : stateWord(tip.s)}</span></div>}
   </div>;
 }
 
@@ -252,6 +427,24 @@ function Inputs({ d, onSaved }) {
     <K l="history (days)" title="backfill depth at the first start">{num('history_days')}</K>
     <K l="scan history (days)" title="patterns of the last N days marked on the chart after the backfill and on Scan history · nothing sent">{num('scan_days')}</K>
     <K l="archived after (days)" title="older candles and detections MOVE to data/archive.db; nothing is deleted">{num('archive_days')}</K>
+    {'trigger' in draft && <>
+      <G>Levels · trigger · sessions · derivatives</G>
+      <div className="k wide"><span>levels used</span><span className="c"><span className="seg small">{LV_CFG.filter(([k]) => k in draft).map(([k, l]) => (
+        <button key={k} type="button" className={draft[k] ? 'active' : ''} aria-pressed={!!draft[k]} onClick={() => set(k, !draft[k])}>{l}</button>))}</span></span></div>
+      <K l="trigger" title="reclaim = wick through the level, close back inside · touch = today's rule"><Seg small opts={[['sweep', 'sweep · reclaim'], ['touch', "touch (today's rule)"]]} v={draft.trigger} set={(v) => set('trigger', v)} /></K>
+      {'approach_atr' in draft && <div className="k wide" title="the price came from at least this far (× ATR 14) within the last N candles"><span>approach · min distance × ATR / candles</span><span className="c">
+        <Seg small opts={[[0.6, '0.6'], [1, '1.0'], [1.5, '1.5']]} v={+draft.approach_atr} set={(v) => set('approach_atr', v)} /><span className="muted">/</span>
+        <Seg small opts={[[8, '8'], [12, '12'], [20, '20']]} v={+draft.approach_candles} set={(v) => set('approach_candles', v)} /></span></div>}
+      {'touches_per_session' in draft && <K l="first touches per level per session"><Seg small opts={[[1, '1'], [2, '2'], [0, 'any']]} v={+draft.touches_per_session} set={(v) => set('touches_per_session', v)} /></K>}
+      {'session_asia' in draft && <div className="k wide" title="marks: stored and scored, never sent · alerts: sent when counted and graded"><span>session weights · Asia · London · New York</span><span className="c">
+        {['session_asia', 'session_london', 'session_ny'].map((k, i) => <React.Fragment key={k}>{i ? <span className="muted">·</span> : null}
+          <Seg small opts={[['marks', 'marks'], ['alerts', 'alerts']]} v={draft[k]} set={(v) => set(k, v)} /></React.Fragment>)}</span></div>}
+      {'atr_floor' in draft && <K l="ATR floor (points)" title="no counted sweep while ATR(14) is under this"><Seg small opts={[[0, '0'], [40, '40'], [80, '80']]} v={+draft.atr_floor} set={(v) => set('atr_floor', v)} /></K>}
+      {'derivs' in draft && <K l="derivatives from Delta (OI · funding)" title="one ticker poll per candle · shown on every detection · a grade input">{sw('derivs')}</K>}
+      {'stop_mode' in draft && <div className="k wide"><span>stop</span><span className="c">
+        <Seg small opts={[['wick', `${draft.stop_wick_pad ?? 10} under the sweep wick`], ['fixed', `fixed ${draft.max_stop ?? ''}`.trim()]]} v={draft.stop_mode} set={(v) => set('stop_mode', v)} />
+        {draft.stop_mode !== 'fixed' && <span className="muted small">· cap {draft.stop_cap_atr ?? 1} × ATR</span>}</span></div>}
+    </>}
     <G>Pivots</G>
     <K l="type"><select className="btc-sel" value={draft.pivot_type} onChange={(e) => set('pivot_type', e.target.value)}>
       {['traditional', 'fibonacci', 'woodie', 'classic', 'camarilla', 'dm'].map((x) => <option key={x} value={x}>{x === 'dm' ? 'DM' : x[0].toUpperCase() + x.slice(1)}</option>)}</select></K>
@@ -361,6 +554,25 @@ export default function CryptoPage() {
   const refresh = async () => { try { const r = await api.cryptoRefresh(); if (!r.ok) setErr(r.why); load(); } catch (e) { setErr(e.message); } };
   const scan = async () => { try { const r = await api.cryptoScan(); if (!r.ok) setErr(r.why); else setErr(`history scan: ${r.marked} marked over ${r.scanned} candles (${r.days} d) · nothing sent`); load(); } catch (e) { setErr(e.message); } };
   const pick = (id) => { setSel(id === sel ? null : id); };
+  // v2 chart toggles (remembered per browser): the level families, the session shading, the not-counted marks
+  const [lv, setLv] = useState(() => { try { return { ...JSON.parse(localStorage.getItem('bp.btc.lv') || '{}') }; } catch { return {}; } });
+  const toggleLv = (k) => setLv((o) => { const n = { ...o, [k]: o[k] === false }; try { localStorage.setItem('bp.btc.lv', JSON.stringify(n)); } catch { /* private mode */ } return n; });
+  const [lvOpen, setLvOpen] = useState(null);
+  const [shade, setShade] = useState(() => { try { return localStorage.getItem('bp.btc.shade') !== '0'; } catch { return true; } });
+  const [showNc, setShowNc] = useState(() => { try { return localStorage.getItem('bp.btc.nc') === '1'; } catch { return false; } });
+  const flip = (key, set_) => set_((v) => { try { localStorage.setItem(key, v ? '0' : '1'); } catch { /* private mode */ } return !v; });
+  useEffect(() => {
+    if (!lvOpen) return undefined;
+    const off = (e) => { if (!e.target.closest?.('.btc-lvmenu, .btc-lvbtn')) setLvOpen(null); };
+    const esc = (e) => { if (e.key === 'Escape') setLvOpen(null); };
+    document.addEventListener('mousedown', off); window.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', off); window.removeEventListener('keydown', esc); };
+  }, [lvOpen]);
+  const DN = d?.derivs_now || null;
+  const v2 = !!(ch?.levels || ch?.sessions || d?.levels_now || d?.sessions || sigs.some((x) => 'trigger' in x));
+  const ST = d?.settings;
+  const sesW = useMemo(() => (ST && 'session_asia' in ST ? { asia: ST.session_asia, london: ST.session_london, ny: ST.session_ny } : null), [ST]);
+  const dstep = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 }[d?.tf] || 300;
   // 📈 Forecast now: the candle model's latest per-candle read (cached by the service; this only reads it) as a live cone
   // from the last closed candle. Off by default; the toggle and the horizon are remembered.
   const lsGet = (k, dflt) => { try { return localStorage.getItem(k) ?? dflt; } catch { return dflt; } };
@@ -416,6 +628,22 @@ export default function CryptoPage() {
 
   // the grade / forecast / outcome columns appear once the server sends those keys (an older server: the table as before)
   const hasG = sigs.some((x) => 'grade' in x), hasF = sigs.some((x) => 'forecast' in x), hasO = sigs.some((x) => 'outcome' in x);
+  const hasT = sigs.some((x) => 'trigger' in x);
+  const shapeWord = (k) => (!k ? '' : (d?.patterns || []).find((p) => p.key === k)?.label?.toLowerCase() || String(k).replace(/_/g, ' '));
+  const stateTag = (x) => (notCounted(x) ? <Tag title={x.why || ''}>not counted{x.why ? ` · ${x.why}` : ''}</Tag>
+    : shadowRow(x) ? <Tag c="w" title={x.why || 'forecast alerts are held in shadow until their gate passes'}>shadow · not sent</Tag>
+      : <Tag c={STATE_C[x.state] || ''} title={[x.why, filters(x)].filter(Boolean).join(' · ')}>{stateWord(x)}</Tag>);
+  const derivTag = (v) => (v?.chip ? <Tag c={TONE_C[v.tone] ?? ''} title={[v.oi_state && `OI ${v.oi_state}`, v.funding_state && `funding ${v.funding_state}`].filter(Boolean).join(' · ')}>{v.chip}</Tag> : <Tag>—</Tag>);
+  const colsT = [{ h: 'When (IST)' }, { h: 'Trigger', w: 170, ell: true }, { h: 'Dir', w: 52 }, { h: 'Level(s)', w: 140, ell: true }, { h: 'Session', w: 80 },
+    { h: 'Approach', w: 100, ell: true }, { h: 'Derivatives', w: 150, ell: true }, hasG && { h: 'Grade', w: 64 }, { h: 'State', w: 160, ell: true },
+    hasO && { h: 'Outcome', w: 120, ell: true }, { h: 'AI', w: 70, ell: true, lo: true }, { h: '', w: 96, lo: true }].filter(Boolean);
+  const rowsT = sigs.map((x) => ({ key: x.id, onClick: () => pick(x.id), cls: `${x.id === sel ? 'btc-sel-row' : ''} ${x.state === 'dropped' || notCounted(x) ? 'dim' : ''}`,
+    title: [x.text, `entry ${px(x.entry)} · stop ${px(x.stop)}${x.capped ? ' (cap)' : ''} · 1R ${px(x.r1)}`].filter(Boolean).join('\n'),
+    cells: [x.when, isFc(x) ? <span><Tag c="a">forecast</Tag> {x.label}</span> : [trigWord(x) || x.label, shapeWord(x.shape)].filter(Boolean).join(' · '),
+      <span className={x.dir === 'long' ? 'up' : 'down'}>{x.dir}</span>, levelsText(x), x.session ? sesWord(x.session) : '—', approachText(x.approach), derivTag(x.derivs),
+      ...(hasG ? [notCounted(x) && !x.grade?.g ? <span className="muted">—</span> : gradeBadge(x.grade)] : []), stateTag(x), ...(hasO ? [outcomeTag(x.outcome)] : []),
+      x.ai?.line ? <span title={x.ai.line}><AiTag /> {x.ai.verdict || ''}</span> : <span className="muted">{x.ai?.verdict || '—'}</span>,
+      x.png ? <a className="btn ghost small" href={`/api/crypto/snap/${x.id}.png`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Snapshot</a> : <span className="muted">—</span>] }));
   const cols = [{ h: 'When (IST)' }, { h: 'Pattern', w: hasF ? 150 : 112, ell: true }, { h: 'Dir', w: 54 }, { h: 'Level', w: 104, ell: true },
     { h: 'Entry · stop · 1R', w: 176, ell: true }, hasG && { h: 'Grade', w: 66 }, hasF && { h: 'Forecast', w: 180, ell: true },
     !hasO && { h: 'Filters', w: 118, ell: true, lo: true }, { h: 'State', w: 150, ell: true }, hasO && { h: 'Outcome', w: 190, ell: true },
@@ -460,7 +688,20 @@ export default function CryptoPage() {
           {fcOn && <Seg small opts={[[30, '30 min'], [60, '60 min']]} v={fcH} set={pickFcH} />}
           {full && <><Seg small opts={TFS} v={vtf} set={setTf} /><Seg small opts={RANGES} v={range} set={setRange} /></>}
           <button type="button" className="btn ghost small" onClick={() => setFull(!full)} title={full ? 'exit full screen (Esc)' : 'full screen'}>{full ? '✕ Exit full screen' : '⛶ Full screen'}</button></>}>
-          <BtcChart data={ch} sel={sel} alt={s} live={liveFc} onPick={pick} />
+          {v2 && <div className="btc-tools">
+            <button type="button" className="btn ghost small btc-lvbtn" aria-expanded={!!lvOpen} title="the level families drawn on the chart (remembered in this browser)"
+              onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setLvOpen(lvOpen ? null : { left: Math.min(r.left, window.innerWidth - 220), top: r.bottom + 4 }); }}>
+              levels ▾ <span className="muted">{LV_FAMS.filter(([k]) => lv[k] !== false).map(([, l]) => l).join(' · ') || 'none'}</span></button>
+            {lvOpen && <div className="btc-lvmenu" style={{ left: lvOpen.left, top: lvOpen.top }} role="menu">
+              {LV_FAMS.map(([k, l]) => <label key={k}><input type="checkbox" checked={lv[k] !== false} onChange={() => toggleLv(k)} /> {l}</label>)}
+              <div className="muted small">the alert reads crypto.levels_* · this only draws</div></div>}
+            <button type="button" className={`btn ghost small ${shade ? 'on' : ''}`} aria-pressed={shade} onClick={() => flip('bp.btc.shade', setShade)}
+              title="the Asia · London · New York windows (IST) shaded behind the candles">sessions shading · {shade ? 'on' : 'off'}</button>
+            <button type="button" className={`btn ghost small ${showNc ? 'on' : ''}`} aria-pressed={showNc} onClick={() => flip('bp.btc.nc', setShowNc)}
+              title="detections that did not count (no approach · drift · session weight · ATR floor · touches cap), faded grey">show not-counted marks · {showNc ? 'on' : 'off'}</button>
+            {DN?.chip && <Chip c={/stretched/.test(DN.funding_state || '') ? 'warn' : 'fc'} title={`Delta ticker${DN.at_label ? ` · ${DN.at_label}` : ''}${DN.mark != null ? ` · mark ${px(DN.mark)}` : ''}`}>{DN.chip}</Chip>}
+          </div>}
+          <BtcChart data={ch} sel={sel} alt={s} live={liveFc} onPick={pick} lv={lv} shade={shade} showNc={showNc} dstep={dstep} levelsNow={d?.levels_now || null} sessNow={d?.sessions || null} sesW={sesW} />
           {fcOn && <div className="btc-fcnow">
             {!fcCur || fcCur.empty ? <Chip>📈 now · no read yet{fcCur?.next_at_label ? ` · ${fcCur.next_at_label} next` : ''}</Chip> : <>
               <Chip c="fc" title={fcCur.when ? `the read on the ${fcCur.when} candle · paths p10–p90 · shadow` : ''}><span>{fcTxt.head}<b>{fcTxt.odds}</b>{fcTxt.tail}</span></Chip>
@@ -470,8 +711,13 @@ export default function CryptoPage() {
                 : <Chip>refreshes at each closed candle · {fcCur?.next_at_label || '—'} next</Chip>}
             {fcCur && !fcCur.empty && fcCur.tf && fcCur.tf !== vtf && <Chip>cone on the {TF_WORD[fcCur.tf] || fcCur.tf} chart</Chip>}
           </div>}
-          <div className="btc-leg"><span><i style={{ background: '#e08a2e' }} />pivots R1–R5 / S1–S5</span><span><i style={{ background: '#9aa3ad' }} />P</span>
-            <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span><span><i className="dotm grey" />formed but filtered (EMA · volume · day · cooldown)</span>
+          <div className="btc-leg">{v2 ? <>
+            <span><i style={{ background: '#c0392b' }} />PDH / PDL / PDC</span><span><i className="dot2" style={{ color: '#9aa3ad' }} />session H / L (Asia · London · New York)</span>
+            <span><i style={{ background: '#e08a2e' }} />VWAP ±1σ</span><span><i style={{ background: '#5b6cff' }} />POC · value area</span><span><i style={{ background: '#e08a2e', opacity: 0.6 }} />pivots</span>
+            <span><i style={{ background: '#5b6cff', opacity: 0.5 }} />EMA {d?.settings?.ema_len ?? 20}</span>
+            <span><i className="dotm up" />sweep · reclaim (counted)</span><span><i className="dotm grey" />not counted (toggle)</span></> : <>
+            <span><i style={{ background: '#e08a2e' }} />pivots R1–R5 / S1–S5</span><span><i style={{ background: '#9aa3ad' }} />P</span>
+            <span><i style={{ background: '#5b6cff' }} />EMA {d?.settings?.ema_len ?? 20}</span><span><i className="dotm up" />bullish</span><span><i className="dotm down" />bearish (faded: quiet / mark only)</span><span><i className="dotm grey" />formed but filtered (EMA · volume · day · cooldown)</span></>}
             <span><i style={{ background: 'var(--blue)' }} />entry</span><span><i style={{ background: 'var(--bad)' }} />stop</span><span><i style={{ background: 'var(--ok)' }} />1R</span>
             {s?.forecast?.paths && <span><i className="cone" />forecast cone · median dashed · 50 % / 80 % bands (shadow)</span>}
             {!s?.forecast?.paths && (fcOn || liveFc) && <span className="fc">▰ forecast cone (candle model · shadow)</span>}
@@ -487,6 +733,26 @@ export default function CryptoPage() {
           <Card unit="n" label="AI" value={d?.ai?.read ? 'read on' : 'off'} sub={modelChip}
             fact={d?.ai?.last ? `${d.ai.last.when} · ${d.ai.last.line}` : (d?.ai?.local_ai ? 'no read yet' : 'local AI off · code facts only')} title={d?.ai?.last?.line || ''} />
         </Cards>
+        {(SC?.by_level_kind || SC?.by_session || SC?.counted || DN) && (() => {
+          const lk = rowsOf(SC?.by_level_kind).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || b.n - a.n), bs = rowsOf(SC?.by_session), cn = SC?.counted || {};
+          const sr = (k) => bs.find((r) => sesKey(r.k) === k);
+          const sesTxt = (k) => { const r = sr(k); return `${SES_SHORT[k]} ${r ? (r.r != null ? rS(r.r) : pctS(r.pct)) : '—'}`; };
+          const wt = (k) => d?.settings?.[`session_${k}`];
+          return <div className="btc-scores"><Cards n={4}>
+            <Card unit="n" label={`By level kind · ${SC?.days || 30} d`} value={lk.length ? lk.slice(0, 2).map((r) => `${r.k} ${pctS(r.pct)}`).join(' · ') : '—'}
+              sub={lk.slice(2, 5).map((r) => `${r.k} ${pctS(r.pct)}`).join(' · ') || 'nothing scored yet'} fact="sweeps only · scored by code"
+              title={lk.map((r) => `${r.k} ${pctS(r.pct)} won of ${r.n}${r.r != null ? ` · ${rS(r.r)}` : ''}`).join(' · ')} />
+            <Card unit="n" label={`By session · ${SC?.days || 30} d`} value={bs.length ? `${sesTxt('ny')} · ${sesTxt('london')}` : '—'}
+              sub={bs.length ? `${sesTxt('asia')}${wt('asia') === 'marks' ? ' (marks only)' : ''}` : 'nothing scored yet'}
+              fact="IST: Asia 5:30 AM–1:30 PM · London 1:30–6:30 PM · NY 6:30 PM–3:30 AM"
+              title={bs.map((r) => `${sesWord(r.k)} ${r.n} · ${pctS(r.pct)} won${r.r != null ? ` · ${rS(r.r)}` : ''}`).join(' · ')} />
+            <Card unit="n" label="Derivatives now · Delta" value={DN ? `OI 24h ${sgnPct(DN.oi_24h_pct)}` : (d?.settings?.derivs === false ? 'off' : '—')}
+              sub={DN ? `30 min ${sgnPct(DN.oi_30m_pct)} · funding ${DN.funding != null ? sgnPct(DN.funding, 3) : '—'}${DN.mark != null ? ` · mark ${px(DN.mark)}` : ''}` : 'no ticker read yet'}
+              fact={`${DN?.funding_state || 'from the ticker'} · polled with the candles${DN?.at_label ? ` · ${DN.at_label}` : ''}`} k={/stretched/.test(DN?.funding_state || '') ? 'down' : ''} title={DN?.chip || ''} />
+            <Card unit="n" label="Counted vs not" value={`${cn.counted ?? 0} counted · ${cn.not ?? 0} not`}
+              sub={`${cn.alerts ?? 0} alerts · ${cn.marks ?? 0} marks`} fact="all still scored for the record" />
+          </Cards></div>;
+        })()}
         {SC && <div className="btc-scores"><Cards n={3}>
           <Card unit="n" label={<>Direction · {sdays} d <span className="btc-dd">{[1, 7, 30].map((k) => <button key={k} type="button" className={sdays === k ? 'on' : ''}
             onClick={(e) => { e.stopPropagation(); setSdays(k); }}>{k} d</button>)}</span></>}
@@ -512,8 +778,8 @@ export default function CryptoPage() {
           <div className="l"><span>read</span><div title={s?.ai?.line || ''}>{s?.ai?.line ? <><AiTag /> {s.ai.line} </> : <span className="muted">{s ? (s.ai?.state === 'off' ? 'the local AI is off' : 'no line yet') : '—'} </span>}
             {s?.ai?.verdict && <span className={/supports/.test(s.ai.verdict) ? 'up' : /against/.test(s.ai.verdict) ? 'down' : 'muted'}>· {s.ai.verdict}</span>}</div></div>
         </div>
-        <Panel title="Detections" meta={sigs.length || null} right={`newest first · every row stays${phone ? '' : ' · click a row: the chart jumps to it'}`}>
-          <div className="btc-table"><FixedTable cols={cols} rows={rows} empty="No detections yet: they appear here as the candles close." /></div>
+        <Panel title="Detections" meta={sigs.length || null} right={`${hasT && !phone ? 'the trigger is the sweep · reclaim; the candle shape is a tag · ' : ''}newest first · every row stays${phone ? '' : ' · click a row: the chart jumps to it'}`}>
+          <div className="btc-table"><FixedTable cols={hasT ? colsT : cols} rows={hasT ? rowsT : rows} empty="No detections yet: they appear here as the candles close." /></div>
         </Panel>
         {Array.isArray(SC?.by_pattern) && <Panel title={`By pattern and level · ${SC.days || 30} d`} right="R and win rate · code-scored">
           <FixedTable cols={bpCols} rows={SC.by_pattern.map((b, i) => ({ key: `${b.pattern}${b.dir}${i}`, cells: [

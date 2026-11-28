@@ -741,6 +741,13 @@ CRYPTO_FORECAST_ATR = (0.6, 1.0)
 FORECAST_GATE_N = 40                   # ₿ forecast alerts send only after ≥ 40 scored forecast rows …
 FORECAST_GATE_PCT = 55                 # … won ≥ 55 % (the candle model's grade step: ≥ 40 scored BTC reads, direction ≥ 55 %)
 CRYPTO_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+CRYPTO_TRIGGERS = ("sweep", "touch")
+CRYPTO_APPROACH_ATR = (0.6, 1.0, 1.5)
+CRYPTO_APPROACH_N = (8, 12, 20)
+CRYPTO_TOUCHES = (0, 1, 2)             # first N touches of (level, direction) per session; 0 = any
+CRYPTO_SESSION_WEIGHTS = ("marks", "alerts")
+CRYPTO_ATR_FLOORS = (0.0, 40.0, 80.0)
+CRYPTO_STOP_MODES = ("wick", "fixed")
 PIVOT_TYPES = ("traditional", "fibonacci", "woodie", "classic", "camarilla", "dm")
 
 
@@ -813,6 +820,23 @@ class CryptoConfig:
     forecast_p: int = 62                   # a forecast candidate needs the candle model's odds ≥ this % one way (58 | 62 | 66)
     forecast_move_atr: float = 0.6         # … and its expected move ≥ this × ATR (0.6 | 1.0)
     forecast_cone: bool = True             # the candle model's cone on the alert snapshot (when the read is already made)
+    levels_pd: bool = True                 # the levels that matter (backend/crypto/levels.py): PDH / PDL / PDC
+    levels_sessions: bool = True           # … the Asia / London / New York session highs and lows
+    levels_vwap: bool = True               # … the daily VWAP ±1σ
+    levels_profile: bool = True            # … the 24 h volume profile: POC / VAH / VAL
+    levels_pivots: bool = True             # … the pivots (pivot_type, as before)
+    trigger: str = "sweep"                 # sweep (wick through a level, close back: sweep · reclaim) | touch (the pattern at a level, the old rule)
+    approach_atr: float = 1.0              # sweep: within the last approach_candles the price was ≥ this × ATR(14) away (0.6 | 1.0 | 1.5)
+    approach_candles: int = 12             # … (8 | 12 | 20)
+    touches_per_session: int = 2           # only the first N sweeps of (level, direction) in a session count (1 | 2 | 0 = any)
+    session_asia: str = "marks"            # session weights (IST): Asia 5:30 AM–1:30 PM · marks (not counted) | alerts
+    session_london: str = "alerts"         # London 1:30–6:30 PM
+    session_ny: str = "alerts"             # New York 6:30 PM–3:30 AM (and the quiet 3:30–5:30 AM gap)
+    atr_floor: float = 40.0                # a sweep counts only with ATR(14) ≥ this many points (0 | 40 | 80)
+    derivs: bool = True                    # Delta's ticker (OI · funding · mark) polled once per closed candle; a grade input
+    stop_mode: str = "wick"                # wick (sweep low − stop_wick_pad, capped at stop_cap_atr × ATR) | fixed (stop_pad / max_stop)
+    stop_wick_pad: float = 10.0            # points beyond the sweep wick
+    stop_cap_atr: float = 1.0              # the wick stop at most this × ATR from the entry (the signal candle's close)
 
 
 def check_crypto(sec: "CryptoConfig") -> None:
@@ -853,9 +877,24 @@ def check_crypto(sec: "CryptoConfig") -> None:
         raise ValueError(f"forecast_p must be one of {list(CRYPTO_FORECAST_P)}")
     if float(sec.forecast_move_atr) not in CRYPTO_FORECAST_ATR:
         raise ValueError(f"forecast_move_atr must be one of {list(CRYPTO_FORECAST_ATR)}")
+    if sec.trigger not in CRYPTO_TRIGGERS:
+        raise ValueError(f"trigger must be one of {list(CRYPTO_TRIGGERS)}")
+    if float(sec.approach_atr) not in CRYPTO_APPROACH_ATR:
+        raise ValueError(f"approach_atr must be one of {list(CRYPTO_APPROACH_ATR)}")
+    if int(sec.approach_candles) not in CRYPTO_APPROACH_N:
+        raise ValueError(f"approach_candles must be one of {list(CRYPTO_APPROACH_N)}")
+    if int(sec.touches_per_session) not in CRYPTO_TOUCHES:
+        raise ValueError(f"touches_per_session must be one of {list(CRYPTO_TOUCHES)} (0 = any)")
+    for k in ("session_asia", "session_london", "session_ny"):
+        if getattr(sec, k) not in CRYPTO_SESSION_WEIGHTS:
+            raise ValueError(f"{k} must be marks or alerts")
+    if float(sec.atr_floor) not in CRYPTO_ATR_FLOORS:
+        raise ValueError(f"atr_floor must be one of {[int(x) for x in CRYPTO_ATR_FLOORS]}")
+    if sec.stop_mode not in CRYPTO_STOP_MODES:
+        raise ValueError(f"stop_mode must be one of {list(CRYPTO_STOP_MODES)}")
     franges = {"wick_mult": (0.5, 10), "wick_min": (0.1, 1), "opp_wick_max": (0, 1), "body_zone": (0.1, 1), "doji_body": (0.01, 0.5),
                "doji_wick": (0.3, 1), "star_body": (0.05, 1), "eq_tol_pct": (0, 2), "touch_points": (0, 5000), "vol_mult": (0.1, 10),
-               "stop_pad": (0, 5000), "max_stop": (1, 50000)}
+               "stop_pad": (0, 5000), "max_stop": (1, 50000), "stop_wick_pad": (0, 5000), "stop_cap_atr": (0.1, 10)}
     for k, (lo, hi) in franges.items():
         if not lo <= float(getattr(sec, k)) <= hi:
             raise ValueError(f"{k} must be {lo:g} … {hi:g}")
