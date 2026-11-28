@@ -2613,13 +2613,13 @@ def crypto_candles(tf: Optional[str] = None, start: Optional[int] = Query(None, 
 
 
 @router.get("/crypto/scores")
-def crypto_scores(days: int = Query(30)):
+def crypto_scores(days: int = Query(30), counted: int = Query(1)):
     """₿ The tiles' numbers for the last 1 | 7 | 30 days: direction, by grade, the forecast rows and their gate, by pattern
     and level, the candle model's BTC chip (the same object as GET /api/crypto's "scores")."""
     from backend.crypto import view as cv
     if days not in (1, 7, 30):
         raise HTTPException(400, "days must be 1, 7 or 30")
-    return cv.scores(S().config, days)
+    return cv.scores(S().config, days, counted_only=bool(counted))
 
 
 @router.get("/crypto/forecast_now")

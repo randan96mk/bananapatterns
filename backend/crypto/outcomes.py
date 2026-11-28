@@ -180,12 +180,14 @@ def forecast_card(config) -> dict:
     return {"n": n, "won": won, "pct": pct, "ok": ok, "why": why}
 
 
-def scores(config, days: int = 30, now_ts: Optional[float] = None) -> dict:
+def scores(config, days: int = 30, now_ts: Optional[float] = None, counted_only: bool = True) -> dict:
     """The page's tiles: direction, by grade, the forecast rows (buckets + the gate), by pattern and level, the model chip."""
     now_ts = _time.time() if now_ts is None else now_ts
     days = int(days) if int(days) in (1, 7, 30) else 30
     rs = _scored(config, "t >= ?", (int(now_ts) - days * 86400,))
     pat = [r for r in rs if (r.get("kind") or "pattern") == "pattern"]
+    if counted_only:                                  # the rows the alerts come from: approach · session · touches · ATR floor applied
+        pat = [r for r in pat if (1 if r.get("counted") is None else int(r["counted"]))]
     fcs = [r for r in rs if r.get("kind") == "forecast"]
 
     def won(r):
@@ -210,10 +212,11 @@ def scores(config, days: int = 30, now_ts: Optional[float] = None) -> dict:
         groups.setdefault((r["pattern"], r["dir"]), []).append(r)
     by_pattern = []
     for (p, d), xs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-        at = {}
-        for name in sorted({x.get("level_name") or "—" for x in xs}):
-            ys = [x for x in xs if (x.get("level_name") or "—") == name]
-            at[name] = {"n": len(ys), "pct": _pct(sum(map(won, ys)), len(ys))}
+        at = {}                                       # by level family: pd · session · vwap · profile · pivot (the chart's level kinds)
+        from backend.crypto import grade as gd
+        for fam in sorted({gd.level_family_of(x) for x in xs}):
+            ys = [x for x in xs if gd.level_family_of(x) == fam]
+            at[fam] = {"n": len(ys), "pct": _pct(sum(map(won, ys)), len(ys))}
         rr = [float(x["outcome_json"]["r"]) for x in xs if x["outcome_json"].get("r") is not None]
         by_pattern.append({"pattern": p, "dir": d, "n": len(xs), "won": sum(map(won, xs)), "pct": _pct(sum(map(won, xs)), len(xs)),
                            "avg_r": round(sum(rr) / len(rr), 2) if rr else None, "at": at})
@@ -222,4 +225,4 @@ def scores(config, days: int = 30, now_ts: Optional[float] = None) -> dict:
     return {"days": days, "direction": direction, "by_grade": by_grade,
             "forecast": {"scored": len(fcs), "won": fwon, "pct": _pct(fwon, len(fcs)), "buckets": buckets,
                          "gate": {"ok": card["ok"], "why": card["why"], "n": card["n"], "pct": card["pct"]}},
-            "by_pattern": by_pattern, "model": mc, "model_chip": model_chip(config, mc)}
+            "by_pattern": by_pattern, "counted_only": bool(counted_only), "model": mc, "model_chip": model_chip(config, mc)}

@@ -536,14 +536,17 @@ export default function CryptoPage() {
   // the scores (outcomes scored by code): the summary carries 30 d; the Direction tile's toggle reads 1 d / 7 d
   const [sdays, setSdays] = useState(30);
   const [sc1, setSc1] = useState(null);
+  // counted only (default): the rows the alerts come from — approach · session · touches · ATR floor applied; "all" adds the marks
+  const [countedOnly, setCountedOnly] = useState(() => { try { return localStorage.getItem('bp.btc.counted') !== '0'; } catch { return true; } });
+  const toggleCounted = () => setCountedOnly((v) => { try { localStorage.setItem('bp.btc.counted', v ? '0' : '1'); } catch { /* private mode */ } return !v; });
   useEffect(() => {
-    if (sdays === 30) { setSc1(null); return undefined; }
+    if (sdays === 30 && countedOnly) { setSc1(null); return undefined; }
     let alive = true;
-    api.cryptoScores(sdays).then((x) => { if (alive) setSc1(x); }).catch(() => { if (alive) setSc1(null); });
+    api.cryptoScores(sdays, countedOnly).then((x) => { if (alive) setSc1(x); }).catch(() => { if (alive) setSc1(null); });
     return () => { alive = false; };
-  }, [sdays, lastT]);
+  }, [sdays, countedOnly, lastT]);
   const SC = d?.scores || null;
-  const SD = (sdays !== 30 && sc1) || SC;
+  const SD = ((sdays !== 30 || !countedOnly) && sc1) || SC;
   const modelChip = SC?.model_chip || d?.ai?.model_chip || 'candle model · off';
   const H = d?.health || {};
   const P = d?.pivots?.levels || {};
@@ -656,8 +659,9 @@ export default function CryptoPage() {
       x.ai?.line ? <span title={x.ai.line}><AiTag /> {x.ai.verdict || ''}</span> : <span className="muted">{x.ai?.verdict || '—'}</span>,
       x.png ? <a className="btn ghost small" href={`/api/crypto/snap/${x.id}.png`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Snapshot</a> : <span className="muted">—</span>] }));
 
+  const FAMS = [['pd', 'PD H/L/C'], ['session', 'session H/L'], ['vwap', 'VWAP'], ['profile', 'POC · VA'], ['pivot', 'pivots']];
   const bpCols = [{ h: 'Pattern', ell: true }, { h: 'Dir', w: 60 }, { h: 'Signals', w: 80, n: true }, { h: 'Won', w: 100, n: true }, { h: 'Avg R', w: 80, n: true },
-    { h: 'At R1', w: 100, n: true, lo: true }, { h: 'At S1', w: 100, n: true, lo: true }, { h: 'At P', w: 100, n: true, lo: true }];
+    ...FAMS.map(([, h]) => ({ h, w: 104, n: true, lo: true }))];
   const stateChip = !d ? <Chip>loading…</Chip> : d.enabled
     ? <Chip dot={H.behind ? 'warn' : 'ok'} c={H.behind ? 'warn' : 'ok'} title={H.last_error || ''}>{d.running ? 'running' : 'starting'} · {TF_WORD[d.tf]} · Delta · {H.last_label ? `last candle ${H.last_label}` : 'no candles yet'}</Chip>
     : <Chip title="Inputs › feed on (crypto.enabled)">off · {TF_WORD[d.tf]} · Delta{H.last_label ? ` · last candle ${H.last_label}` : ''}</Chip>;
@@ -781,11 +785,13 @@ export default function CryptoPage() {
         <Panel title="Detections" meta={sigs.length || null} right={`${hasT && !phone ? 'the trigger is the sweep · reclaim; the candle shape is a tag · ' : ''}newest first · every row stays${phone ? '' : ' · click a row: the chart jumps to it'}`}>
           <div className="btc-table"><FixedTable cols={hasT ? colsT : cols} rows={hasT ? rowsT : rows} empty="No detections yet: they appear here as the candles close." /></div>
         </Panel>
-        {Array.isArray(SC?.by_pattern) && <Panel title={`By pattern and level · ${SC.days || 30} d`} right="R and win rate · code-scored">
-          <FixedTable cols={bpCols} rows={SC.by_pattern.map((b, i) => ({ key: `${b.pattern}${b.dir}${i}`, cells: [
+        {Array.isArray((SD || SC)?.by_pattern) && <Panel title={`By pattern and level · ${(SD || SC).days || 30} d`} right={<>
+          <button type="button" className={`btn small ${countedOnly ? '' : 'ghost'}`} onClick={toggleCounted} title="counted = the rows the alerts come from: the approach, the session weight, the touch cap and the ATR floor applied · all = the marks too">{countedOnly ? 'counted only' : 'all rows'}</button>
+          <span className="muted small"> · R and win rate · code-scored</span></>}>
+          <FixedTable cols={bpCols} rows={(SD || SC).by_pattern.map((b, i) => ({ key: `${b.pattern}${b.dir}${i}`, cells: [
             (d?.patterns || []).find((p) => p.key === b.pattern)?.label || b.label || b.pattern, <span className={b.dir === 'long' ? 'up' : 'down'}>{b.dir}</span>,
             b.n ?? 0, `${b.won ?? 0} · ${pctS(b.pct)}`, <span className={b.avg_r > 0 ? 'up' : b.avg_r < 0 ? 'down' : ''}>{b.avg_r == null ? '—' : `${b.avg_r > 0 ? '+' : b.avg_r < 0 ? '−' : ''}${Math.abs(b.avg_r).toFixed(1)}`}</span>,
-            ...['R1', 'S1', 'P'].map((k) => (b.at?.[k]?.n ? `${b.at[k].n} · ${pctS(b.at[k].pct)}` : '—'))] }))}
+            ...FAMS.map(([k]) => (b.at?.[k]?.n ? `${b.at[k].n} · ${pctS(b.at[k].pct)}` : '—'))] }))}
             empty="Nothing scored yet: each detection is scored by code after crypto.score_after_min." />
         </Panel>}
       </div>
